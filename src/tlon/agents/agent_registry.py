@@ -84,11 +84,11 @@ from tlon.base.metrics import MetricsService
 from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_context import continue_trace, start_span
 from tlon.base.tracing.trace_store import TraceStore
+from tlon.lifecycle.ports import StopRejectedError
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.mail.post_office import PostOffice
 from tlon.organization.mail.resolver import MemberAddress
 from tlon.organization.mail.store import MailStore
-from tlon.tools.agents.ports import StopRejectedError
 from tlosure.builtins import Builtin
 
 if TYPE_CHECKING:

@@ -14,7 +14,7 @@ The distillation call is attributed to the retired member itself
 (``agent_id`` on the LLM client — its last ledger entry, ADR 0014). The
 lessons file is raw material: packaging it into a prototype's
 ``LESSONS.md`` (the inheritance channel) is a separate, human/agent
-decision via ``writePrototype`` / the admin API.
+decision via ``prototype-write`` / the admin API.
 
 Skip conditions (retirement bookkeeping must never block or fail the
 stop flow — the stop is already done, this is post-hoc):

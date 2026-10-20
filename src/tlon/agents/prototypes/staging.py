@@ -27,7 +27,8 @@ from tlon.agents.prototypes.info import (
 from tlon.base.identifiers import new_prototype_id
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
-from tlon.tools.prototypes.ports import PrototypeError
+from tlon.evolution.ports import PrototypeError
+from tlon.evolution.publication import publish_directory
 from tlosure.edn import EDNParseError, Keyword, dumps, loads
 
 logger = get_logger(__name__)
@@ -93,7 +94,7 @@ def write_staging_prototype(
     parse as EDN and pass the unified ``MemberSpec`` schema.
 
     The metadata is written with ``:trusted false`` and ``:author`` recording
-    the authoring agent, so ``spawnAgent`` refuses it until a human approves
+    the authoring agent, so ``member-spawn`` refuses it until a human approves
     it (ops/WebUI). Lineage (see docs/design/prototypes.md): ``parent``
     links the proposal to the prototype it was derived from (trusted or
     staging) and the generation is derived server-side as the parent's + 1;
@@ -129,11 +130,6 @@ def write_staging_prototype(
     if (p.prototypes_dir() / name).exists() or (p.prototypes_staging_dir() / name).exists():
         raise PrototypeError(f"prototype '{name}' already exists")
     staging_dir = p.prototypes_staging_dir() / name
-    staging_dir.mkdir(parents=True)
-
-    (staging_dir / BEHAVIOR_FILE).write_text(spec_text, encoding="utf-8")
-    if lessons:
-        (staging_dir / LESSONS_FILE).write_text(lessons, encoding="utf-8")
 
     metadata: dict[Any, Any] = {
         Keyword("name"): Keyword(name),
@@ -147,7 +143,10 @@ def write_staging_prototype(
         metadata[Keyword("parent")] = Keyword(parent)
     if proposal_note:
         metadata[Keyword("proposal-note")] = proposal_note
-    (staging_dir / METADATA_FILE).write_text(dumps(metadata) + "\n", encoding="utf-8")
+    files = {BEHAVIOR_FILE: spec_text, METADATA_FILE: dumps(metadata) + "\n"}
+    if lessons:
+        files[LESSONS_FILE] = lessons
+    publish_directory(staging_dir, files)
 
     logger.info(
         "staging_prototype_written",

@@ -61,9 +61,9 @@ from tlon.base.config import AgentConfig, yaml_save
 from tlon.base.events.event import Event, EventType
 from tlon.base.identifiers import new_member_id
 from tlon.base.logger import get_logger
+from tlon.lifecycle.ports import SpawnRejectedError
 from tlon.organization.mail.mail import HUMAN_ID_PREFIX
 from tlon.organization.mail.store import MailStore
-from tlon.tools.agents.ports import SpawnRejectedError
 
 if TYPE_CHECKING:
     from tlon.agents.agent_registry import AgentRegistry

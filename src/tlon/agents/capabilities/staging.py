@@ -23,6 +23,7 @@ from tlon.agents.capabilities.spec import (
 )
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
+from tlon.evolution.publication import publish_directory
 from tlosure.edn import Keyword, dumps, loads
 
 logger = get_logger(__name__)
@@ -85,10 +86,7 @@ def write_staging_capability(
     if staging_dir.exists():
         raise CapabilityError(f"capability '{name}' already exists in the staging area")
 
-    staging_dir.mkdir(parents=True)
-
     capability_text = capability_edn if capability_edn.endswith("\n") else capability_edn + "\n"
-    (staging_dir / CAPABILITY_FILE).write_text(capability_text, encoding="utf-8")
 
     metadata: dict[Any, Any] = {
         Keyword("name"): Keyword(name),
@@ -97,7 +95,9 @@ def write_staging_capability(
     }
     if proposal_note:
         metadata[Keyword("proposal-note")] = proposal_note
-    (staging_dir / METADATA_FILE).write_text(dumps(metadata) + "\n", encoding="utf-8")
+    publish_directory(
+        staging_dir, {CAPABILITY_FILE: capability_text, METADATA_FILE: dumps(metadata) + "\n"}
+    )
 
     logger.info(
         "staging_capability_written",

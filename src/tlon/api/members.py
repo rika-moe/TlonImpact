@@ -23,11 +23,11 @@ from tlon.agents.prototypes.instantiate import instantiate
 from tlon.base.config import AgentConfig
 from tlon.base.identifiers import new_member_id
 from tlon.base.paths import TlonPaths
+from tlon.evolution.ports import PrototypeError
+from tlon.lifecycle.ports import StopRejectedError
 from tlon.organization.mail.mail import HUMAN_ID_PREFIX
 from tlon.organization.mail.store import MailStore
 from tlon.organization.messaging.member_info import MemberInfo
-from tlon.tools.agents.ports import StopRejectedError
-from tlon.tools.prototypes.ports import PrototypeError
 
 __all__ = [
     "MembersFacade",

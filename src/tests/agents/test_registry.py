@@ -19,9 +19,9 @@ from tlon.base.config import AgentConfig, AgentInfoProvider, LLMConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.paths import TlonPaths
+from tlon.lifecycle.ports import StopRejectedError
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
-from tlon.tools.agents.ports import StopRejectedError
 
 RELAY_EDN = '{:version 1\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["sink@tlon.internal"]})]}]}\n'
 

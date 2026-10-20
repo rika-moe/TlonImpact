@@ -6,7 +6,7 @@ and returns it as ``MemberCapabilities`` for ``MemberRuntime``. It is
 a pure function of its parameters: the registry injects itself (it
 satisfies the ``AgentLifecycle`` port structurally) plus the config
 provider and paths, keeping the import direction agents → tools (the
-ports live in ``tlon.tools.agents.ports``).
+ports live in ``tlon.lifecycle.ports`` / ``tlon.evolution.ports``).
 """
 
 from functools import partial
@@ -38,8 +38,16 @@ from tlon.base.logger import get_logger
 from tlon.base.metrics import MetricsService
 from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_store import TraceStore
+from tlon.evolution.get_lineage import PrototypeLineage
+from tlon.evolution.list_prototypes import PrototypeCatalog
+from tlon.evolution.list_staging import StagingCatalog
+from tlon.evolution.propose_behavior import BehaviorProposer
+from tlon.evolution.propose_capability import CapabilityProposer
+from tlon.evolution.review_prototype import PrototypeReviewer
+from tlon.evolution.write_prototype import PrototypeWriter
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
+from tlon.operations.evolution import make_evolution_operations
 from tlon.operations.filesystem import make_filesystem_operations
 from tlon.operations.identity import make_identity_operations
 from tlon.operations.memory import make_memory_operations
@@ -54,21 +62,6 @@ from tlon.sandbox.docker_runtime import AGENT_HOME_CONTAINER_PATH, DockerRuntime
 from tlon.sandbox.filesystem import MemberFilesystemService
 from tlon.sandbox.shell import MemberShellService
 from tlon.tasks.manager import TaskManager
-from tlon.tools.agents.list_members import ListMembersTool
-from tlon.tools.agents.propose_behavior import ProposeBehaviorTool
-from tlon.tools.agents.propose_capability import ProposeCapabilityTool
-from tlon.tools.agents.scheduling import (
-    ExitAgentTool,
-    FinishTurnTool,
-    GetSelfStateTool,
-    SleepUntilTool,
-)
-from tlon.tools.agents.spawn_agent import SpawnAgentTool
-from tlon.tools.agents.write_prototype import WritePrototypeTool
-from tlon.tools.prototypes.get_lineage import GetPrototypeLineageTool
-from tlon.tools.prototypes.list_prototypes import ListPrototypesTool
-from tlon.tools.prototypes.list_staging import ListStagingPrototypesTool
-from tlon.tools.prototypes.review_prototype import ReviewPrototypeTool
 
 if TYPE_CHECKING:
     from tlon.agents.agent_registry import AgentRegistry
@@ -80,17 +73,17 @@ logger = get_logger(__name__)
 #: assembly time (trust ladder, docs/design/unified-member-model.md). The
 #: trust *level* is policy (the ``full-member?``
 #: hook, ``agents/policy.py``, ADR 0022); this tool subset is the
-#: execution-side mechanism the level drives. ``reviewPrototype`` is
+#: execution-side mechanism the level drives. ``prototype-review`` is
 #: deliberately absent: reviewing a staging proposal is advisory (approve
 #: stays human).
 REPRODUCTION_TOOLS: frozenset[str] = frozenset(
-    {"spawnAgent", "writePrototype", "proposeBehavior", "proposeCapability"}
+    {"member-spawn", "prototype-write", "behavior-propose", "capability-propose"}
 )
 
 
 def _render_trusted_capability_words(tlon_paths: TlonPaths) -> str:
     """Render the trusted capability library as prompt text for the
-    ``proposeCapability`` drafting call (anti-duplication + style sample).
+    ``capability-propose`` drafting call (anti-duplication + style sample).
     An empty library renders as ``""`` (the tool then omits the section)."""
     lines = []
     for cap in list_trusted_capabilities(tlon_paths):
@@ -245,7 +238,7 @@ async def assemble_member_capabilities(
     # policy's ``full-member?`` hook (ADR 0022); fail-open reads as full
     # trust (availability first). A probationary member (spawned, not yet
     # endorsed, per the default policy) is assembled without the four
-    # reproduction/evolution tools (REPRODUCTION_TOOLS; reviewPrototype
+    # reproduction/evolution tools (REPRODUCTION_TOOLS; prototype-review
     # stays — advisory only) and gets its mentor (the spawner) cc'd on
     # composed outbound mail.
     is_full = await policy_trust_provider(tlon_paths)(config.id)
@@ -272,115 +265,42 @@ async def assemble_member_capabilities(
     if config.docker.level == "L2":
         shell_service = MemberShellService(config.docker, docker_runtime)
         operations.extend(make_shell_operations(shell_service))
-    tool_executor.register_tool(FinishTurnTool())
-    tool_executor.register_tool(SleepUntilTool())
-    tool_executor.register_tool(ExitAgentTool())
-    tool_executor.register_tool(GetSelfStateTool(registry=registry, agent_id=config.id))
-    tool_executor.register_tool(
-        ListPrototypesTool(lister=partial(list_prototypes, tlon_paths=tlon_paths))
-    )
-    # Staging proposals (docs/design/prototypes.md): agent-authored
-    # prototypes awaiting human
-    # trust approval — visible so a member (e.g. the scribe's digest) can
-    # surface them as pending human decisions.
-    tool_executor.register_tool(
-        ListStagingPrototypesTool(lister=partial(list_staging_prototypes, tlon_paths=tlon_paths))
-    )
-    # Lineage (docs/design/prototypes.md): the prototype genealogy is
-    # first-class data — any
-    # member can walk a :parent chain and see each generation's diff.
-    tool_executor.register_tool(
-        GetPrototypeLineageTool(lineage=partial(get_prototype_lineage, tlon_paths=tlon_paths))
-    )
-    # Heterogeneous review (docs/design/prototypes.md, phase 2): a member
-    # reviews a staging
-    # proposal with its own llm_client — the heterogeneity comes from the
-    # reviewer's model bloodline (config.model_name), the verdict is never
-    # caller-supplied. Records append to the proposal's REVIEW.md and ride
-    # along with approval's whole-directory move. Advisory only: approve
-    # stays a human decision.
-    tool_executor.register_tool(
-        ReviewPrototypeTool(
-            reviewer_id=config.id,
-            llm_client=llm_client,
-            detail=partial(get_prototype_detail, staging=True, tlon_paths=tlon_paths),
-            lineage=partial(get_prototype_lineage, tlon_paths=tlon_paths),
-            append_review=partial(append_staging_review, tlon_paths=tlon_paths),
-        )
-    )
-    # Reproduction tool: the registry is the
-    # assembler, so it injects itself (it satisfies the AgentLifecycle
-    # port structurally); spawner_id binds the tool to the owning
-    # agent for budget accounting and audit. Trust ladder
-    # (docs/design/unified-member-model.md):
-    # probationary members don't get these (REPRODUCTION_TOOLS) — the
-    # DSL spawn action is backstopped by the SpawnManager probation
-    # quota (same funnel). Self scheduling tools above are always available.
-    if is_full:
-        tool_executor.register_tool(SpawnAgentTool(registry=registry, spawner_id=config.id))
-    tool_executor.register_tool(ListMembersTool(directory=registry))
-    # Spec authoring (stage 4a): writes untrusted prototypes to the
-    # staging area; author_id is recorded as the :author for audit.
-    # Proposal solvency gate (docs/design/prototypes.md, agent side only
-    # — the human direct
-    # write channel is never gated): an insolvent bloodline loses
-    # proposal eligibility until it earns endorsements back. The gate
-    # recomputes from raw files per call (proposals are low-frequency).
     proposal_solvency = policy_solvency_provider(tlon_paths)
-    # Near-kin rejection (docs/design/prototypes.md, agent side only like
-    # the solvency gate):
-    # reskin-level duplicates of an existing prototype (trusted or
-    # staging) are turned away before they reach disk.
     near_kin_check = partial(find_near_kin, tlon_paths=tlon_paths)
-    # Trust ladder (docs/design/unified-member-model.md): both
-    # spec-authoring tools are reproduction/
-    # evolution tools (REPRODUCTION_TOOLS) — withheld from probationary
-    # members.
-    if is_full:
-        tool_executor.register_tool(
-            WritePrototypeTool(
+    operations.extend(
+        make_evolution_operations(
+            config.id,
+            is_full,
+            catalog=PrototypeCatalog(lister=partial(list_prototypes, tlon_paths=tlon_paths)),
+            staging=StagingCatalog(lister=partial(list_staging_prototypes, tlon_paths=tlon_paths)),
+            lineage=PrototypeLineage(lineage=partial(get_prototype_lineage, tlon_paths=tlon_paths)),
+            reviewer=PrototypeReviewer(
+                reviewer_id=config.id,
+                llm_client=llm_client,
+                detail=partial(get_prototype_detail, staging=True, tlon_paths=tlon_paths),
+                lineage=partial(get_prototype_lineage, tlon_paths=tlon_paths),
+                append_review=partial(append_staging_review, tlon_paths=tlon_paths),
+            ),
+            writer=PrototypeWriter(
                 author_id=config.id,
-                writer=write_staging_prototype,
+                writer=partial(write_staging_prototype, tlon_paths=tlon_paths),
                 prototype=config.prototype,
                 solvency=proposal_solvency,
                 near_kin=near_kin_check,
-            )
-        )
-    # Experience entry of the generation channel
-    # (docs/design/unified-member-model.md): drafts the next
-    # generation's spec from the member's own behavior + memory, parented
-    # to its own prototype. First agents-domain tool to receive the
-    # llm_client / memory pair; the journal (agents layer) is injected as
-    # the SessionLogReader port so tlon.tools never imports tlon.agents.
-    if is_full:
-        tool_executor.register_tool(
-            ProposeBehaviorTool(
+            ),
+            behavior_proposer=BehaviorProposer(
                 agent_id=config.id,
                 prototype=config.prototype,
                 author_id=config.id,
                 llm_client=llm_client,
                 memory=memory,
                 logs=SessionJournal(config.id, tlon_paths),
-                writer=write_staging_prototype,
+                writer=partial(write_staging_prototype, tlon_paths=tlon_paths),
                 tlon_paths=tlon_paths,
                 solvency=proposal_solvency,
                 near_kin=near_kin_check,
-            )
-        )
-    # Experience entry of the capability channel (issue #30,
-    # docs/design/capabilities.md): drafts a capability word's tlosure
-    # artifact from the member's own memory + lessons, through the
-    # write_staging_capability gate. No near-kin check (unlike
-    # proposeBehavior): the vocabulary is a few dozen words, same-name is
-    # a hard structural rejection, and reviewers see the full artifact
-    # plus its :examples assertions — a similarity subsystem would be a
-    # preventive abstraction. The solvency gate is reused (proposal
-    # eligibility follows bloodline solvency). The trusted-library
-    # listing is rendered here (agents side) and injected as a zero-arg
-    # callable, keeping tlon.tools free of tlon.agents.
-    if is_full:
-        tool_executor.register_tool(
-            ProposeCapabilityTool(
+            ),
+            capability_proposer=CapabilityProposer(
                 agent_id=config.id,
                 prototype=config.prototype,
                 author_id=config.id,
@@ -391,8 +311,9 @@ async def assemble_member_capabilities(
                 tlon_paths=tlon_paths,
                 solvency=proposal_solvency,
                 trusted_words=partial(_render_trusted_capability_words, tlon_paths),
-            )
+            ),
         )
+    )
     operations.extend(make_memory_operations(memory, SessionJournal(config.id, tlon_paths)))
     operations.extend(make_task_operations(task_manager))
     operations.extend(make_identity_operations(tlon_paths, config.id))
@@ -424,9 +345,6 @@ async def assemble_member_capabilities(
         tool_count=len(tool_executor.list_tools()),
     )
 
-    # Initialize tools
-    await tool_executor.initialize()
-
     # Read tool timeout from agent config
     per_tool_timeout = config.tool.per_timeout
 
@@ -445,4 +363,5 @@ async def assemble_member_capabilities(
         docker_runtime=docker_runtime,
         operations=tuple(operations),
         shell_service=shell_service,
+        is_full=is_full,
     )

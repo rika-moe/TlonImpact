@@ -103,7 +103,7 @@ async def test_dsl_and_tool_nonzero_preserve_same_failure_data():
     device = AsyncMock()
     device.run.return_value = ExecutionResult(7, "partial", "failed")
     _, executor, adapter = bindings(device)
-    tool = await OperationTool(executor, "shell-run").execute(command="false")
+    tool = await OperationTool(executor, "shell-run").execute_context({"command": "false"})
     with pytest.raises(ShellExecutionError) as error:
         await Evaluator(adapter.builtins(), 10000, 100).eval_async(
             loads('(shell-run {:command "false"})'), {}, 0, adapter.handle
@@ -159,10 +159,12 @@ async def test_background_unknown_preserves_original_task_handle(failure):
     else:
         device.run.return_value = failure
     service, executor, _ = bindings(device)
-    started = await OperationTool(executor, "shell-run").execute(command="effect", background=True)
+    started = await OperationTool(executor, "shell-run").execute_context(
+        {"command": "effect", "background": True}
+    )
     task_id = started.data["task_id"]
     await asyncio.gather(service._tasks[task_id], return_exceptions=True)
-    result = await OperationTool(executor, "shell-check").execute(task_id=task_id)
+    result = await OperationTool(executor, "shell-check").execute_context({"task_id": task_id})
     assert not result.success
     assert result.data["outcome"] == "unknown"
     assert result.data["retry_safe"] is False

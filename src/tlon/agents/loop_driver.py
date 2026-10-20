@@ -63,7 +63,6 @@ from tlon.agents.vocabulary import (
 from tlon.base.events.event import EventType
 from tlon.base.llm_client import ContextWindowExceededError, LLMResponse, ToolCall
 from tlon.base.logger import get_logger
-from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.member_mail import MailDraft
@@ -634,12 +633,8 @@ class LoopDriver:
             )
         except TimeoutError:
             tool = self._tool_executor.get_tool(tc.function_name)
-            if isinstance(tool, OperationTool):
-                result = tool.timeout_result(tc.arguments, self._operation_context(session_id, tc))
-            else:
-                result = ToolResult(
-                    success=False, data={}, error=f"Timeout after {timeout}s ({authority})"
-                )
+            result = tool.timeout_result(tc.arguments, self._operation_context(session_id, tc))
+            result.error = f"Timeout after {timeout}s ({authority}); {result.error}"
         except Exception as e:
             result = ToolResult(success=False, data={}, error=str(e))
         # Spill before journaling: log and context hold the same locator.
@@ -656,9 +651,7 @@ class LoopDriver:
         if not self._tool_executor.has_tool(tc.function_name):
             return {}
         tool = self._tool_executor.get_tool(tc.function_name)
-        if isinstance(tool, OperationTool):
-            return tool.recovery_metadata(tc.arguments, self._operation_context(session_id, tc))
-        return {}
+        return tool.recovery_metadata(tc.arguments, self._operation_context(session_id, tc))
 
     def _tool_timeout_budget(self, tc: ToolCall) -> tuple[float, str]:
         """Effective wait_for budget for one tool call, plus its authority.

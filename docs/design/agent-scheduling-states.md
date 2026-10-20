@@ -22,12 +22,12 @@
 ```mermaid
 stateDiagram-v2
     waiting --> active: 可处理邮件或工作事件
-    active --> waiting: finishTurn / 本次工作因限额或错误结束
-    active --> sleeping: sleepUntil / 管理员定时睡眠，排空当前工作
+    active --> waiting: finish-turn / 本次工作因限额或错误结束
+    active --> sleeping: sleep-until / 管理员定时睡眠，排空当前工作
     waiting --> sleeping: 管理员定时睡眠
     sleeping --> active: 到期或管理员唤醒，且有待处理邮件
     sleeping --> waiting: 到期或管理员唤醒，且无可处理邮件
-    active --> dead: exitAgent / 管理终止
+    active --> dead: exit-agent / 管理终止
     waiting --> dead: 管理终止
     sleeping --> dead: 管理终止
 ```
@@ -36,7 +36,7 @@ stateDiagram-v2
 - 活跃时新来信仍入箱，不并发创建第二个session。工作结束后如有新接纳的邮件，可以立即再次活跃。
 - 睡眠期间的邮件和普通事件均不能绕过睡眠门控；不积攒重放所有普通事件。已有邮件保存在邮箱，到期后按成员规则检查。
 - 睡眠到期先检查持久邮箱：有可处理邮件则处理，否则等待。到期和管理员提前唤醒本身均不调用 LLM。
-- 结束、睡眠、退出不隐式标读。沿用责任集与慢速重扫规则，避免 finishTurn 后立即反复处理同一批搁置邮件；睡眠到期可重新检查这些未读邮件。
+- 结束、睡眠、退出不隐式标读。沿用责任集与慢速重扫规则，避免 finish-turn 后立即反复处理同一批搁置邮件；睡眠到期可重新检查这些未读邮件。
 - 无效或已过期的睡眠时间拒绝，状态不变。暂不提供无限期睡眠和普通邮件提前唤醒。
 - 死亡后不再以成员身份调用工具或发送告别邮件；系统只读归档清点不恢复成员。死亡不可通过来信、到期、start/reload、服务重启或管理员“启动”复活。人格、记忆、邮件和 journal 保留；历史删除是另一个明确管理动作。
 
@@ -48,12 +48,12 @@ stateDiagram-v2
 | `mail-forward(...)` | 转发邮件 | 无 |
 | `mail-check-inbox` / `mail-search` | 查询自己的邮箱 | 无 |
 | `mail-mark-read(mail_ids)` | 标读自己的邮件 | 影响以后哪些邮件可触发工作；不直接转换当前状态 |
-| `finishTurn()` | 结束本次工作，不发送邮件 | 活跃 → 等待；有新工作可紧接着再活跃 |
-| `sleepUntil(wake_at, reason?)` | 结束本次工作，睡至指定 UTC 时刻 | 活跃 → 睡眠 |
-| `exitAgent(reason?)` | 自己永久退出，保留历史 | 活跃 → 死亡 |
-| `getSelfState()` | 读取自己的状态、唤醒时间、待退出等诊断信息 | 无 |
+| `finish-turn()` | 结束本次工作，不发送邮件 | 活跃 → 等待；有新工作可紧接着再活跃 |
+| `sleep-until(wake_at, reason?)` | 结束本次工作，睡至指定 UTC 时刻 | 活跃 → 睡眠 |
+| `exit-agent(reason?)` | 自己永久退出，保留历史 | 活跃 → 死亡 |
+| `member-self-state()` | 读取自己的状态、唤醒时间、待退出等诊断信息 | 无 |
 
-上述状态工具只操作调用者自身；退休其他成员属于单独的管理权限，不由“正式成员身份”默认授予。旧 stopAgent 已删除；管理端通过 POST /admin/agents/{agent_id}/terminate 请求排空后死亡，不提供普通成员可调用的同等工具。
+上述状态工具只操作调用者自身；退休其他成员属于单独的管理权限，不由“正式成员身份”默认授予。旧 member-stop 已删除；管理端通过 POST /admin/agents/{agent_id}/terminate 请求排空后死亡，不提供普通成员可调用的同等工具。
 
 三个结束类调用必须单独占据一个工具调用轮次，不能与发信、文件写入或其他工具并发。runtime 必须确认本轮其他成员工作与已派发工具完成，再提交转换；不接受“先关掉自己，再等待自己的工具返回”。后台反思也需纳入工作计数，不允许睡眠后继续调用模型。
 
@@ -61,9 +61,9 @@ stateDiagram-v2
 
 1. `mail-mark-read(...)`：明确标记已处理的信。
 2. `mail-send(...)`：发送必要回复，检查投递结果，失败时可处理失败。
-3. 下一轮调用 `finishTurn()`、`sleepUntil(...)` 或 `exitAgent()`，明确表达后续调度意图。
+3. 下一轮调用 `finish-turn()`、`sleep-until(...)` 或 `exit-agent()`，明确表达后续调度意图。
 
-这会比现有 `mail-send(is_complete=true)` 多一次模型工具调用轮次，是解耦的成本。本轮不预设批处理或“发信后自动 finish”的隐藏优化。可以发多封邮件后结束，也可以完全不发信直接结束或睡眠。删除 `silence`，由 `finishTurn` 承担不回信结束工作的语义，不保留别名。
+这会比现有 `mail-send(is_complete=true)` 多一次模型工具调用轮次，是解耦的成本。本轮不预设批处理或“发信后自动 finish”的隐藏优化。可以发多封邮件后结束，也可以完全不发信直接结束或睡眠。删除 `silence`，由 `finish-turn` 承担不回信结束工作的语义，不保留别名。
 
 业务任务的 `task-pause` / `task-complete` 只改变任务记录，不代表成员睡眠或本次会话结束；继续保持独立。
 
@@ -73,7 +73,7 @@ stateDiagram-v2
 
 - 邮局负责地址、幂等、原子入箱与拒信。睡眠和等待都正常收信；死亡拒收。一封多人邮件若含死亡收件人，沿用当前整封拒绝契约。
 - 调度器负责何时处理邮箱、何时睡、何时结束。发信成功只表示入箱，不表示自己的工作已经完成或对方已处理。
-- `finishTurn` 不保证任务已经完成，也不保证邮箱清空，只表示本次工作周期结束。
+- `finish-turn` 不保证任务已经完成，也不保证邮箱清空，只表示本次工作周期结束。
 - 资源回收不设置 sleeping。旧 idle drain 应改为卸载等待中的实例；睡眠期限只能由显式睡眠意图决定。
 - 错误、超时或预算耗尽结束当前工作，不自动判定死亡。已有错误通知可由明确的系统通知政策发送，不能重新把邮件工具当作结束信号。
 
@@ -98,10 +98,10 @@ runtime 恢复活跃成员时沿用 session journal 恢复机制，不从已完�
 | `agents/scheduler.py`、`agents/session.py` | session ACTIVE/WAITING/COMPLETED，结束后链式唤醒 | 保留内部执行阶段，明确待工具与成员等待的区别；结束意图在安全点落地 |
 | `agents/stages/act.py`、`agents/loop_driver.py`、`agents/executor.py`、`agents/stages/outcome.py` | 识别 mail-send/silence 作为结束信号 | 改为独立状态效果；成功发信不结束；sleep/exit 不发信、不隐式标读 |
 | `tools/mail/send_email.py`、`tools/mail/silence.py` | 邮件和会话完成耦合 | 删除 is_complete 与 silence，保持投信结果语义 |
-| `tools/agents/stop_agent.py`、`agents/assembly.py` | 可按信任层装配 stopAgent，目标是任意成员 | 自我结束/睡眠/退出工具与管理终止权限分离 |
+| `lifecycle/service.py`、`agents/assembly.py` | 可按信任层装配 member-stop，目标是任意成员 | 自我结束/睡眠/退出工具与管理终止权限分离 |
 | `organization/mail/store.py`、`post_office.py` 及生命周期持久化接口 | 退休拒收与入箱事务排序 | 保留原子拒收；睡眠正常入箱；死亡状态单一权威 |
 | `agents/vocabulary.py`、`member_spec.py`、`agents/adam.py` | completing? 依赖 mail-send/silence；DSL start/stop、idle/noisy 政策 | 明确工作结束与邮件派发谓词；更新 DSL 管理动作、Adam 回收政策，避免 stop 同时表示卸载和死亡 |
-| `prototypes/`、公共提示词、工具参考 | 交卷前自评基于 completing?，说明用发信结束 | 全部同步独立结束工具；证据核验应在实际邮件派发前审查，不能挪到 finishTurn 时才检查已发邮件 |
+| `prototypes/`、公共提示词、工具参考 | 交卷前自评基于 completing?，说明用发信结束 | 全部同步独立结束工具；证据核验应在实际邮件派发前审查，不能挪到 finish-turn 时才检查已发邮件 |
 | `tlon_server` 生命周期 API/SSE、`tlon_client`、WebUI | retired/thinking/sleeping 等状态展示及启停操作 | 一致输出四态与 wake_at；启动/错误显示为诊断；死亡无启动按钮，睡眠显示到期时间 |
 
 本次不做旧接口兼容层、不保留 is_complete 或 silence 别名。实施时必须同时更新包内 DSL、协议文本、测试及使用方。当前 ~/.tlon 的原型与成员 spec 是否同步另行明确授权，不因写设计稿修改现有数据。
@@ -115,12 +115,12 @@ runtime 恢复活跃成员时沿用 session journal 恢复机制，不从已完�
 - 睡眠期限跨重启保留，已到期不会再完整睡一遍。
 - 死亡拒收新邮件且不复活；历史可查；死亡与投递的并发结果符合事务提交顺序。
 - 睡眠/退出与正在执行的工具、反思、到期回调竞争时，不重复执行或留下活动工作。
-- 证据核验在发信前生效，失败的邮件不会因后续 finishTurn 而误判已交付。
+- 证据核验在发信前生效，失败的邮件不会因后续 finish-turn 而误判已交付。
 - 所有质量门与真实冒烟使用临时实例，不影响现有社会。
 
 ## 8. 已确认的选择
 
-1. 采用 `finishTurn`、`sleepUntil`、`exitAgent`、`getSelfState` 这组自我管理接口，接受发信与结束分成两个轮次。
+1. 采用 `finish-turn`、`sleep-until`、`exit-agent`、`member-self-state` 这组自我管理接口，接受发信与结束分成两个轮次。
 2. 普通成员只能管理自己的状态，终止其他成员仅留给人类/明确授权的管理主体。
 3. 支持到时自然醒与管理员提前唤醒（ADR 0041）；普通邮件不能提前唤醒。管理员等待、睡眠和永久退出先排空，强制取消另行设计。
 

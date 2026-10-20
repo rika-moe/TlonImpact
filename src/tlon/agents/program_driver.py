@@ -8,10 +8,11 @@ from typing import Any
 from tlon.agents.member_spec import MemberRule
 from tlon.agents.program_store import ProgramStore
 from tlon.operations.adapters import DSLAdapter
+from tlon.operations.control import CONTROL_NAMES, validate_control_forms
 from tlon.operations.core import CallContext
-from tlon.operations.schema import UnknownOutcomeError
+from tlon.operations.schema import UnknownOutcomeError, json_value
 from tlosure.builtins import ActionRequest, Builtin, BuiltinCall, EvalError
-from tlosure.edn import dumps, loads
+from tlosure.edn import Form, dumps, loads
 from tlosure.eval import DEFAULT_FUEL, DEFAULT_MAX_DEPTH, DEFAULT_WHEN_FUEL, Evaluator
 
 ExecuteEffect = Callable[[ActionRequest, str, int, str], Awaitable[Any]]
@@ -32,7 +33,10 @@ class ProgramDriver:
         operations: DSLAdapter | None = None,
         member_id: str = "",
         on_operation: Callable[[], None] | None = None,
+        on_control: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> None:
+        self.on_control = on_control
+        self._control_allowed = False
         self.operations = operations
         self.member_id = member_id
         self.on_operation = on_operation
@@ -47,20 +51,31 @@ class ProgramDriver:
         self.remaining_tokens = token_budget
 
     async def run(self, rule: MemberRule, env: dict[str, Any]) -> None:
+        validate_control_forms(rule.actions)
+        self._control_allowed = False
         shared = (
             Evaluator(self.builtins, rule.fuel, DEFAULT_MAX_DEPTH)
             if rule.fuel is not None
             else None
         )
         if rule.when is not None:
+            validate_control_forms([rule.when], allow_direct=False)
             gate = shared or Evaluator(self.builtins, DEFAULT_WHEN_FUEL, DEFAULT_MAX_DEPTH)
             if not await gate.eval_async(rule.when, env, 0, self._call):
                 return
+        self._control_allowed = bool(
+            rule.actions
+            and isinstance(rule.actions[0], Form)
+            and rule.actions[0]
+            and str(rule.actions[0][0]) in CONTROL_NAMES
+        )
         for action in rule.actions:
             evaluator = shared or Evaluator(self.builtins, DEFAULT_FUEL, DEFAULT_MAX_DEPTH)
             await evaluator.eval_async(action, env, 0, self._call)
 
     async def _call(self, call: BuiltinCall) -> Any:
+        if call.name in CONTROL_NAMES and not self._control_allowed:
+            raise EvalError("nested control operation is forbidden")
         index = self.index
         self.index += 1
         args_edn = dumps(call.args)
@@ -70,12 +85,17 @@ class ProgramDriver:
         if found:
             assert result_edn is not None
             result = loads(result_edn)
-            if call.name == "llm-call":
+            if call.name == "model-call":
                 self._charge(result, call)
+            if call.name in CONTROL_NAMES and self.on_control is not None:
+                await self.on_control(json_value(result, edn_keys=True)["scheduling_request"])
             return result
         if self.operations is not None and self.operations.owns(call):
             call_id = f"program:{self.run_id}:{index}:{call.name}"
-            if self.operations.prepare(call):
+            unsafe = self.operations.prepare(call)
+            if call.name == "model-call" and self.remaining_tokens <= 0:
+                raise EvalError("member program LLM output budget exhausted")
+            if unsafe:
                 claimed = await asyncio.to_thread(
                     self.store.claim_intent, self.run_id, index, call.name, args_edn
                 )
@@ -86,8 +106,17 @@ class ProgramDriver:
                     )
             if self.on_operation is not None:
                 self.on_operation()
+            dispatched_call = call
+            if call.name == "model-call":
+                inputs = self.operations._arguments(call.args)
+                dispatched_call = replace(
+                    call,
+                    args=[
+                        {**inputs, "max_tokens": min(inputs["max_tokens"], self.remaining_tokens)}
+                    ],
+                )
             result = await self.operations.handle(
-                call,
+                dispatched_call,
                 CallContext(
                     self.member_id,
                     self.run_id,
@@ -99,6 +128,10 @@ class ProgramDriver:
             await asyncio.to_thread(
                 self.store.record_effect, self.run_id, index, call.name, args_edn, dumps(result)
             )
+            if call.name == "model-call":
+                self._charge(result, call)
+            if call.name in CONTROL_NAMES and self.on_control is not None:
+                await self.on_control(json_value(result, edn_keys=True)["scheduling_request"])
             return result
         try:
             request = call.invoke()
@@ -107,16 +140,6 @@ class ProgramDriver:
         # Closure-backed words run through the kernel. Host query functions
         # return ordinary values; action constructors return request data.
         if isinstance(request, ActionRequest):
-            if request.kind == "llm_call":
-                if self.remaining_tokens <= 0:
-                    raise EvalError("member program LLM output budget exhausted")
-                request = ActionRequest(
-                    request.kind,
-                    {
-                        **request.data,
-                        "max_tokens": min(request.data["max_tokens"], self.remaining_tokens),
-                    },
-                )
             result = await self.execute(request, call.name, index, args_edn)
         elif isinstance(request, list) and all(isinstance(item, ActionRequest) for item in request):
             result = []
@@ -127,7 +150,7 @@ class ProgramDriver:
         await asyncio.to_thread(
             self.store.record_effect, self.run_id, index, call.name, args_edn, dumps(result)
         )
-        if call.name == "llm-call":
+        if call.name == "model-call":
             self._charge(result, call)
         return result
 
@@ -135,7 +158,7 @@ class ProgramDriver:
         # Reserve the requested output allowance. Missing provider usage can
         # never make the next call free; replay applies the same reservation.
         requested = next(
-            (value for key, value in call.args[0].items() if str(key) == "max-tokens"),
+            (value for key, value in call.args[0].items() if str(key) == "max_tokens"),
             self.remaining_tokens,
         )
         self.remaining_tokens -= min(requested, self.remaining_tokens)

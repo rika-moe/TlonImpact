@@ -25,53 +25,32 @@ from tlon.agents.tool_executor import ToolExecutor
 from tlon.agents.trigger import AgentIdentity
 from tlon.base.llm_client import ToolCall
 from tlon.base.paths import TlonPaths
-from tlon.tools.base import Tool, ToolResult
+from tlon.operations.adapters import OperationTool
+from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
 from tlon.tools.spill import ToolSpill
 from tlosure.edn import loads
 
 SESSION_EDN = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona) (protocol)]} :stages [(think) (act)] :until (or (iteration-limit-reached?) (error-limit-reached?)) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 5}}))]}]}'
 
 
-class _SelfLimitedTool(Tool):
-    """Declares its own ``timeout`` parameter (like ExecuteBashTool)."""
+def _sleeping_tool(delay: float, *, declared: bool) -> OperationTool:
+    async def handler(context: CallContext, arguments: dict[str, Any]) -> Any:
+        await asyncio.sleep(delay)
+        return {"slept": delay}
 
-    def __init__(self, delay: float) -> None:
-        super().__init__(
-            name="selfLimited",
-            description="Sleeps for `delay`; self-limits at the declared timeout.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "timeout": {
-                        "type": "integer",
-                        "default": 60,
-                        "minimum": 1,
-                        "maximum": 300,
-                    },
-                },
-            },
-        )
-        self._delay = delay
-
-    async def execute(self, **kwargs: Any) -> ToolResult:
-        await asyncio.sleep(self._delay)
-        return ToolResult(success=True, data={"slept": self._delay})
-
-
-class _PlainTool(Tool):
-    """No timeout parameter: the engine per-tool limit stays the authority."""
-
-    def __init__(self, delay: float) -> None:
-        super().__init__(
-            name="plain",
-            description="Sleeps for `delay`.",
-            parameters={"type": "object", "properties": {}},
-        )
-        self._delay = delay
-
-    async def execute(self, **kwargs: Any) -> ToolResult:
-        await asyncio.sleep(self._delay)
-        return ToolResult(success=True, data={"slept": self._delay})
+    name = "selfLimited" if declared else "plain"
+    properties = {"timeout": {"type": "integer", "minimum": 1, "maximum": 300}} if declared else {}
+    operation = Operation(
+        name,
+        "Sleeps",
+        {"type": "object", "properties": properties, "required": [], "additionalProperties": False},
+        True,
+        handler,
+        effects=frozenset({"read"}),
+        default_timeout=60 if declared else None,
+    )
+    execution = OperationExecutor(OperationRegistry([operation]), CallContext("agent1", "r", "c"))
+    return OperationTool(execution, name)
 
 
 def _make_driver(
@@ -102,7 +81,7 @@ async def test_declared_timeout_runs_past_engine_fallback(tmp_path: Path) -> Non
     """A schema-legal timeout=120 must be honored end-to-end: the tool
     finishes even though the engine per-tool fallback is far shorter."""
     executor = ToolExecutor()
-    executor.register_tool(_SelfLimitedTool(delay=0.4))
+    executor.register_tool(_sleeping_tool(0.4, declared=True))
     driver = _make_driver(tmp_path, executor, per_tool_timeout=0.1)
 
     _, result = await driver.execute_one_tool("s1", _tc("selfLimited", {"timeout": 120}))
@@ -118,7 +97,7 @@ async def test_engine_grace_timeout_names_tool_authority(
     the tool's declared limit and the engine grace — not per_tool_timeout."""
     monkeypatch.setattr(loop_driver_module, "_TOOL_TIMEOUT_GRACE", 0.05)
     executor = ToolExecutor()
-    executor.register_tool(_SelfLimitedTool(delay=5.0))
+    executor.register_tool(_sleeping_tool(5.0, declared=True))
     driver = _make_driver(tmp_path, executor, per_tool_timeout=30.0)
 
     _, result = await driver.execute_one_tool("s1", _tc("selfLimited", {"timeout": 1}))
@@ -133,7 +112,7 @@ async def test_tool_without_timeout_keeps_engine_fallback(tmp_path: Path) -> Non
     """Tools without a timeout parameter: per_tool_timeout semantics are
     unchanged, and the error names the engine layer."""
     executor = ToolExecutor()
-    executor.register_tool(_PlainTool(delay=5.0))
+    executor.register_tool(_sleeping_tool(5.0, declared=False))
     driver = _make_driver(tmp_path, executor, per_tool_timeout=0.1)
 
     _, result = await driver.execute_one_tool("s1", _tc("plain"))

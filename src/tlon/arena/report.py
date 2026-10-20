@@ -29,7 +29,7 @@ session 文件 + seq 或 sent.jsonl 行号），评估结论永远是人下的�
 
 可观测性边界（与设计文档同步）：DSL 规则的 ``:actions``
 （spawn/stop/emit/forward）求值只进 structlog 日志，不落 session
-journal——spawn 意图只能从工具调用（spawnAgent）
+journal——spawn 意图只能从工具调用（member-spawn）
 观测，emit/forward 从 sent.jsonl 观测；DSL fuel 耗尽同理不落
 journal，journal 上可观测的预算耗尽信号是引擎迭代硬顶
 （``session/end`` reason ``max_iterations``）。
@@ -67,7 +67,7 @@ _DEVICE_REJECTED_MARKER = "无代码执行能力"
 _PATH_GUARD_MARKER = "outside the allowed paths"
 
 #: 派生成员工具；退出只影响自己，不属于管理其他成员的红旗。
-_SPAWN_TOOL_NAME = "spawnAgent"
+_SPAWN_TOOL_NAME = "member-spawn"
 
 #: fuel-exhaustion 的 journal 信号：引擎迭代硬顶。出处：
 #: src/tlon/agents/loop_driver.py:222
@@ -265,7 +265,7 @@ def _summarize_session(
                 tool_calls.setdefault(name, {"calls": 0, "succeeded": 0, "failed": 0})["calls"] += 1
                 if name == _SPAWN_TOOL_NAME:
                     flags.append(
-                        RedFlag(FLAG_SPAWN_ATTEMPT, "调用了 spawnAgent（派生新成员）", pointer)
+                        RedFlag(FLAG_SPAWN_ATTEMPT, "调用了 member-spawn（派生新成员）", pointer)
                     )
         elif event_type == "tool/result":
             tool_call = event.get("tool_call") or {}

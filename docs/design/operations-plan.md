@@ -1,6 +1,6 @@
 # 统一操作：分阶段实施计划
 
-状态：2026-10-19 完整方案已认可；用户已授权创建分支、提交设计 PR 并开工 EPIC A。P1 最小契约已通过 #184 合并 main；P2 邮件双入口切换已通过 #185 合并 main；P3a 已通过 #186 合并 main；P3b 已完成本地验收，待 PR 审查，合并仍由人类确认。
+状态：2026-10-19 完整方案已认可；用户已授权创建分支、提交设计 PR 并开工 EPIC A。P1 最小契约已通过 #184 合并 main；P2 邮件双入口切换已通过 #185 合并 main；P3a 已通过 #186 合并 main；P3b 已通过 #187 合入 main；P3c 正在实现与验证，合并仍由人类确认。
 
 设计权威：[operations](operations.md)；决策：[ADR 0044](../decisions/0044-unified-operations.md)。代码基线为 `d35c3a546a5e3dacef331b5d39d3e1cc7efd4e9a`。GitHub 跟踪链接见本文末尾；Issue/PR 负责验收证据，不复制一份持续漂移的设计。
 
@@ -199,7 +199,7 @@ EPIC B 完成标准：目标设计完成；工具只是入口，复合能力可�
 - [EPIC A #180](https://github.com/rika-moe/TlonImpact/issues/180)：P1、P2、P3a/P3b/P3c、P4，六个串行 PR。
 - [EPIC B #181](https://github.com/rika-moe/TlonImpact/issues/181)：依赖 A，P5-P8，四个串行 PR。
 
-P1 已通过 [#184](https://github.com/rika-moe/TlonImpact/pull/184) 合并 main。P2 已通过 [#185](https://github.com/rika-moe/TlonImpact/pull/185) 合并 main。P3a 已通过 #186 合并 main；P3b 正在实现与验证，P3c-P8 未实施。关联的 [#173](https://github.com/rika-moe/TlonImpact/issues/173) 继续保留为长期工作方式/习惯学习方向，本计划不将其一并关闭。
+P1 已通过 [#184](https://github.com/rika-moe/TlonImpact/pull/184) 合并 main。P2 已通过 [#185](https://github.com/rika-moe/TlonImpact/pull/185) 合并 main。P3a 已通过 #186 合并 main；P3b 已通过 #187 合入 main；P3c 已通过本地验收，待 PR 审查合并；P4-P8 未实施。关联的 [#173](https://github.com/rika-moe/TlonImpact/issues/173) 继续保留为长期工作方式/习惯学习方向，本计划不将其一并关闭。
 
 ## P3a 实施细化（2026-10-20）
 
@@ -229,3 +229,17 @@ P3b 持久化复核：任务与 ClaimStore 均先原子保存私有快照，再�
 ### P3b 本地验收（2026-10-20）
 
 主会话复核后完整 `bash scripts/check_all.sh` 14/14 全绿：单元 2500 passed / 15 skipped，集成 34 passed，前端检查及构建均通过。真实隔离 dream + SDK 邮件链覆盖新领域操作并核对实际文件、状态与收件箱，资源已清理；确定性 DSL 冒烟未调用真实模型，SDK 显式携带服务端要求的标头。Markdown 本地链接/围栏与 diff 检查通过。修复与 #186 同类的 scheduling 测试 SQLite 表初始化等待竞态；P3c/P4 未开工，默认仍由人类合并。
+
+## P3c 实施细化（2026-10-20）
+
+P3b #187 已合入 main。剩余宿主能力继续沿用 Operation 的唯一 schema、宿主身份绑定与双入口：member-spawn/list/start/stop/start-all/self-state；prototype-list、prototype-staging-list、prototype-lineage、prototype-review、prototype-write、behavior-propose、capability-propose；model-call。实际名称以本阶段生成 reference 为准，原有 camelCase 工具和旧位置参数 DSL 入口删除，无兼容别名。原型/能力 artifact 格式仍留待 EPIC B，不在本阶段重建。
+
+finish-turn/sleep-until/exit-agent 是控制请求，使用共享契约但保留控制标记；模型混批和 DSL 深层封装均拒绝，只有合法独占请求在排空后由 runtime 提交四态转换。run-loop 只保留 Behavior 编排请求，不注册为模型工具或可封装宿主操作。生命周期权限、见习限制、偿付门槛、近亲检查、作者归属、人工批准由宿主服务实际执行边界保证，不依赖工具是否展示。模型调用复用成员 LLMClient 与系统提示词，费用归原成员；不允许输入覆盖模型身份或预算归属。
+
+删除剩余旧 Tool 业务类及手写参数校验，保留协议 ToolResult 与薄投影。ToolExecutor 只负责模型协议调用、跟踪及结果传递，所有业务交给 OperationExecutor；复用既有 ProgramStore/session journal，不提前扩张 P4 的一般预算与恢复框架。验收覆盖双入口相同返回/拒绝、见习绕路拒绝、模型归属/费用、控制混批/深层封装、staging 失败不残留及人工批准边界；最终亲自跑全量质量门与真实 dream/SDK 冒烟，PR 面向 main 等待人类合并。
+
+P3c 边界细化：DSL 控制请求仅允许规则唯一的直接动作，参数必须为字面量命名 JSON 对象；加载与程序执行均拒绝混批、嵌套及 when 中的控制请求，避免参数效果先行。模型入口保留唯一工具调用约束。见习成员只禁止 spawn 和三类提案创建，原型目录、谱系与咨询评审仍可用。staging 先在同文件系统 catalog 外构建完整包，以短目录锁保护同名检查和原子 rename；提案在批准前保持 untrusted。主会话真实装配复核补齐原型 writer 的 TlonPaths 绑定，并以隔离落盘测试与真实 SDK 冒烟核验。
+
+### P3c 本地验收（2026-10-20）
+
+主会话亲自审 diff，独立交叉审查无新增阻塞。完整 `bash scripts/check_all.sh` 14/14 全绿：单元 2533 passed / 15 skipped，集成 34 passed，前端检查/构建、类型、依赖、打包及文档新鲜度通过。最后同步 Capability 提示词的可封装词表，额外 48 项起草/控制回归通过；提示词锚定真实准入注册表。真实隔离 dream + SDK 邮件链核对生命周期目录、原型写入/谱系、作者、未审批状态、回信及持久化 sleep，finish 通过，数据与进程清理、8080 无残留。模型双入口通过真实 LLMClient ledger 路径加 fake provider 验证原成员归属，未调用真实模型服务；SDK 显式携带服务端标头。初轮类型标注与测试接线问题已修复，以最终质量门为准。默认仍由人类合并，P4 尚未开工。

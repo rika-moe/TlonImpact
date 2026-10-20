@@ -1,4 +1,4 @@
-"""proposeCapability — the experience entry of the capability channel
+"""capability-propose — the experience entry of the capability channel
 (issue #30, docs/design/capabilities.md).
 
 A mutation is born as a tlosure artifact: the tool drafts the complete
@@ -8,28 +8,24 @@ behavior.tlon draft) — then through the ``write_staging_capability``
 gate. Failures (garbage draft, name mismatch, validation, name conflict)
 come back as ``success=False`` for the outer ReAct loop to retry — the
 tool never retries internally. No near-kin check (same-name is a hard
-structural rejection); the solvency gate is reused from proposeBehavior.
+structural rejection); the solvency gate is reused from behavior-propose.
 """
 
 from functools import partial
 from pathlib import Path
 from typing import Any
 
+from tests.evolution_helpers import make_capability_tool
 from tlon.agents.assembly import _render_trusted_capability_words
-from tlon.agents.capabilities.spec import CAPABILITY_PURE_BUILTINS
+from tlon.agents.capabilities.spec import CAPABILITY_ACTION_BUILTINS, CAPABILITY_PURE_BUILTINS
 from tlon.agents.capabilities.staging import approve_capability, write_staging_capability
 from tlon.agents.session_journal import SessionJournal
-from tlon.agents.vocabulary import MEMBER_ACTION_NAMES
 from tlon.base.llm_client import LLMResponse
 from tlon.base.paths import TlonPaths
+from tlon.evolution.propose_capability import _ACTION_WORDS, _ARTIFACT_HINT, _PURE_WORDS
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
-from tlon.tools.agents.propose_capability import (
-    _ACTION_WORDS,
-    _ARTIFACT_HINT,
-    _PURE_WORDS,
-    ProposeCapabilityTool,
-)
+from tlon.operations.adapters import OperationTool
 
 _DRAFT_ARTIFACT = """\
 {:version 1
@@ -80,10 +76,10 @@ def _make_tool(
     memory: MemoryManager | None = None,
     solvency: Any = None,
     trusted_words: Any = None,
-) -> ProposeCapabilityTool:
+) -> OperationTool:
     if memory is None:
         memory = MemoryManager(agent_id, MemoryConfig(), data_dir=p.agent_dir(agent_id))
-    return ProposeCapabilityTool(
+    return make_capability_tool(
         agent_id=agent_id,
         prototype=prototype,
         author_id=agent_id,
@@ -112,7 +108,9 @@ class TestProposeCapability:
         await memory.remember_fact("每周都要手整理线程摘要")
         tool = _make_tool(p, agent_id, llm, memory=memory)
 
-        result = await tool.execute(intent="造一个词把线程主题蒸成一行", name="thread-digest")
+        result = await tool.execute_context(
+            {"intent": "造一个词把线程主题蒸成一行", "name": "thread-digest"}
+        )
 
         assert result.success, result.error
         assert result.data == {
@@ -147,7 +145,7 @@ class TestProposeCapability:
         llm = _FakeLLM(_DRAFT_ARTIFACT)
         tool = _make_tool(p, agent_id, llm, trusted_words=lambda: "- mail-triage（纯）：邮件分诊")
 
-        result = await tool.execute(intent="造词", name="thread-digest")
+        result = await tool.execute_context({"intent": "造词", "name": "thread-digest"})
 
         assert result.success, result.error
         prompt = llm.calls[0]["messages"][0]["content"]
@@ -161,7 +159,7 @@ class TestProposeCapability:
         llm = _FakeLLM(_DRAFT_ARTIFACT)
         tool = _make_tool(p, agent_id, llm, trusted_words=lambda: "")
 
-        result = await tool.execute(intent="造词", name="thread-digest")
+        result = await tool.execute_context({"intent": "造词", "name": "thread-digest"})
 
         assert result.success, result.error
         assert "既有受信词" not in llm.calls[0]["messages"][0]["content"]
@@ -172,7 +170,7 @@ class TestProposeCapability:
         agent_id = "c-base-00000001"
         tool = _make_tool(p, agent_id, _FakeLLM("我觉得可以造这样一个词……"))
 
-        result = await tool.execute(intent="造词", name="junk")
+        result = await tool.execute_context({"intent": "造词", "name": "junk"})
 
         assert not result.success
         assert "EDN" in result.error
@@ -184,7 +182,7 @@ class TestProposeCapability:
         agent_id = "c-base-00000001"
         tool = _make_tool(p, agent_id, _FakeLLM(_OTHER_NAME_ARTIFACT))
 
-        result = await tool.execute(intent="造词", name="thread-digest")
+        result = await tool.execute_context({"intent": "造词", "name": "thread-digest"})
 
         assert not result.success
         assert "thread-digest" in result.error
@@ -197,7 +195,7 @@ class TestProposeCapability:
         agent_id = "c-base-00000001"
         tool = _make_tool(p, agent_id, _FakeLLM(_INVALID_ARTIFACT))
 
-        result = await tool.execute(intent="造词", name="wild-word")
+        result = await tool.execute_context({"intent": "造词", "name": "wild-word"})
 
         assert not result.success
         assert "jump" in result.error
@@ -211,7 +209,7 @@ class TestProposeCapability:
         write_staging_capability(_DRAFT_ARTIFACT, tlon_paths=p)
         tool = _make_tool(p, agent_id, _FakeLLM(_DRAFT_ARTIFACT))
 
-        result = await tool.execute(intent="再造一次", name="thread-digest")
+        result = await tool.execute_context({"intent": "再造一次", "name": "thread-digest"})
 
         assert not result.success
         assert "already exists" in result.error
@@ -231,7 +229,7 @@ class TestProposeCapabilitySolvency:
         llm = _FakeLLM(_DRAFT_ARTIFACT)
         tool = _make_tool(p, agent_id, llm, solvency=_insolvent)
 
-        result = await tool.execute(intent="造词", name="thread-digest")
+        result = await tool.execute_context({"intent": "造词", "name": "thread-digest"})
 
         assert not result.success
         assert "insolvent" in result.error
@@ -248,7 +246,7 @@ class TestProposeCapabilitySolvency:
 
         tool = _make_tool(p, agent_id, _FakeLLM(_DRAFT_ARTIFACT), solvency=_boom)
 
-        result = await tool.execute(intent="造词", name="thread-digest")
+        result = await tool.execute_context({"intent": "造词", "name": "thread-digest"})
 
         assert result.success, result.error
 
@@ -277,6 +275,17 @@ class TestHintVocabularyAnchor:
         assert " ".join(sorted(CAPABILITY_PURE_BUILTINS)) in _ARTIFACT_HINT
 
     def test_action_words_match_member_vocabulary(self) -> None:
-        assert set(_ACTION_WORDS) == set(MEMBER_ACTION_NAMES)
-        for word in MEMBER_ACTION_NAMES:
+        assert set(_ACTION_WORDS) == set(CAPABILITY_ACTION_BUILTINS)
+        for word in CAPABILITY_ACTION_BUILTINS:
             assert word in _ARTIFACT_HINT
+
+
+async def test_draft_name_cannot_be_spoofed_by_edn_comment(tmp_path: Path) -> None:
+    paths = TlonPaths(home=tmp_path)
+    draft = _DRAFT_ARTIFACT.replace(':name "thread-digest"', ':name "other-word"').replace(
+        ":version 1", ':version 1\n ; :name "thread-digest"'
+    )
+    tool = _make_tool(paths, "author", _FakeLLM(draft))
+    result = await tool.execute_context({"intent": "造词", "name": "thread-digest"})
+    assert not result.success and "不一致" in result.error
+    assert not paths.capabilities_staging_dir().exists()

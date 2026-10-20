@@ -5,13 +5,14 @@ pressure.
 
 ``find_near_kin`` (agents/prototypes/near_kin.py) is pure stdlib text similarity
 (``difflib.SequenceMatcher.ratio`` on normalized text: comment lines and
-whitespace stripped); the two proposal tools (``writePrototype`` /
-``proposeBehavior``) receive it as an injected callable, fail-open like
+whitespace stripped); the two proposal tools (``prototype-write`` /
+``behavior-propose``) receive it as an injected callable, fail-open like
 the solvency gate. The human direct-write channel is never gated.
 """
 
 from pathlib import Path
 
+from tests.evolution_helpers import make_behavior_tool, make_write_tool
 from tlon.agents.prototypes.management import write_trusted_prototype
 from tlon.agents.prototypes.near_kin import find_near_kin
 from tlon.agents.prototypes.staging import write_staging_prototype
@@ -19,12 +20,11 @@ from tlon.base.llm_client import LLMResponse
 from tlon.base.paths import TlonPaths
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
-from tlon.tools.agents.propose_behavior import ProposeBehaviorTool
-from tlon.tools.agents.write_prototype import WritePrototypeTool
+from tlon.operations.adapters import OperationTool
 
 _EXISTING_SPEC = '; 既有原型：邮件转发器\n{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
 _RESKIN_SPEC = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["y@tlon.internal"]})]}]}\n'
-_DISTINCT_SPEC = '{:version 1\n :rules [{:name "boot-task"\n          :on :boot\n          :actions [(start {:task "daily-digest"})]}]}\n'
+_DISTINCT_SPEC = '{:version 1\n :rules [{:name "boot-task"\n          :on :boot\n          :actions [(member-start {:agent_id "daily-digest"})]}]}\n'
 _PARENT_SPEC = '{:version 1 :rules [{:name "respond" :on :mail-delivered :when (or (addressed-to-me? msg) (cc-ed? msg)) :actions [(run-loop (quote {:context {:sections [(persona) (protocol) (knowledge) (skills) (mail-history 20)]} :stages [(think) (act)] :until (or (iteration-limit-reached?) (error-limit-reached?)) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled true :interval-minutes 15}}))]} {:name "boot" :on :boot :actions []}]}'
 _TEMPLATE_SPEC = '{:version 1\n :parameters {:to {:type :string-list :required true}}\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ${to}})]}]}\n'
 
@@ -130,19 +130,19 @@ class TestFindNearKin:
 
 
 class TestWritePrototypeNearKin:
-    """writePrototype 的近亲闸：跨血脉命中 → success=False 且
+    """prototype-write 的近亲闸：跨血脉命中 → success=False 且
     staging 无残留；父本豁免（显式 parent > 自身 prototype）→ 放行；
     检查异常 → fail-open 放行。"""
 
     def _make_tool(
         self, p: TlonPaths, prototype: str | None = None, near_kin: object = "REAL"
-    ) -> WritePrototypeTool:
+    ) -> OperationTool:
         if near_kin == "REAL":
 
             def near_kin(text: str, exclude: str | None) -> tuple[str, float] | None:
                 return find_near_kin(text, exclude, tlon_paths=p)
 
-        return WritePrototypeTool(
+        return make_write_tool(
             author_id="adam",
             writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
             prototype=prototype,
@@ -154,10 +154,10 @@ class TestWritePrototypeNearKin:
         p = TlonPaths(home=tmp_path)
         created_1 = write_trusted_prototype(_EXISTING_SPEC, tlon_paths=p, display_name="定址转发")
         tool = self._make_tool(p)
-        result = await tool.execute(behavior=_RESKIN_SPEC, display_name="定址转发")
+        result = await tool.execute_context({"behavior": _RESKIN_SPEC, "display_name": "定址转发"})
         assert not result.success
         assert created_1.name in result.error
-        assert created_1.name in result.message
+        assert created_1.name in result.error
         assert not p.prototypes_staging_dir().exists()
 
     async def test_own_parent_exempted(self, tmp_path: Path) -> None:
@@ -166,7 +166,7 @@ class TestWritePrototypeNearKin:
         p = TlonPaths(home=tmp_path)
         created_1 = write_trusted_prototype(_EXISTING_SPEC, tlon_paths=p, display_name="定址转发")
         tool = self._make_tool(p, prototype=created_1.name)
-        result = await tool.execute(behavior=_RESKIN_SPEC, display_name="定址转发")
+        result = await tool.execute_context({"behavior": _RESKIN_SPEC, "display_name": "定址转发"})
         assert result.success, result.error
 
     async def test_explicit_parent_takes_priority_over_own_prototype(self, tmp_path: Path) -> None:
@@ -176,8 +176,8 @@ class TestWritePrototypeNearKin:
         created_1 = write_trusted_prototype(_EXISTING_SPEC, tlon_paths=p, display_name="定址转发")
         created_2 = write_trusted_prototype(_DISTINCT_SPEC, tlon_paths=p, display_name="定址转发")
         tool = self._make_tool(p, prototype=created_1.name)
-        result = await tool.execute(
-            behavior=_RESKIN_SPEC, parent=created_2.name, display_name="定址转发"
+        result = await tool.execute_context(
+            {"behavior": _RESKIN_SPEC, "parent": created_2.name, "display_name": "定址转发"}
         )
         assert not result.success
         assert created_1.name in result.error
@@ -190,7 +190,9 @@ class TestWritePrototypeNearKin:
             raise OSError("similarity scan broke")
 
         tool = self._make_tool(p, near_kin=_boom)
-        result = await tool.execute(behavior=_DISTINCT_SPEC, display_name="定址转发")
+        result = await tool.execute_context(
+            {"behavior": _DISTINCT_SPEC, "display_name": "定址转发"}
+        )
         assert result.success, result.error
 
     async def test_no_provider_no_check(self, tmp_path: Path) -> None:
@@ -198,7 +200,9 @@ class TestWritePrototypeNearKin:
         p = TlonPaths(home=tmp_path)
         write_trusted_prototype(_EXISTING_SPEC, tlon_paths=p, display_name="定址转发")
         tool = self._make_tool(p, near_kin=None)
-        result = await tool.execute(behavior=_EXISTING_SPEC, display_name="定址转发")
+        result = await tool.execute_context(
+            {"behavior": _EXISTING_SPEC, "display_name": "定址转发"}
+        )
         assert result.success, result.error
 
 
@@ -213,7 +217,7 @@ class _FakeLLM:
 
 
 class TestProposeBehaviorNearKin:
-    """proposeBehavior 的近亲闸：闸排在起草之后（被比较的是
+    """behavior-propose 的近亲闸：闸排在起草之后（被比较的是
     草稿文本）；父本恒为成员自己的 prototype，豁免后沿血脉微改放行，
     跨血脉命中 → success=False 且 staging 无残留；fail-open。"""
 
@@ -224,7 +228,7 @@ class TestProposeBehaviorNearKin:
         draft: str,
         prototype: str | None = None,
         near_kin: object = "REAL",
-    ) -> ProposeBehaviorTool:
+    ) -> OperationTool:
         from tlon.agents.session_journal import SessionJournal
 
         if near_kin == "REAL":
@@ -232,7 +236,7 @@ class TestProposeBehaviorNearKin:
             def near_kin(text: str, exclude: str | None) -> tuple[str, float] | None:
                 return find_near_kin(text, exclude, tlon_paths=p)
 
-        return ProposeBehaviorTool(
+        return make_behavior_tool(
             agent_id=agent_id,
             prototype=prototype,
             author_id=agent_id,
@@ -257,7 +261,9 @@ class TestProposeBehaviorNearKin:
         created_1 = write_trusted_prototype(_EXISTING_SPEC, tlon_paths=p, display_name="定址转发")
         self._write_behavior(p, agent_id)
         tool = self._make_tool(p, agent_id, _RESKIN_SPEC, prototype=created_1.name)
-        result = await tool.execute(intent="把转发目标换成 y", display_name="定址转发")
+        result = await tool.execute_context(
+            {"intent": "把转发目标换成 y", "display_name": "定址转发"}
+        )
         assert result.success, result.error
         assert (p.prototypes_staging_dir() / result.data["name"] / "behavior.tlon").exists()
 
@@ -269,7 +275,7 @@ class TestProposeBehaviorNearKin:
         created_2 = write_trusted_prototype(_DISTINCT_SPEC, tlon_paths=p, display_name="定址转发")
         self._write_behavior(p, agent_id)
         tool = self._make_tool(p, agent_id, _RESKIN_SPEC, prototype=created_2.name)
-        result = await tool.execute(intent="换皮", display_name="定址转发")
+        result = await tool.execute_context({"intent": "换皮", "display_name": "定址转发"})
         assert not result.success
         assert created_1.name in result.error
         assert not p.prototypes_staging_dir().exists()
@@ -286,5 +292,5 @@ class TestProposeBehaviorNearKin:
         tool = self._make_tool(
             p, agent_id, _DISTINCT_SPEC, prototype=created_1.name, near_kin=_boom
         )
-        result = await tool.execute(intent="实质改款", display_name="定址转发")
+        result = await tool.execute_context({"intent": "实质改款", "display_name": "定址转发"})
         assert result.success, result.error

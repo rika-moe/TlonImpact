@@ -187,7 +187,19 @@ class TestNamespaceRejection:
                 validate_capability(spec)
 
     def test_builtin_collision_rejected(self):
-        for word in ("get", "str", "count", "inc", "spawn", "mail-send", "mail-forward"):
+        for word in (
+            "get",
+            "str",
+            "count",
+            "inc",
+            "member-spawn",
+            "mail-send",
+            "mail-forward",
+            "run-loop",
+            "finish-turn",
+            "sleep-until",
+            "exit-agent",
+        ):
             spec = CapabilitySpec.from_edn(_capability(name=f'"{word}"'))
             with pytest.raises(CapabilityError, match="collides with a builtin word"):
                 validate_capability(spec)
@@ -207,7 +219,12 @@ class TestRegistryComposition:
             assert builtin.pure is True, name
 
     def test_action_registry_is_the_member_action_vocabulary(self):
-        assert set(CAPABILITY_ACTION_BUILTINS) == MEMBER_ACTION_NAMES
+        assert set(CAPABILITY_ACTION_BUILTINS) == MEMBER_ACTION_NAMES - {
+            "run-loop",
+            "finish-turn",
+            "sleep-until",
+            "exit-agent",
+        }
         for name, builtin in CAPABILITY_ACTION_BUILTINS.items():
             assert builtin.pure is False, name
 

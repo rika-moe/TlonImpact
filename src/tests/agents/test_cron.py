@@ -113,8 +113,8 @@ class TestBuiltinDigestTick:
         # human recipients, and the send method.
         assert "alice@tlon.internal" in mail.content
         assert "social-health" in mail.content
-        assert "listStagingPrototypes" in mail.content
-        assert "finishTurn" in mail.content
+        assert "prototype-staging-list" in mail.content
+        assert "finish-turn" in mail.content
 
     async def test_tick_lists_all_known_humans(self, bus, tmp_path, monkeypatch):
         _make_human(tmp_path, "alice")

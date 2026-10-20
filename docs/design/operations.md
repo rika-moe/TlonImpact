@@ -23,12 +23,12 @@
 | [CapabilitySpec](../../src/tlon/agents/capabilities/spec.py)、[词汇桥](../../src/tlon/agents/capabilities/bridge.py) | 一个 artifact 一个闭包；只见参数；纯度准入；不能依赖其他能力；只进入 DSL | artifact 成为复合 Operation；保留零隐式 env 和审批；开放显式可分析依赖及 Tool 投影 |
 | [MemberSpec](../../src/tlon/agents/member_spec.py)、[vocabulary](../../src/tlon/agents/vocabulary.py) | when/actions、until、stage-if 使用不同注册表，复合词不能自然用于所有纯条件 | 统一纯函数准入；保留各位置明确的数据作用域 |
 | [ProgramDriver](../../src/tlon/agents/program_driver.py)、[ProgramStore](../../src/tlon/agents/program_store.py) | 冻结规则/输入；按调用序号及名称/参数核对重放；state-put 与结果可同事务提交 | 保留并扩展定义快照、嵌套调用标识；不重做另一套执行数据库 |
-| [LoopDriver](../../src/tlon/agents/loop_driver.py)、[ProgramEffects](../../src/tlon/agents/program_effects.py)、[EffectExecutor](../../src/tlon/agents/executor.py) | Tool 邮件返回数据后由 LoopDriver 按工具名提交；DSL 邮件走 ProgramEffects；底层均已使用 PostOffice | 邮件领域逻辑和提交统一；两种驱动仍各自负责程序与会话生命周期 |
+| [LoopDriver](../../src/tlon/agents/loop_driver.py)、[ProgramEffects](../../src/tlon/operations/model.py)、[EffectExecutor](../../src/tlon/agents/executor.py) | Tool 邮件返回数据后由 LoopDriver 按工具名提交；DSL 邮件走 ProgramEffects；底层均已使用 PostOffice | 邮件领域逻辑和提交统一；两种驱动仍各自负责程序与会话生命周期 |
 | [ProgramDriver._HOST_QUERIES](../../src/tlon/agents/program_driver.py) | 宿主查询在词汇表是 pure，驱动又改为非 pure 以便记录 | 分开确定性计算、外部读取、外部写入；不再用 pure 同时表达三种含义 |
 | [StageServices.think](../../src/tlon/agents/stages/services.py) | 每次模型请求读取工具定义；尚无请求级工具快照与状态准入契约 | 在该边界生成并记录请求快照，执行时重新授权 |
 | [instantiate](../../src/tlon/agents/prototypes/instantiate.py)、[MemberCapabilities](../../src/tlon/agents/member_runtime.py) | 原型复制完整 Behavior；MemberCapabilities 实际为成员服务装配容器 | 保留复制；装配对象改名 MemberServices，避免与能力 artifact 混淆 |
 
-事实纠正：旧 [capabilities](capabilities.md) 中“能力不能 LLM/IO”的笼统描述与代码不符。`CAPABILITY_ACTION_BUILTINS` 已来自全部 `MEMBER_ACTION_NAMES`，包含 llm-call/state-get/state-put。当前真正限制是只组合准入的既有动作、不新增宿主原语；目标方案沿用这一权限边界。
+事实纠正：旧 [capabilities](capabilities.md) 中“能力不能 LLM/IO”的笼统描述与代码不符。`CAPABILITY_ACTION_BUILTINS` 已来自全部 `MEMBER_ACTION_NAMES`，包含 model-call/state-get/state-put。当前真正限制是只组合准入的既有动作、不新增宿主原语；目标方案沿用这一权限边界。
 
 ## 3. 概念与所有权
 
@@ -41,7 +41,7 @@
 | Tool | 某次模型请求中 Operation 的协议投影 | 独立业务实现和另一份 schema |
 | tlosure | 语言、求值、静态作用域校验、fuel/depth | Agent、Tool、操作目录与宿主权限 |
 
-“Capability”保留为对外的能力概念及现有提案通道术语；技术契约收敛到 Operation，不能保留第二套 Capability 执行器。现有 `capability.tlon` 可继续作为复合操作文件名，文件名不是兼容层。`proposeCapability` 的职责变成提交复合 Operation 提案。
+“Capability”保留为对外的能力概念及现有提案通道术语；技术契约收敛到 Operation，不能保留第二套 Capability 执行器。现有 `capability.tlon` 可继续作为复合操作文件名，文件名不是兼容层。`capability-propose` 的职责变成提交复合 Operation 提案。
 
 ## 4. 单一操作契约
 
@@ -98,7 +98,7 @@ PostOffice 的持久提交与 request_id 去重保留；state-put 与记录同�
 
 无副作用的独立读取可并发；同成员写操作按模型声明的调用顺序串行执行，复合写操作作为同一串行域；子调用重入当前执行上下文，不再抢自己持有的锁。原有并发读写行为的收紧在 P4 明确验收，不能偷偷变化。
 
-finishTurn/sleepUntil/exitAgent 仍是独占的调度请求，等本轮排空后由 scheduler 提交；不得与普通操作混批，不得封装进复合操作后隐藏结束/睡眠/死亡。run-loop 是 Behavior 的会话控制边界，允许 Behavior 调用但不开放给复合 Operation 或 LLM，防止持有成员写执行域时再开启会话造成重入/死锁。这是控制流语义，不是按业务名称写在 LoopDriver 中的例外。
+finish-turn/sleep-until/exit-agent 仍是独占的调度请求，等本轮排空后由 scheduler 提交；不得与普通操作混批，不得封装进复合操作后隐藏结束/睡眠/死亡。run-loop 是 Behavior 的会话控制边界，允许 Behavior 调用但不开放给复合 Operation 或 LLM，防止持有成员写执行域时再开启会话造成重入/死锁。这是控制流语义，不是按业务名称写在 LoopDriver 中的例外。
 
 ## 6. 权限、工具视图与状态
 

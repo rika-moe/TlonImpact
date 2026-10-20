@@ -194,8 +194,8 @@ async def test_schema_and_projection_mutation_cannot_change_contract() -> None:
     tool = OperationTool(execution, "identity")
     tool.parameters["properties"].clear()
     tool.to_openai_definition()["function"]["parameters"]["properties"].clear()
-    assert (await tool.execute(x=7)).data == 7
-    assert not (await tool.execute(x="bad")).success
+    assert (await tool.execute_context({"x": 7})).data == 7
+    assert not (await tool.execute_context({"x": "bad"})).success
     with pytest.raises(FrozenInstanceError):
         op.name = "changed"  # type: ignore[misc]
     with pytest.raises(FrozenInstanceError):

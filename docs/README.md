@@ -53,7 +53,7 @@ architecture 区分规范与当前实现；design 负责当前领域模型和机
 | [dsl-reference](reference/dsl-reference.md) | MemberSpec、领域词汇、stage/section 与政策格式 |
 | [config-reference](reference/config-reference.md) | agent.yaml、环境变量、人格/记忆配置与目录布局 |
 | [tools-reference](reference/tools-reference.md) | 工具参数与语义 |
-| [operations-reference](reference/operations-reference.md) | P1 共享操作契约与双入口；尚未切换生产业务 |
+| [operations-reference](reference/operations-reference.md) | P1–P3c 共享操作契约、双入口及宿主领域切换 |
 | [api-reference](reference/api-reference.md) | REST/SSE 端点、字段、错误与事件 |
 | [quickstart](guides/quickstart.md) | 安装、启动、创建成员与发信 |
 | [writing-a-prototype](guides/writing-a-prototype.md) | 编写一个行为原型 |

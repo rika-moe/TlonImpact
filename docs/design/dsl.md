@@ -12,7 +12,7 @@ Tlon 的愿景是 agent 社会自进化（见 [../vision.md](../vision.md)）：
 
 成员的事件规则、循环编排和完成动作由一份 spec 描述：[agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `MemberSpec`，落盘为每成员唯一的 `config/behavior.tlon` 文件。DSL 就是这份数据的语法。它是自进化的前提，而不是一个配置格式的偏好问题。
 
-由此推出本文其余部分的全部设计取向：这门语言的预期作者不只是人类，还包括 LLM（[tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py) 的 `WritePrototypeTool` 让 agent 自己撰写新成员的 spec）。所以 DSL 被**故意**设计得受限——表达能力让渡给安全性，一门语言只有足够安全，才配交给 agent 自己书写。
+由此推出本文其余部分的全部设计取向：这门语言的预期作者不只是人类，还包括 LLM（[evolution/write_prototype.py](../../src/tlon/evolution/write_prototype.py) 的 `PrototypeWriter` 让 agent 自己撰写新成员的 spec）。所以 DSL 被**故意**设计得受限——表达能力让渡给安全性，一门语言只有足够安全，才配交给 agent 自己书写。
 
 成员的规则统一为 `:on + :when + :actions`，可选 `:fuel`。`run-loop` 是普通效果词，配方独立于规则；同一成员可以按条件调用不同配方，也可以用 `while` 完成不涉及模型的计算。`quote` 将配方表达式保留为数据。成员不再按有无会话分类，具体决定见 [ADR 0042](../decisions/0042-unified-member-rule-execution.md)。
 
@@ -36,7 +36,7 @@ spec 的作者是 LLM，这意味着 DSL 面对的是不可信输入。把"不�
 
 受限不是只有"少"，还有"各归各位"。builtin 注册表按使用语境切成互不混淆的几份：`:when` 门控用成员统一注册表的纯子集（`make_member_builtins` 里 `pure=True` 的部分）；`:until` 只能见 `LOOP_BUILTINS`（迭代/错误上限谓词）；stage `:if` 只能见 `STAGE_COND_BUILTINS`（对会话 scratchpad 的只读谓词）。这些纯语境的注册表只含纯词，所以三个语境的求值都是无副作用的**构造性**结论——不是靠约定"作者别乱写"，而是乱写的词汇根本不在注册表里。`:when` 里引用 `iteration-limit-reached?`、`:until` 里引用 `addressed-to-me?`，都在加载校验时因"未注册"被拒。
 
-规则的门控与动作都使用 `{msg, event, self}`。非邮件事件的 `msg` 为 `nil`，邮件谓词对此安全返回；动作不再有另一套完成环境或隐式 `result`。`llm-call`、状态和邮件效果的实际返回值可以作为普通表达式值继续求值（[ADR 0043](../decisions/0043-newspaper-member-workflow.md)）。
+规则的门控与动作都使用 `{msg, event, self}`。非邮件事件的 `msg` 为 `nil`，邮件谓词对此安全返回；动作不再有另一套完成环境或隐式 `result`。`model-call`、状态和邮件效果的实际返回值可以作为普通表达式值继续求值（[ADR 0043](../decisions/0043-newspaper-member-workflow.md)）。
 
 ### 函数能力与信任边界
 
@@ -48,19 +48,19 @@ spec 的作者是 LLM，这意味着 DSL 面对的是不可信输入。把"不�
 
 ### 效果边界：DSL 描述，宿主执行并返回结果
 
-已切换的 Operation builtin（read/write）在异步调用边界执行共享契约并返回真实结果。尚未切换的生命周期和 llm-call builtin 仍产生 `ActionRequest` 数据。tlosure 使用同一个可暂停 generator 内核计量同步与异步求值：同步入口返回请求数据，供分析和测试；生产程序使用异步入口，在调用处等待宿主执行，再把实际结果送回表达式。权限、配额、收件人和四态接纳仍由宿主检查，DSL 无法绕过。
+已切换的 Operation builtin（read/write）在异步调用边界执行共享契约并返回真实结果。仅 `run-loop` 仍产生 `ActionRequest` 会话配方数据；生命周期和模型调用已通过同一 Operation 边界执行。tlosure 使用同一个可暂停 generator 内核计量同步与异步求值：同步入口返回请求数据，供分析和测试；生产程序使用异步入口，在调用处等待宿主执行，再把实际结果送回表达式。权限、配额、收件人和四态接纳仍由宿主检查，DSL 无法绕过。
 
 这是 ADR 0043 对 ADR 0042 阶段“先完整求值、后执行所有效果”的替代。函数、条件和传统循环共享同一调用机制；未选分支没有效果。后面的表达式失败不会撤回已经提交的效果，不能将整条规则理解为外部事务。
 
 ```clojure
-(let [draft (llm-call {:prompt "根据给定来源编辑简报" :max-tokens 256})]
+(let [draft (model-call {:prompt "根据给定来源编辑简报" :max_tokens 256})]
   (when (not (= (get draft :content) ""))
     (state-put {:key "edition" :value (get draft :content)})))
 ```
 
 `ProgramStore` 保存成员私有状态、每次规则的原始程序与触发输入、每步效果参数和结果。恢复从原程序开始，已完成调用返回原结果，未完成调用继续执行；参数漂移报错。`state-put` 和效果结果同事务提交。模型结果成功记录后不会重复生成；上游已生成而本地还没记录时仍可能重试，不能承诺模型恰好一次。
 
-`llm-call` 不附工具，保留成员人格、RULES 与协议；输出上限传给 provider。规则内按请求上限预留共享输出额度，重放沿用预留，不因 usage 缺失获得无限额度。`mail-send` 返回真实邮局回执，稳定请求 ID 复用邮局幂等提交；明确拒收与未知提交均不能当成已发送。报社示例在发送前冻结期刊内容与订阅者快照，重试不会重新编辑或重发已提交的同一期邮件。
+`model-call` 不附工具，保留成员人格、RULES 与协议；输出上限传给 provider。规则内按请求上限预留共享输出额度，重放沿用预留，不因 usage 缺失获得无限额度。`mail-send` 返回真实邮局回执，稳定请求 ID 复用邮局幂等提交；明确拒收与未知提交均不能当成已发送。报社示例在发送前冻结期刊内容与订阅者快照，重试不会重新编辑或重发已提交的同一期邮件。
 
 环境值对表达式不透明：没有属性/方法访问语法，`Mail` 只能经白名单 builtin 检查或读取。`mail-field` 提供真实 ID、发件人、主题、正文等字段，模型不能用杜撰的编号替代原始来源。宿主动态查询在程序执行中记录结果；能力 artifact 仍只接收显式参数，不获得隐式宿主上下文。
 
@@ -70,7 +70,7 @@ map 字面量的键保持字面，值可以内嵌表达式，例如 `(stop {:age
 
 ### 信任闸：staging + 人工批准
 
-受限语言把风险降到了"写错行为"的级别，但写错的行为仍然是行为。所以 LLM 撰写的 spec 不直接生效：`WritePrototypeTool` 的产物经 [agents/prototypes/staging.py](../../src/tlon/agents/prototypes/staging.py) 的 `write_staging_prototype` 落入 `~/.tlon/prototypes-staging/`，元数据标记 `:trusted false`；`AgentRegistry` 在 spawn 前检查信任位，未受信原型直接拒绝。人类通过管理审批入口批准后，`approve_prototype` 把目录移入受信库并改写 `:trusted true`。
+受限语言把风险降到了"写错行为"的级别，但写错的行为仍然是行为。所以 LLM 撰写的 spec 不直接生效：`PrototypeWriter` 的产物经 [agents/prototypes/staging.py](../../src/tlon/agents/prototypes/staging.py) 的 `write_staging_prototype` 落入 `~/.tlon/prototypes-staging/`，元数据标记 `:trusted false`；`AgentRegistry` 在 spawn 前检查信任位，未受信原型直接拒绝。人类通过管理审批入口批准后，`approve_prototype` 把目录移入受信库并改写 `:trusted true`。
 
 信任的默认值是不对称的：随包播种的与人类手写的原型默认受信（`:trusted true`，可直接 spawn——手写即意味着人类已经看过），只有 staging 区写出 `:trusted false`。也就是说信任位标记的不是"这份 spec 的质量"，而是"它的作者是不是机器"；审批动作把一份机器产物正式记为人类认可。`:author` 字段记录撰写者 agent 的 id，审计链完整：谁写的、谁批准的、何时进的可信库，都可追溯。
 
@@ -97,7 +97,7 @@ spec 的加载是全有或全无的：缺必填字段是错误而不是默认值
 
 为什么不做"尽力加载、能跑多少跑多少"：spec 是行为的**唯一权威**（见下节），一份半残的 spec 意味着一个行为不可预测的成员——它可能收不到邮件、可能永不停机、可能发出不该发的信。对一个人类会长期缺席的系统，"拒绝启动、原地报错"比"带病运行"安全得多。注册表隔离失败：一个成员的 spec 坏了只影响它自己，server 与其他成员不受影响。
 
-报错设计也承认读者可能是机器：校验失败的错误消息原文返回给撰写者（`WritePrototypeTool` 把 `PrototypeError` 连同格式提示一起塞回工具结果），LLM 据此自行修正重试。所以错误消息要求自解释——带字段路径、带期望值、带实际值——这不是日志美学，而是"agent 能自己修好自己写的 spec"这个闭环的必要条件。错误信息是 API 的一部分。
+报错设计也承认读者可能是机器：校验失败的错误消息原文返回给撰写者（`PrototypeWriter` 把 `PrototypeError` 连同格式提示一起塞回工具结果），LLM 据此自行修正重试。所以错误消息要求自解释——带字段路径、带期望值、带实际值——这不是日志美学，而是"agent 能自己修好自己写的 spec"这个闭环的必要条件。错误信息是 API 的一部分。
 
 当前解析器对未知键会记 warning 后忽略（`_warn_unknown_keys`）；这描述现有校验行为，不构成维护旧格式、兼容层或迁移程序的要求。缺失必填项和错误值仍拒绝加载。
 
@@ -131,7 +131,7 @@ DSL 的实现分五层，各层职责单一、失败模式明确。语言核心�
 |---|---|---|---|
 | EDN 解析 | [tlosure/edn.py](../../src/tlosure/edn.py) 的 `loads` / `dumps` | 文本 → 纯 Python 数据，不求值 | `EDNParseError`（带行列号） |
 | 语义模型 | [agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `MemberSpec` / `MemberRule` / `SessionRecipe` | 语义权威：typed frozen dataclass 树 + 结构校验 | `MemberSpecValidationError` |
-| 受限求值器 | [tlosure/eval.py](../../src/tlosure/eval.py) 的 `eval_form` 与 [tlosure/validate.py](../../src/tlosure/validate.py) 的 `validate_form` | fuel 计量求值与静态校验；已切换操作返回宿主结果；剩余动作产出 `ActionRequest` | `EvalError` 家族 |
+| 受限求值器 | [tlosure/eval.py](../../src/tlosure/eval.py) 的 `eval_form` 与 [tlosure/validate.py](../../src/tlosure/validate.py) 的 `validate_form` | fuel 计量求值与静态校验；已切换操作返回宿主结果；仅 run-loop 产出 `ActionRequest` | `EvalError` 家族 |
 | 领域词汇 | [agents/vocabulary.py](../../src/tlon/agents/vocabulary.py) 的四个纯注册表 + `make_member_builtins` + `validate_member_actions` | tlon 的 DSL 词汇表：mail/loop/stage 谓词、动作族、`ScriptHostQueries` 宿主端口；通用词汇与契约类型来自 tlosure | 未注册词汇在加载校验被拒 |
 | 加载校验 | [agents/loader.py](../../src/tlon/agents/loader.py) 的 `load_member_spec` | 唯一读盘路径：解析 → 模型 → 校验 → 挂 provenance | 成员拒绝启动（注册表隔离） |
 
@@ -143,7 +143,7 @@ DSL 的实现分五层，各层职责单一、失败模式明确。语言核心�
 - **EDN 只是语法，dataclass 才是语义**。`MemberSpec` 的模块 docstring 写明："EDN is only syntax, the dataclass is the semantics authority"。序列化前端可以换（`to_dict` 已经提供 snake_case dict 形态），语义模型不动。归一化（`_normalize_data`）只把 map 的 kebab-case 关键字键翻成 snake_case 字段名，对 Form 内部原样放行——表达式里的关键字是语言词汇（如 `:recipient`），不是配置键，不能被改名。
 - **结构校验与作用域校验分离**。EDN 前端只查类型与形状（这个字段是不是 form、是不是非负 int）；builtin 白名单与符号作用域的校验全部集中在 `validate_member_spec` 一处，由 loader 调用而 `from_dict` 不调用——这样宿主相关的序列化 roundtrip（比如 Adam 的 spec 导出再导入）不会被无宿主的校验器误杀。校验规则只有一个家，散落即腐烂。
 
-`dumps` 的存在也不只是为了测试 roundtrip：agent 自己书写 spec（writePrototype 修正重试、`to_edn` 序列化）依赖同一套读写对称性。
+`dumps` 的存在也不只是为了测试 roundtrip：agent 自己书写 spec（prototype-write 修正重试、`to_edn` 序列化）依赖同一套读写对称性。
 
 L1 内部还有一个刻意的紧邻：运行时求值（`eval_form`）与加载时静态校验（`validate_form`）住在 tlosure 包内相邻的两个模块（`eval.py` 求值、`validate.py` 校验）、共享对表达式树的同一套结构理解（特殊形式的形状、尾位置规则、绑定向量格式在两处是 mirrored 实现）。这保证了"校验器承认的语言"与"求值器执行的语言"不会随版本漂移而裂开——如果校验在别处另起炉灶，两边对 `(recur ...)` 合法位置的理解迟早出现缝隙，而静态校验的全部价值就在于它证明的东西在运行时成立。
 

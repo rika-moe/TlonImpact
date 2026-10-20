@@ -15,14 +15,15 @@ from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.events.event_bus import EventBus
 from tlon.base.llm_client import LLMResponse
 from tlon.base.paths import TlonPaths
+from tlon.lifecycle.service import LifecycleService
 from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.lifecycle import make_lifecycle_operations
 from tlon.operations.mail import make_mail_operations
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.mail.member_mail import MemberMailService
 from tlon.organization.mail.post_office import PostOffice
-from tlon.tools.agents.scheduling import FinishTurnTool
 
 
 def _drafts() -> LLMResponse:
@@ -78,7 +79,11 @@ def _real_mail_engine(
     )
     for operation in operations.registry.definitions():
         tools.register_tool(OperationTool(operations, operation.name))
-    tools.register_tool(FinishTurnTool())
+    controls = OperationExecutor(
+        OperationRegistry(make_lifecycle_operations(LifecycleService("agent1"))),
+        CallContext("agent1", "assembly", "assembly"),
+    )
+    tools.register_tool(OperationTool(controls, "finish-turn"))
     driver._tool_executor = tools
     driver._executor = EffectExecutor(
         identity=driver._identity,

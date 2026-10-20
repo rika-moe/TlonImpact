@@ -4,7 +4,7 @@
 
 > 本文定义原型目录、实例化、提案审批、spawn 预算和谱系。成员模型、信任阶梯与默认生命周期政策见 [unified-member-model.md](unified-member-model.md)。当前 stop 为永久退休，idle drain 为可唤醒休眠；二者均不隐式删除历史。历史来源：[ADR 0006](../decisions/0006-unified-member-model.md)、[ADR 0030](../decisions/0030-sqlite-post-office.md)。
 
-Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型是一份纯数据的行为模板，spawn 是把它拷贝成一个真实 agent 的动作。这套体系是「新成员由社会内部产生」的当前形态。本文解释它为什么长现在这样，以当前实现为准（原型库在 [src/tlon/agents/prototypes/](../../src/tlon/agents/prototypes) 包，内置原型在 [src/tlon/prototypes/](../../src/tlon/prototypes)，spawn 工具在 [src/tlon/tools/agents/](../../src/tlon/tools/agents)）。
+Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型是一份纯数据的行为模板，spawn 是把它拷贝成一个真实 agent 的动作。这套体系是「新成员由社会内部产生」的当前形态。本文解释它为什么长现在这样，以当前实现为准（原型库在 [src/tlon/agents/prototypes/](../../src/tlon/agents/prototypes) 包，内置原型在 [src/tlon/prototypes/](../../src/tlon/prototypes)，spawn 工具在 [src/tlon/lifecycle/](../../src/tlon/tools/agents)）。
 
 ## 原型是什么
 
@@ -12,8 +12,8 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 - `prototype.tlon`——元数据 map：`:name`、`:display-name`、`:description`、`:trusted`、`:author`，以及谱系字段 `:parent`（父原型名，根缺省）、`:generation`（int，根=1，子=父+1，服务端推导）、`:proposal-note`（本代变更说明，自由文本，可缺省）。缺省时以目录名兜底（`_read_metadata`）；无谱系字段的旧文件读取时按根处理（parent=None、generation=1），不做落盘迁移。
 - `behavior.tlon`——一份**完整**的 MemberSpec（统一 rules 形态 `{:version 1 :rules [...]}`）。文件即全部行为，没有第二个来源。
-- `LESSONS.md`——**可选**：随包传递的教训文本——退休成员记忆的蒸馏产物（见 [memory.md](./memory.md)「退休蒸馏」），经 `writePrototype` / `write_trusted_prototype` / `update_prototype` 的 `lessons` 参数（或 admin REST 的 `lessons` 字段）写入；详情端点（`get_prototype_detail`）把文本带回，评审提案时可见。
-- `REVIEW.md`——**可选**：staging 提案的同行评审记录，`reviewPrototype` 工具每次评审追加一条（时间、评审者 id、评审者模型、verdict、理由）；元数据读取不碰它（listing 零成本），approve 的整目录 `shutil.move` 把它免费带进 trusted 库；详情端点以 `reviews` 字段带回文本。
+- `LESSONS.md`——**可选**：随包传递的教训文本——退休成员记忆的蒸馏产物（见 [memory.md](./memory.md)「退休蒸馏」），经 `prototype-write` / `write_trusted_prototype` / `update_prototype` 的 `lessons` 参数（或 admin REST 的 `lessons` 字段）写入；详情端点（`get_prototype_detail`）把文本带回，评审提案时可见。
+- `REVIEW.md`——**可选**：staging 提案的同行评审记录，`prototype-review` 工具每次评审追加一条（时间、评审者 id、评审者模型、verdict、理由）；元数据读取不碰它（listing 零成本），approve 的整目录 `shutil.move` 把它免费带进 trusted 库；详情端点以 `reviews` 字段带回文本。
 
 统一成员模型（ADR 0006）：原型**不带人格文件**——原型是行为的基因型，成员的人格文件可在创建时播种，之后 IDENTITY.md / SOUL.md 可由成员自主修改，RULES.md 由人类维护，见 [identity.md](identity.md)；这些文件不是基因型的一部分。这也让进化的单位保持纯粹：能安全进化的只有受限 DSL（behavior.tlon），自由文本人格不进基因库。
 
@@ -61,7 +61,7 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 ### 列出与实例化
 
-`listPrototypes` 工具（[tools/prototypes/list_prototypes.py](../../src/tlon/tools/prototypes/list_prototypes.py) 的 `ListPrototypesTool`）把库的元数据暴露给 agent（名称、显示名、描述、trusted 标志）。`instantiate` 做真正的派生，语义是**拷贝，不是引用**：
+`prototype-list` 工具（[evolution/list_prototypes.py](../../src/tlon/evolution/list_prototypes.py) 的 `PrototypeCatalog`）把库的元数据暴露给 agent（名称、显示名、描述、trusted 标志）。`instantiate` 做真正的派生，语义是**拷贝，不是引用**：
 
 1. 读原型的 `behavior.tlon`；声明了 `:parameters` 则先用调用方给的 `params` 渲染（见下节），未声明则必须为空 params——参数门是双向的：该给的没给拒绝，不该给的给了也拒绝（`render_template` 对未知参数直接报错）。模板契约是精确的，没有「多给了就忽略」的宽松。
 2. 行为文件逐字写入新 agent 的 `~/.tlon/{agent_id}/config/`——行为在创建时刻**冻结**，此后改原型不影响已派生的 agent。原型携带 `LESSONS.md` 时同样逐字拷贝到同一目录（与 behavior.tlon 为邻），新成员的 spec 用 `(lessons)` context section 显式声明才会把它注入对话；原型没有该文件则成员侧也不产生。
@@ -88,7 +88,7 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 ## spawn：从原型派生新成员
 
-agent 侧入口是 `SpawnAgentTool`（[tools/agents/spawn_agent.py](../../src/tlon/tools/agents/spawn_agent.py)，工具名 `spawnAgent`）：指定原型名、显示名、可选模板参数，从原型派生一个新 agent 并立即启动。session 归属经 structlog contextvars 绑定——agent 的 session span 把 `session_id` 注入上下文变量，工具执行时取出作为配额桶；脱离 session 的直接调用（如测试）落入 spawner 的单一桶。这意味着配额记账不需要工具签名里多一个参数，session 是隐式上下文，LLM 看不见也伪造不了。
+agent 侧入口是 `LifecycleService`（[lifecycle/service.py](../../src/tlon/lifecycle/service.py)，工具名 `member-spawn`）：指定原型名、显示名、可选模板参数，从原型派生一个新 agent 并立即启动。session 归属经 structlog contextvars 绑定——agent 的 session span 把 `session_id` 注入上下文变量，工具执行时取出作为配额桶；脱离 session 的直接调用（如测试）落入 spawner 的单一桶。这意味着配额记账不需要工具签名里多一个参数，session 是隐式上下文，LLM 看不见也伪造不了。
 
 真正的管线在 `AgentRegistry.spawn_member`（[agents/agent_registry.py](../../src/tlon/agents/agent_registry.py)），顺序是刻意安排的：**信任门先于一切预算检查**——`untrusted_prototype` 的拒绝在计数之前，staging 里的原型连预算都消耗不到。随后：
 
@@ -121,34 +121,34 @@ agent 侧入口是 `SpawnAgentTool`（[tools/agents/spawn_agent.py](../../src/tl
 
 ### 休眠、退休与保留
 
-空闲回收只卸载等待中的实例，不改变逻辑状态。定时睡眠由成员自身 sleepUntil 请求，来信不能提前唤醒；exitAgent 或管理端排空终止导致死亡，拒收新信但保留历史。详见 [agent-scheduling-states.md](agent-scheduling-states.md)。
+空闲回收只卸载等待中的实例，不改变逻辑状态。定时睡眠由成员自身 sleep-until 请求，来信不能提前唤醒；exit-agent 或管理端排空终止导致死亡，拒收新信但保留历史。详见 [agent-scheduling-states.md](agent-scheduling-states.md)。
 
 这两种自动生命周期都不隐式删除成员 home；人类显式 admin 删除是独立治理动作。spawn 成员独立注册，spawner 休眠或退休不会连带停止它，`spawned_by` 是出生审计而不是所有权。
 
-`listMembers` 是统一成员寻址黄页，包含可投递的已登记通信成员及 Adam，只输出公开 id / name / address，并过滤退休成员；运行状态和血缘在管理详情及专门查询中展示。spawn 成功回执带回 `agent_id`、`spawn_depth` 等信息，供后续寻址与管理使用。
+`member-list` 是统一成员寻址黄页，包含可投递的已登记通信成员及 Adam，只输出公开 id / name / address，并过滤退休成员；运行状态和血缘在管理详情及专门查询中展示。spawn 成功回执带回 `agent_id`、`spawn_depth` 等信息，供后续寻址与管理使用。
 
 ## 信任分级：staging 闸
 
 「agent 创造 agent」的安全闸是两区制：
 
 - **trusted 区**（`~/.tlon/prototypes/`）——包内播种的与人类手写的原型，`:trusted true`，可直接 spawn。手写即可信：能写文件进这个目录的人本来就有系统的完全控制权。
-- **staging 区**（`~/.tlon/prototypes-staging/`）——LLM 经 `writePrototype`（[tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py) 的 `WritePrototypeTool`）创作的原型落在这里，元数据强制 `:trusted false`、`:author` 记录作者 agent id（审计）。`spawnAgent` 拒绝 spawn 不可信原型。
+- **staging 区**（`~/.tlon/prototypes-staging/`）——LLM 经 `prototype-write`（[evolution/write_prototype.py](../../src/tlon/evolution/write_prototype.py) 的 `PrototypeWriter`）创作的原型落在这里，元数据强制 `:trusted false`、`:author` 记录作者 agent id（审计）。`member-spawn` 拒绝 spawn 不可信原型。
 
-`write_staging_prototype`（[agents/prototypes/staging.py](../../src/tlon/agents/prototypes/staging.py)）的铁律是**校验先于落盘**：模板声明校验 → EDN 解析 → `validate_member_spec` schema 校验（用无 host 谓词的默认注册表——host 谓词是 Adam 的词汇表，不许过闸），任何一步失败则什么都不写，错误原文返回给 LLM 让它改了重试。名称做字符集检查（字母数字加 `-`/`_`），且在两个区里都须唯一；`reject_prototype` 删除时还有路径穿越防护（resolve 后必须严格落在 staging 根下）。`writePrototype` 可带可选的 `parent`/`proposal_note` 参数记录谱系（见下节）：给了 `parent` 时校验父原型存在（trusted 或 staging 皆可——staging 提案可以继续派生提案），`:generation` 由服务端推导为父代 + 1，客户端无权指定。`lessons` 参数（可选）把随包教训落盘为 `LESSONS.md`——退休成员蒸馏出的经验由此搭上下一代的出生包。
+`write_staging_prototype`（[agents/prototypes/staging.py](../../src/tlon/agents/prototypes/staging.py)）的铁律是**校验先于落盘**：模板声明校验 → EDN 解析 → `validate_member_spec` schema 校验（用无 host 谓词的默认注册表——host 谓词是 Adam 的词汇表，不许过闸），任何一步失败则什么都不写，错误原文返回给 LLM 让它改了重试。名称做字符集检查（字母数字加 `-`/`_`），且在两个区里都须唯一；`reject_prototype` 删除时还有路径穿越防护（resolve 后必须严格落在 staging 根下）。`prototype-write` 可带可选的 `parent`/`proposal_note` 参数记录谱系（见下节）：给了 `parent` 时校验父原型存在（trusted 或 staging 皆可——staging 提案可以继续派生提案），`:generation` 由服务端推导为父代 + 1，客户端无权指定。`lessons` 参数（可选）把随包教训落盘为 `LESSONS.md`——退休成员蒸馏出的经验由此搭上下一代的出生包。
 
 晋级只由人类完成：`approve_prototype` 把目录从 staging 移入 trusted 库并把元数据改写为 `:trusted true`（`:author` 保留——晋级不抹掉作者，审计链不断）；`reject_prototype` 整个删除 staging 目录。这是 Gatekeeper 模型——LLM 可以创作行为，但只有人类能把创作变成可执行的成员。审批界面在 ops 的 Agents 视图（`s`）与 WebUI 的 PROTOTYPES 视图；校验失败时给 LLM 的 ToolResult 里带 `hint`（schema 速查），让它能自助修正重试——闸要严，但试错成本要低。
 
 人类手写有直达入口（WebUI 的 PROTOTYPES 视图，`POST /admin/prototypes`（behavior + 必填 display_name）→ `write_trusted_prototype`）：直接写进正式库、`:trusted true`、无 `:author`——handwritten implies trusted，与元数据读取的默认方向一致；写前跑的是与 staging 完全相同的校验链（`_validate_behavior`），失败不落盘。编辑（`update_prototype`，`PATCH /admin/prototypes/{name}` 及 staging 变体）可改 `display-name`/`description`、`lessons`（重写 `LESSONS.md`，不传则保留）和/或重写 `behavior.tlon`：behavior 变更先跑校验链、失败则磁盘原样，元数据改写保留既有 `:trusted`/`:author`（于是 staging 原型可以在审批前被人类修正，晋级语义不变）。删除分两侧：正式库走 `delete_prototype`（`DELETE /admin/prototypes/{name}`，与 `reject_prototype` 同款路径穿越防护），staging 的删除即 reject。
 
-`writePrototype` 输出统一 rules-form 的 `behavior.tlon`，不写人格文件。所有规则共用同一条 staging 校验链；字面会话配方在加载时校验，动态配方在实际请求时再校验。
+`prototype-write` 输出统一 rules-form 的 `behavior.tlon`，不写人格文件。所有规则共用同一条 staging 校验链；字面会话配方在加载时校验，动态配方在实际请求时再校验。
 
-提案资格还有第二道闸——血脉偿付门槛（agent 侧）：`writePrototype` / `proposeBehavior` 在执行开头检查作者血脉的偿付能力（`agents/policy.py` 的 `solvent?` 政策 hook，ADR 0022——默认公式与阈值见 [society-policy.md](society-policy.md)，可由人类在 `~/.tlon/policy.tlon` 调整），失去偿付能力的血脉提案被直接拒绝（staging 无残留），指引是「先用手上成员做出被 endorse 的产出再提案」。这道闸不进 `write_staging_prototype` 域函数：admin REST 的人类直写不受闸——信任闸按影响半径分级，人类不受影响半径约束。闸本身 fail-open：偿付派生任何异常都放行。
+提案资格还有第二道闸——血脉偿付门槛（agent 侧）：`prototype-write` / `behavior-propose` 在执行开头检查作者血脉的偿付能力（`agents/policy.py` 的 `solvent?` 政策 hook，ADR 0022——默认公式与阈值见 [society-policy.md](society-policy.md)，可由人类在 `~/.tlon/policy.tlon` 调整），失去偿付能力的血脉提案被直接拒绝（staging 无残留），指引是「先用手上成员做出被 endorse 的产出再提案」。这道闸不进 `write_staging_prototype` 域函数：admin REST 的人类直写不受闸——信任闸按影响半径分级，人类不受影响半径约束。闸本身 fail-open：偿付派生任何异常都放行。
 
-第三道闸是近亲拒绝（ADR 0014 的非收敛选择压，agent 侧）：提案文本与 trusted + staging 两区所有既有原型的 `behavior.tlon` 做纯文本相似度比较（`find_near_kin`，`difflib.SequenceMatcher.ratio`，比较前规范化——去掉 `;` 注释行、折叠空白；不解析 EDN，模板原型的 `${var}` 占位符按原文比），最相似的一档 ≥ 阈值 0.9 就直接打回（staging 无残留），指引是「做出实质差异或改为提案改进既有原型」。阈值刻意定高、只拦换皮级雷同与**跨血脉**趋同：提案的声明父本在比较中豁免（NEAT 式物种形成保护——创新在自己血脉内被保护几代；writePrototype 的豁免名取显式 `parent`、缺省回退作者自身的 prototype，proposeBehavior 的父本恒为成员自己的 prototype），于是沿血脉的代际微改可放行，而跨血脉的近似复制仍被拦。与偿付闸同款边界：不进 `write_staging_prototype`、不闸 admin REST 人类直写，fail-open——相似度扫描任何异常都放行。
+第三道闸是近亲拒绝（ADR 0014 的非收敛选择压，agent 侧）：提案文本与 trusted + staging 两区所有既有原型的 `behavior.tlon` 做纯文本相似度比较（`find_near_kin`，`difflib.SequenceMatcher.ratio`，比较前规范化——去掉 `;` 注释行、折叠空白；不解析 EDN，模板原型的 `${var}` 占位符按原文比），最相似的一档 ≥ 阈值 0.9 就直接打回（staging 无残留），指引是「做出实质差异或改为提案改进既有原型」。阈值刻意定高、只拦换皮级雷同与**跨血脉**趋同：提案的声明父本在比较中豁免（NEAT 式物种形成保护——创新在自己血脉内被保护几代；prototype-write 的豁免名取显式 `parent`、缺省回退作者自身的 prototype，behavior-propose 的父本恒为成员自己的 prototype），于是沿血脉的代际微改可放行，而跨血脉的近似复制仍被拦。与偿付闸同款边界：不进 `write_staging_prototype`、不闸 admin REST 人类直写，fail-open——相似度扫描任何异常都放行。
 
-三道闸之外是**同行评审记录**：任何成员可用 `reviewPrototype`（[tools/prototypes/review_prototype.py](../../src/tlon/tools/prototypes/review_prototype.py) 的 `ReviewPrototypeTool`）评审一个 staging 提案。调用方只点名——verdict 不由调用方当场给，工具内部用**评审者自己的** `llm_client` 做一次专项评审调用（`purpose="review"`、timeout 60s；采样参数不配置，供应商默认生效），材料是提案的 behavior 全文、随包 lessons、谱系链与每代 diff；响应首行必须是三个标记之一（`通过`/`不通过`/`弃权`），不合规则 `success=False` 且不写记录。通过的评审追加进提案目录的 `REVIEW.md`（每条含时间、评审者 id、评审者模型 `llm_client.config.model_name`、verdict、理由全文）。异质性来自评审者的模型血统（成员的模型在创建时经 WebUI/admin API 选定，随 spawn 沿血脉继承，ADR 0016——不同血脉各自绑定不同模型）——评审记录格式统一，判断却出自不同血统，这正是 ADR 0014 的非收敛选择压落在审批环节的形态。评审是**咨询性的**：不闸 approve，人类审批时在详情 payload 的 `reviews` 字段里读到全部记录再做决定；评审记录随 approve 的整目录 move 晋级 trusted，审计链不断。
+三道闸之外是**同行评审记录**：任何成员可用 `prototype-review`（[evolution/review_prototype.py](../../src/tlon/evolution/review_prototype.py) 的 `PrototypeReviewer`）评审一个 staging 提案。调用方只点名——verdict 不由调用方当场给，工具内部用**评审者自己的** `llm_client` 做一次专项评审调用（`purpose="review"`、timeout 60s；采样参数不配置，供应商默认生效），材料是提案的 behavior 全文、随包 lessons、谱系链与每代 diff；响应首行必须是三个标记之一（`通过`/`不通过`/`弃权`），不合规则 `success=False` 且不写记录。通过的评审追加进提案目录的 `REVIEW.md`（每条含时间、评审者 id、评审者模型 `llm_client.config.model_name`、verdict、理由全文）。异质性来自评审者的模型血统（成员的模型在创建时经 WebUI/admin API 选定，随 spawn 沿血脉继承，ADR 0016——不同血脉各自绑定不同模型）——评审记录格式统一，判断却出自不同血统，这正是 ADR 0014 的非收敛选择压落在审批环节的形态。评审是**咨询性的**：不闸 approve，人类审批时在详情 payload 的 `reviews` 字段里读到全部记录再做决定；评审记录随 approve 的整目录 move 晋级 trusted，审计链不断。
 
-评审材料还包括执行能力声明的派生红旗（宪法一，[execution-device.md](./execution-device.md)）：spec 顶层 `:execution` 段声明的层级随提案一起评审——staging 提案声明 `:L2`（Docker 完整 Linux userland）本身就是红旗，详情 payload 派生 `execution_level` + `red_flags`（`execution-level-l2`），WebUI PROTOTYPES 视图渲染为警示徽章；`reviewPrototype` 的评审 prompt 角度清单也含对应一条（L0/L1 足以满足却声明 L2 是红旗）。
+评审材料还包括执行能力声明的派生红旗（宪法一，[execution-device.md](./execution-device.md)）：spec 顶层 `:execution` 段声明的层级随提案一起评审——staging 提案声明 `:L2`（Docker 完整 Linux userland）本身就是红旗，详情 payload 派生 `execution_level` + `red_flags`（`execution-level-l2`），WebUI PROTOTYPES 视图渲染为警示徽章；`prototype-review` 的评审 prompt 角度清单也含对应一条（L0/L1 足以满足却声明 L2 是红旗）。
 
 信任门与预算检查的顺序也是设计：`spawn_member` 里 `untrusted_prototype` 的拒绝排在一切预算检查**之前**，紧随其后是同一偿付门槛的 spawn 侧（`insolvent_lineage`：失去偿付能力的血脉连 spawn 资格也没有）。不可信原型连预算都消耗不到——否则 LLM 可以用不存在的权限反复试探配额边界，把拒绝回执当成预算状态的探针。
 
@@ -158,7 +158,7 @@ agent 侧入口是 `SpawnAgentTool`（[tools/agents/spawn_agent.py](../../src/tl
 
 - **落盘的只有三个元数据字段**：`:parent`（父原型名）、`:generation`（代数，根=1、子=父+1，永远服务端推导）、`:proposal-note`（本代变更说明）。写入点只有 `write_staging_prototype` / `write_trusted_prototype` / `update_prototype` 三处；`approve_prototype` 的晋级是目录搬迁 + 元数据改写，谱系字段原样保留（审计链不断）。
 - **谱系查询是派生的，不另落盘**：`get_prototype_lineage` 沿 `:parent` 链向上走到根，返回每一代的 `{name, generation, author, proposal_note, trusted}` 加相邻两代 `behavior.tlon` 的 unified diff（difflib 文本 diff，不做结构化 diff——模板 `${var}` 占位符会让 EDN loads 失败，而 behavior.tlon 本身已是规范化文本）。父原型被删除/改名时链断在哪就停在哪，最老可达的一代标注 `broken`；环与失控链由 visited 集合 + 链长上限（32）截断，同样标注 `broken`。
-- **两个查询面**：agent 侧有 `getPrototypeLineage` 工具（[tools/prototypes/get_lineage.py](../../src/tlon/tools/prototypes/get_lineage.py)），`listPrototypes`/`listStagingPrototypes` 的输出也带上了 `parent`/`generation`；人类侧 `GET /admin/prototypes/{name}`（含 staging 变体）的详情 payload 内嵌同一份 lineage 结果，`POST`/`PATCH` 接受 `parent`/`proposal_note`（`generation` 不接受客户端指定）。
+- **两个查询面**：agent 侧有 `prototype-lineage` 工具（[evolution/get_lineage.py](../../src/tlon/evolution/get_lineage.py)），`prototype-list`/`prototype-staging-list` 的输出也带上了 `parent`/`generation`；人类侧 `GET /admin/prototypes/{name}`（含 staging 变体）的详情 payload 内嵌同一份 lineage 结果，`POST`/`PATCH` 接受 `parent`/`proposal_note`（`generation` 不接受客户端指定）。
 
 已知限制：同名原型原地 `update_prototype` 改写 behavior 不产生新代——代际只在「创建新原型」时推进，原地编辑会造成同一 `generation` 下行为混杂。这是刻意的简化：代际语义绑定在派生动作上，不绑定在编辑动作上。
 
@@ -166,10 +166,10 @@ agent 侧入口是 `SpawnAgentTool`（[tools/agents/spawn_agent.py](../../src/tl
 
 spawn/stop/list/write 这些工具天然要触碰 agents 层（注册表）和 prototypes 层（原型库），但 import-linter 契约禁止 `tlon.tools` 反向依赖 `tlon.agents`。解法是端口声明在 tools 侧：
 
-- [tools/agents/ports.py](../../src/tlon/tools/agents/ports.py)——`AgentLifecycle` Protocol（`spawn_member` / `stop_member` / `get_all_agent_status` 的切片）加共享异常 `SpawnRejectedError` / `StopRejectedError`。
-- [tools/prototypes/ports.py](../../src/tlon/tools/prototypes/ports.py)——`PrototypeError`（原型库抛、工具捕）与 `PrototypeSummary`（只读元数据视图，`PrototypeInfo` 结构化满足）。
+- [lifecycle/ports.py](../../src/tlon/lifecycle/ports.py)——`AgentLifecycle` Protocol（`spawn_member` / `stop_member` / `get_all_agent_status` 的切片）加共享异常 `SpawnRejectedError` / `StopRejectedError`。
+- [evolution/ports.py](../../src/tlon/evolution/ports.py)——`PrototypeError`（原型库抛、工具捕）与 `PrototypeSummary`（只读元数据视图，`PrototypeInfo` 结构化满足）。
 
-装配层（`assemble_member_capabilities`，[agents/assembly.py](../../src/tlon/agents/assembly.py)）把实现注入工具实例：注册表把自己注入 `SpawnAgentTool` / `StopAgentTool`（结构化满足 `AgentLifecycle` Protocol），`ListMembersTool` 使用独立的只读目录端口，委托同一邮局目录，把 `list_prototypes` / `write_staging_prototype` 作为普通 callable 注入 `ListPrototypesTool` / `WritePrototypeTool`。import 方向保持 tools → ports，永不倒流，由 `uv run lint-imports` 强制。
+装配层（`assemble_member_capabilities`，[agents/assembly.py](../../src/tlon/agents/assembly.py)）将成员身份、注册表和 callable 绑定到 LifecycleService 与演化领域服务，Operation handler 只负责契约投影。生命周期端口在 `tlon.lifecycle.ports`，演化端口在 `tlon.evolution.ports`；领域服务不反向依赖 agents。依赖方向由 `uv run lint-imports` 检查。
 
 为什么不用直接 import 加契约豁免：反向依赖一旦开一个口子，tools 层就会逐渐长出对 agents 内部的随意引用，分层检查从「方向强制」退化为「逐个评审」。Protocol + 注入的额外收益是工具可独立测试——测试注入一个假的 `AgentLifecycle` 实现即可，不必拉起整个注册表。异常类型放 ports 而不是抛方模块，是因为 catch 发生在 tools 侧：异常是接口的一部分，不是实现的细节。
 
@@ -177,8 +177,8 @@ spawn/stop/list/write 这些工具天然要触碰 agents 层（注册表）和 p
 
 与愿景的差距主要有两处：
 
-- **实例化是纯拷贝，无变异算子**——「新成员从社会内部生长」目前只有复制一种算子：拷贝 + 填模板槽位。实例化不会自行变异、重组或交叉，派生成员的行为来自已有原型和模板参数。成员已经可以用 `proposeBehavior` 起草变更后的完整 spec 并进入 staging；尚未实现的是实例化时的自动变异、重组和交叉。
-- **staging 审批是人工瓶颈**——Gatekeeper 模型里人类是每个 LLM 创作的原型的必经之路，这与愿景里「人类从审批者退为规则的守护者」相悖。审批社会化的第一步已落地：成员可用 `reviewPrototype` 对 staging 提案做异质同行评审，评审记录（含评审者模型血统）落盘 `REVIEW.md` 并随详情端点呈现给审批者——人类不再是唯一读提案的人。但**自动晋级仍不做**：评审是咨询性的，approve 依旧是人类决定；下一步才是「评议通过的原型按规则自动晋级」，人类退到「定评议规则」的位置。
+- **实例化是纯拷贝，无变异算子**——「新成员从社会内部生长」目前只有复制一种算子：拷贝 + 填模板槽位。实例化不会自行变异、重组或交叉，派生成员的行为来自已有原型和模板参数。成员已经可以用 `behavior-propose` 起草变更后的完整 spec 并进入 staging；尚未实现的是实例化时的自动变异、重组和交叉。
+- **staging 审批是人工瓶颈**——Gatekeeper 模型里人类是每个 LLM 创作的原型的必经之路，这与愿景里「人类从审批者退为规则的守护者」相悖。审批社会化的第一步已落地：成员可用 `prototype-review` 对 staging 提案做异质同行评审，评审记录（含评审者模型血统）落盘 `REVIEW.md` 并随详情端点呈现给审批者——人类不再是唯一读提案的人。但**自动晋级仍不做**：评审是咨询性的，approve 依旧是人类决定；下一步才是「评议通过的原型按规则自动晋级」，人类退到「定评议规则」的位置。
 
 ## 技术标识与存量
 

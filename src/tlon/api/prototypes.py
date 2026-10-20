@@ -26,7 +26,7 @@ from tlon.agents.prototypes.staging import (
     reject_prototype,
 )
 from tlon.base.paths import TlonPaths
-from tlon.tools.prototypes.ports import PrototypeError
+from tlon.evolution.ports import PrototypeError
 from tlosure.edn import EDNParseError, loads
 
 __all__ = ["PrototypeError", "PrototypeInfo", "PrototypesFacade", "parse_execution_level"]

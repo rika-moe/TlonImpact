@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from structlog.contextvars import bound_contextvars, get_contextvars
+from structlog.contextvars import bound_contextvars
 
 from tlon.agents.context_builder import ContextBuilder
 from tlon.agents.context_pressure import ContextPressure
@@ -17,7 +17,6 @@ from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.agents.loop_driver import LoopDriver
 from tlon.agents.member_spec import MemberRule, MemberSpec, SessionRecipe
 from tlon.agents.program_driver import ProgramDriver
-from tlon.agents.program_effects import ProgramEffects
 from tlon.agents.program_store import ProgramRun, ProgramStore
 from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
@@ -38,10 +37,13 @@ from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_context import continue_trace
+from tlon.lifecycle.service import LifecycleService
 from tlon.memory.manager import MemoryManager
 from tlon.operations.adapters import DSLAdapter, OperationTool
 from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
+from tlon.operations.lifecycle import make_lifecycle_operations
 from tlon.operations.mail import make_mail_operations
+from tlon.operations.model import make_model_operations
 from tlon.operations.schema import UnknownOutcomeError
 from tlon.operations.state import make_state_operations
 from tlon.operations.time import time_operation_definitions
@@ -102,6 +104,7 @@ class MemberCapabilities:
     docker_runtime: "ExecutionDevice | None" = None
     operations: tuple[Operation, ...] = ()
     shell_service: MemberShellService | None = None
+    is_full: bool = True
 
 
 class MemberRuntime(Member):
@@ -152,8 +155,31 @@ class MemberRuntime(Member):
         self._program_store = ProgramStore(
             self._paths.agent_program_database_file(member_id) if self._paths else None
         )
+        self._registry = (
+            registry if registry is not None else (capabilities.registry if capabilities else None)
+        )
+        self._program_trigger: Event | None = None
         operations = list(capabilities.operations) if capabilities else []
+        operations.extend(
+            make_lifecycle_operations(
+                LifecycleService(
+                    member_id,
+                    registry=self._registry,
+                    directory=self._registry,
+                    state_reader=self._registry,
+                    publish_request=self._request_member_lifecycle,
+                    start_all_candidates=self._registry.boot_candidates
+                    if self._registry is not None
+                    else None,
+                    apprentice=not capabilities.is_full if capabilities is not None else False,
+                )
+            )
+        )
         operations.extend(make_state_operations(self._program_store))
+        if capabilities is not None:
+            operations.extend(
+                make_model_operations(capabilities.llm_client, self._program_system_prompt)
+            )
         if not any(operation.name == "time-now" for operation in operations):
             operations.extend(time_operation_definitions())
         if mailbox is not None and post_office is not None:
@@ -168,16 +194,16 @@ class MemberRuntime(Member):
         self._builtins = {**builtins, **self._operations.builtins()}
         if capabilities is not None:
             for operation in operation_executor.registry.definitions():
+                if not capabilities.is_full and operation.name in {
+                    "member-spawn",
+                    "prototype-write",
+                    "behavior-propose",
+                    "capability-propose",
+                }:
+                    continue
                 capabilities.tool_executor.register_tool(
                     OperationTool(operation_executor, operation.name)
                 )
-        self._program_effects = ProgramEffects(
-            llm_client=capabilities.llm_client if capabilities else None,
-            system_prompt=self._program_system_prompt,
-        )
-        self._registry = (
-            registry if registry is not None else (capabilities.registry if capabilities else None)
-        )
         self._mentor_cc = capabilities.mentor_cc if capabilities is not None else None
         # Rule idle bookkeeping (registry drain): initialize time
         # and the last executed rule action, both monotonic.
@@ -304,10 +330,9 @@ class MemberRuntime(Member):
                 await self._reflection.shutdown()
             self.unsubscribe_all()
             if self._capabilities is not None:
-                await self._capabilities.tool_executor.shutdown()
                 if self._capabilities.shell_service is not None:
                     await self._capabilities.shell_service.shutdown()
-                # Tools first (a background bash task may still be using
+                # Shell tasks first (a background command may still be using
                 # the runtime), then the Docker client — its connection
                 # pool must not leak across sleep→wake re-assembly
                 # (docs/design/execution-device.md). A close failure is
@@ -462,18 +487,21 @@ class MemberRuntime(Member):
         if not self._can_schedule():
             return False
         self._active_actions += 1
+        previous_trigger = self._program_trigger
+        self._program_trigger = trigger_event
         try:
             if trigger_event is None and self._registry is not None:
                 await self._registry.publish_scheduling_state(self._member_id)
             return await self._run_rule_body(rule, trigger_event, payload, run_id=run_id)
         finally:
+            self._program_trigger = previous_trigger
             self._active_actions -= 1
             if trigger_event is None and self._registry is not None:
                 await self._registry.publish_scheduling_state(self._member_id)
 
     async def _program_system_prompt(self) -> str:
         if self._paths is None:
-            raise RuntimeError("llm-call requires member paths and persona")
+            raise RuntimeError("model-call requires member paths and persona")
         contacts_file = self._paths.agent_contacts_file(self._member_id)
         contacts = contacts_file.read_text(encoding="utf-8") if contacts_file.exists() else ""
         return (
@@ -586,11 +614,6 @@ class MemberRuntime(Member):
 
         async def execute(request: ActionRequest, name: str, index: int, args_edn: str) -> Any:
             self._last_action_at = time.monotonic()
-            request_id = f"program:{run_id}:{index}:{name}"
-            if request.kind == "llm_call":
-                return await self._program_effects.execute(
-                    request, request_id, run_id, index, self._program_store, args_edn
-                )
             if request.kind == "run_loop":
                 await self._run_session_effect(
                     request,
@@ -605,10 +628,7 @@ class MemberRuntime(Member):
                     },
                 )
                 return None
-            await self._execute_action(
-                request, session_mail=mail, trigger_event=trigger_event, payload=payload
-            )
-            return None
+            raise EvalError(f"unknown orchestration request: {request.kind}")
 
         driver = ProgramDriver(
             self._program_store,
@@ -618,6 +638,7 @@ class MemberRuntime(Member):
             operations=self._operations,
             member_id=self._member_id,
             on_operation=self._record_activity,
+            on_control=self._apply_program_control,
             token_budget=self._capabilities.config.llm.max_tokens
             if self._capabilities and self._capabilities.config.llm
             else 4096,
@@ -653,50 +674,26 @@ class MemberRuntime(Member):
 
     # ── Unified action executor ──
 
-    async def _execute_action(
-        self,
-        request: ActionRequest,
-        session_mail: Mail | None = None,
-        *,
-        trigger_event: Event | None = None,
-        payload: Any = None,
-    ) -> None:
-        """Execute retained lifecycle requests outside the Operation domains.
+    async def _apply_program_control(self, request: dict[str, Any]) -> None:
+        if self._registry is None:
+            if request["action"] != "finish":
+                raise EvalError("self scheduling requires a member registry")
+            return
+        await self._registry.prepare_scheduling_request(self._member_id, request, "")
+        await self._registry.apply_scheduling_request(self._member_id, request)
 
-        ``start`` / ``stop`` publish lifecycle decisions for the registry;
-        ``spawn`` delegates to the registry's spawn pipeline. Mail and
-        device effects use the shared Operation executor instead.
-        """
-        self._last_action_at = time.monotonic()
-        kind = request.kind
-        if (
-            kind in {"start", "stop"}
-            and self._member_id != "adam"
-            and request.data["agent_id"] != self._member_id
-        ):
-            raise ValueError("members may only manage their own scheduling state")
-        if kind == "spawn":
-            await self._execute_spawn(request)
-        elif kind == "start":
-            await self._publish_request(
-                EventType.AGENT_START_REQUEST,
-                StartRequest(agent_id=request.data["agent_id"], reason=request.data["reason"]),
-                trigger_event,
-                action="start",
-            )
-        elif kind == "stop":
-            await self._publish_request(
-                EventType.AGENT_STOP_REQUEST,
-                StopRequest(agent_id=request.data["agent_id"], reason=request.data["reason"]),
-                trigger_event,
-                action="stop",
-            )
-        else:
-            logger.warning(
-                "member_action_unknown",
-                member_id=self._member_id,
-                action=kind,
-            )
+    async def _request_member_lifecycle(
+        self, action: str, agent_id: str, reason: str, context: CallContext
+    ) -> None:
+        event_type = (
+            EventType.AGENT_START_REQUEST if action == "start" else EventType.AGENT_STOP_REQUEST
+        )
+        payload = (
+            StartRequest(agent_id=agent_id, reason=reason)
+            if action == "start"
+            else StopRequest(agent_id=agent_id, reason=reason)
+        )
+        await self._publish_request(event_type, payload, self._program_trigger, action=action)
 
     async def _publish_request(
         self,
@@ -723,23 +720,6 @@ class MemberRuntime(Member):
                 span_id=trigger_event.span_id if trigger_event else None,
                 parent_span_id=trigger_event.parent_span_id if trigger_event else None,
             )
-        )
-
-    async def _execute_spawn(self, request: ActionRequest) -> None:
-        """Spawn a new member through the registry's full trust gate and
-        spawn budget (stage 6b); the session-id binding for quota
-        attribution comes from structlog contextvars when inside a session."""
-        registry = self._registry
-        if registry is None:
-            raise RuntimeError("spawn action unavailable: member has no registry")
-        prototype = request.data["prototype"]
-        name = request.data["name"] or f"{prototype}-{uuid.uuid4().hex[:4]}"
-        session_id = get_contextvars().get("session_id")
-        await registry.spawn_member(
-            prototype=prototype,
-            name=name,
-            spawner_id=self._member_id,
-            session_id=str(session_id) if session_id else None,
         )
 
     # ── Internal inbox scheduling cursor ──

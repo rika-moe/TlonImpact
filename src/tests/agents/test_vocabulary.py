@@ -20,7 +20,7 @@ from tlon.agents.vocabulary import (
 )
 from tlon.organization.mail.mail import Mail
 from tlosure.edn import loads
-from tlosure.eval import ActionRequest, EvalError, eval_form, validate_form
+from tlosure.eval import EvalError, eval_form, validate_form
 
 #: The unified member registry (pure predicates + arithmetic + actions) —
 #: the full registry the ADR 0021 action gate validates against.
@@ -107,25 +107,6 @@ class TestMemberRoster:
         assert "member-roster" not in _BUILTINS
         with pytest.raises(EvalError, match="unknown function: member-roster"):
             eval_form(loads("(member-roster)"), {}, _BUILTINS)
-
-
-class TestActionCollection:
-    """Lifecycle action collection is independent from shared Operations."""
-
-    def test_while_body_collects_each_lifecycle_request(self):
-        collector: list[ActionRequest] = []
-        builtins = make_member_builtins(collector=collector)
-        result = eval_form(
-            loads('(while [i 0] (< i 3) (stop {:agent "member" :reason (str i)}) (recur (inc i)))'), {}, builtins
-        )
-        assert result is None
-        assert [request.data["reason"] for request in collector] == ["0", "1", "2"]
-
-    def test_map_returns_request_list(self):
-        result = eval_form(
-            loads('(map i (stop {:agent "member" :reason (str i)}) [1 2 3])'), {}, make_member_builtins()
-        )
-        assert [request.kind for request in result] == ["stop"] * 3
 
 
 class TestValidateMemberActions:

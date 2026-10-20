@@ -77,7 +77,7 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 
 「已知人类」指已在 SQLite 注册的 `human:<username>`，与在线状态及旧邮箱目录无关。首次 attach 或 REST 投信时注册。`PostOffice` 与 `AdapterManager` 共享注入的 resolver；agent 查询来自 `AgentInfoProvider`，网关查询来自注入的认领表。
 
-成员寻址黄页由投递解析层生成，经 `PostOffice.list_members` 提供给 `listMembers` 和 `member-roster`：合并可解析的配置成员、Adam、SQLite 已登记的通信成员，按真实投递归属去重、排除退休地址。离线成员仍可发现，输出仅公开 id（地址 local-part）、名字和地址，不披露运行类型、社会身份或私有材料。黄页可向其他成员引用、转告，详见 [ADR 0034](../decisions/0034-member-address-directory.md)。
+成员寻址黄页由投递解析层生成，经 `PostOffice.list_members` 提供给 `member-list` 和 `member-roster`：合并可解析的配置成员、Adam、SQLite 已登记的通信成员，按真实投递归属去重、排除退休地址。离线成员仍可发现，输出仅公开 id（地址 local-part）、名字和地址，不披露运行类型、社会身份或私有材料。黄页可向其他成员引用、转告，详见 [ADR 0034](../decisions/0034-member-address-directory.md)。
 
 完整地址通过 `resolve_address` 只代表格式可用，仍必须经 `resolve_member` 和退休检查，不能把解析成地址等同于投信有效。
 
@@ -139,7 +139,7 @@ agent 与邮件系统的接口只有两条：收信经 `MemberRuntime` 门控唤
 
 stage 继续声明数据，外部效果由引擎执行；区别在于工具回执现在反映实际投信结果。本地成功表示已经入箱，网关仅表示尝试及已知结果，均不表示阅读或工作完成。
 
-发信与成员调度正交：mail-send/mail-forward 成功或失败都不结束当前工作。需要标读先 mail-mark-read；发送回复并查看真实回执后，成员下一轮单独调用 finishTurn、sleepUntil 或 exitAgent。也可以不发信直接结束。睡眠期间正常入箱，到期才处理；死亡拒收新信，保留历史。状态、期限和安全转换见 [agent-scheduling-states.md](agent-scheduling-states.md)。
+发信与成员调度正交：mail-send/mail-forward 成功或失败都不结束当前工作。需要标读先 mail-mark-read；发送回复并查看真实回执后，成员下一轮单独调用 finish-turn、sleep-until 或 exit-agent。也可以不发信直接结束。睡眠期间正常入箱，到期才处理；死亡拒收新信，保留历史。状态、期限和安全转换见 [agent-scheduling-states.md](agent-scheduling-states.md)。
 
 ## 周期任务：tick 即邮件
 
@@ -147,7 +147,7 @@ stage 继续声明数据，外部效果由引擎执行；区别在于工具回�
 
 条目来自两个来源，合并管理：
 
-- **内置条目**（代码注册，内容可在 tick 时现算）。目前的实例是「社会文摘」：每隔一个间隔（默认一天）给书记员（`ji-shuheng`，scribe 原型）发一封「社会文摘周期任务」邮件，正文自带完整工作指令与人类收件人清单（tick 时从 `known_human_ids()` 现算）；书记员的 LLM 调观测工具（metrics-read / traces-list+trace-read / reputation-read / social-health / listStagingPrototypes）汇总，再一封 mail-send 发给全体已知人类。书记员未注册或尚无已知人类时 tick 记日志跳过——没有读者就没有文摘。
+- **内置条目**（代码注册，内容可在 tick 时现算）。目前的实例是「社会文摘」：每隔一个间隔（默认一天）给书记员（`ji-shuheng`，scribe 原型）发一封「社会文摘周期任务」邮件，正文自带完整工作指令与人类收件人清单（tick 时从 `known_human_ids()` 现算）；书记员的 LLM 调观测工具（metrics-read / traces-list+trace-read / reputation-read / social-health / prototype-staging-list）汇总，再一封 mail-send 发给全体已知人类。书记员未注册或尚无已知人类时 tick 记日志跳过——没有读者就没有文摘。
 - **声明式条目**（`~/.tlon/cron.yaml`，启动时读一次，改动需重启生效；文件不存在 = 无声明条目）。每条目声明静态正文和两种 schedule 之一：`interval_seconds: N`（每 N 秒，首轮也等 N 秒后）或 `cron: "分 时 日 月 周"`（标准 5 字段 cron 表达式，本地时区，用 croniter 计算下次触发）。`to` 是成员 id（agent id 或 `human:<username>`）。配置非法的条目（缺字段、两种 schedule 都写或都不写、cron 表达式解析失败）在启动时记 warning 拒绝，不影响其他条目；目标成员不存在时 tick 记日志跳过。示例：
 
 ```yaml
@@ -160,7 +160,7 @@ stage 继续声明数据，外部效果由引擎执行；区别在于工具回�
 - name: staging-check
   to: ji-shuheng
   subject: 定期检查 staging 提案
-  content: 用 listStagingPrototypes 查一下原型暂存区，有待批准的提案就汇总发给人类。
+  content: 用 prototype-staging-list 查一下原型暂存区，有待批准的提案就汇总发给人类。
   interval_seconds: 21600
 ```
 
@@ -168,7 +168,7 @@ stage 继续声明数据，外部效果由引擎执行；区别在于工具回�
 
 周期任务同样调用统一邮局：周期信号不需要专用通道，tick 与正常通信同构——它先落盘（有投递幂等和未读语义保底）、可唤醒睡眠中的收件人、在 trace 树上可见。postmaster 没有自己的邮箱，系统发件不留 sent 副本，通道干净。
 
-配套的两个只读工具把「待人类处置」可查询化：`social-health`（[operations/observability.py](../../src/tlon/operations/observability.py)）按需实时返回孤儿邮件清单（与 `PublicHealthMonitor` 的 MAIL_ORPHAN_SCAN 共用同一个采集器，派生不存储）；`listStagingPrototypes`（[tools/prototypes/list_staging.py](../../src/tlon/tools/prototypes/list_staging.py)）列出原型暂存区里待人类信任批准的提案。人类由此从「读全部邮件」退为「读摘要 + 处置例外」。
+配套的两个只读工具把「待人类处置」可查询化：`social-health`（[operations/observability.py](../../src/tlon/operations/observability.py)）按需实时返回孤儿邮件清单（与 `PublicHealthMonitor` 的 MAIL_ORPHAN_SCAN 共用同一个采集器，派生不存储）；`prototype-staging-list`（[evolution/list_staging.py](../../src/tlon/evolution/list_staging.py)）列出原型暂存区里待人类信任批准的提案。人类由此从「读全部邮件」退为「读摘要 + 处置例外」。
 
 ## 死亡归档清点
 

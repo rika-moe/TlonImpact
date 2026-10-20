@@ -13,6 +13,8 @@ from typing import Any
 import pytest
 
 from tlon.agents.assembly import REPRODUCTION_TOOLS, assemble_member_capabilities
+from tlon.agents.member_runtime import MemberRuntime
+from tlon.agents.member_spec import MemberSpec
 from tlon.agents.policy import (
     TILT_NEUTRAL,
     PolicyValidationError,
@@ -23,10 +25,13 @@ from tlon.agents.policy import (
     policy_tilt_provider,
     policy_trust_provider,
 )
+from tlon.agents.vocabulary import make_member_builtins
 from tlon.base.config import AgentConfig, LLMConfig, yaml_save
+from tlon.base.events.event_bus import EventBus
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
+from tlosure.edn import loads
 
 
 @pytest.fixture
@@ -285,12 +290,12 @@ class TestProbationProvider:
 class TestReproductionTools:
     def test_reproduction_tools_inventory(self) -> None:
         expected = frozenset(
-            {"spawnAgent", "writePrototype", "proposeBehavior", "proposeCapability"}
+            {"member-spawn", "prototype-write", "behavior-propose", "capability-propose"}
         )
         assert expected == REPRODUCTION_TOOLS
-        # reviewPrototype stays available to probationary members
+        # prototype-review stays available to probationary members
         # (advisory only — approve remains a human decision).
-        assert "reviewPrototype" not in REPRODUCTION_TOOLS
+        assert "prototype-review" not in REPRODUCTION_TOOLS
 
 
 class _FakeAgentInfo:
@@ -319,30 +324,41 @@ class TestAssemblyToolSubset:
             llm=LLMConfig(model_name="test/model"),
         )
         yaml_save(config, tlon_paths.tlon_home())
-        return await assemble_member_capabilities(
+        caps = await assemble_member_capabilities(
             config,
             registry=None,  # type: ignore[arg-type]
             agent_info=_FakeAgentInfo({"rookie": config}),  # type: ignore[arg-type]
             tlon_paths=tlon_paths,
         )
+        runtime = MemberRuntime(
+            member_id=config.id,
+            name=config.name,
+            event_bus=EventBus(),
+            spec=MemberSpec.from_edn(
+                loads('{:version 1 :rules [{:name "boot" :on :boot :actions []}]}')
+            ),
+            builtins=make_member_builtins(),
+            capabilities=caps,
+        )
+        return caps, runtime
 
     async def test_probation_member_lacks_reproduction_tools(self, tlon_paths: TlonPaths) -> None:
-        caps = await self._assemble(tlon_paths, spawned_by="mentor")
+        caps, runtime = await self._assemble(tlon_paths, spawned_by="mentor")
 
         names = set(caps.tool_executor.list_tools())
         assert names.isdisjoint(REPRODUCTION_TOOLS)
-        assert "reviewPrototype" in names
-        assert "listMembers" in names
+        assert "prototype-review" in names
+        assert "member-list" in names
         # The probation mentor cc rides along for the send paths.
         assert caps.mentor_cc == "mentor@tlon.internal"
 
-        await caps.tool_executor.shutdown()
+        await runtime.shutdown()
 
     async def test_full_member_gets_everything(self, tlon_paths: TlonPaths) -> None:
-        caps = await self._assemble(tlon_paths, spawned_by=None)
+        caps, runtime = await self._assemble(tlon_paths, spawned_by=None)
 
         names = set(caps.tool_executor.list_tools())
         assert names >= REPRODUCTION_TOOLS
         assert caps.mentor_cc is None
 
-        await caps.tool_executor.shutdown()
+        await runtime.shutdown()

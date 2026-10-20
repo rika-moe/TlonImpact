@@ -42,6 +42,7 @@ class Operation:
     effects: frozenset[Effect]
     handler: Handler | AsyncHandler
     retry_safe: bool
+    control: bool
     default_timeout: float | None
     _input_json: str
     _output_json: str
@@ -56,6 +57,7 @@ class Operation:
         *,
         effects: frozenset[Effect] = frozenset(),
         retry_safe: bool = False,
+        control: bool = False,
         default_timeout: float | None = None,
     ) -> None:
         if len(name) > 64 or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", name):
@@ -73,6 +75,7 @@ class Operation:
             raise DefinitionError("pure handlers must be synchronous; effectful handlers async")
         object.__setattr__(self, "default_timeout", default_timeout)
         object.__setattr__(self, "retry_safe", retry_safe)
+        object.__setattr__(self, "control", control)
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "description", description)
         object.__setattr__(self, "handler", handler)

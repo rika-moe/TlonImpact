@@ -26,7 +26,7 @@ from tlon.agents.prototypes.staging import (
 )
 from tlon.base.config import yaml_load_file
 from tlon.base.paths import TlonPaths
-from tlon.tools.prototypes.ports import PrototypeError
+from tlon.evolution.ports import PrototypeError
 
 VALID_BEHAVIOR = '{:version 1\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
 VALID_BEHAVIOR_V2 = '{:version 1\n :rules [{:name "relay-v2"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["y@tlon.internal"]})]}]}\n'

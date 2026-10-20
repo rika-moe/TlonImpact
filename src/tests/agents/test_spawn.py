@@ -20,8 +20,8 @@ import pytest
 from tlon.agents.spawn import SpawnManager
 from tlon.base.config import AgentConfig, LLMConfig, yaml_load_file
 from tlon.base.paths import TlonPaths
-from tlon.tools.agents.ports import SpawnRejectedError
-from tlon.tools.prototypes.ports import PrototypeError
+from tlon.evolution.ports import PrototypeError
+from tlon.lifecycle.ports import SpawnRejectedError
 
 ECHO_EDN = '{:version 1\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["sink@tlon.internal"]})]}]}\n'
 

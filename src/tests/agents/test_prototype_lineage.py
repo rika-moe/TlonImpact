@@ -2,10 +2,11 @@
 walks the :parent
 chain, derives per-generation unified diffs of behavior.tlon, and marks
 broken links (deleted/renamed parent) or cycles. Also covers the
-``getPrototypeLineage`` tool."""
+``prototype-lineage`` tool."""
 
 import pytest
 
+from tests.evolution_helpers import make_lineage_tool, make_write_tool
 from tlon.agents.prototypes.lineage import get_prototype_lineage
 from tlon.agents.prototypes.management import (
     delete_prototype,
@@ -14,9 +15,7 @@ from tlon.agents.prototypes.management import (
 )
 from tlon.agents.prototypes.staging import approve_prototype, write_staging_prototype
 from tlon.base.paths import TlonPaths
-from tlon.tools.agents.write_prototype import WritePrototypeTool
-from tlon.tools.prototypes.get_lineage import GetPrototypeLineageTool
-from tlon.tools.prototypes.ports import PrototypeError
+from tlon.evolution.ports import PrototypeError
 
 SPEC_V1 = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
 SPEC_V2 = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["y@tlon.internal"]})]}]}\n'
@@ -117,8 +116,8 @@ class TestGetPrototypeLineageTool:
     async def test_returns_chain_with_diffs(self, tmp_path):
         p = TlonPaths(home=tmp_path)
         gen1, gen2, gen3 = _three_generations(p)
-        tool = GetPrototypeLineageTool(lineage=lambda name: get_prototype_lineage(name, p))
-        result = await tool.execute(name=gen3)
+        tool = make_lineage_tool(lineage=lambda name: get_prototype_lineage(name, p))
+        result = await tool.execute_context({"name": gen3})
         assert result.success
         lineage = result.data["lineage"]
         assert [e["name"] for e in lineage] == [gen1, gen2, gen3]
@@ -127,34 +126,36 @@ class TestGetPrototypeLineageTool:
 
     async def test_unknown_prototype_fails(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        tool = GetPrototypeLineageTool(lineage=lambda name: get_prototype_lineage(name, p))
-        result = await tool.execute(name="ghost")
+        tool = make_lineage_tool(lineage=lambda name: get_prototype_lineage(name, p))
+        result = await tool.execute_context({"name": "ghost"})
         assert not result.success
         assert "ghost" in (result.error or "")
 
     def test_tool_schema(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        tool = GetPrototypeLineageTool(lineage=lambda name: get_prototype_lineage(name, p))
-        assert tool.name == "getPrototypeLineage"
+        tool = make_lineage_tool(lineage=lambda name: get_prototype_lineage(name, p))
+        assert tool.name == "prototype-lineage"
         assert tool.parameters["required"] == ["name"]
 
 
 class TestWritePrototypeToolLineage:
-    """writePrototype passes parent / proposal_note through to the staging
+    """prototype-write passes parent / proposal_note through to the staging
     writer (docs/design/prototypes.md)."""
 
     async def test_parent_and_note_passed_through(self, tmp_path):
         p = TlonPaths(home=tmp_path)
         created_1 = write_trusted_prototype(SPEC_V1, tlon_paths=p, display_name="定址转发")
-        tool = WritePrototypeTool(
+        tool = make_write_tool(
             author_id="adam",
             writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
         )
-        result = await tool.execute(
-            behavior=SPEC_V2,
-            parent=created_1.name,
-            proposal_note="换转发目标",
-            display_name="定址转发",
+        result = await tool.execute_context(
+            {
+                "behavior": SPEC_V2,
+                "parent": created_1.name,
+                "proposal_note": "换转发目标",
+                "display_name": "定址转发",
+            }
         )
         assert result.success
         assert result.data["parent"] == created_1.name
@@ -165,10 +166,12 @@ class TestWritePrototypeToolLineage:
 
     async def test_unknown_parent_returns_failure(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        tool = WritePrototypeTool(
+        tool = make_write_tool(
             author_id="adam",
             writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
         )
-        result = await tool.execute(behavior=SPEC_V2, parent="ghost", display_name="定址转发")
+        result = await tool.execute_context(
+            {"behavior": SPEC_V2, "parent": "ghost", "display_name": "定址转发"}
+        )
         assert not result.success
         assert "ghost" in (result.error or "")

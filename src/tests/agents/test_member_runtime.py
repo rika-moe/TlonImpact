@@ -388,7 +388,6 @@ async def test_real_session_then_forward_uses_same_trigger(tmp_path: Path) -> No
     from tlon.base.config import AgentConfig, LLMConfig
     from tlon.base.llm_client import LLMResponse, ToolCall
     from tlon.memory.models import MemoryConfig
-    from tlon.tools.agents.scheduling import FinishTurnTool
 
     shell = _member(
         tmp_path,
@@ -400,7 +399,8 @@ async def test_real_session_then_forward_uses_same_trigger(tmp_path: Path) -> No
     llm.config = LLMConfig(model_name="openai/gpt-4o-mini")
     llm.chat = AsyncMock(
         return_value=LLMResponse(
-            content="", tool_calls=[ToolCall(id="finish", function_name="finishTurn", arguments={})]
+            content="",
+            tool_calls=[ToolCall(id="finish", function_name="finish-turn", arguments={})],
         )
     )
     memory = MagicMock()
@@ -408,7 +408,6 @@ async def test_real_session_then_forward_uses_same_trigger(tmp_path: Path) -> No
     memory.load = AsyncMock()
     memory.maybe_distill_completed_sessions = AsyncMock(return_value=0)
     tools = ToolExecutor()
-    tools.register_tool(FinishTurnTool())
     caps = MemberCapabilities(
         config=AgentConfig(id="member", name="Member"),
         llm_client=llm,
@@ -498,23 +497,43 @@ async def test_when_and_bound_effect_values_do_not_repeat_requests(tmp_path: Pat
 
 
 async def test_host_start_all_preserves_order_and_executes_once(tmp_path: Path) -> None:
-    host = MagicMock()
-    host.start_all_candidates.return_value = ["worker-a", "worker-b"]
-    member = _member(
-        tmp_path,
-        _spec(
-            '(when true (start-all {:reason "boot"}) (mail-send {:to ["sink@tlon.internal"] :content "done"}))'
+    from tlon.lifecycle.service import LifecycleService
+    from tlon.operations.adapters import DSLAdapter
+    from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+    from tlon.operations.lifecycle import make_lifecycle_operations
+
+    bus = EventBus()
+    office = make_office(bus, tmp_path, ["adam", "sender", "sink"])
+    member = MemberRuntime(
+        member_id="adam",
+        name="Adam",
+        event_bus=bus,
+        spec=_spec(
+            '(when true (member-start-all {:reason "boot"}) (mail-send {:to ["sink@tlon.internal"] :content "done"}))'
         ),
+        builtins=make_member_builtins(),
+        mailbox=Mailbox(tmp_path / "shared/mail.sqlite3", "adam"),
+        post_office=office,
+        tlon_paths=TlonPaths(home=tmp_path),
     )
-    member._builtins = {**make_member_builtins(host), **member._operations.builtins()}
-    member._execute_action = AsyncMock()
+    publish = AsyncMock()
+    candidates = MagicMock(return_value=["worker-a", "worker-b"])
+    lifecycle = LifecycleService("adam", publish_request=publish, start_all_candidates=candidates)
+    # Use one shared adapter for all domains, as the real runtime does.
+    original = member._operations._executor.registry.definitions()
+    definitions = [op for op in original if not op.name.startswith("member-") and not op.control]
+    member._operations = DSLAdapter(
+        OperationExecutor(
+            OperationRegistry((*definitions, *make_lifecycle_operations(lifecycle))),
+            CallContext("adam", "run", "call"),
+        )
+    )
+    member._builtins.update(member._operations.builtins())
     member._post_office.send = AsyncMock(wraps=member._post_office.send)
     assert await member._run_rule_body(member.spec.rules[0], _event(_mail()))
-    requests = [call.args[0] for call in member._execute_action.await_args_list]
-    assert [request.kind for request in requests] == ["start", "start"]
-    assert [request.data["agent_id"] for request in requests] == ["worker-a", "worker-b"]
+    assert [call.args[1] for call in publish.await_args_list] == ["worker-a", "worker-b"]
     assert member._post_office.send.await_args.kwargs["content"] == "done"
-    host.start_all_candidates.assert_called_once()
+    candidates.assert_called_once()
 
 
 async def test_later_evaluation_failure_keeps_committed_effects_without_repeating(

@@ -64,10 +64,14 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Protocol, TypedDict
 
+from tlon.operations.control import validate_control_forms
+from tlon.operations.evolution import evolution_operation_definitions
 from tlon.operations.filesystem import filesystem_operation_definitions
 from tlon.operations.identity import identity_operation_definitions
+from tlon.operations.lifecycle import lifecycle_operation_definitions
 from tlon.operations.mail import mail_builtin_definitions
 from tlon.operations.memory import memory_operation_definitions
+from tlon.operations.model import model_operation_definitions
 from tlon.operations.observability import observability_operation_definitions
 from tlon.operations.shell import shell_builtin_definitions
 from tlon.operations.state import state_operation_definitions
@@ -405,7 +409,7 @@ def _builtin_first_iteration(env: dict[str, Any]) -> bool:
 def _builtin_completing(env: dict[str, Any]) -> bool:
     """The round's pending response would end the session if dispatched.
 
-    True for a sole ``finishTurn``, ``sleepUntil`` or ``exitAgent`` call.
+    True for a sole ``finish-turn``, ``sleep-until`` or ``exit-agent`` call.
     Sending mail is independent of completing work.
     """
     round_map = env.get("round")
@@ -580,14 +584,10 @@ class ScriptHostQueries(Protocol):
 #: Effects available to every rule, independent of its event or other actions.
 MEMBER_ACTION_NAMES = frozenset(
     {
-        "spawn",
-        "start",
-        "stop",
-        "start-all",
         "run-loop",
         "state-get",
         "state-put",
-        "llm-call",
+        "model-call",
         "mail-send",
         "mail-forward",
         "mail-check-inbox",
@@ -605,38 +605,14 @@ MEMBER_ACTION_NAMES = frozenset(
 ) | frozenset(
     operation.name
     for operation in (
+        *evolution_operation_definitions(),
+        *lifecycle_operation_definitions(),
         *memory_operation_definitions(),
         *task_operation_definitions(),
         *identity_operation_definitions(),
         *observability_operation_definitions(),
     )
 )
-
-
-def _script_action_fields(name: str, options: Any, require_agent: bool) -> dict[str, str]:
-    """Validate a script action's options map; return the normalized fields.
-
-    ``:reason`` is always a required non-empty string; ``:agent`` is
-    required for ``start`` / ``stop`` and rejected for ``start-all``.
-    """
-    if not isinstance(options, dict):
-        raise EvalError(f"{name} expects an options map, got {type(options).__name__}")
-    fields = {str(key): value for key, value in options.items()}
-    unknown = set(fields) - {"agent", "reason"}
-    if unknown:
-        raise EvalError(f"{name} options: unknown keys {sorted(unknown)}")
-    reason = fields.get("reason")
-    if type(reason) is not str or not reason:
-        raise EvalError(f"{name} :reason must be a non-empty string, got {reason!r}")
-    out = {"reason": reason}
-    agent = fields.get("agent")
-    if require_agent:
-        if type(agent) is not str or not agent:
-            raise EvalError(f"{name} :agent must be a non-empty string, got {agent!r}")
-        out["agent_id"] = agent
-    elif agent is not None:
-        raise EvalError(f"{name} takes no :agent option")
-    return out
 
 
 _EFFECT_COLLECTOR: ContextVar[list[ActionRequest] | None] = ContextVar(
@@ -665,9 +641,10 @@ def make_member_builtins(
 ) -> dict[str, Builtin]:
     """Build the member vocabulary with optional effect collection.
 
-    Every effect returns an ActionRequest. With a collector attached it also
-    records the request, preserving nested effects in functions and loops.
-    Host queries are injected closures; evaluation performs no actual I/O.
+    Operation names are static unavailable placeholders until DSLAdapter binds
+    member services. Only run-loop constructs ActionRequest recipe data;
+    an optional collector supports synchronous recipe analysis. Host queries
+    are injected closures.
     """
 
     def _record(request: ActionRequest) -> ActionRequest:
@@ -687,76 +664,6 @@ def make_member_builtins(
             raise EvalError(str(exc)) from exc
         return _record(ActionRequest(kind="run_loop", data={"recipe": recipe}))
 
-    def _spawn(env: dict[str, Any], prototype: Any, options: Any = None) -> ActionRequest:
-        if type(prototype) is not str:
-            raise EvalError(f"spawn prototype must be a string, got {type(prototype).__name__}")
-        name: str | None = None
-        if options is not None:
-            if not isinstance(options, dict):
-                raise EvalError(f"spawn options must be a map, got {type(options).__name__}")
-            unknown = set(options) - {"name"}
-            if unknown:
-                raise EvalError(f"spawn options: unknown keys {sorted(unknown)}")
-            raw_name = options.get("name")
-            if raw_name is not None:
-                if type(raw_name) is not str:
-                    raise EvalError(f"spawn :name must be a string, got {type(raw_name).__name__}")
-                name = raw_name
-        return _record(ActionRequest(kind="spawn", data={"prototype": prototype, "name": name}))
-
-    def _start(env: dict[str, Any], options: Any) -> ActionRequest:
-        fields = _script_action_fields("start", options, require_agent=True)
-        return _record(
-            ActionRequest(
-                kind="start",
-                data={"agent_id": fields["agent_id"], "reason": fields["reason"]},
-            ),
-        )
-
-    def _stop(env: dict[str, Any], options: Any) -> ActionRequest:
-        fields = _script_action_fields("stop", options, require_agent=True)
-        return _record(
-            ActionRequest(
-                kind="stop",
-                data={"agent_id": fields["agent_id"], "reason": fields["reason"]},
-            ),
-        )
-
-    def _start_all(env: dict[str, Any], options: Any) -> list[ActionRequest]:
-        fields = _script_action_fields("start-all", options, require_agent=False)
-        if host is None:
-            raise EvalError("start-all unavailable: no host queries injected")
-        return [
-            _record(
-                ActionRequest(
-                    kind="start", data={"agent_id": agent_id, "reason": fields["reason"]}
-                ),
-            )
-            for agent_id in host.start_all_candidates()
-        ]
-
-    def _options(name: str, options: Any, required: set[str], optional: set[str]) -> dict[str, Any]:
-        if not isinstance(options, dict) or any(not isinstance(key, Keyword) for key in options):
-            raise EvalError(f"{name} options must be a keyword map")
-        data = {str(key): value for key, value in options.items()}
-        if not required <= data.keys() or data.keys() - required - optional:
-            raise EvalError(f"{name}: missing or unknown options")
-        return data
-
-    def _llm_call(env: dict[str, Any], options: Any) -> ActionRequest:
-        data = _options("llm-call", options, {"prompt", "max-tokens"}, set())
-        if (
-            type(data["prompt"]) is not str
-            or type(data["max-tokens"]) is not int
-            or data["max-tokens"] <= 0
-        ):
-            raise EvalError("llm-call requires a string prompt and positive integer max-tokens")
-        return _record(
-            ActionRequest(
-                kind="llm_call", data={"prompt": data["prompt"], "max_tokens": data["max-tokens"]}
-            )
-        )
-
     builtins: dict[str, Builtin] = {
         **mail_builtin_definitions(),
         **shell_builtin_definitions(),
@@ -766,6 +673,9 @@ def make_member_builtins(
                 *filesystem_operation_definitions(),
                 *time_operation_definitions(),
                 *state_operation_definitions(),
+                *model_operation_definitions(),
+                *lifecycle_operation_definitions(),
+                *evolution_operation_definitions(),
                 *memory_operation_definitions(),
                 *task_operation_definitions(),
                 *identity_operation_definitions(),
@@ -775,12 +685,7 @@ def make_member_builtins(
         **TRIGGER_BUILTINS,
         **SCRIPT_BUILTINS,
         **ARITHMETIC_BUILTINS,
-        "llm-call": Builtin(_llm_call, pure=False),
         "run-loop": Builtin(_run_loop, pure=False),
-        "spawn": Builtin(_spawn, pure=False),
-        "start": Builtin(_start, pure=False),
-        "stop": Builtin(_stop, pure=False),
-        "start-all": Builtin(_start_all, pure=False),
     }
     if host is not None:
         builtins["sleeping?"] = Builtin(lambda env, aid: host.is_sleeping(aid), pure=True)
@@ -809,6 +714,7 @@ def validate_member_actions(
     ``defn`` head form adds its name to the scope the *following* forms
     see (define-before-use), mirroring the runtime's shared env dict.
     """
+    validate_control_forms(forms)
     local = set(scope)
     for form in forms:
         if _is_defn(form):

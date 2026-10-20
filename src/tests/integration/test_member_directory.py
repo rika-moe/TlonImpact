@@ -7,10 +7,22 @@ import aiohttp
 
 from tests.prototype_helpers import builtin_id
 from tlon.agents.agent_registry import RegistryQueries
-from tlon.tools.agents.list_members import ListMembersTool
+from tlon.lifecycle.ports import MemberDirectory
+from tlon.lifecycle.service import LifecycleService
+from tlon.operations.adapters import OperationTool
+from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.lifecycle import make_lifecycle_operations
 
 from .conftest import WEBUI_HEADERS, _read_inbox, _send_mail
 from .test_post_office import _server
+
+
+def _directory_tool(directory: MemberDirectory) -> OperationTool:
+    executor = OperationExecutor(
+        OperationRegistry(make_lifecycle_operations(LifecycleService("self", directory=directory))),
+        CallContext("self", "test", "test"),
+    )
+    return OperationTool(executor, "member-list")
 
 
 async def test_member_directory_matches_delivery_offline_and_after_restart(tmp_path: Path) -> None:
@@ -18,7 +30,9 @@ async def test_member_directory_matches_delivery_offline_and_after_restart(tmp_p
         assert app._runtime is not None
         runtime = app._runtime
         seeded_ids = set(runtime.members.list_ids())
-        baseline = (await ListMembersTool(directory=runtime.agent_registry).execute()).data
+        baseline = (
+            await _directory_tool(directory=runtime.agent_registry).execute_context({})
+        ).data
         assert len(seeded_ids) == 30
         async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
             async with http.post(
@@ -33,8 +47,8 @@ async def test_member_directory_matches_delivery_offline_and_after_restart(tmp_p
                 bob_id = (await response.json())["agent_id"]
             # Alice has a durable mailbox but no online adapter/SSE session.
             assert runtime.events.list_online_humans() == []
-            tool = ListMembersTool(directory=runtime.agent_registry)
-            result = await tool.execute()
+            tool = _directory_tool(directory=runtime.agent_registry)
+            result = await tool.execute_context({})
             assert result.success
             assert result.data == sorted(
                 [
@@ -56,15 +70,15 @@ async def test_member_directory_matches_delivery_offline_and_after_restart(tmp_p
             receipt = await _send_mail(http, url, "directory address is deliverable", to=["alice"])
             assert _read_inbox(tmp_path, "human:alice")[0]["id"] == receipt["mail_id"]
         await asyncio.to_thread(runtime.post_office.store.retire, bob_id)
-        assert (await tool.execute()).data == baseline
+        assert (await tool.execute_context({})).data == baseline
         assert (await runtime.agent_registry._health.scan_orphan_mail())[
             "scanned_members"
         ] == sorted(member["id"] for member in baseline)
 
     async with _server(tmp_path) as (_, restarted):
         assert restarted._runtime is not None
-        tool = ListMembersTool(directory=restarted._runtime.agent_registry)
-        result = await tool.execute()
+        tool = _directory_tool(directory=restarted._runtime.agent_registry)
+        result = await tool.execute_context({})
         assert result.data == baseline
         assert all(set(member) == {"id", "name", "address"} for member in result.data)
         assert all("human:" not in member["id"] for member in result.data)

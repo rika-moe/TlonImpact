@@ -1,7 +1,7 @@
 """Heterogeneous peer review of staging proposals (see
 docs/design/prototypes.md).
 
-``reviewPrototype`` lets a member review a staged proposal: the caller
+``prototype-review`` lets a member review a staged proposal: the caller
 only names the proposal — the verdict is NOT caller-supplied. The tool
 makes one dedicated review call with the reviewer's own ``llm_client``
 (purpose="review"), so the record format is uniform and the heterogeneity
@@ -15,8 +15,8 @@ library for free. Reviews are advisory — they never gate ``approve``;
 the human reads them on the detail endpoint when deciding.
 
 No retry inside the tool — an unparseable verdict comes back as
-``success=False`` without writing a record, and the outer ReAct loop is
-the retry mechanism (the ``proposeBehavior`` precedent).
+a known rejection without writing a record, and the outer ReAct loop is
+the retry mechanism (the ``behavior-propose`` precedent).
 """
 
 from collections.abc import Callable
@@ -25,8 +25,8 @@ from typing import Any
 
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
-from tlon.tools.base import Tool, ToolResult
-from tlon.tools.prototypes.ports import PrototypeError, PrototypeSummary
+from tlon.evolution.ports import PrototypeError, PrototypeSummary
+from tlon.operations.schema import RejectedError
 
 logger = get_logger(__name__)
 
@@ -69,8 +69,8 @@ def _render_lineage(chain: list[dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
-class ReviewPrototypeTool(Tool):
-    """Tool to peer-review a staging proposal with one dedicated LLM call.
+class PrototypeReviewer:
+    """Service to peer-review a staging proposal with one dedicated LLM call.
 
     The injected ``detail`` / ``lineage`` / ``append_review`` callables are
     the domain functions of ``agents.prototypes`` (dependency inversion,
@@ -89,40 +89,19 @@ class ReviewPrototypeTool(Tool):
         lineage: Callable[[str], list[dict[str, Any]]],
         append_review: Callable[[str, str], None],
     ) -> None:
-        super().__init__(
-            name="reviewPrototype",
-            description=(
-                "评审一个 staging 区的原型提案（异质评审）。只点名提案——"
-                "结论不由你当场给：工具内部用你自己的模型做一次专项评审调用，"
-                "读取提案的 behavior 全文、随包教训与谱系链（含每代 diff）后产出"
-                " verdict（通过/不通过/弃权）与理由，追加记入提案目录的 REVIEW.md"
-                "（含时间、你的 id 与你的模型）。评审是咨询性的：不自动晋级，"
-                "人类审批时参考这些记录做决定。提案不存在或不在 staging 时失败。"
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "staging 区提案名称（trusted 库原型不可评审）",
-                    },
-                },
-                "required": ["name"],
-            },
-        )
         self._reviewer_id = reviewer_id
         self._llm_client = llm_client
         self._detail = detail
         self._lineage = lineage
         self._append_review = append_review
 
-    async def execute(self, **kwargs: Any) -> ToolResult:
+    async def execute(self, **kwargs: Any) -> dict[str, Any]:
         name: str = kwargs["name"]
         try:
             info, behavior, lessons, _reviews = self._detail(name)
             chain = self._lineage(name)
         except PrototypeError as e:
-            return ToolResult(success=False, data=None, error=str(e), message=f"评审失败: {e}")
+            raise RejectedError(str(e), {}) from e
 
         prompt_parts = [
             f"## 提案元数据\nID：{info.name}；行为显示名：{info.display_name}；描述：{info.description}；作者：{info.author or '未知'}；"
@@ -145,11 +124,8 @@ class ReviewPrototypeTool(Tool):
         first_line, _, reason = content.partition("\n")
         verdict = first_line.strip()
         if verdict not in VERDICTS:
-            return ToolResult(
-                success=False,
-                data={},
-                error=f"评审响应首行不是合法 verdict（{'/'.join(VERDICTS)}）：{first_line!r}",
-                message="评审调用的响应格式不合规，未记录，请重试",
+            raise RejectedError(
+                f"评审响应首行不是合法 verdict（{'/'.join(VERDICTS)}）：{first_line!r}", {}
             )
 
         model = self._llm_client.config.model_name
@@ -158,9 +134,7 @@ class ReviewPrototypeTool(Tool):
         try:
             self._append_review(name, entry)
         except PrototypeError as e:
-            return ToolResult(
-                success=False, data=None, error=str(e), message=f"评审记录落盘失败: {e}"
-            )
+            raise RejectedError(str(e), {}) from e
 
         logger.info(
             "prototype_reviewed",
@@ -169,16 +143,9 @@ class ReviewPrototypeTool(Tool):
             model=model,
             verdict=verdict,
         )
-        return ToolResult(
-            success=True,
-            data={
-                "name": name,
-                "verdict": verdict,
-                "reviewer": self._reviewer_id,
-                "model": model,
-            },
-            message=(
-                f"评审已记入 '{name}' 的 REVIEW.md：{verdict}。"
-                "评审是咨询性的——晋级与否由人类审批（ops/WebUI）决定。"
-            ),
-        )
+        return {
+            "name": name,
+            "verdict": verdict,
+            "reviewer": self._reviewer_id,
+            "model": model,
+        }

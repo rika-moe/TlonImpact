@@ -1,4 +1,4 @@
-"""reviewPrototype — heterogeneous peer review of staging proposals ().
+"""prototype-review — heterogeneous peer review of staging proposals ().
 
 The caller only names the proposal; the verdict comes from one dedicated
 review call with the reviewer's own ``llm_client`` (purpose="review"),
@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from tests.evolution_helpers import make_review_tool
 from tlon.agents.prototypes.catalog import get_prototype_detail
 from tlon.agents.prototypes.lineage import get_prototype_lineage
 from tlon.agents.prototypes.management import write_trusted_prototype
@@ -25,7 +26,7 @@ from tlon.agents.prototypes.staging import (
 from tlon.base.config import LLMConfig
 from tlon.base.llm_client import LLMResponse
 from tlon.base.paths import TlonPaths
-from tlon.tools.prototypes.review_prototype import ReviewPrototypeTool
+from tlon.operations.adapters import OperationTool
 
 _BASE_SPEC = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
 _CHILD_SPEC = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["y@tlon.internal"]})]}]}\n'
@@ -44,8 +45,8 @@ class _FakeLLM:
         return LLMResponse(content=self._content)
 
 
-def _make_tool(p: TlonPaths, reviewer_id: str, llm: _FakeLLM) -> ReviewPrototypeTool:
-    return ReviewPrototypeTool(
+def _make_tool(p: TlonPaths, reviewer_id: str, llm: _FakeLLM) -> OperationTool:
+    return make_review_tool(
         reviewer_id=reviewer_id,
         llm_client=llm,
         detail=lambda name: get_prototype_detail(name, staging=True, tlon_paths=p),
@@ -76,7 +77,7 @@ class TestReviewPrototype:
         parent_id, child_id = _stage_child(p)
         llm = _FakeLLM("通过\n变更与 proposal_note 一致，spec 完整自足。")
         tool = _make_tool(p, "c-scribe-00000002", llm)
-        result = await tool.execute(name=child_id)
+        result = await tool.execute_context({"name": child_id})
         assert result.success, result.error
         assert result.data == {
             "name": child_id,
@@ -112,7 +113,7 @@ class TestReviewPrototype:
         llm = _FakeLLM("不通过\n理由甲。")
         tool = _make_tool(p, "r-1", llm)
         for _ in range(3):
-            result = await tool.execute(name=child_id)
+            result = await tool.execute_context({"name": child_id})
             assert result.success, result.error
         text = (p.prototypes_staging_dir() / child_id / "REVIEW.md").read_text(encoding="utf-8")
         assert text.count("# 评审记录") == 1
@@ -124,7 +125,7 @@ class TestReviewPrototype:
         p = TlonPaths(home=tmp_path)
         parent_id, child_id = _stage_child(p)
         tool = _make_tool(p, "r-1", _FakeLLM("通过\n可以晋级。"))
-        await tool.execute(name=child_id)
+        await tool.execute_context({"name": child_id})
         approve_prototype(child_id, tlon_paths=p)
         trusted_review = p.prototypes_dir() / child_id / "REVIEW.md"
         assert trusted_review.exists()
@@ -141,7 +142,7 @@ class TestReviewPrototype:
             _BASE_SPEC, author_id="a", tlon_paths=p, display_name="定址转发"
         )
         tool = _make_tool(p, "r-1", _FakeLLM(f"{verdict}\n理由。"))
-        result = await tool.execute(name=created_1.name)
+        result = await tool.execute_context({"name": created_1.name})
         assert result.success, result.error
         assert result.data["verdict"] == verdict
 
@@ -152,7 +153,7 @@ class TestReviewPrototype:
             _BASE_SPEC, author_id="a", tlon_paths=p, display_name="定址转发"
         )
         tool = _make_tool(p, "r-1", _FakeLLM("我觉得可以\n因为……"))
-        result = await tool.execute(name=created_1.name)
+        result = await tool.execute_context({"name": created_1.name})
         assert not result.success
         assert "verdict" in result.error
         assert not (p.prototypes_staging_dir() / created_1.name / "REVIEW.md").exists()
@@ -162,7 +163,7 @@ class TestReviewPrototype:
         p = TlonPaths(home=tmp_path)
         llm = _FakeLLM("通过\n理由。")
         tool = _make_tool(p, "r-1", llm)
-        result = await tool.execute(name="ghost")
+        result = await tool.execute_context({"name": "ghost"})
         assert not result.success
         assert "no prototype named 'ghost'" in result.error
         assert llm.calls == []
@@ -173,6 +174,6 @@ class TestReviewPrototype:
         created_1 = write_trusted_prototype(_BASE_SPEC, tlon_paths=p, display_name="定址转发")
         llm = _FakeLLM("通过\n理由。")
         tool = _make_tool(p, "r-1", llm)
-        result = await tool.execute(name=created_1.name)
+        result = await tool.execute_context({"name": created_1.name})
         assert not result.success
         assert llm.calls == []

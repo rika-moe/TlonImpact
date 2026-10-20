@@ -30,8 +30,13 @@ def bound(tmp_path: Path, member: str = "a", mentor: str | None = None):
 async def test_reply_endorsement_and_mentor_are_shared_submission_policy(tmp_path: Path) -> None:
     office, box, service, executor = bound(tmp_path, mentor="b@tlon.internal")
     original = await office.send(from_address="b@tlon.internal", to=["a"], content="evidence")
-    result = await OperationTool(executor, "mail-send").execute(
-        to=["a"], content="thanks", in_reply_to=original.mail.id, endorsing=original.mail.id
+    result = await OperationTool(executor, "mail-send").execute_context(
+        {
+            "to": ["a"],
+            "content": "thanks",
+            "in_reply_to": original.mail.id,
+            "endorsing": original.mail.id,
+        }
     )
     assert result.success
     sent = (await box.sent())[0]
@@ -115,7 +120,9 @@ async def test_dsl_and_tool_share_named_inputs_and_receipts(tmp_path: Path) -> N
     arguments = {Keyword("to"): ["b"], Keyword("content"): "dsl"}
     result = await adapter.handle(BuiltinCall("mail-send", builtin, [arguments], {}))
     assert result[Keyword("status")] == "accepted"
-    tool = await OperationTool(executor, "mail-send").execute(to=["b"], content="dsl")
+    tool = await OperationTool(executor, "mail-send").execute_context(
+        {"to": ["b"], "content": "dsl"}
+    )
     assert tool.success
     assert result[Keyword("mail_id")] == tool.data["mail_id"]
 
@@ -148,7 +155,9 @@ async def test_limits_and_strict_inputs_apply_to_both_entry_points(tmp_path: Pat
 
     with pytest.raises(InputError):
         await executor.call("mail-check-inbox", {"limit": 51})
-    rejected = await OperationTool(executor, "mail-search").execute(limit=21, query="a")
+    rejected = await OperationTool(executor, "mail-search").execute_context(
+        {"limit": 21, "query": "a"}
+    )
     assert not rejected.success
     with pytest.raises(InputError):
         await executor.call("mail-send", {"to": ["b"], "content": "x", "member_id": "b"})
@@ -184,7 +193,9 @@ async def test_post_commit_exceptions_preserve_unknown_request_id(
         raise failure
 
     monkeypatch.setattr(office, "send", lose_response)
-    result = await OperationTool(executor, "mail-send").execute(to=["b"], content="committed")
+    result = await OperationTool(executor, "mail-send").execute_context(
+        {"to": ["b"], "content": "committed"}
+    )
     assert not result.success
     assert result.data == {"outcome": "unknown", "request_id": "call-1"}
     monkeypatch.setattr(office, "send", original_send)

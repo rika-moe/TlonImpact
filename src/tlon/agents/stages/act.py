@@ -21,7 +21,7 @@ from tlon.base.events.event import EventType
 from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.tools.base import ToolResult
 
-ENDING_TOOLS = frozenset({"finishTurn", "sleepUntil", "exitAgent"})
+ENDING_TOOLS = frozenset({"finish-turn", "sleep-until", "exit-agent"})
 
 
 def attempts_completion(response: LLMResponse | None) -> bool:
@@ -78,7 +78,7 @@ async def act_stage_step(
             context_appends=[
                 {
                     "role": "user",
-                    "content": "冲突：finishTurn、sleepUntil、exitAgent 必须单独调用，不能与其他工具同时调用。请另起一轮。",
+                    "content": "冲突：finish-turn、sleep-until、exit-agent 必须单独调用，不能与其他工具同时调用。请另起一轮。",
                 }
             ],
             advance_iteration=True,
@@ -187,8 +187,8 @@ def _no_tool_reminder_appends(response: LLMResponse) -> list[dict[str, Any]]:
             "role": "user",
             "content": (
                 "你必须调用工具，不能直接输出文本。需要发信时调用 mail-send 或 mail-forward；"
-                "发信不会结束工作。完成后另起一轮单独调用 finishTurn，"
-                "或使用 sleepUntil 定时睡眠、exitAgent 永久退出。"
+                "发信不会结束工作。完成后另起一轮单独调用 finish-turn，"
+                "或使用 sleep-until 定时睡眠、exit-agent 永久退出。"
             ),
         }
     )

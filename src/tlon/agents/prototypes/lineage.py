@@ -13,7 +13,7 @@ from tlon.agents.prototypes.info import (
     _validate_name,
 )
 from tlon.base.paths import TlonPaths
-from tlon.tools.prototypes.ports import PrototypeError
+from tlon.evolution.ports import PrototypeError
 
 _MAX_LINEAGE_DEPTH = 32
 

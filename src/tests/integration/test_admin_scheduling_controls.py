@@ -35,7 +35,7 @@ async def test_admin_sleep_wake_drain_wait_and_terminal_death(tmp_path: Path) ->
             await release.wait()
             name, args = "mail-mark-read", {"mail_ids": [mail.id for mail in unread]}
         else:
-            name, args = "finishTurn", {}
+            name, args = "finish-turn", {}
         return LLMResponse(
             content=None,
             tool_calls=[ToolCall(id=f"admin-control-{calls}", function_name=name, arguments=args)],

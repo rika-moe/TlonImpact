@@ -17,7 +17,7 @@ from tlon.agents.prototypes.info import (
 )
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
-from tlon.tools.prototypes.ports import PrototypeError
+from tlon.evolution.ports import PrototypeError
 
 logger = get_logger(__name__)
 

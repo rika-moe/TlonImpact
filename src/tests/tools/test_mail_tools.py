@@ -98,7 +98,7 @@ class TestSearchMailsTool:
         await _seed_mailbox(mailbox)
         tool = _search_tool(tlon_paths)
 
-        result = await tool.execute(query="季度 分析")
+        result = await tool.execute_context({"query": "季度 分析"})
 
         assert result.success
         # "季度"+"分析" AND: m1（正文含两者）与 m2（主题/正文各含其一）都命中，m3 不命中
@@ -112,7 +112,7 @@ class TestSearchMailsTool:
         await _seed_mailbox(mailbox)
         tool = _search_tool(tlon_paths)
 
-        result = await tool.execute(query="b-002")
+        result = await tool.execute_context({"query": "b-002"})
 
         assert result.success
         assert result.data["count"] == 3
@@ -123,7 +123,7 @@ class TestSearchMailsTool:
         await mailbox.append_inbox(_mail("m-long", BOB, [OWN], long_content, "2026-09-06T12:00:00"))
         tool = _search_tool(tlon_paths)
 
-        result = await tool.execute(mail_id="m-long")
+        result = await tool.execute_context({"mail_id": "m-long"})
 
         assert result.success
         assert result.data["mail"]["content"] == long_content
@@ -133,7 +133,7 @@ class TestSearchMailsTool:
         await _seed_mailbox(mailbox)
         tool = _search_tool(tlon_paths)
 
-        result = await tool.execute(mail_id="nope")
+        result = await tool.execute_context({"mail_id": "nope"})
 
         assert not result.success
         assert "nope" in result.error
@@ -146,15 +146,17 @@ class TestSearchMailsTool:
             )
         tool = _search_tool(tlon_paths)
 
-        capped = await tool.execute(query="命中词", limit=SEARCH_MAILS_MAX_LIMIT + 5)
+        capped = await tool.execute_context(
+            {"query": "命中词", "limit": SEARCH_MAILS_MAX_LIMIT + 5}
+        )
         assert not capped.success
-        capped = await tool.execute(query="命中词", limit=SEARCH_MAILS_MAX_LIMIT)
+        capped = await tool.execute_context({"query": "命中词", "limit": SEARCH_MAILS_MAX_LIMIT})
         assert capped.data["count"] == SEARCH_MAILS_MAX_LIMIT
 
-        defaulted = await tool.execute(query="命中词")
+        defaulted = await tool.execute_context({"query": "命中词"})
         assert defaulted.data["count"] == 10
 
-        explicit = await tool.execute(query="命中词", limit=3)
+        explicit = await tool.execute_context({"query": "命中词", "limit": 3})
         assert [m["id"] for m in explicit.data["mails"]] == ["m24", "m23", "m22"]
 
     @pytest.mark.asyncio
@@ -164,7 +166,7 @@ class TestSearchMailsTool:
         await bobs.append_inbox(_mail("b1", OWN, [BOB], "季度数据", "2026-09-06T10:00:00"))
         tool = _search_tool(tlon_paths)
 
-        result = await tool.execute(query="季度")
+        result = await tool.execute_context({"query": "季度"})
 
         assert result.success
         assert result.data["count"] == 0
@@ -174,7 +176,7 @@ class TestSearchMailsTool:
         await _seed_mailbox(mailbox)
         tool = _search_tool(tlon_paths)
 
-        result = await tool.execute(query="不存在的关键词")
+        result = await tool.execute_context({"query": "不存在的关键词"})
 
         assert result.success
         assert result.data["mails"] == []
@@ -184,7 +186,7 @@ class TestSearchMailsTool:
     async def test_requires_query_or_mail_id(self, tlon_paths: TlonPaths):
         tool = _search_tool(tlon_paths)
 
-        result = await tool.execute()
+        result = await tool.execute_context({})
 
         assert not result.success
         assert "至少传一个" in result.error
@@ -202,14 +204,14 @@ class TestSearchMailsTool:
         await mailbox.append_inbox(_mail("int1", BOB, [OWN], "内部来信", "2026-09-06T11:00:00"))
         tool = _search_tool(tlon_paths)
 
-        external = await tool.execute(query="CI")
+        external = await tool.execute_context({"query": "CI"})
         assert external.data["mails"][0]["external"] is True
 
-        internal = await tool.execute(query="内部来信")
+        internal = await tool.execute_context({"query": "内部来信"})
         assert internal.data["mails"][0]["external"] is False
 
         # mail_id lookup returns the full dict, flag included
-        full = await tool.execute(mail_id="ext1")
+        full = await tool.execute_context({"mail_id": "ext1"})
         assert full.data["mail"]["external"] is True
 
     @pytest.mark.asyncio
@@ -221,7 +223,7 @@ class TestSearchMailsTool:
         )
         tool = _search_tool(tlon_paths)
 
-        result = await tool.execute(query="长")
+        result = await tool.execute_context({"query": "长"})
 
         excerpt = result.data["mails"][0]["content_excerpt"]
         assert excerpt == "长" * CONTENT_EXCERPT_LENGTH + "…"
@@ -244,7 +246,7 @@ class TestCheckInboxTool:
         await _seed_mailbox(mailbox)
         tool = _check_inbox_tool(tlon_paths)
 
-        result = await tool.execute()
+        result = await tool.execute_context({})
 
         assert result.success
         assert [m["id"] for m in result.data["mails"]] == ["m1", "m3"]
@@ -268,7 +270,7 @@ class TestCheckInboxTool:
         )
         tool = _check_inbox_tool(tlon_paths)
 
-        result = await tool.execute()
+        result = await tool.execute_context({})
 
         assert result.data["mails"][0]["external"] is True
 
@@ -276,7 +278,7 @@ class TestCheckInboxTool:
     async def test_empty_inbox(self, tlon_paths: TlonPaths):
         tool = _check_inbox_tool(tlon_paths)
 
-        result = await tool.execute()
+        result = await tool.execute_context({})
 
         assert result.success
         assert result.data["mails"] == []
@@ -288,7 +290,7 @@ class TestCheckInboxTool:
         await mailbox.mark_read("m1")
         tool = _check_inbox_tool(tlon_paths)
 
-        result = await tool.execute()
+        result = await tool.execute_context({})
 
         assert [m["id"] for m in result.data["mails"]] == ["m3"]
         assert result.data["total_unread"] == 1
@@ -303,18 +305,18 @@ class TestCheckInboxTool:
             )
         tool = _check_inbox_tool(tlon_paths)
 
-        capped = await tool.execute(limit=CHECK_INBOX_MAX_LIMIT + 5)
+        capped = await tool.execute_context({"limit": CHECK_INBOX_MAX_LIMIT + 5})
         assert not capped.success
-        capped = await tool.execute(limit=CHECK_INBOX_MAX_LIMIT)
+        capped = await tool.execute_context({"limit": CHECK_INBOX_MAX_LIMIT})
         assert capped.data["count"] == CHECK_INBOX_MAX_LIMIT
         assert capped.data["total_unread"] == CHECK_INBOX_MAX_LIMIT + 10
         # 截断保留最旧的（处理顺序），不是最新的
         assert capped.data["mails"][0]["id"] == "m00"
 
-        defaulted = await tool.execute()
+        defaulted = await tool.execute_context({})
         assert defaulted.data["count"] == CHECK_INBOX_DEFAULT_LIMIT
 
-        explicit = await tool.execute(limit=3)
+        explicit = await tool.execute_context({"limit": 3})
         assert [m["id"] for m in explicit.data["mails"]] == ["m00", "m01", "m02"]
 
     @pytest.mark.asyncio
@@ -324,7 +326,7 @@ class TestCheckInboxTool:
         await bobs.append_inbox(_mail("b1", OWN, [BOB], "季度数据", "2026-09-06T10:00:00"))
         tool = _check_inbox_tool(tlon_paths)
 
-        result = await tool.execute()
+        result = await tool.execute_context({})
 
         assert result.success
         assert result.data["total_unread"] == 0
@@ -336,7 +338,7 @@ class TestMarkReadTool:
         await _seed_mailbox(mailbox)  # 未读：m1, m3（m2 是 sent）
         tool = _mark_read_tool(tlon_paths)
 
-        result = await tool.execute(mail_ids=["m1", "m3"])
+        result = await tool.execute_context({"mail_ids": ["m1", "m3"]})
 
         assert result.success
         assert result.data == {"marked": ["m1", "m3"], "already_read": [], "not_found": []}
@@ -347,8 +349,8 @@ class TestMarkReadTool:
         await _seed_mailbox(mailbox)
         tool = _mark_read_tool(tlon_paths)
 
-        await tool.execute(mail_ids=["m1"])
-        again = await tool.execute(mail_ids=["m1"])
+        await tool.execute_context({"mail_ids": ["m1"]})
+        again = await tool.execute_context({"mail_ids": ["m1"]})
 
         assert again.success
         assert again.data["marked"] == []
@@ -360,7 +362,7 @@ class TestMarkReadTool:
         await _seed_mailbox(mailbox)
         tool = _mark_read_tool(tlon_paths)
 
-        result = await tool.execute(mail_ids=["nope", "m1"])
+        result = await tool.execute_context({"mail_ids": ["nope", "m1"]})
 
         assert result.success
         assert result.data["not_found"] == ["nope"]
@@ -373,7 +375,7 @@ class TestMarkReadTool:
         await _seed_mailbox(mailbox)  # m2 在 sent
         tool = _mark_read_tool(tlon_paths)
 
-        result = await tool.execute(mail_ids=["m2"])
+        result = await tool.execute_context({"mail_ids": ["m2"]})
 
         assert result.data["not_found"] == ["m2"]
         assert [mail.id for mail in await mailbox.unread()] == ["m1", "m3"]
@@ -382,13 +384,13 @@ class TestMarkReadTool:
     async def test_requires_mail_ids(self, tlon_paths: TlonPaths):
         tool = _mark_read_tool(tlon_paths)
 
-        missing = await tool.execute()
+        missing = await tool.execute_context({})
         assert not missing.success
 
-        empty = await tool.execute(mail_ids=[])
+        empty = await tool.execute_context({"mail_ids": []})
         assert not empty.success
 
-        wrong_type = await tool.execute(mail_ids="m1")
+        wrong_type = await tool.execute_context({"mail_ids": "m1"})
         assert not wrong_type.success
 
     @pytest.mark.asyncio
@@ -400,7 +402,7 @@ class TestMarkReadTool:
         tool = _mark_read_tool(tlon_paths)
 
         # a-001 的收件箱里没有 b1——not_found，且 Bob 的未读不变
-        result = await tool.execute(mail_ids=["b1", "m1"])
+        result = await tool.execute_context({"mail_ids": ["b1", "m1"]})
 
         assert result.data["not_found"] == ["b1"]
         assert result.data["marked"] == ["m1"]

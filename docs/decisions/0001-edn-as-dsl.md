@@ -1,5 +1,6 @@
 # ADR 0001：用 Lisp 风格 EDN 作为行为 DSL 的语法
 
+> P3c 当前实现：宿主能力统一定义为 Operation；Tool 与 DSL 共用定义和执行边界。旧工具名和类名仅记录当时设计，当前入口见 [工具手册](../reference/tools-reference.md)。
 > 阅读定位：本文保留当时的选择与理由；当前设计见 [dsl](../design/dsl.md)。当前适用范围：语法选择保留；「无 fn/def」由 ADR 0021 修订，语言核心路径由 ADR 0018 调整。完整关系见 [决策索引](README.md)。
 
 - 状态：已接受（回溯记录，2026-08-15）
@@ -7,7 +8,7 @@
 
 ## 背景
 
-Tlon 要求 agent 的行为是数据而不是代码（见 [../vision.md](../vision.md) 的「行为即数据」）：只有行为可被读写，agent 才能自己书写行为，自进化才有可能。同时这份数据的预期作者包括 LLM（[tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py)），所以承载它的语言必须满足一组不常见的同时成立的约束：
+Tlon 要求 agent 的行为是数据而不是代码（见 [../vision.md](../vision.md) 的「行为即数据」）：只有行为可被读写，agent 才能自己书写行为，自进化才有可能。同时这份数据的预期作者包括 LLM（[tools/agents/write_prototype.py](../../src/tlon/evolution/write_prototype.py)），所以承载它的语言必须满足一组不常见的同时成立的约束：
 
 1. 是数据——可解析、可序列化、可整体校验；
 2. 能表达策略——条件门控、循环、对事件负载的计算，不只是静态配置；

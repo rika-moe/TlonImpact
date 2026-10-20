@@ -24,7 +24,9 @@ def tool(paths):
 
 class TestUpdatePersonaTool:
     async def test_updates_identity_file(self, tool, paths):
-        result = await tool.execute(file="identity", content="# 我是谁\n\n核心自我认知。")
+        result = await tool.execute_context(
+            {"file": "identity", "content": "# 我是谁\n\n核心自我认知。"}
+        )
 
         assert result.success is True
         assert result.data["file"] == "identity"
@@ -33,7 +35,7 @@ class TestUpdatePersonaTool:
         assert target.read_text(encoding="utf-8") == "# 我是谁\n\n核心自我认知。"
 
     async def test_updates_soul_file(self, tool, paths):
-        result = await tool.execute(file="soul", content="角色定位与工作风格")
+        result = await tool.execute_context({"file": "soul", "content": "角色定位与工作风格"})
 
         assert result.success is True
         target = paths.agent_soul_file(AGENT_ID)
@@ -44,26 +46,26 @@ class TestUpdatePersonaTool:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("旧人格", encoding="utf-8")
 
-        result = await tool.execute(file="identity", content="新人格")
+        result = await tool.execute_context({"file": "identity", "content": "新人格"})
 
         assert result.success is True
         assert target.read_text(encoding="utf-8") == "新人格"
 
     async def test_invalid_file_value_rejected(self, tool, paths):
-        result = await tool.execute(file="rules", content="x")
+        result = await tool.execute_context({"file": "rules", "content": "x"})
 
         assert result.success is False
         assert "rules" in result.error
 
     async def test_empty_content_rejected(self, tool, paths):
         for content in ("", "   \n\t  "):
-            result = await tool.execute(file="identity", content=content)
+            result = await tool.execute_context({"file": "identity", "content": content})
             assert result.success is False
             assert "content" in result.error
         assert not paths.agent_identity_file(AGENT_ID).exists()
 
     async def test_other_member_untouched(self, tool, paths):
-        await tool.execute(file="identity", content="我自己的人格")
+        await tool.execute_context({"file": "identity", "content": "我自己的人格"})
 
         other = paths.agent_identity_file("a-002")
         assert not other.exists()
@@ -86,7 +88,7 @@ class TestPersonaLedgerAudit:
 
     async def test_success_appends_persona_update_record(self, tool, paths):
         content = "# 我是谁\n\n核心自我认知。"
-        result = await tool.execute(file="identity", content=content)
+        result = await tool.execute_context({"file": "identity", "content": content})
 
         assert result.success is True
         assert "留痕失败" not in result.message
@@ -101,15 +103,15 @@ class TestPersonaLedgerAudit:
         assert record["ts"]
 
     async def test_each_rewrite_appends_one_record(self, tool, paths):
-        await tool.execute(file="identity", content="第一版")
-        await tool.execute(file="soul", content="灵魂第一版")
+        await tool.execute_context({"file": "identity", "content": "第一版"})
+        await tool.execute_context({"file": "soul", "content": "灵魂第一版"})
 
         records = await read_ledger(paths.agent_ledger_file(AGENT_ID))
         assert [r["file"] for r in records] == ["identity", "soul"]
 
     async def test_failed_call_writes_no_ledger_record(self, tool, paths):
-        await tool.execute(file="rules", content="x")
-        await tool.execute(file="identity", content="   ")
+        await tool.execute_context({"file": "rules", "content": "x"})
+        await tool.execute_context({"file": "identity", "content": "   "})
 
         assert not paths.agent_ledger_file(AGENT_ID).exists()
 
@@ -125,7 +127,7 @@ class TestPersonaLedgerAudit:
 
         monkeypatch.setattr(LedgerWriter, "append", _boom)
 
-        result = await tool.execute(file="identity", content="新人格")
+        result = await tool.execute_context({"file": "identity", "content": "新人格"})
 
         assert result.success is True
         assert "留痕失败" in result.message
@@ -147,7 +149,7 @@ class TestPersonaLedgerAudit:
             "session_id": "s1",
         }
         await LedgerWriter(paths.agent_ledger_file(AGENT_ID)).append(llm_record)
-        await tool.execute(file="identity", content="人格")
+        await tool.execute_context({"file": "identity", "content": "人格"})
 
         summary = await collect_agent_ledger(AGENT_ID, tlon_paths=paths)
         assert summary["calls"] == 1

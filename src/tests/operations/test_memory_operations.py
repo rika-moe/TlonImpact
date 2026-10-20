@@ -32,8 +32,8 @@ def services(
 
 async def test_real_memory_both_entries_and_persistence(tmp_path: Path) -> None:
     memory, _, executor = services(tmp_path, "a")
-    result = await OperationTool(executor, "memory-remember").execute(
-        fact="Python preferred", importance=0.8
+    result = await OperationTool(executor, "memory-remember").execute_context(
+        {"fact": "Python preferred", "importance": 0.8}
     )
     assert result.success and result.data["claim_id"]
     adapter = DSLAdapter(executor)

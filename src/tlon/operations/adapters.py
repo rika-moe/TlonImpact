@@ -4,7 +4,7 @@ from typing import Any
 
 from tlon.operations.core import CallContext, OperationExecutor
 from tlon.operations.schema import InputError, OperationError, edn_value, json_value, validate
-from tlon.tools.base import Tool, ToolResult
+from tlon.tools.base import ToolResult
 from tlosure.builtins import Builtin, BuiltinCall
 
 
@@ -51,13 +51,12 @@ class DSLAdapter:
         return edn_value(result)
 
 
-class OperationTool(Tool):
+class OperationTool:
     """Protocol projection; definitions and execution use the operation authority."""
 
     def __init__(self, executor: OperationExecutor, name: str) -> None:
         self._executor = executor
         self._operation = executor.registry.get(name)
-        super().__init__(name, self._operation.description, self._operation.input_schema)
 
     @property
     def default_timeout(self) -> float | None:
@@ -73,9 +72,28 @@ class OperationTool(Tool):
             },
         }
 
-    def validate_arguments(self, arguments: dict[str, Any]) -> list[str]:
-        """Defer once to the shared boundary; bypass the legacy shallow validator."""
-        return []
+    @property
+    def name(self) -> str:
+        return self._operation.name
+
+    @property
+    def description(self) -> str:
+        return self._operation.description
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return self._operation.input_schema
+
+    def get_parameter_description(self) -> str:
+        schema = self.parameters
+        required = schema.get("required", [])
+        lines = []
+        for name, field in schema.get("properties", {}).items():
+            kind = field.get("type", "JSON") if isinstance(field, dict) else "JSON"
+            description = field.get("description", "") if isinstance(field, dict) else ""
+            marker = " (required)" if name in required else ""
+            lines.append(f"  - {name} ({kind}){marker}: {description}")
+        return "\n".join(lines) if lines else "  (no parameters)"
 
     def recovery_metadata(self, arguments: dict[str, Any], context: CallContext) -> dict[str, Any]:
         if "write" not in self._operation.effects:
@@ -93,9 +111,6 @@ class OperationTool(Tool):
             data=data,
             error="Operation interrupted; outcome unknown" if data else "Operation interrupted",
         )
-
-    async def execute(self, /, **kwargs: Any) -> ToolResult:
-        return await self.execute_context(kwargs)
 
     async def execute_context(
         self, arguments: dict[str, Any], context: CallContext | None = None

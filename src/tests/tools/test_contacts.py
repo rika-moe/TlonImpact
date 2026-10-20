@@ -29,7 +29,7 @@ def _book(paths) -> str:
 
 class TestReadContacts:
     async def test_missing_file_reads_as_empty_book(self, reader, paths):
-        result = await reader.execute()
+        result = await reader.execute_context({})
 
         assert result.success is True
         assert result.data["entries"] == 0
@@ -39,10 +39,14 @@ class TestReadContacts:
         assert not paths.agent_contacts_file(AGENT_ID).exists()
 
     async def test_reads_full_text_with_entry_count(self, reader, writer):
-        await writer.execute(name="林知遥", address="lin@tlon.internal", description="聪明")
-        await writer.execute(name="沈默", address="shen@tlon.internal", description="话少靠谱")
+        await writer.execute_context(
+            {"name": "林知遥", "address": "lin@tlon.internal", "description": "聪明"}
+        )
+        await writer.execute_context(
+            {"name": "沈默", "address": "shen@tlon.internal", "description": "话少靠谱"}
+        )
 
-        result = await reader.execute()
+        result = await reader.execute_context({})
 
         assert result.success is True
         assert result.data["entries"] == 2
@@ -52,8 +56,8 @@ class TestReadContacts:
 
 class TestUpdateContact:
     async def test_add_creates_file_with_header_and_entry(self, writer, paths):
-        result = await writer.execute(
-            name="林知遥", address="lin@tlon.internal", description="聪明，做事快"
+        result = await writer.execute_context(
+            {"name": "林知遥", "address": "lin@tlon.internal", "description": "聪明，做事快"}
         )
 
         assert result.success is True
@@ -63,9 +67,11 @@ class TestUpdateContact:
         )
 
     async def test_same_name_upserts_address_and_description(self, writer, paths):
-        await writer.execute(name="林知遥", address="lin@tlon.internal", description="聪明")
-        result = await writer.execute(
-            name="林知遥", address="lin2@tlon.internal", description="聪明但急躁"
+        await writer.execute_context(
+            {"name": "林知遥", "address": "lin@tlon.internal", "description": "聪明"}
+        )
+        result = await writer.execute_context(
+            {"name": "林知遥", "address": "lin2@tlon.internal", "description": "聪明但急躁"}
         )
 
         assert result.success is True
@@ -76,14 +82,18 @@ class TestUpdateContact:
         assert content.count("## 林知遥") == 1
 
     async def test_free_text_lines_inside_section_survive_upsert(self, writer, paths):
-        await writer.execute(name="林知遥", address="lin@tlon.internal", description="聪明")
+        await writer.execute_context(
+            {"name": "林知遥", "address": "lin@tlon.internal", "description": "聪明"}
+        )
         book_file = paths.agent_contacts_file(AGENT_ID)
         book_file.write_text(
             "# 联系簿\n\n## 林知遥\n- 地址：lin@tlon.internal\n- 描述：聪明\n上次合作写规格很顺\n",
             encoding="utf-8",
         )
 
-        await writer.execute(name="林知遥", address="lin@tlon.internal", description="很靠谱")
+        await writer.execute_context(
+            {"name": "林知遥", "address": "lin@tlon.internal", "description": "很靠谱"}
+        )
 
         content = _book(paths)
         assert "上次合作写规格很顺" in content
@@ -97,17 +107,23 @@ class TestUpdateContact:
             encoding="utf-8",
         )
 
-        await writer.execute(name="沈默", address="shen@tlon.internal", description="靠谱")
+        await writer.execute_context(
+            {"name": "沈默", "address": "shen@tlon.internal", "description": "靠谱"}
+        )
 
         content = _book(paths)
         assert "我的社交小记：先记熟的。" in content
         assert "## 沈默" in content
 
     async def test_empty_description_deletes_entry(self, writer, paths):
-        await writer.execute(name="林知遥", address="lin@tlon.internal", description="聪明")
-        await writer.execute(name="沈默", address="shen@tlon.internal", description="靠谱")
+        await writer.execute_context(
+            {"name": "林知遥", "address": "lin@tlon.internal", "description": "聪明"}
+        )
+        await writer.execute_context(
+            {"name": "沈默", "address": "shen@tlon.internal", "description": "靠谱"}
+        )
 
-        result = await writer.execute(name="林知遥", description="")
+        result = await writer.execute_context({"name": "林知遥", "description": ""})
 
         assert result.success is True
         assert result.data["action"] == "deleted"
@@ -116,35 +132,45 @@ class TestUpdateContact:
         assert "沈默" in content
 
     async def test_delete_missing_entry_is_friendly_error(self, writer, paths):
-        result = await writer.execute(name="不存在", description="")
+        result = await writer.execute_context({"name": "不存在", "description": ""})
 
         assert result.success is False
         assert "不存在" in result.error
         assert not paths.agent_contacts_file(AGENT_ID).exists()
 
     async def test_add_without_address_rejected(self, writer, paths):
-        result = await writer.execute(name="林知遥", description="聪明")
+        result = await writer.execute_context({"name": "林知遥", "description": "聪明"})
 
         assert result.success is False
         assert "address" in result.error
         assert not paths.agent_contacts_file(AGENT_ID).exists()
 
     async def test_empty_name_rejected(self, writer):
-        result = await writer.execute(name="  ", address="x@tlon.internal", description="y")
+        result = await writer.execute_context(
+            {"name": "  ", "address": "x@tlon.internal", "description": "y"}
+        )
 
         assert result.success is False
 
     async def test_other_entries_untouched_by_upsert(self, writer, paths):
-        await writer.execute(name="林知遥", address="lin@tlon.internal", description="聪明")
-        await writer.execute(name="沈默", address="shen@tlon.internal", description="靠谱")
+        await writer.execute_context(
+            {"name": "林知遥", "address": "lin@tlon.internal", "description": "聪明"}
+        )
+        await writer.execute_context(
+            {"name": "沈默", "address": "shen@tlon.internal", "description": "靠谱"}
+        )
 
-        await writer.execute(name="林知遥", address="lin@tlon.internal", description="更新过")
+        await writer.execute_context(
+            {"name": "林知遥", "address": "lin@tlon.internal", "description": "更新过"}
+        )
 
         content = _book(paths)
         assert "- 描述：靠谱" in content
 
     async def test_other_member_untouched(self, writer, paths):
-        await writer.execute(name="林知遥", address="lin@tlon.internal", description="聪明")
+        await writer.execute_context(
+            {"name": "林知遥", "address": "lin@tlon.internal", "description": "聪明"}
+        )
 
         assert not paths.agent_contacts_file("a-002").exists()
 

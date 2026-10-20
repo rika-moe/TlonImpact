@@ -12,7 +12,7 @@ from tlon.agents.prototypes.info import BEHAVIOR_FILE, LESSONS_FILE, _is_prototy
 from tlon.base.config import AgentConfig, DockerRuntimeConfig, LLMConfig, yaml_exists, yaml_save
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
-from tlon.tools.prototypes.ports import PrototypeError
+from tlon.evolution.ports import PrototypeError
 from tlosure.edn import EDNParseError, loads
 
 logger = get_logger(__name__)

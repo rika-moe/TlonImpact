@@ -40,11 +40,11 @@ async def test_private_mail_stats_owner_cannot_be_overridden(tmp_path: Path) -> 
         _bound("alice", mail_stats_provider=provider),
         _bound("bob", mail_stats_provider=provider),
     )
-    a = await OperationTool(alice, "mail-stats").execute()
-    b = await OperationTool(bob, "mail-stats").execute()
+    a = await OperationTool(alice, "mail-stats").execute_context({})
+    b = await OperationTool(bob, "mail-stats").execute_context({})
     assert a.success and b.success
     assert a.data["agent_id"] == "alice" and b.data["agent_id"] == "bob"
-    denied = await OperationTool(alice, "mail-stats").execute(member_id="bob")
+    denied = await OperationTool(alice, "mail-stats").execute_context({"member_id": "bob"})
     assert not denied.success and "InputError" in denied.error
     adapter = DSLAdapter(alice)
     value = await adapter.handle(
@@ -72,10 +72,10 @@ async def test_public_cross_member_traces_and_full_schema() -> None:
     )
     store.list_traces.assert_awaited_once_with(limit=100, source="bob")
     assert json_value(value, edn_keys=True)["source"] == "bob"
-    result = await OperationTool(executor, "trace-read").execute(trace_id="trace")
+    result = await OperationTool(executor, "trace-read").execute_context({"trace_id": "trace"})
     assert result.success and result.data["span_tree"]["payload"] == {"llm.usage.prompt_tokens": 3}
     store.list_traces.reset_mock()
-    bad = await OperationTool(executor, "traces-list").execute(limit=101)
+    bad = await OperationTool(executor, "traces-list").execute_context({"limit": 101})
     assert not bad.success
     store.list_traces.assert_not_awaited()
 
@@ -87,8 +87,8 @@ async def test_metrics_non_json_and_missing_known_output_rejected() -> None:
     executor = _bound(
         "alice", metrics_snapshot=lambda: {"metrics": {"bad": {"points": [], "value": object()}}}
     )
-    result = await OperationTool(executor, "metrics-read").execute()
+    result = await OperationTool(executor, "metrics-read").execute_context({})
     assert not result.success and "OutputError" in result.error
     executor = _bound("alice", mail_stats_provider=AsyncMock(return_value={"agent_id": "alice"}))
-    result = await OperationTool(executor, "mail-stats").execute()
+    result = await OperationTool(executor, "mail-stats").execute_context({})
     assert not result.success and "OutputError" in result.error

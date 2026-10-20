@@ -28,7 +28,7 @@ from tlon.api.members import MembersFacade
 from tlon.api.prototypes import PrototypesFacade
 from tlon.base.config import yaml_load_all
 from tlon.base.paths import TlonPaths
-from tlon.tools.agents.ports import StopRejectedError
+from tlon.lifecycle.ports import StopRejectedError
 from tlon_server.api.rest import RESTAPIHandler
 
 
