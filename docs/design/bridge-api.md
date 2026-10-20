@@ -1,6 +1,6 @@
 # Bridge API：宿主机制与 tlosure 策略的接口
 
-> 后续方案（邮件 P2 已通过 #185 合并；文件/Shell/时间 P3a 正在实施，其余分阶段实施）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
+> 后续方案（邮件 P2 与文件/Shell/时间 P3a 已分别通过 #185/#186 合并；P3b 已接入，后续仍分阶段实施）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
 
 Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值语境能使用哪些词汇。它由 Python 协议、builtin 注册表、环境契约和 `ActionRequest` 组成；不是通用 FFI。语言及行为模型见 [DSL 设计](dsl.md)，字段与词汇见 [DSL reference](../reference/dsl-reference.md)。
 
@@ -29,8 +29,8 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 
 | 效果 | 返回值与边界 |
 | --- | --- |
-| `(state-get "key")` | 成员私有状态值，缺失为 `nil`；读取结果参与重放 |
-| `(state-put "key" value)` | 返回写入值；状态与该效果结果同事务提交 |
+| `(state-get {:key "key"})` | 成员私有状态值，缺失为 `nil`；读取结果参与重放 |
+| `(state-put {:key "key" :value value})` | 返回写入值；状态与该效果结果同事务提交 |
 | `(llm-call {:prompt "任务数据" :max-tokens 256})` | `{:content "..." :usage {...}}`；不附工具，保留人格、RULES 与协议，额度受成员与规则预算约束 |
 | `(mail-send {:to ["地址"] :content "正文" :request_id "稳定键"})` | 真实邮局回执；拒收抛 RejectedError，未知抛 UnknownOutcomeError，均带结构化 data |
 

@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from tlon.tools.tasks.manager import Task, TaskStatus
+from tlon.tasks.models import Task, TaskStatus
 
 
 class TestTask:

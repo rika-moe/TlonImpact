@@ -3,7 +3,7 @@
 All rules use one event-driven program format
 (phase C). Unified member model (ADR 0006): prototypes carry no persona —
 a member's persona files are seeded at creation and member-owned
-afterwards (self-editable via ``updatePersona``, ADR 0024), never part of
+afterwards (self-editable via ``persona-update``, ADR 0024), never part of
 the behavior genome.
 """
 

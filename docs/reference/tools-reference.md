@@ -31,7 +31,7 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 ### 注册清单
 
 <!-- BEGIN GENERATED: tool-registry -->
-满配成员注册 46 个工具（尚未切换的 Tool 按 assembly 顺序，共享 Operation 按域列出；L0 不注册 7 个装置操作，L1 注册 5 个文件操作，L2 再增加 2 个 Shell 操作；时间不依赖装置）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+满配成员注册 48 个工具（尚未切换的 Tool 按 assembly 顺序，共享 Operation 按域列出；L0 不注册 7 个装置操作，L1 注册 5 个文件操作，L2 再增加 2 个 Shell 操作；时间不依赖装置）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | # | 工具名 | 实现 | 域 |
 |---|---|---|---|
@@ -39,48 +39,50 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 | 2 | `sleepUntil` | [tools/agents/scheduling.py](../../src/tlon/tools/agents/scheduling.py) 的 `SleepUntilTool` | agents |
 | 3 | `exitAgent` | [tools/agents/scheduling.py](../../src/tlon/tools/agents/scheduling.py) 的 `ExitAgentTool` | agents |
 | 4 | `getSelfState` | [tools/agents/scheduling.py](../../src/tlon/tools/agents/scheduling.py) 的 `GetSelfStateTool` | agents |
-| 5 | `updatePersona` | [tools/agents/update_persona.py](../../src/tlon/tools/agents/update_persona.py) 的 `UpdatePersonaTool` | agents |
-| 6 | `readContacts` | [tools/agents/contacts.py](../../src/tlon/tools/agents/contacts.py) 的 `ReadContactsTool` | agents |
-| 7 | `updateContact` | [tools/agents/contacts.py](../../src/tlon/tools/agents/contacts.py) 的 `UpdateContactTool` | agents |
-| 8 | `listPrototypes` | [tools/prototypes/list_prototypes.py](../../src/tlon/tools/prototypes/list_prototypes.py) 的 `ListPrototypesTool` | prototypes |
-| 9 | `listStagingPrototypes` | [tools/prototypes/list_staging.py](../../src/tlon/tools/prototypes/list_staging.py) 的 `ListStagingPrototypesTool` | prototypes |
-| 10 | `getPrototypeLineage` | [tools/prototypes/get_lineage.py](../../src/tlon/tools/prototypes/get_lineage.py) 的 `GetPrototypeLineageTool` | prototypes |
-| 11 | `reviewPrototype` | [tools/prototypes/review_prototype.py](../../src/tlon/tools/prototypes/review_prototype.py) 的 `ReviewPrototypeTool` | prototypes |
-| 12 | `spawnAgent` | [tools/agents/spawn_agent.py](../../src/tlon/tools/agents/spawn_agent.py) 的 `SpawnAgentTool` | agents |
-| 13 | `listMembers` | [tools/agents/list_members.py](../../src/tlon/tools/agents/list_members.py) 的 `ListMembersTool` | agents |
-| 14 | `writePrototype` | [tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py) 的 `WritePrototypeTool` | agents |
-| 15 | `proposeBehavior` | [tools/agents/propose_behavior.py](../../src/tlon/tools/agents/propose_behavior.py) 的 `ProposeBehaviorTool` | agents |
-| 16 | `proposeCapability` | [tools/agents/propose_capability.py](../../src/tlon/tools/agents/propose_capability.py) 的 `ProposeCapabilityTool` | agents |
-| 17 | `rememberFact` | [tools/memory/remember_fact.py](../../src/tlon/tools/memory/remember_fact.py) 的 `RememberFactTool` | memory |
-| 18 | `searchMemories` | [tools/memory/search_memories.py](../../src/tlon/tools/memory/search_memories.py) 的 `SearchMemoriesTool` | memory |
-| 19 | `forget` | [tools/memory/forget_memory.py](../../src/tlon/tools/memory/forget_memory.py) 的 `ForgetMemoryTool` | memory |
-| 20 | `readSession` | [tools/memory/read_session.py](../../src/tlon/tools/memory/read_session.py) 的 `ReadSessionTool` | memory |
-| 21 | `createTask` | [tools/tasks/create_task.py](../../src/tlon/tools/tasks/create_task.py) 的 `CreateTaskTool` | tasks |
-| 22 | `listTasks` | [tools/tasks/list_tasks.py](../../src/tlon/tools/tasks/list_tasks.py) 的 `ListTasksTool` | tasks |
-| 23 | `startTask` | [tools/tasks/start_task.py](../../src/tlon/tools/tasks/start_task.py) 的 `StartTaskTool` | tasks |
-| 24 | `pauseTask` | [tools/tasks/pause_task.py](../../src/tlon/tools/tasks/pause_task.py) 的 `PauseTaskTool` | tasks |
-| 25 | `completeTask` | [tools/tasks/complete_task.py](../../src/tlon/tools/tasks/complete_task.py) 的 `CompleteTaskTool` | tasks |
-| 26 | `removeTask` | [tools/tasks/remove_task.py](../../src/tlon/tools/tasks/remove_task.py) 的 `RemoveTaskTool` | tasks |
-| 27 | `getCurrentTask` | [tools/tasks/get_current_task.py](../../src/tlon/tools/tasks/get_current_task.py) 的 `GetCurrentTaskTool` | tasks |
-| 28 | `getMailStats` | [tools/observability/mail_stats.py](../../src/tlon/tools/observability/mail_stats.py) 的 `GetMailStatsTool` | observability |
-| 29 | `getReputation` | [tools/observability/reputation.py](../../src/tlon/tools/observability/reputation.py) 的 `GetReputationTool` | observability |
-| 30 | `getSocialHealth` | [tools/observability/social_health.py](../../src/tlon/tools/observability/social_health.py) 的 `GetSocialHealthTool` | observability |
-| 31 | `getMetrics` | [tools/observability/get_metrics.py](../../src/tlon/tools/observability/get_metrics.py) 的 `GetMetricsTool` | observability |
-| 32 | `listTraces` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `ListTracesTool` | observability |
-| 33 | `getTrace` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `GetTraceTool` | observability |
-| 34 | `mail-send` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
-| 35 | `mail-forward` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
-| 36 | `mail-check-inbox` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
-| 37 | `mail-search` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
-| 38 | `mail-mark-read` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
-| 39 | `file-read` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
-| 40 | `file-write` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
-| 41 | `file-edit` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
-| 42 | `file-list` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
-| 43 | `file-search` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
-| 44 | `shell-run` | [operations/shell.py](../../src/tlon/operations/shell.py) 的 `OperationTool` 投影 | shell |
-| 45 | `shell-check` | [operations/shell.py](../../src/tlon/operations/shell.py) 的 `OperationTool` 投影 | shell |
-| 46 | `time-now` | [operations/time.py](../../src/tlon/operations/time.py) 的 `OperationTool` 投影 | time |
+| 5 | `listPrototypes` | [tools/prototypes/list_prototypes.py](../../src/tlon/tools/prototypes/list_prototypes.py) 的 `ListPrototypesTool` | prototypes |
+| 6 | `listStagingPrototypes` | [tools/prototypes/list_staging.py](../../src/tlon/tools/prototypes/list_staging.py) 的 `ListStagingPrototypesTool` | prototypes |
+| 7 | `getPrototypeLineage` | [tools/prototypes/get_lineage.py](../../src/tlon/tools/prototypes/get_lineage.py) 的 `GetPrototypeLineageTool` | prototypes |
+| 8 | `reviewPrototype` | [tools/prototypes/review_prototype.py](../../src/tlon/tools/prototypes/review_prototype.py) 的 `ReviewPrototypeTool` | prototypes |
+| 9 | `spawnAgent` | [tools/agents/spawn_agent.py](../../src/tlon/tools/agents/spawn_agent.py) 的 `SpawnAgentTool` | agents |
+| 10 | `listMembers` | [tools/agents/list_members.py](../../src/tlon/tools/agents/list_members.py) 的 `ListMembersTool` | agents |
+| 11 | `writePrototype` | [tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py) 的 `WritePrototypeTool` | agents |
+| 12 | `proposeBehavior` | [tools/agents/propose_behavior.py](../../src/tlon/tools/agents/propose_behavior.py) 的 `ProposeBehaviorTool` | agents |
+| 13 | `proposeCapability` | [tools/agents/propose_capability.py](../../src/tlon/tools/agents/propose_capability.py) 的 `ProposeCapabilityTool` | agents |
+| 14 | `mail-send` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
+| 15 | `mail-forward` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
+| 16 | `mail-check-inbox` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
+| 17 | `mail-search` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
+| 18 | `mail-mark-read` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
+| 19 | `file-read` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
+| 20 | `file-write` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
+| 21 | `file-edit` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
+| 22 | `file-list` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
+| 23 | `file-search` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
+| 24 | `shell-run` | [operations/shell.py](../../src/tlon/operations/shell.py) 的 `OperationTool` 投影 | shell |
+| 25 | `shell-check` | [operations/shell.py](../../src/tlon/operations/shell.py) 的 `OperationTool` 投影 | shell |
+| 26 | `time-now` | [operations/time.py](../../src/tlon/operations/time.py) 的 `OperationTool` 投影 | time |
+| 27 | `memory-remember` | [operations/memory.py](../../src/tlon/operations/memory.py) 的 `OperationTool` 投影 | memory |
+| 28 | `memory-search` | [operations/memory.py](../../src/tlon/operations/memory.py) 的 `OperationTool` 投影 | memory |
+| 29 | `memory-forget` | [operations/memory.py](../../src/tlon/operations/memory.py) 的 `OperationTool` 投影 | memory |
+| 30 | `session-read` | [operations/memory.py](../../src/tlon/operations/memory.py) 的 `OperationTool` 投影 | memory |
+| 31 | `task-create` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
+| 32 | `task-list` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
+| 33 | `task-start` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
+| 34 | `task-pause` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
+| 35 | `task-complete` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
+| 36 | `task-remove` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
+| 37 | `task-current` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
+| 38 | `contacts-read` | [operations/identity.py](../../src/tlon/operations/identity.py) 的 `OperationTool` 投影 | identity |
+| 39 | `contacts-upsert` | [operations/identity.py](../../src/tlon/operations/identity.py) 的 `OperationTool` 投影 | identity |
+| 40 | `persona-update` | [operations/identity.py](../../src/tlon/operations/identity.py) 的 `OperationTool` 投影 | identity |
+| 41 | `metrics-read` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
+| 42 | `mail-stats` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
+| 43 | `reputation-read` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
+| 44 | `social-health` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
+| 45 | `traces-list` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
+| 46 | `trace-read` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
+| 47 | `state-get` | [operations/state.py](../../src/tlon/operations/state.py) 的 `OperationTool` 投影 | state |
+| 48 | `state-put` | [operations/state.py](../../src/tlon/operations/state.py) 的 `OperationTool` 投影 | state |
 <!-- END GENERATED: tool-registry -->
 
 上表是正式成员的满配。见习成员不注册 spawnAgent、writePrototype、proposeBehavior、proposeCapability 四个生殖/演化工具；所有成员均可使用绑定自身的四个调度工具。L0 不注册 shell/filesystem 七个装置工具，L1 不注册 shell 两个工具。
@@ -351,7 +353,7 @@ Operation 单一契约；输入与输出字段保留 snake_case。（本区块�
 | `mode` | string | 是 | enum=['content', 'filename'] |
 | `pattern` | string | 是 | — |
 | `path` | string | 是 | — |
-| `matches` | array[['string', 'object']] | 是 | — |
+| `matches` | array[string / object] | 是 | — |
 | `count` | integer | 是 | — |
 | `truncated` | boolean | 是 | — |
 | `hint` | string | 否 | — |
@@ -438,103 +440,421 @@ Operation 单一契约；输入与输出字段保留 snake_case。（本区块�
 
 ## memory
 
-前三个工具操作当前 agent 自己的 `MemoryManager`（[memory/manager.py](../../src/tlon/memory/manager.py)），数据落在 `~/.tlon/{agent_id}/memory/claims.jsonl`（claim 模型，ADR 0017）；`readSession` 只查询本 agent 的 `sessions.sqlite3` 中指定 session 的事件，不回读旧 `sessions/*.jsonl`（ADR 0032）。检索为向量检索（ADR 0017 阶段 2，sqlite-vec），索引不可用时降级关键词子串匹配。
+<!-- BEGIN GENERATED: memory-operations -->
+Operation 单一契约；输入与输出字段保留 snake_case。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
-### rememberFact
+### memory-remember
 
-| 参数 | 类型 | 必填 | 默认 | 说明 |
-|---|---|---|---|---|
-| `fact` | string | 是 | — | 记忆的自然语言描述 |
-| `importance` | number | 否 | 0.5 | 0.0–1.0，作为重要度存入 |
+记录一条重要记忆，保留现有冲突判断。
 
-返回 `claim_id`，记忆立即追加进 `claims.jsonl`（一条 active claim，`source_session_ids` 为空）。
+输入：
 
-### searchMemories
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `fact` | string | 是 | minLength=1 |
+| `importance` | number | 否 | minimum=0; maximum=1 |
 
-| 参数 | 类型 | 必填 | 默认 | 说明 |
-|---|---|---|---|---|
-| `query` | string | 是 | — | 搜索关键词 |
-| `limit` | integer | 否 | 5 | 最多返回条数 |
+输出：
 
-返回拼接文本（`data.results` 与 `message` 同内容），向量检索 top-k active claims，每条带日期与 `source_session_ids` 来源引用（需要原文细节时用 `readSession` 回读该会话）；无命中时仍 `success=True`，文本为「未找到相关记忆。」。
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `claim_id` | string | 是 | — |
 
-### readSession
+### memory-search
 
-回读一个历史会话的 journal 原文摘要（ADR 0017 阶段 4）——claim → 来源的回读通道：`searchMemories` 结果带的 `source_session_ids` 在这里落地（ReadAgent 模式）。
+搜索自己的长期记忆，来源会话可用 session-read 回读。
 
-| 参数 | 类型 | 必填 | 默认 | 说明 |
-|---|---|---|---|---|
-| `session_id` | string | 是 | — | 要回读的会话 id（searchMemories 结果里的 source_session_ids 之一） |
+输入：
 
-返回有界摘要：触发来信 + 各轮 LLM 回复 + 工具活动计数 + 结束原因。截断策略：触发截 300 字符、每轮回复截 600 字符、最多列 12 轮回复（超出注明轮数）、整个摘要硬上限 12000 字符（防 context 爆掉）。会话不存在（无日志）返回 `success=False` 与明确错误消息，不抛异常。
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `query` | string | 是 | minLength=1 |
+| `limit` | integer | 否 | minimum=1; maximum=100 |
 
-### forget
+输出：
 
-| 参数 | 类型 | 必填 | 默认 | 说明 |
-|---|---|---|---|---|
-| `query` | string | 是 | — | 要删除内容的描述 |
-| `confirm` | boolean | 否 | false | false=只预览，true=真删 |
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `results` | string | 是 | — |
 
-两段式：`confirm=false` 按空格分词（长度 ≤1 的词丢弃，全丢则用整串）做关键词匹配，返回命中条数（附前几条预览）和确认提示；`confirm=true` 删除全部命中项，返回删除条数。无匹配时返回「未找到匹配 …」。删除不可撤销。
+### memory-forget
+
+预览匹配记忆，confirm 为 true 时删除。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `query` | string | 是 | minLength=1 |
+| `confirm` | boolean | 否 | — |
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `result` | string | 是 | — |
+
+### session-read
+
+回读自己的历史会话，返回有界原文摘要。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `session_id` | string | 是 | minLength=1 |
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `session_id` | string | 是 | — |
+| `digest` | string | 是 | — |
+| `event_count` | integer | 是 | — |
+<!-- END GENERATED: memory-operations -->
 
 ## tasks
 
-每个 agent 一份任务清单，由 [tools/tasks/manager.py](../../src/tlon/tools/tasks/manager.py) 的 `TaskManager` 管理，每次变更整体落盘到 `~/.tlon/{agent_id}/tasks.jsonl`。任务 id 自增（`t-001`、`t-002`…），重启后从文件恢复计数。状态机：`todo` / `doing` / `paused` / `done`（[tools/tasks/models.py](../../src/tlon/tools/tasks/models.py) 的 `TaskStatus`）。
+<!-- BEGIN GENERATED: tasks-operations -->
+Operation 单一契约；输入与输出字段保留 snake_case。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
-### createTask
+### task-create
 
-| 参数 | 类型 | 必填 | 默认 | 说明 |
-|---|---|---|---|---|
-| `title` | string | 是 | — | 任务标题 |
-| `description` | string | 否 | `""` | 详细描述、验收标准 |
+创建自己的任务。
 
-返回 `task_id`/`title`/`status`（初始 `todo`）。
+输入：
 
-### listTasks
-
-| 参数 | 类型 | 必填 | 默认 | 说明 |
-|---|---|---|---|---|
-| `filter` | string | 否 | `all` | enum：`all`/`todo`/`doing`/`paused`/`done` |
-
-返回各状态统计（`total`/`todo`/`doing`/`paused`/`done`）+ 任务列表（每项仅 `id`/`title`/`status`），按创建时间排序。
-
-### startTask
-
-| 参数 | 类型 | 必填 | 说明 |
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `task_id` | string | 是 | 要开始/恢复的任务 id |
+| `title` | string | 是 | minLength=1 |
+| `description` | string | 否 | — |
 
-行为：开始目标任务；若另有 `doing` 任务，自动把它暂停（返回里的 `auto_paused` 字段）。从 `paused` 恢复不重置 `started_at`，只清 `paused_at`。任务不存在返回失败。
+输出：
 
-### pauseTask
-
-| 参数 | 类型 | 必填 | 默认 | 说明 |
-|---|---|---|---|---|
-| `task_id` | string | 是 | — | 要暂停的任务 id |
-| `reason` | string | 否 | `""` | 暂停原因/进度记录 |
-
-仅 `doing` 状态可暂停，其他状态返回失败。`reason` 以 `[Paused] ...` 追加进任务 description。返回 `pause_count`。
-
-### completeTask
-
-| 参数 | 类型 | 必填 | 默认 | 说明 |
-|---|---|---|---|---|
-| `task_id` | string | 是 | — | 要完成的任务 id |
-| `result` | string | 否 | `""` | 完成情况摘要 |
-
-`todo` 状态拒绝（提示先 `startTask`）；`done` 拒绝（已完成）；`doing` 和 `paused` 都可直接完成。返回 `duration_minutes`（从 `started_at` 算，恢复执行不把暂停时间剔除）和 `pause_count`。
-
-### removeTask
-
-| 参数 | 类型 | 必填 | 说明 |
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `task_id` | string | 是 | 要移除的任务 id |
+| `task` | object | 是 | — |
+| `auto_paused` | object / null | 是 | — |
 
-仅 `done` 状态可移除，其他状态返回失败（提示先 `completeTask`）。操作不可撤销。
+### task-list
 
-### getCurrentTask
+列出自己的任务，可按状态筛选。
 
-无参数。返回 `doing` 任务；无 `doing` 时返回最近暂停的任务；都没有时 `success=True, data={"has_task": false}`。有任务时返回 id/title/description/status/started_at/elapsed_minutes/pause_count。
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `filter` | string | 否 | enum=['all', 'todo', 'doing', 'paused', 'done'] |
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `tasks` | array[object] | 是 | — |
+| `stats` | object | 是 | — |
+
+### task-start
+
+开始或恢复任务，自动暂停其他进行中的任务。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `task_id` | string | 是 | — |
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `task` | object | 是 | — |
+| `auto_paused` | object / null | 是 | — |
+
+### task-pause
+
+暂停正在进行的任务并记录原因。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `task_id` | string | 是 | — |
+| `reason` | string | 否 | — |
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `task` | object | 是 | — |
+| `auto_paused` | object / null | 是 | — |
+
+### task-complete
+
+完成已开始的任务并记录结果。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `task_id` | string | 是 | — |
+| `result` | string | 否 | — |
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `task` | object | 是 | — |
+| `auto_paused` | object / null | 是 | — |
+
+### task-remove
+
+移除已经完成的任务。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `task_id` | string | 是 | — |
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `task` | object | 是 | — |
+| `auto_paused` | object / null | 是 | — |
+
+### task-current
+
+读取当前进行中或最近暂停的任务。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `task` | object / null | 是 | — |
+<!-- END GENERATED: tasks-operations -->
+
+## identity
+
+<!-- BEGIN GENERATED: identity-operations -->
+Operation 单一契约；输入与输出字段保留 snake_case。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
+### contacts-read
+
+读取自己的私有联系簿全文，包含自由文本与条目数。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `content` | string | 是 | — |
+| `entries` | integer | 是 | — |
+| `message` | string | 是 | — |
+
+### contacts-upsert
+
+按名字添加或更新自己的联系簿条目，保留其他自由文本；description为空则删除。修改在下次组装生效。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | string | 是 | minLength=1 |
+| `address` | string | 否 | — |
+| `description` | string | 是 | — |
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | string | 是 | — |
+| `address` | string | 否 | — |
+| `action` | string | 是 | enum=['added', 'updated', 'deleted'] |
+| `message` | string | 是 | — |
+
+### persona-update
+
+全文替换自己的IDENTITY或SOUL；RULES仅人类可改。修改下次组装生效，记录内容哈希；记账失败仍报告已写入及警告。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `file` | string | 是 | enum=['identity', 'soul'] |
+| `content` | string | 是 | minLength=1 |
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `file` | string | 是 | — |
+| `path` | string | 是 | — |
+| `bytes` | integer | 是 | — |
+| `message` | string | 是 | — |
+<!-- END GENERATED: identity-operations -->
+
+## observability
+
+<!-- BEGIN GENERATED: observability-operations -->
+Operation 单一契约；输入与输出字段保留 snake_case。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
+### metrics-read
+
+读取进程指标快照（重启清零）。sent按封、delivered按收件人成功计数，不等于已读或执行；指标标签展示公开成员ID。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `metrics` | object | 是 | — |
+
+### mail-stats
+
+读取自己邮箱的收发、首次回复时长和从未回复对象；不读取他人私有邮箱。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `agent_id` | string | 是 | — |
+| `address` | string | 是 | — |
+| `total_sent` | integer | 是 | — |
+| `total_received` | integer | 是 | — |
+| `correspondents` | object | 是 | — |
+| `never_replied` | array[string] | 是 | — |
+| `never_replied_total` | integer | 是 | — |
+
+### reputation-read
+
+查询公开成员的邮件行为派生声誉，默认自己；致谢按不同成员去重，最多五封高致谢邮件。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `member_id` | string | 否 | — |
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `member_id` | string | 是 | — |
+| `address` | string | 是 | — |
+| `endorsements_given` | integer | 是 | — |
+| `endorsements_received` | integer | 是 | — |
+| `top_endorsed_mails` | array[object] | 是 | — |
+| `mail_behavior` | object | 是 | — |
+
+### social-health
+
+查询社会孤儿邮件报告，返回成功及失败扫描成员与最久的前20封候选；未回复不能据此判定未送达或失职。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `scanned_members` | array[string] | 是 | — |
+| `scanned_count` | integer | 是 | — |
+| `failed_members` | array[string] | 是 | — |
+| `orphan_count` | integer | 是 | — |
+| `orphans` | array[object] | 是 | — |
+
+### traces-list
+
+列出公开执行轨迹，默认自己；source允许其他成员或组件，按trace起始来源筛选。默认20条，最大100条。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `limit` | integer | 否 | minimum=1; maximum=100 |
+| `source` | string | 否 | — |
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `traces` | array[object] | 是 | — |
+| `count` | integer | 是 | — |
+| `source` | string | 是 | — |
+
+### trace-read
+
+按trace_id读取公开完整轨迹及span树；LLM span的usage属性记录token消耗。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `trace_id` | string | 是 | minLength=1 |
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `trace` | object | 是 | — |
+| `span_tree` | object | 是 | — |
+<!-- END GENERATED: observability-operations -->
+
+## state
+
+<!-- BEGIN GENERATED: state-operations -->
+Operation 单一契约；输入与输出字段保留 snake_case。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
+### state-get
+
+读取自身的结构化状态；不存在返回 null。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `key` | string | 是 | minLength=1 |
+
+输出：
+
+任意严格 JSON 值。
+
+### state-put
+
+写入自身的严格 JSON 状态并返回该值。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `key` | string | 是 | minLength=1 |
+| `value` | JSON | 是 | — |
+
+输出：
+
+任意严格 JSON 值。
+<!-- END GENERATED: state-operations -->
 
 ## agents
 
@@ -579,7 +899,7 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 
 **见习成员不可用（信任阶梯，ADR 0022）**——装配时不注册；`reviewPrototype`（咨询性）对见习成员保留。
 
-创作新 behavior prototype，写入 `~/.tlon/prototypes-staging/`。新 prototype 一律 `trusted=false`（`status=pending_approval`），需人类在 ops 的 Agents 视图（`s` 审批）批准后才能被 `spawnAgent` 使用——LLM 写行为、人类把关的信任闸。原型不带人格（统一成员模型，ADR 0006）：人格在成员创建时播种、之后是成员自主数据（`updatePersona` 自改，ADR 0024），不属基因库。
+创作新 behavior prototype，写入 `~/.tlon/prototypes-staging/`。新 prototype 一律 `trusted=false`（`status=pending_approval`），需人类在 ops 的 Agents 视图（`s` 审批）批准后才能被 `spawnAgent` 使用——LLM 写行为、人类把关的信任闸。原型不带人格（统一成员模型，ADR 0006）：人格在成员创建时播种、之后是成员自主数据（`persona-update` 自改，ADR 0024），不属基因库。
 
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|

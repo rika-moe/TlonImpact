@@ -17,6 +17,7 @@ from tlon.base.events.event_bus import EventBus
 from tlon.operations.adapters import DSLAdapter
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
 from tlon.operations.mail import make_mail_operations
+from tlon.operations.state import make_state_operations
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.mail.member_mail import MemberMailService
@@ -89,7 +90,7 @@ class NewspaperHarness:
         service.send = interrupted_send
         operations = DSLAdapter(
             OperationExecutor(
-                OperationRegistry(make_mail_operations(service)),
+                OperationRegistry((*make_mail_operations(service), *make_state_operations(self.store))),
                 CallContext("newspaper", run_id, run_id),
             )
         )
@@ -309,8 +310,8 @@ async def test_runtime_recovers_later_rules_after_first_rule_interrupts(
         loads(
             f"""{{:version 1 :execution {{:level :L0}} :rules [
             {{:name "first" :on :{on}
-              :actions [(state-put "first" true) {mark_read}]}}
-            {{:name "second" :on :{on} :actions [(state-put "second" true)]}}]}}"""
+              :actions [(state-put {{:key "first" :value true}}) {mark_read}]}}
+            {{:name "second" :on :{on} :actions [(state-put {{:key "second" :value true}})]}}]}}"""
         )
     )
     bus = EventBus()
@@ -390,7 +391,7 @@ async def test_terminal_expression_error_preserves_effects_and_does_not_block_ne
 
     spec = MemberSpec.from_edn(
         loads(
-            '{:version 1 :execution {:level :L0} :rules [\n          {:name "work" :on :mail-delivered :actions [\n            (state-put "seen" (mail-field msg :id))\n            (if (= (mail-field msg :subject) "broken")\n              (/ 1 0)\n              (state-put "healthy" true))\n            (mail-mark-read {:mail_ids [(mail-field msg :id)]})]}]}'
+            '{:version 1 :execution {:level :L0} :rules [\n          {:name "work" :on :mail-delivered :actions [\n            (state-put {:key "seen" :value (mail-field msg :id)})\n            (if (= (mail-field msg :subject) "broken")\n              (/ 1 0)\n              (state-put {:key "healthy" :value true}))\n            (mail-mark-read {:mail_ids [(mail-field msg :id)]})]}]}'
         )
     )
     bus = EventBus()
@@ -430,7 +431,7 @@ async def test_terminal_expression_error_preserves_effects_and_does_not_block_ne
         assert failed.error
         assert member._program_store.pending() == []
         found, recorded = member._program_store.get_effect(
-            run_id, 0, "state-put", dumps(("seen", broken.mail.id))
+            run_id, 0, "state-put", dumps(({Keyword("key"): "seen", Keyword("value"): broken.mail.id},))
         )
         assert found and loads(recorded) == broken.mail.id
         assert [mail.id for mail in await mailbox.unread()] == [broken.mail.id]
@@ -445,7 +446,7 @@ async def test_terminal_expression_error_preserves_effects_and_does_not_block_ne
         assert failed_after.error == failed.error
         assert not failed_after.completed
         assert member._program_store.get_effect(
-            run_id, 0, "state-put", dumps(("seen", broken.mail.id))
+            run_id, 0, "state-put", dumps(({Keyword("key"): "seen", Keyword("value"): broken.mail.id},))
         ) == (found, recorded)
     finally:
         await member.shutdown()

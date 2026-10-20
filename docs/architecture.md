@@ -117,3 +117,6 @@ serving 侧在 facade 上装配客户端会话、通知服务、通讯录和 HTT
 邮件、文件、Shell、时间的 Operation 保存唯一输入/输出 schema，由 DSLAdapter 和 OperationTool 投影为两种入口。成员作用域服务负责领域行为；工具协议层不保存第二份邮件规则或 Shell 任务表。文件与执行等级在领域执行时检查；在本次切换的装置与时间域，L0 可读时间、L1 加文件、L2 加 Shell，邮件及其他非装置操作沿各自既有约束装配。程序的非幂等写入沿用 ProgramStore intent/result 恢复，模型会话沿用 journal，结果不明保留 unknown。
 
 完整目标与尚未实现的动态工具视图、复合操作及统一预算见[实施计划](design/operations-plan.md)；当前调用契约见[Operation reference](reference/operations-reference.md)。
+
+
+P3b 已将记忆/会话回读、任务、人格/联系人、只读观测及 state-get/state-put 接入相同 Operation 目录。成员身份由宿主绑定，操作输入不能改写拥有者；公开观察与私有资源保持各自边界。state-put 的两入口复用同一 ProgramStore 原子状态及效果记录，TaskManager 已移至 `tlon.tasks`。剩余生命周期、模型和提案操作按 P3c 切换，统一预算/通用恢复仍属于 P4。

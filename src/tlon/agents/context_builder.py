@@ -32,7 +32,7 @@ from tlon.memory.manager import MemoryManager
 from tlon.memory.models import build_session_projection
 from tlon.organization.mail.mail import Mail, is_external_address
 from tlon.organization.mail.mailbox import Mailbox
-from tlon.tools.tasks.manager import TaskManager
+from tlon.tasks.manager import TaskManager
 
 logger = get_logger(__name__)
 
@@ -428,7 +428,7 @@ class ContextBuilder:
 
         The cache is keyed on the mtime signature of the agent's own
         persona files (IDENTITY/SOUL/RULES plus the contact book), so
-        editing any of them — including an ``updateContact`` write —
+        editing any of them — including an ``contacts-upsert`` write —
         takes effect without restarting the process.
         """
         signature = self.persona_mtime_signature(self.persona_files())

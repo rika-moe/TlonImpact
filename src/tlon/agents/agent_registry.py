@@ -205,10 +205,10 @@ class AgentRegistry(Component):
                 (spawner, session) pair
             metrics_service: Metrics pillar injected into each member's
                 observability tools (read-only snapshot); None
-                skips the getMetrics tool
+                skips the metrics-read tool
             trace_store: Trace pillar injected into each member's
                 observability tools (read-only); None skips the
-                listTraces/getTrace tools
+                traces-list/trace-read tools
         """
         super().__init__(name="AgentRegistry")
         self.event_bus = event_bus

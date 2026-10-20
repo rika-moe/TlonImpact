@@ -12,9 +12,10 @@ from tlon.agents.program_store import ProgramStore
 from tlon.agents.vocabulary import make_member_builtins
 from tlon.base.config import LLMConfig
 from tlon.base.llm_client import LLMClient
+from tlon.operations.schema import ReplayConflictError
 from tlon.organization.mail.mail import Mail
 from tlosure.builtins import ActionRequest, EvalError
-from tlosure.edn import Keyword, dumps, loads
+from tlosure.edn import Keyword, loads
 from tlosure.eval import eval_form
 
 
@@ -26,9 +27,9 @@ def test_store_freezes_inputs_and_rejects_effect_drift(tmp_path: Path, disk: boo
     assert store.get_effect("r", 0, "read", "[]") == (False, None)
     store.record_effect("r", 0, "read", "[]", "nil")
     assert store.get_effect("r", 0, "read", "[]") == (True, "nil")
-    with pytest.raises(ValueError, match="changed"):
+    with pytest.raises(ReplayConflictError, match="changed"):
         store.get_effect("r", 0, "different", "[]")
-    with pytest.raises(ValueError, match="changed"):
+    with pytest.raises(ReplayConflictError, match="changed"):
         store.get_effect("r", 0, "read", "[1]")
     store.complete("r")
     assert not store.pending()
@@ -57,16 +58,6 @@ def test_state_and_effect_commit_together_and_replay_does_not_overwrite(
     store.atomic_state_put_record("r", 1, "state-put", '["key" 3]', "key", 3)
     assert restarted.atomic_state_put_record("r", 0, "state-put", '["key" 1]', "key", 1) == 1
     assert restarted.state_get("key") == 3
-
-
-async def test_state_effect_uses_original_call_arguments() -> None:
-    store = ProgramStore(None)
-    effects = ProgramEffects()
-    request = ActionRequest("state_put", {"key": "edition", "value": {Keyword("body"): "fixed"}})
-    args = dumps(["edition", request.data["value"]])
-    result = await effects.execute(request, "unused", "r", 0, store, args)
-    found, recorded = store.get_effect("r", 0, "state-put", args)
-    assert found and loads(recorded) == result == store.state_get("edition")
 
 
 async def test_llm_effect_keeps_system_prompt_and_disables_tools() -> None:
@@ -122,7 +113,7 @@ def test_program_words_validate_and_mail_field_uses_real_mail() -> None:
         eval_form(loads("(mail-field msg :made-up)"), {"msg": mail}, builtins)
     with pytest.raises(EvalError, match="positive integer"):
         eval_form(loads('(llm-call {:prompt "x" :max-tokens true})'), {}, builtins)
-    assert eval_form(loads('(state-get "subscriptions")'), {}, builtins).kind == "state_get"
+    assert not builtins["state-get"].pure
 
 
 @pytest.mark.parametrize("disk", [False, True])
@@ -184,3 +175,16 @@ def test_batch_registration_rolls_back_all_rules_on_mid_batch_failure(tmp_path: 
         connection.execute("DROP TRIGGER fail_second")
     registered = store.ensure_many([("first", "s1", "i1"), ("second", "s2", "i2")])
     assert [run.run_id for run in registered] == ["first", "second"]
+
+
+@pytest.mark.parametrize("disk", [False, True])
+def test_durable_effect_identity_and_results_have_typed_conflicts(
+    tmp_path: Path, disk: bool
+) -> None:
+    store = ProgramStore(tmp_path / "conflict.sqlite" if disk else None)
+    store.record_effect("r", 0, "read", "[]", "1")
+    with pytest.raises(ReplayConflictError):
+        store.record_effect("r", 0, "read", "[]", "2")
+    assert store.claim_intent("r", 1, "write", "[]")
+    with pytest.raises(ReplayConflictError):
+        store.claim_intent("r", 1, "write", "[1]")

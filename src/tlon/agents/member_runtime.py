@@ -43,6 +43,7 @@ from tlon.operations.adapters import DSLAdapter, OperationTool
 from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
 from tlon.operations.mail import make_mail_operations
 from tlon.operations.schema import UnknownOutcomeError
+from tlon.operations.state import make_state_operations
 from tlon.operations.time import time_operation_definitions
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
@@ -51,8 +52,8 @@ from tlon.organization.mail.post_office import PostOffice
 from tlon.organization.mail.store import MailStore
 from tlon.organization.messaging.member import Member
 from tlon.sandbox.shell import MemberShellService
+from tlon.tasks.manager import TaskManager
 from tlon.tools.spill import ToolSpill
-from tlon.tools.tasks.manager import TaskManager
 from tlosure.builtins import ActionRequest, Builtin, EvalError, FuelExhaustedError
 from tlosure.edn import dumps, loads
 
@@ -147,7 +148,12 @@ class MemberRuntime(Member):
         self._mailbox = mailbox
         self._post_office = post_office
         self._capabilities = capabilities
+        self._paths = capabilities.tlon_paths if capabilities else tlon_paths
+        self._program_store = ProgramStore(
+            self._paths.agent_program_database_file(member_id) if self._paths else None
+        )
         operations = list(capabilities.operations) if capabilities else []
+        operations.extend(make_state_operations(self._program_store))
         if not any(operation.name == "time-now" for operation in operations):
             operations.extend(time_operation_definitions())
         if mailbox is not None and post_office is not None:
@@ -165,10 +171,6 @@ class MemberRuntime(Member):
                 capabilities.tool_executor.register_tool(
                     OperationTool(operation_executor, operation.name)
                 )
-        self._paths = capabilities.tlon_paths if capabilities else tlon_paths
-        self._program_store = ProgramStore(
-            self._paths.agent_program_database_file(member_id) if self._paths else None
-        )
         self._program_effects = ProgramEffects(
             llm_client=capabilities.llm_client if capabilities else None,
             system_prompt=self._program_system_prompt,
@@ -585,7 +587,7 @@ class MemberRuntime(Member):
         async def execute(request: ActionRequest, name: str, index: int, args_edn: str) -> Any:
             self._last_action_at = time.monotonic()
             request_id = f"program:{run_id}:{index}:{name}"
-            if request.kind in {"state_get", "state_put", "llm_call"}:
+            if request.kind == "llm_call":
                 return await self._program_effects.execute(
                     request, request_id, run_id, index, self._program_store, args_edn
                 )

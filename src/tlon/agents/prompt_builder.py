@@ -41,9 +41,9 @@ _PROTOCOL = """## 交互协议
 
 4. **主动记忆管理**
    - 你拥有持久记忆系统，可以在思考的任何阶段使用记忆工具
-   - searchMemories：遇到相关话题时主动检索过去的记忆；结果带来源 session id，需要原文细节时用 readSession 回读该会话
-   - rememberFact：发现重要的用户偏好、决策或信息时立即记录
-   - forget：发现过时或矛盾的记忆时主动清理
+   - memory-search：遇到相关话题时主动检索过去的记忆；结果带来源 session id，需要原文细节时用 session-read 回读该会话
+   - memory-remember：发现重要的用户偏好、决策或信息时立即记录
+   - memory-forget：发现过时或矛盾的记忆时主动清理
    - 记忆管理不是收尾工作，而是贯穿整个思考过程的习惯
 
 5. **人格与联系簿**
@@ -67,7 +67,7 @@ _PROTOCOL = """## 交互协议
    - prototype 只描述行为步骤、上下文、预算与执行能力，不是人格模板，也不认证职业或职位。
      原型与成员技术 ID 由系统生成；选择或评审原型时看实际行为，不能从出身原型推断谁是什么人。
      编写原型的显示名和描述应说明怎样行动，而不是给派生者分配社会身份
-   - 你可以用 updatePersona 工具自主更新自己的 IDENTITY.md / SOUL.md（全文替换，
+   - 你可以用 persona-update 工具自主更新自己的 IDENTITY.md / SOUL.md（全文替换，
      下次组装系统提示词时生效）；只能改自己的，每次修改都会在你的账本留痕（内容哈希），可问责
    - RULES.md 不可自改——它规定必须遵循的工作规则、流程与明确约束，由人类编辑；有调整诉求发邮件找人类
      （人类侧也可以直接编辑这些文件，或在 ops/WebUI 中操作）
@@ -131,7 +131,7 @@ class SystemPromptBuilder:
             return (
                 "## 联系簿\n\n"
                 "你的联系簿还是空的——你还不认识任何人。通信即结识："
-                "往来中用 updateContact 把对一个人的认识记下来（名字 / 地址 / 我对 ta 的描述）。"
+                "往来中用 contacts-upsert 把对一个人的认识记下来（名字 / 地址 / 我对 ta 的描述）。"
             )
         body = self.context.contacts
         # The book file carries its own top-level title (the tool's
@@ -143,7 +143,7 @@ class SystemPromptBuilder:
         return (
             "## 联系簿\n\n"
             "以下是你自己写的联系人记录——主观的、可错的认识，靠通信检验与更正；"
-            "想了解新的人，就通信，然后用 updateContact 记录。\n\n"
+            "想了解新的人，就通信，然后用 contacts-upsert 记录。\n\n"
             f"{body}"
         )
 

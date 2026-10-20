@@ -89,7 +89,11 @@ class ProgramDriver:
             result = await self.operations.handle(
                 call,
                 CallContext(
-                    self.member_id, self.run_id, f"program:{self.run_id}:{index}:{call.name}"
+                    self.member_id,
+                    self.run_id,
+                    call_id,
+                    effect_index=index,
+                    arguments_edn=args_edn,
                 ),
             )
             await asyncio.to_thread(

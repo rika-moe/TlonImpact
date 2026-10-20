@@ -210,7 +210,7 @@ class TestJudgeConflicts:
 
 class TestRememberFactConflicts:
     async def test_contradicted_old_claim_is_superseded_not_deleted(self, tmp_path: Path) -> None:
-        """rememberFact goes through the same conflict judgment: the old
+        """memory-remember goes through the same conflict judgment: the old
         claim is invalidated in place (auditable), the new one appends."""
         old_text = "用户喜欢手冲咖啡"
         new_text = "用户改喝美式了"

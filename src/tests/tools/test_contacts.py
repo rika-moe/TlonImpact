@@ -3,7 +3,7 @@
 import pytest
 
 from tlon.base.paths import TlonPaths
-from tlon.tools.agents.contacts import ReadContactsTool, UpdateContactTool
+from tlon.operations.identity import make_identity_operations
 
 AGENT_ID = "a-001"
 
@@ -15,12 +15,12 @@ def paths(tmp_path):
 
 @pytest.fixture
 def reader(paths):
-    return ReadContactsTool(tlon_paths=paths, agent_id=AGENT_ID)
+    return _tool(paths, "contacts-read")
 
 
 @pytest.fixture
 def writer(paths):
-    return UpdateContactTool(tlon_paths=paths, agent_id=AGENT_ID)
+    return _tool(paths, "contacts-upsert")
 
 
 def _book(paths) -> str:
@@ -155,3 +155,16 @@ class TestUpdateContact:
 
     def test_update_schema_requires_name_and_description(self, writer):
         assert writer.parameters["required"] == ["name", "description"]
+
+
+def _tool(paths, name):
+    from tlon.operations.adapters import OperationTool
+    from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+
+    return OperationTool(
+        OperationExecutor(
+            OperationRegistry(make_identity_operations(paths, AGENT_ID)),
+            CallContext(AGENT_ID, "run", "call"),
+        ),
+        name,
+    )

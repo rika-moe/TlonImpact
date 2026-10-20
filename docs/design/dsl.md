@@ -1,6 +1,6 @@
 # DSL 设计：行为即数据
 
-> 后续方案（邮件 P2 已通过 #185 合并；文件/Shell/时间 P3a 正在实施，其余分阶段实施）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
+> 后续方案（邮件 P2 与文件/Shell/时间 P3a 已分别通过 #185/#186 合并；P3b 已接入，后续仍分阶段实施）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
 
 > 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种。模型总览见 [docs/design/unified-member-model.md](./unified-member-model.md)。
 
@@ -48,14 +48,14 @@ spec 的作者是 LLM，这意味着 DSL 面对的是不可信输入。把"不�
 
 ### 效果边界：DSL 描述，宿主执行并返回结果
 
-动作 builtin（`pure=False`）校验参数并产生 `ActionRequest` 数据，不直接访问系统资源。tlosure 使用同一个可暂停 generator 内核计量同步与异步求值：同步入口返回请求数据，供分析和测试；生产程序使用异步入口，在调用处等待宿主执行，再把实际结果送回表达式。权限、配额、收件人和四态接纳仍由宿主检查，DSL 无法绕过。
+已切换的 Operation builtin（read/write）在异步调用边界执行共享契约并返回真实结果。尚未切换的生命周期和 llm-call builtin 仍产生 `ActionRequest` 数据。tlosure 使用同一个可暂停 generator 内核计量同步与异步求值：同步入口返回请求数据，供分析和测试；生产程序使用异步入口，在调用处等待宿主执行，再把实际结果送回表达式。权限、配额、收件人和四态接纳仍由宿主检查，DSL 无法绕过。
 
 这是 ADR 0043 对 ADR 0042 阶段“先完整求值、后执行所有效果”的替代。函数、条件和传统循环共享同一调用机制；未选分支没有效果。后面的表达式失败不会撤回已经提交的效果，不能将整条规则理解为外部事务。
 
 ```clojure
 (let [draft (llm-call {:prompt "根据给定来源编辑简报" :max-tokens 256})]
   (when (not (= (get draft :content) ""))
-    (state-put "edition" (get draft :content))))
+    (state-put {:key "edition" :value (get draft :content)})))
 ```
 
 `ProgramStore` 保存成员私有状态、每次规则的原始程序与触发输入、每步效果参数和结果。恢复从原程序开始，已完成调用返回原结果，未完成调用继续执行；参数漂移报错。`state-put` 和效果结果同事务提交。模型结果成功记录后不会重复生成；上游已生成而本地还没记录时仍可能重试，不能承诺模型恰好一次。
@@ -120,7 +120,7 @@ spec 是成员规则的权威来源；boot、lazy、wake 资格从规则派生�
 
 唯一权威还有两层推论：
 
-- **实例化生成独立配置，不是引用**。[agents/prototypes/instantiate.py](../../src/tlon/agents/prototypes/instantiate.py) 的 `instantiate` 把原型 behavior（带参数时先渲染）写成新成员自己的配置，行为冻结在创建时刻；之后原型的修改不影响已出生的成员，成员的 spec 被改也不回流原型。原型不带人格（ADR 0006）——成员的人格文件在创建时播种，之后 IDENTITY/SOUL 是成员自主数据（`updatePersona` 自改，ADR 0024）。spec 是 total 的，所以不存在"继承 + 覆盖"的合并语义——没有可合并的东西，拷贝就是完整答案。模型不是基因型（ADR 0016——机制/策略分离，模型选择是部署/资源策略）：成员的 `llm.model_name` 来自 `instantiate` 的必填 `model` 参数（spawn 时继承 spawner 的模型）；spec 语法已删除顶层 `:llm` 键，残留即加载报错；未声明模型的成员装配期硬报错，没有进程级兜底。执行能力声明则相反——它是基因型：spec 的可选顶层段 `:execution {:level :L0|:L1|:L2}` 随原型提案一起评审，`instantiate` 把它一次性投影进 agent.yaml 的 `docker.level`，此后运行时权威是 agent.yaml——成员自改自己 spec 的 `:execution` 不生效，防自提权。
+- **实例化生成独立配置，不是引用**。[agents/prototypes/instantiate.py](../../src/tlon/agents/prototypes/instantiate.py) 的 `instantiate` 把原型 behavior（带参数时先渲染）写成新成员自己的配置，行为冻结在创建时刻；之后原型的修改不影响已出生的成员，成员的 spec 被改也不回流原型。原型不带人格（ADR 0006）——成员的人格文件在创建时播种，之后 IDENTITY/SOUL 是成员自主数据（`persona-update` 自改，ADR 0024）。spec 是 total 的，所以不存在"继承 + 覆盖"的合并语义——没有可合并的东西，拷贝就是完整答案。模型不是基因型（ADR 0016——机制/策略分离，模型选择是部署/资源策略）：成员的 `llm.model_name` 来自 `instantiate` 的必填 `model` 参数（spawn 时继承 spawner 的模型）；spec 语法已删除顶层 `:llm` 键，残留即加载报错；未声明模型的成员装配期硬报错，没有进程级兜底。执行能力声明则相反——它是基因型：spec 的可选顶层段 `:execution {:level :L0|:L1|:L2}` 随原型提案一起评审，`instantiate` 把它一次性投影进 agent.yaml 的 `docker.level`，此后运行时权威是 agent.yaml——成员自改自己 spec 的 `:execution` 不生效，防自提权。
 - **模板只存在于写侧**。behavior 文件可以声明顶层 `:parameters` 并用 `${name}` 占位（[agents/behavior_template.py](../../src/tlon/agents/behavior_template.py)），但渲染发生在实例化落盘之前；运行时加载器永远见不到占位符，`:parameters` 本身也只作为未知键记 warning。运行时面对的是具体规则，不在读取时重新套模板；其词汇仍依赖显式注入的受信注册表。
 
 ## 分层
@@ -131,7 +131,7 @@ DSL 的实现分五层，各层职责单一、失败模式明确。语言核心�
 |---|---|---|---|
 | EDN 解析 | [tlosure/edn.py](../../src/tlosure/edn.py) 的 `loads` / `dumps` | 文本 → 纯 Python 数据，不求值 | `EDNParseError`（带行列号） |
 | 语义模型 | [agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `MemberSpec` / `MemberRule` / `SessionRecipe` | 语义权威：typed frozen dataclass 树 + 结构校验 | `MemberSpecValidationError` |
-| 受限求值器 | [tlosure/eval.py](../../src/tlosure/eval.py) 的 `eval_form` 与 [tlosure/validate.py](../../src/tlosure/validate.py) 的 `validate_form` | fuel 计量求值与静态校验；动作产出 `ActionRequest` | `EvalError` 家族 |
+| 受限求值器 | [tlosure/eval.py](../../src/tlosure/eval.py) 的 `eval_form` 与 [tlosure/validate.py](../../src/tlosure/validate.py) 的 `validate_form` | fuel 计量求值与静态校验；已切换操作返回宿主结果；剩余动作产出 `ActionRequest` | `EvalError` 家族 |
 | 领域词汇 | [agents/vocabulary.py](../../src/tlon/agents/vocabulary.py) 的四个纯注册表 + `make_member_builtins` + `validate_member_actions` | tlon 的 DSL 词汇表：mail/loop/stage 谓词、动作族、`ScriptHostQueries` 宿主端口；通用词汇与契约类型来自 tlosure | 未注册词汇在加载校验被拒 |
 | 加载校验 | [agents/loader.py](../../src/tlon/agents/loader.py) 的 `load_member_spec` | 唯一读盘路径：解析 → 模型 → 校验 → 挂 provenance | 成员拒绝启动（注册表隔离） |
 

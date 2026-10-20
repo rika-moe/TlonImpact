@@ -524,7 +524,7 @@ async def test_later_evaluation_failure_keeps_committed_effects_without_repeatin
         tmp_path,
         _spec(
             '(mail-send {:to ["sink@tlon.internal"] :content "committed before failure"}) (/ 1 0)',
-            extra='{:name "next" :on :agent-idle :actions [(state-put "next" true)]}',
+            extra='{:name "next" :on :agent-idle :actions [(state-put {:key "next" :value true})]}',
         ),
     )
     member._post_office.send = AsyncMock(wraps=member._post_office.send)
@@ -696,7 +696,7 @@ async def test_pending_failure_blocks_new_state_updates_until_recovery(tmp_path:
         tmp_path,
         _spec(
             '(mail-send {:to [(mail-field msg :from)] :content "blocked" :in_reply_to (mail-field msg :id)})',
-            extra='{:name "new" :on :agent-idle :actions [(state-put "new" true)]}',
+            extra='{:name "new" :on :agent-idle :actions [(state-put {:key "new" :value true})]}',
         ),
     )
     blocked = True
@@ -742,29 +742,30 @@ async def test_boot_io_failure_recovers_without_stopping_actor(tmp_path: Path) -
     member = _member(
         tmp_path,
         _spec(
-            '(state-put "boot" true)',
+            '(state-put {:key "boot" :value true})',
             "boot",
-            extra='{:name "later" :on :agent-idle :actions [(state-put "later" true)]}',
+            extra='{:name "later" :on :agent-idle :actions [(state-put {:key "later" :value true})]}',
         ),
     )
     first_attempt = asyncio.Event()
     recovered = asyncio.Event()
-    execute = member._program_effects.execute
+    execute = member._program_store.atomic_state_put_record
     attempts = 0
+    loop = asyncio.get_running_loop()
 
-    async def transient(request: Any, *args: Any, **kwargs: Any) -> Any:
+    def transient(run_id: str, index: int, name: str, args_edn: str, key: str, value: Any) -> Any:
         nonlocal attempts
-        if request.data.get("key") == "boot":
+        if key == "boot":
             attempts += 1
             if attempts == 1:
-                first_attempt.set()
+                loop.call_soon_threadsafe(first_attempt.set)
                 raise OSError("temporary boot storage failure")
-            result = await execute(request, *args, **kwargs)
-            recovered.set()
+            result = execute(run_id, index, name, args_edn, key, value)
+            loop.call_soon_threadsafe(recovered.set)
             return result
-        return await execute(request, *args, **kwargs)
+        return execute(run_id, index, name, args_edn, key, value)
 
-    member._program_effects.execute = transient
+    member._program_store.atomic_state_put_record = transient
     await member.initialize()
     try:
         await asyncio.wait_for(first_attempt.wait(), 2)

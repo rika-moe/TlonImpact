@@ -4,7 +4,8 @@ import shutil
 import tempfile
 
 from tlon.base.paths import TlonPaths
-from tlon.tools.tasks.manager import TaskManager, TaskStatus
+from tlon.tasks.manager import TaskManager
+from tlon.tasks.models import TaskStatus
 
 
 class TestTaskManager:

@@ -110,22 +110,22 @@ class TestMemberRoster:
 
 
 class TestActionCollection:
-    """Retained state action collection is independent from host mail calls."""
+    """Lifecycle action collection is independent from shared Operations."""
 
-    def test_while_body_collects_each_state_write(self):
+    def test_while_body_collects_each_lifecycle_request(self):
         collector: list[ActionRequest] = []
         builtins = make_member_builtins(collector=collector)
         result = eval_form(
-            loads('(while [i 0] (< i 3) (state-put "last" i) (recur (inc i)))'), {}, builtins
+            loads('(while [i 0] (< i 3) (stop {:agent "member" :reason (str i)}) (recur (inc i)))'), {}, builtins
         )
         assert result is None
-        assert [request.data["value"] for request in collector] == [0, 1, 2]
+        assert [request.data["reason"] for request in collector] == ["0", "1", "2"]
 
     def test_map_returns_request_list(self):
         result = eval_form(
-            loads('(map i (state-put "last" i) [1 2 3])'), {}, make_member_builtins()
+            loads('(map i (stop {:agent "member" :reason (str i)}) [1 2 3])'), {}, make_member_builtins()
         )
-        assert [request.kind for request in result] == ["state_put"] * 3
+        assert [request.kind for request in result] == ["stop"] * 3
 
 
 class TestValidateMemberActions:

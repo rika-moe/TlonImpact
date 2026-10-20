@@ -41,7 +41,11 @@ from tlon.base.tracing.trace_store import TraceStore
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
 from tlon.operations.filesystem import make_filesystem_operations
+from tlon.operations.identity import make_identity_operations
+from tlon.operations.memory import make_memory_operations
+from tlon.operations.observability import make_observability_operations
 from tlon.operations.shell import make_shell_operations
+from tlon.operations.tasks import make_task_operations
 from tlon.operations.time import time_operation_definitions
 from tlon.organization.mail.mail import address_for_member
 from tlon.organization.mail.store import MailStore
@@ -49,7 +53,7 @@ from tlon.sandbox.device import AuditedExecutionDevice, ExecutionDevice
 from tlon.sandbox.docker_runtime import AGENT_HOME_CONTAINER_PATH, DockerRuntime
 from tlon.sandbox.filesystem import MemberFilesystemService
 from tlon.sandbox.shell import MemberShellService
-from tlon.tools.agents.contacts import ReadContactsTool, UpdateContactTool
+from tlon.tasks.manager import TaskManager
 from tlon.tools.agents.list_members import ListMembersTool
 from tlon.tools.agents.propose_behavior import ProposeBehaviorTool
 from tlon.tools.agents.propose_capability import ProposeCapabilityTool
@@ -60,29 +64,11 @@ from tlon.tools.agents.scheduling import (
     SleepUntilTool,
 )
 from tlon.tools.agents.spawn_agent import SpawnAgentTool
-from tlon.tools.agents.update_persona import UpdatePersonaTool
 from tlon.tools.agents.write_prototype import WritePrototypeTool
-from tlon.tools.memory.forget_memory import ForgetMemoryTool
-from tlon.tools.memory.read_session import ReadSessionTool
-from tlon.tools.memory.remember_fact import RememberFactTool
-from tlon.tools.memory.search_memories import SearchMemoriesTool
-from tlon.tools.observability.get_metrics import GetMetricsTool
-from tlon.tools.observability.mail_stats import GetMailStatsTool
-from tlon.tools.observability.reputation import GetReputationTool
-from tlon.tools.observability.social_health import GetSocialHealthTool
-from tlon.tools.observability.traces import GetTraceTool, ListTracesTool
 from tlon.tools.prototypes.get_lineage import GetPrototypeLineageTool
 from tlon.tools.prototypes.list_prototypes import ListPrototypesTool
 from tlon.tools.prototypes.list_staging import ListStagingPrototypesTool
 from tlon.tools.prototypes.review_prototype import ReviewPrototypeTool
-from tlon.tools.tasks.complete_task import CompleteTaskTool
-from tlon.tools.tasks.create_task import CreateTaskTool
-from tlon.tools.tasks.get_current_task import GetCurrentTaskTool
-from tlon.tools.tasks.list_tasks import ListTasksTool
-from tlon.tools.tasks.manager import TaskManager
-from tlon.tools.tasks.pause_task import PauseTaskTool
-from tlon.tools.tasks.remove_task import RemoveTaskTool
-from tlon.tools.tasks.start_task import StartTaskTool
 
 if TYPE_CHECKING:
     from tlon.agents.agent_registry import AgentRegistry
@@ -290,20 +276,6 @@ async def assemble_member_capabilities(
     tool_executor.register_tool(SleepUntilTool())
     tool_executor.register_tool(ExitAgentTool())
     tool_executor.register_tool(GetSelfStateTool(registry=registry, agent_id=config.id))
-    # Persona self-edit (ADR 0024, docs/design/identity.md): the member
-    # rewrites its own IDENTITY.md / SOUL.md on the host (outside the
-    # container /workspace). agent_id binds at construction — touching
-    # another member's persona files is structurally impossible. Not a
-    # reproduction/evolution tool: registered unconditionally (probationary
-    # members included).
-    tool_executor.register_tool(UpdatePersonaTool(tlon_paths=tlon_paths, agent_id=config.id))
-    # Contact book (ADR 0024, docs/design/identity.md): the member's
-    # private CONTACTS.md — full-text read + entry-level upsert. Same
-    # host-side binding as updatePersona (agent_id at construction —
-    # structurally private); not reproduction/evolution, registered
-    # unconditionally.
-    tool_executor.register_tool(ReadContactsTool(tlon_paths=tlon_paths, agent_id=config.id))
-    tool_executor.register_tool(UpdateContactTool(tlon_paths=tlon_paths, agent_id=config.id))
     tool_executor.register_tool(
         ListPrototypesTool(lister=partial(list_prototypes, tlon_paths=tlon_paths))
     )
@@ -421,61 +393,25 @@ async def assemble_member_capabilities(
                 trusted_words=partial(_render_trusted_capability_words, tlon_paths),
             )
         )
-    tool_executor.register_tool(RememberFactTool(memory))
-    tool_executor.register_tool(SearchMemoriesTool(memory))
-    tool_executor.register_tool(ForgetMemoryTool(memory))
-    # Claim → source read-back (ADR 0017 stage 4): searchMemories exposes
-    # source_session_ids; this tool reads the referenced session's journal.
-    # Same SessionLogReader port as proposeBehavior — tlon.tools stays
-    # free of tlon.agents.
-    tool_executor.register_tool(ReadSessionTool(SessionJournal(config.id, tlon_paths)))
-    tool_executor.register_tool(CreateTaskTool(task_manager))
-    tool_executor.register_tool(ListTasksTool(task_manager))
-    tool_executor.register_tool(StartTaskTool(task_manager))
-    tool_executor.register_tool(PauseTaskTool(task_manager))
-    tool_executor.register_tool(CompleteTaskTool(task_manager))
-    tool_executor.register_tool(RemoveTaskTool(task_manager))
-    tool_executor.register_tool(GetCurrentTaskTool(task_manager))
-    # Observability (read-only): the agent can read the society's
-    # health report but never write it. Metrics/traces pillars are
-    # optional here so tests can assemble without the OTel pipeline; the
-    # server always injects both.
-    tool_executor.register_tool(
-        GetMailStatsTool(provider=mail_stats_provider(tlon_paths), agent_id=config.id)
-    )
-    # Reputation (docs/design/mail.md): derived, never stored — the member
-    # enumeration
-    # is re-read per query so the report always sees the current roster.
-    tool_executor.register_tool(
-        GetReputationTool(
-            provider=reputation_provider(
+    operations.extend(make_memory_operations(memory, SessionJournal(config.id, tlon_paths)))
+    operations.extend(make_task_operations(task_manager))
+    operations.extend(make_identity_operations(tlon_paths, config.id))
+    operations.extend(
+        make_observability_operations(
+            member_id=config.id,
+            mail_stats_provider=mail_stats_provider(tlon_paths),
+            reputation_provider=reputation_provider(
                 tlon_paths,
                 member_ids=lambda: (
                     sorted(agent_info.get_all_ids())
                     + MailStore(tlon_paths.mail_database_file()).known_human_ids()
                 ),
             ),
-            member_id=config.id,
+            orphan_provider=orphan_mail_provider(tlon_paths, agent_info=agent_info),
+            metrics_snapshot=metrics_service.snapshot if metrics_service else None,
+            trace_store=trace_store,
         )
     )
-    # Social health (docs/design/mail.md): the orphan-mail scan is the
-    # same collector the
-    # PublicHealthMonitor publishes as MAIL_ORPHAN_SCAN, here on demand;
-    # the roster is re-read per query so the report sees the current
-    # society.
-    tool_executor.register_tool(
-        GetSocialHealthTool(
-            provider=orphan_mail_provider(
-                tlon_paths,
-                agent_info=agent_info,
-            )
-        )
-    )
-    if metrics_service is not None:
-        tool_executor.register_tool(GetMetricsTool(snapshot=metrics_service.snapshot))
-    if trace_store is not None:
-        tool_executor.register_tool(ListTracesTool(trace_store=trace_store, agent_id=config.id))
-        tool_executor.register_tool(GetTraceTool(trace_store=trace_store))
     if not is_full:
         logger.info(
             "probation_tools_withheld",

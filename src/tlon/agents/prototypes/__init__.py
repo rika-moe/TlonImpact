@@ -3,7 +3,7 @@
 A prototype is a directory of pure data — the behavior genome (unified
 member model, ADR 0006: prototypes carry **no persona**; a member's
 persona files are seeded at creation and member-owned afterwards
-(self-editable via ``updatePersona``, ADR 0024), never part of the
+(self-editable via ``persona-update``, ADR 0024), never part of the
 genome):
 
 - ``prototype.tlon`` — metadata ``{:name :display-name :description

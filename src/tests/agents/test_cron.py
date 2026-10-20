@@ -112,7 +112,7 @@ class TestBuiltinDigestTick:
         # The instructions are self-contained: tool list, coverage areas,
         # human recipients, and the send method.
         assert "alice@tlon.internal" in mail.content
-        assert "getSocialHealth" in mail.content
+        assert "social-health" in mail.content
         assert "listStagingPrototypes" in mail.content
         assert "finishTurn" in mail.content
 

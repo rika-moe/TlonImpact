@@ -17,14 +17,14 @@ description: 被问「你为什么这么决定」「你这么做的依据是什�
 
 每一次会话的执行轨迹都持久化为 trace（跨重启不丢）。
 
-1. 用 `listTraces`（`source` 默认是你自己）按时间定位相关会话，拿到 `trace_id`。
-2. 用 `getTrace` 读这条 trace 的完整 span 树：
+1. 用 `traces-list`（`source` 默认是你自己）按时间定位相关会话，拿到 `trace_id`。
+2. 用 `trace-read` 读这条 trace 的完整 span 树：
    - LLM span 携带 `llm.model`、`llm.usage.prompt_tokens` / `llm.usage.completion_tokens`——你当时用的模型与 token 消耗；
    - 工具 span 携带 `tool_name` 等属性——你当时调用过什么工具、顺序如何。
 
 ### 2. 记忆：我当时知道什么
 
-用 `searchMemories` 查相关的记忆。记忆条目（claim）都记着 `source_session_ids` 来源，可以指回具体的 session。
+用 `memory-search` 查相关的记忆。记忆条目（claim）都记着 `source_session_ids` 来源，可以指回具体的 session。
 
 ### 3. 邮件：谁让我做的、我当时回了什么
 

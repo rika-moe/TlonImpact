@@ -255,8 +255,8 @@
 
 | 调用 | 返回值 |
 | --- | --- |
-| `(state-get "key")` | 成员私有状态；缺失返回 `nil`，读取结果被记录供重放 |
-| `(state-put "key" value)` | 写入值；状态更新与效果记录同事务提交 |
+| `(state-get {:key "key"})` | 成员私有状态；缺失返回 `nil`，读取结果被记录供重放 |
+| `(state-put {:key "key" :value value})` | 写入值；状态更新与效果记录同事务提交 |
 | `(llm-call {:prompt "任务数据" :max-tokens 256})` | `{:content "..." :usage {...}}`，usage 使用 `:completion-tokens` 等关键字 |
 
 邮件是统一 Operation，不再构造旧邮件 `ActionRequest`。DSL 使用一个命名参数 map，键与 JSON Tool 参数均为 snake_case：
@@ -286,7 +286,7 @@
 | `run-loop` | `(run-loop (quote {...}))` | 请求按独立配方运行一次会话，结束后继续剩余效果；可用于任意事件、条件及传统循环 |
 
 <!-- BEGIN GENERATED: dsl-action-kinds -->
-效果 builtin 实际产出的 `ActionRequest` 形状（7 种 kind，生成自 `vocabulary.py` 的调用点；`start-all` 不产出自己的 kind——它按宿主查询 `start_all_candidates` 的候选集展开为多个 `kind="start"` 请求；生产程序在效果调用处执行并返回实际结果）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+效果 builtin 实际产出的 `ActionRequest` 形状（5 种 kind，生成自 `vocabulary.py` 的调用点；`start-all` 不产出自己的 kind——它按宿主查询 `start_all_candidates` 的候选集展开为多个 `kind="start"` 请求；生产程序在效果调用处执行并返回实际结果）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | kind | data 字段 |
 |---|---|
@@ -294,8 +294,6 @@
 | `spawn` | `prototype`、`name` |
 | `start` | `agent_id`、`reason` |
 | `stop` | `agent_id`、`reason` |
-| `state_get` | `key` |
-| `state_put` | `key`、`value` |
 | `llm_call` | `prompt`、`max_tokens` |
 <!-- END GENERATED: dsl-action-kinds -->
 

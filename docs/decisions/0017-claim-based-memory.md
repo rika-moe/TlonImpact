@@ -1,5 +1,7 @@
 # ADR 0017：记忆系统重设计——claim 模型 + 向量检索 + JIT 注入，整体替换旧 episodic 记忆
 
+> 更新（2026-10-20，P3b）：本文保留决策时的术语；记忆、联系人等旧 Tool 已切换为共享 Operation，当前契约见 [operations-reference](../reference/operations-reference.md)。
+
 > 阅读定位：本文保留当时的选择与理由；当前设计见 [memory](../design/memory.md)、[runtime](../design/runtime.md)。当前适用范围：Claim 模型与检索；journal 物理存储由 ADR 0032 修订。完整关系见 [决策索引](README.md)。
 
 状态：已接受（2026-09-17，方向讨论拍板）；阶段 1（水位线 + claim 数据模型）、阶段 2（sqlite-vec 向量索引 + JIT 注入）、阶段 3（冲突判定 + 失效不删除）、阶段 4（anchor 减肥 + journal 回读工具）、阶段 5（记忆回归集）已实施（2026-09-17，五阶段收官）

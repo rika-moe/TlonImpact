@@ -166,16 +166,26 @@ class TestReputationProvider:
 
 
 async def test_public_member_query_resolves_internal_mailbox(tlon_paths: TlonPaths) -> None:
-    from tlon.tools.observability.reputation import GetReputationTool
+    from tlon.operations.adapters import OperationTool
+    from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+    from tlon.operations.observability import make_observability_operations
 
     roster = [TARGET, "human:rika"]
     await Mailbox(tlon_paths.mail_database_file(), "human:rika").append_sent(
         _mail("rika1", "rika@tlon.internal", [TARGET_ADDR], endorsing="mail1")
     )
-    tool = GetReputationTool(
-        provider=reputation_provider(tlon_paths, member_ids=lambda: roster),
-        member_id=TARGET,
+    executor = OperationExecutor(
+        OperationRegistry(
+            make_observability_operations(
+                member_id=TARGET,
+                mail_stats_provider=None,
+                orphan_provider=None,
+                reputation_provider=reputation_provider(tlon_paths, member_ids=lambda: roster),
+            )
+        ),
+        CallContext(TARGET, "run", "call"),
     )
+    tool = OperationTool(executor, "reputation-read")
     result = await tool.execute(member_id="rika")
     assert result.success
     assert result.data["member_id"] == "rika"

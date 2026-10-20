@@ -60,8 +60,7 @@ async def test_member_program_and_model_share_file_contract(tmp_path: Path) -> N
     member = member_at(
         tmp_path,
         device,
-        '(file-write {:file_path "shared.txt" :content "共享内容"}) '
-        '(state-put "seen" (get (file-read {:file_path "shared.txt"}) :content))',
+        '(file-write {:file_path "shared.txt" :content "共享内容"}) (state-put {:key "seen" :value (get (file-read {:file_path "shared.txt"}) :content)})',
     )
     try:
         await member._run_rule_body(member.spec.rules[0], None, run_id="device-run")

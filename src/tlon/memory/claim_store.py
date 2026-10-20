@@ -1,9 +1,10 @@
-"""Claim store: append-only JSONL persistence for memory claims (ADR 0017)."""
+"""Claim store: atomic JSONL snapshots for memory claims."""
 
 import asyncio
 import contextlib
 import json
 import os
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, cast
 
@@ -15,13 +16,14 @@ logger = get_logger(__name__)
 
 
 class ClaimStore:
-    """Append-only store for memory claims.
+    """Member-private claim snapshots with logical append semantics.
 
     Storage format: JSON Lines (``claims.jsonl``), one claim per line.
     Claims have no capacity cap — supersession marks, never deletes
     (same storage philosophy as the session journal). Deletion exists
-    only for the agent-initiated ``forget``/reflection paths and rewrites
-    the file atomically (temp file + os.replace).
+    only for the agent-initiated ``forget``/reflection paths. Every mutation
+    persists a private snapshot atomically before publishing it in memory
+    (temp file + os.replace); failed writes never report successful receipt.
 
     Example:
         >>> store = ClaimStore("dev-001", Path("./data/agents/dev-001/memory"))
@@ -49,99 +51,91 @@ class ClaimStore:
         self.claims_file.parent.mkdir(parents=True, exist_ok=True)
 
     async def load(self) -> None:
-        """Load claims from disk. Should be called once at startup."""
+        """Publish a complete disk snapshot; I/O failures remain visible."""
+        self._loaded = False
         await self._ensure_dir()
-
+        claims: list[dict[str, Any]] = []
         if self.claims_file.exists():
-            try:
-                self._claims_cache = []
-                async with aiofiles.open(self.claims_file, encoding="utf-8") as f:
-                    async for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            self._claims_cache.append(json.loads(line))
-                        except json.JSONDecodeError as e:
-                            logger.warning("claim_line_parse_failed", error=str(e))
-                logger.info(
-                    "claims_loaded",
-                    agent_id=self.agent_id,
-                    claim_count=len(self._claims_cache),
-                )
-            except Exception as e:
-                logger.error("claims_load_failed", error=str(e), exc_info=True)
-                self._claims_cache = []
-        else:
-            logger.info("claims_not_found", agent_id=self.agent_id)
-            self._claims_cache = []
-
+            async with aiofiles.open(self.claims_file, encoding="utf-8") as stream:
+                async for line in stream:
+                    if not line.strip():
+                        continue
+                    try:
+                        claims.append(json.loads(line))
+                    except json.JSONDecodeError as error:
+                        logger.warning("claim_line_parse_failed", error=str(error))
+        self._claims_cache = claims
         self._loaded = True
 
-    async def _persist(self) -> None:
-        """Rewrite the claims file atomically (temp file + os.replace)."""
-        tmp_file = self.claims_file.with_name(self.claims_file.name + ".tmp")
+    async def _persist(self, claims: list[dict[str, Any]]) -> None:
+        """Persist a candidate snapshot before publishing it to readers."""
+        await self._ensure_dir()
+        temporary = self.claims_file.with_name(self.claims_file.name + ".tmp")
         try:
-            async with aiofiles.open(tmp_file, "w", encoding="utf-8") as f:
-                for item in self._claims_cache:
-                    await f.write(json.dumps(item, ensure_ascii=False) + "\n")
-            await asyncio.to_thread(os.replace, tmp_file, self.claims_file)
-        except Exception as e:
-            logger.error("claims_persist_failed", error=str(e), exc_info=True)
+            async with aiofiles.open(temporary, "w", encoding="utf-8") as stream:
+                for claim in claims:
+                    await stream.write(json.dumps(claim, ensure_ascii=False) + "\n")
+                await stream.flush()
+                os.fsync(stream.fileno())
+            # The short atomic commit is synchronous: cancellation cannot race
+            # a background replace against reload or the next writer.
+            os.replace(temporary, self.claims_file)
+        finally:
             with contextlib.suppress(OSError):
-                tmp_file.unlink(missing_ok=True)
+                temporary.unlink(missing_ok=True)
+
+    async def _commit(self, claims: list[dict[str, Any]]) -> None:
+        try:
+            await self._persist(claims)
+        except BaseException:
+            # Even a raised acknowledgement can follow a committed replace.
+            # Reload disk facts; if reload fails, _loaded remains False.
+            self._loaded = False
+            await self.load()
+            raise
+        self._claims_cache = claims
 
     async def add_claim(self, claim: dict[str, Any]) -> str:
-        """Add a claim (append-only)."""
-        if not self._loaded:
-            await self.load()
-
+        """Append logically, with one atomic candidate snapshot commit."""
         async with self._lock:
+            if not self._loaded:
+                await self.load()
             claim_id = claim.get("id")
             if not claim_id:
                 raise ValueError("Claim must have an 'id' field")
-
-            self._claims_cache.append(claim)
-
-            await self._ensure_dir()
-            try:
-                async with aiofiles.open(self.claims_file, "a", encoding="utf-8") as f:
-                    await f.write(json.dumps(claim, ensure_ascii=False) + "\n")
-            except Exception as e:
-                logger.error("claim_append_failed", error=str(e), exc_info=True)
-                await self._persist()
-
+            candidate = deepcopy(self._claims_cache)
+            candidate.append(deepcopy(claim))
+            await self._commit(candidate)
             return cast(str, claim_id)
 
     async def get_claim(self, claim_id: str) -> dict[str, Any] | None:
         """Get a claim by ID."""
-        if not self._loaded:
-            await self.load()
-
         async with self._lock:
+            if not self._loaded:
+                await self.load()
             for item in self._claims_cache:
                 if item.get("id") == claim_id:
-                    return item
+                    return deepcopy(item)
             return None
 
     async def get_recent_claims(self, limit: int = 10) -> list[dict[str, Any]]:
         """Get recent active claims (superseded claims never surface)."""
-        if not self._loaded:
-            await self.load()
-
         async with self._lock:
+            if not self._loaded:
+                await self.load()
             active = [c for c in self._claims_cache if c.get("status", "active") == "active"]
-            return active[-limit:] if limit < len(active) else active.copy()
+            return deepcopy(active[-limit:] if limit < len(active) else active)
 
     async def get_all_claims(self, include_superseded: bool = False) -> list[dict[str, Any]]:
         """Get all claims."""
-        if not self._loaded:
-            await self.load()
-
         async with self._lock:
+            if not self._loaded:
+                await self.load()
             if include_superseded:
-                return self._claims_cache.copy()
-            return [c for c in self._claims_cache if c.get("status", "active") == "active"]
+                return deepcopy(self._claims_cache)
+            return deepcopy(
+                [c for c in self._claims_cache if c.get("status", "active") == "active"]
+            )
 
     async def supersede_claim(self, claim_id: str, superseded_by: str, valid_to: str) -> bool:
         """Mark a claim superseded by a newer one.
@@ -156,30 +150,30 @@ class ClaimStore:
             True when the claim was found and marked; an unknown id is
             logged and returns False — never a silent no-op
         """
-        if not self._loaded:
-            await self.load()
-
         async with self._lock:
-            for item in self._claims_cache:
+            if not self._loaded:
+                await self.load()
+            candidate = deepcopy(self._claims_cache)
+            for item in candidate:
                 if item.get("id") == claim_id:
                     item["status"] = "superseded"
                     item["superseded_by"] = superseded_by
                     item["valid_to"] = valid_to
-                    await self._persist()
+                    await self._commit(candidate)
                     return True
             logger.warning("claim_supersede_not_found", agent_id=self.agent_id, claim_id=claim_id)
             return False
 
     async def delete_claim(self, claim_id: str) -> bool:
         """Delete a claim by exact ID."""
-        if not self._loaded:
-            await self.load()
-
         async with self._lock:
+            if not self._loaded:
+                await self.load()
             for i, item in enumerate(self._claims_cache):
                 if item.get("id") == claim_id:
-                    self._claims_cache.pop(i)
-                    await self._persist()
+                    candidate = deepcopy(self._claims_cache)
+                    candidate.pop(i)
+                    await self._commit(candidate)
                     return True
             return False
 
@@ -187,10 +181,9 @@ class ClaimStore:
         self, keywords: list[str], limit: int = 5
     ) -> list[dict[str, Any]]:
         """Search active claims by keywords (substring match on text)."""
-        if not self._loaded:
-            await self.load()
-
         async with self._lock:
+            if not self._loaded:
+                await self.load()
             results = []
             for item in reversed(self._claims_cache):
                 if item.get("status", "active") != "active":
@@ -200,4 +193,4 @@ class ClaimStore:
                     results.append(item)
                 if len(results) >= limit:
                     break
-            return results
+            return deepcopy(results)

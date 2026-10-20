@@ -16,17 +16,33 @@ from tlon.agents.mail_stats import collect_mail_stats, mail_stats_provider
 from tlon.base.config import AgentConfig, AgentInfoProvider
 from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_store import SpanRecord, TraceRecord, TraceStore
+from tlon.operations.adapters import OperationTool
+from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.observability import LIST_TRACES_MAX_LIMIT, make_observability_operations
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
-from tlon.tools.observability.get_metrics import GetMetricsTool
-from tlon.tools.observability.mail_stats import GetMailStatsTool
-from tlon.tools.observability.reputation import GetReputationTool
-from tlon.tools.observability.social_health import GetSocialHealthTool
-from tlon.tools.observability.traces import (
-    LIST_TRACES_MAX_LIMIT,
-    GetTraceTool,
-    ListTracesTool,
-)
+
+
+def _tool(name: str, **kwargs: Any) -> OperationTool:
+    member_id = kwargs.pop("agent_id", kwargs.pop("member_id", "a-001"))
+    if "snapshot" in kwargs:
+        kwargs["metrics_snapshot"] = kwargs.pop("snapshot")
+    if "provider" in kwargs:
+        key = {
+            "mail-stats": "mail_stats_provider",
+            "reputation-read": "reputation_provider",
+            "social-health": "orphan_provider",
+        }[name]
+        kwargs[key] = kwargs.pop("provider")
+    bound = {
+        "mail_stats_provider": None,
+        "reputation_provider": None,
+        "orphan_provider": None,
+        **kwargs,
+    }
+    registry = OperationRegistry(make_observability_operations(member_id=member_id, **bound))
+    return OperationTool(OperationExecutor(registry, CallContext(member_id, "run", "call")), name)
+
 
 AGENT_ID = "a-001"
 OWN = "a-001@tlon.internal"
@@ -69,7 +85,7 @@ class TestGetMetricsTool:
                 }
             }
         }
-        tool = GetMetricsTool(snapshot=lambda: snapshot_data)
+        tool = _tool("metrics-read", snapshot=lambda: snapshot_data)
 
         result = await tool.execute()
 
@@ -82,7 +98,7 @@ class TestGetMetricsTool:
         }
 
     def test_is_read_only(self):
-        tool = GetMetricsTool(snapshot=lambda: {"metrics": {}})
+        tool = _tool("metrics-read", snapshot=lambda: {"metrics": {}})
         mutating = [
             name
             for name in dir(tool)
@@ -91,8 +107,8 @@ class TestGetMetricsTool:
         assert mutating == []
 
     def test_tool_schema(self):
-        tool = GetMetricsTool(snapshot=lambda: {"metrics": {}})
-        assert tool.name == "getMetrics"
+        tool = _tool("metrics-read", snapshot=lambda: {"metrics": {}})
+        assert tool.name == "metrics-read"
         assert tool.parameters["required"] == []
 
 
@@ -155,7 +171,7 @@ class TestListTracesTool:
     @pytest.mark.asyncio
     async def test_default_source_is_owner(self):
         store = _FakeTraceStore([_trace("t1", AGENT_ID), _trace("t2", "b-002")])
-        tool = ListTracesTool(trace_store=store, agent_id=AGENT_ID)
+        tool = _tool("traces-list", trace_store=store, agent_id=AGENT_ID)
 
         result = await tool.execute()
 
@@ -167,7 +183,7 @@ class TestListTracesTool:
     @pytest.mark.asyncio
     async def test_explicit_source_passthrough(self):
         store = _FakeTraceStore([_trace("t1", AGENT_ID), _trace("t2", "b-002")])
-        tool = ListTracesTool(trace_store=store, agent_id=AGENT_ID)
+        tool = _tool("traces-list", trace_store=store, agent_id=AGENT_ID)
 
         result = await tool.execute(source="b-002")
 
@@ -178,15 +194,17 @@ class TestListTracesTool:
     @pytest.mark.asyncio
     async def test_limit_capped(self):
         store = _FakeTraceStore([])
-        tool = ListTracesTool(trace_store=store, agent_id=AGENT_ID)
+        tool = _tool("traces-list", trace_store=store, agent_id=AGENT_ID)
 
-        await tool.execute(limit=LIST_TRACES_MAX_LIMIT + 500)
-
+        result = await tool.execute(limit=LIST_TRACES_MAX_LIMIT + 500)
+        assert not result.success
+        assert not store.list_calls
+        await tool.execute(limit=LIST_TRACES_MAX_LIMIT)
         assert store.list_calls[-1]["limit"] == LIST_TRACES_MAX_LIMIT
 
     def test_tool_schema(self):
-        tool = ListTracesTool(trace_store=_FakeTraceStore([]), agent_id=AGENT_ID)
-        assert tool.name == "listTraces"
+        tool = _tool("traces-list", trace_store=_FakeTraceStore([]), agent_id=AGENT_ID)
+        assert tool.name == "traces-list"
         limit = tool.parameters["properties"]["limit"]
         assert limit["maximum"] == LIST_TRACES_MAX_LIMIT
 
@@ -195,7 +213,7 @@ class TestGetTraceTool:
     @pytest.mark.asyncio
     async def test_returns_span_tree_with_token_attributes(self):
         store = _FakeTraceStore([_trace("t1", AGENT_ID)])
-        tool = GetTraceTool(trace_store=store)
+        tool = _tool("trace-read", trace_store=store)
 
         result = await tool.execute(trace_id="t1")
 
@@ -209,7 +227,7 @@ class TestGetTraceTool:
 
     @pytest.mark.asyncio
     async def test_unknown_trace_fails(self):
-        tool = GetTraceTool(trace_store=_FakeTraceStore([]))
+        tool = _tool("trace-read", trace_store=_FakeTraceStore([]))
 
         result = await tool.execute(trace_id="missing")
 
@@ -297,7 +315,7 @@ class TestGetMailStatsTool:
     @pytest.mark.asyncio
     async def test_execute_returns_provider_stats(self, tlon_paths: TlonPaths, mailbox: Mailbox):
         await _seed_mailbox(mailbox)
-        tool = GetMailStatsTool(provider=mail_stats_provider(tlon_paths), agent_id=AGENT_ID)
+        tool = _tool("mail-stats", provider=mail_stats_provider(tlon_paths), agent_id=AGENT_ID)
 
         result = await tool.execute()
 
@@ -313,13 +331,15 @@ class TestGetMailStatsTool:
             seen.append(agent_id)
             return {
                 "agent_id": agent_id,
+                "address": f"{agent_id}@tlon.internal",
+                "never_replied_total": 0,
                 "total_sent": 0,
                 "total_received": 0,
                 "correspondents": {},
                 "never_replied": [],
             }
 
-        tool = GetMailStatsTool(provider=provider, agent_id=AGENT_ID)
+        tool = _tool("mail-stats", provider=provider, agent_id=AGENT_ID)
         result = await tool.execute()
 
         assert result.success
@@ -329,8 +349,8 @@ class TestGetMailStatsTool:
         async def provider(agent_id: str) -> dict[str, Any]:
             return {}
 
-        tool = GetMailStatsTool(provider=provider, agent_id=AGENT_ID)
-        assert tool.name == "getMailStats"
+        tool = _tool("mail-stats", provider=provider, agent_id=AGENT_ID)
+        assert tool.name == "mail-stats"
         assert tool.parameters["required"] == []
 
 
@@ -344,10 +364,16 @@ class TestGetReputationTool:
             seen.append(member_id)
             return {
                 "member_id": member_id,
+                "address": f"{member_id}@tlon.internal",
                 "endorsements_given": 1,
                 "endorsements_received": 2,
                 "top_endorsed_mails": [],
-                "mail_behavior": {},
+                "mail_behavior": {
+                    "total_sent": 0,
+                    "total_received": 0,
+                    "reply_rate": None,
+                    "avg_first_reply_seconds": None,
+                },
             }
 
         return provider
@@ -355,7 +381,7 @@ class TestGetReputationTool:
     @pytest.mark.asyncio
     async def test_default_subject_is_the_caller(self):
         seen: list[str] = []
-        tool = GetReputationTool(provider=self._fake_provider(seen), member_id=AGENT_ID)
+        tool = _tool("reputation-read", provider=self._fake_provider(seen), member_id=AGENT_ID)
 
         result = await tool.execute()
 
@@ -366,7 +392,7 @@ class TestGetReputationTool:
     @pytest.mark.asyncio
     async def test_explicit_member_id_queries_another_member(self):
         seen: list[str] = []
-        tool = GetReputationTool(provider=self._fake_provider(seen), member_id=AGENT_ID)
+        tool = _tool("reputation-read", provider=self._fake_provider(seen), member_id=AGENT_ID)
 
         result = await tool.execute(member_id="b-002")
 
@@ -378,8 +404,8 @@ class TestGetReputationTool:
         async def provider(member_id: str) -> dict[str, Any]:
             return {}
 
-        tool = GetReputationTool(provider=provider, member_id=AGENT_ID)
-        assert tool.name == "getReputation"
+        tool = _tool("reputation-read", provider=provider, member_id=AGENT_ID)
+        assert tool.name == "reputation-read"
         assert tool.parameters["required"] == []
         assert "member_id" in tool.parameters["properties"]
 
@@ -389,14 +415,14 @@ class TestGetSocialHealthTool:
     real mailbox layout — same collector the health monitor publishes."""
 
     @staticmethod
-    def _tool(tlon_paths: TlonPaths, member_ids: list[str]) -> GetSocialHealthTool:
+    def _tool(tlon_paths: TlonPaths, member_ids: list[str]) -> OperationTool:
         info = Mock(spec=AgentInfoProvider)
         info.get_all_ids.return_value = set(member_ids)
         info.get_config.side_effect = lambda key: (
             AgentConfig(id=key, name=key) if key in member_ids else None
         )
-        return GetSocialHealthTool(
-            provider=orphan_mail_provider(tlon_paths, info, orphan_mail_days=3)
+        return _tool(
+            "social-health", provider=orphan_mail_provider(tlon_paths, info, orphan_mail_days=3)
         )
 
     @pytest.mark.asyncio
@@ -442,8 +468,8 @@ class TestGetSocialHealthTool:
         async def provider() -> dict[str, Any]:
             return {}
 
-        tool = GetSocialHealthTool(provider=provider)
-        assert tool.name == "getSocialHealth"
+        tool = _tool("social-health", provider=provider)
+        assert tool.name == "social-health"
         assert tool.parameters["required"] == []
 
 
@@ -475,7 +501,7 @@ async def test_metrics_member_view_hides_categories_and_preserves_totals() -> No
             },
         }
     }
-    result = await GetMetricsTool(snapshot=lambda: snapshot).execute()
+    result = await _tool("metrics-read", snapshot=lambda: snapshot).execute()
     metrics = result.data["metrics"]
     assert metrics["tlon.mail.sent"]["points"] == [
         {"attributes": {"member_id": "rika"}, "value": 2},
@@ -492,8 +518,8 @@ async def test_metrics_member_view_hides_categories_and_preserves_totals() -> No
 @pytest.mark.parametrize("arguments", [{"agent_id": "rika"}, {"member_id": "human:rika"}])
 async def test_reputation_rejects_internal_identity_inputs(arguments: dict[str, str]) -> None:
     seen: list[str] = []
-    tool = GetReputationTool(
-        provider=TestGetReputationTool._fake_provider(seen), member_id=AGENT_ID
+    tool = _tool(
+        "reputation-read", provider=TestGetReputationTool._fake_provider(seen), member_id=AGENT_ID
     )
     result = await tool.execute(**arguments)
     assert not result.success

@@ -1,17 +1,21 @@
 """Strict JSON data boundary and admitted JSON Schema 2020-12 subset."""
 
 import math
-from typing import Any
+from typing import Any, cast
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 
-from tlosure.edn import Keyword
+from tlosure.edn import EDNParseError, Keyword, loads
 from tlosure.eval import EvalError
 
 
 class OperationError(EvalError):
     """A failure at the shared operation boundary."""
+
+
+class ReplayConflictError(ValueError):
+    """A durable invocation key conflicts with its committed identity or result."""
 
 
 class RejectedError(OperationError):
@@ -112,23 +116,37 @@ def json_value(value: Any, *, edn_keys: bool = False) -> Any:
 def edn_value(value: Any) -> Any:
     """Project already validated JSON results to DSL data."""
     if type(value) is dict:
-        return {Keyword(key): edn_value(item) for key, item in value.items()}
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            # Arbitrary JSON keys (addresses, spaces, Unicode) need quoted
+            # EDN strings; only parser-roundtrippable keys become keywords.
+            try:
+                parsed = loads(":" + key)
+            except EDNParseError:
+                parsed = None
+            projected = parsed if type(parsed) is Keyword and str(parsed) == key else key
+            result[projected] = edn_value(item)
+        return result
     if type(value) is list:
         return [edn_value(item) for item in value]
     return value
 
 
-def admit_schema(schema: dict[str, Any], *, input_schema: bool = False) -> dict[str, Any]:
+def admit_schema(
+    schema: dict[str, Any] | bool, *, input_schema: bool = False
+) -> dict[str, Any] | bool:
     """Check schemas once on admission; never silently ignore unknown keywords."""
     try:
-        copied: dict[str, Any] = json_value(schema)
+        copied = json_value(schema)
     except InputError as error:
         raise DefinitionError(str(error)) from error
 
-    if type(copied) is not dict:
-        raise DefinitionError("schema root must be an object")
+    if type(copied) not in (dict, bool):
+        raise DefinitionError("schema must be an object or boolean")
 
     def visit(node: Any, path: str) -> None:
+        if type(node) is bool:
+            return
         if type(node) is not dict:
             raise DefinitionError(f"{path}: schema must be an object")
         unknown = node.keys() - _KEYWORDS
@@ -169,12 +187,16 @@ def admit_schema(schema: dict[str, Any], *, input_schema: bool = False) -> dict[
         Draft202012Validator.check_schema(copied)
     except SchemaError as error:
         raise DefinitionError(error.message) from error
-    if input_schema and (copied["type"] != "object" or copied["additionalProperties"] is not False):
+    if input_schema and (
+        type(copied) is not dict
+        or copied.get("type") != "object"
+        or copied.get("additionalProperties") is not False
+    ):
         raise DefinitionError("input schema must be a closed object")
-    return copied
+    return cast(dict[str, Any] | bool, copied)
 
 
-def validate(schema: dict[str, Any], value: Any, *, output: bool = False) -> Any:
+def validate(schema: dict[str, Any] | bool, value: Any, *, output: bool = False) -> Any:
     """Normalize and validate one input/output, returning an isolated copy."""
     error_type = OutputError if output else InputError
     try:

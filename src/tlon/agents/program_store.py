@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tlon.operations.schema import ReplayConflictError
 from tlosure.edn import dumps, loads
 
 
@@ -106,7 +107,7 @@ class ProgramStore:
         if row is None:
             return False, None
         if row[:2] != (name, args_edn):
-            raise ValueError("Program replay effect name/arguments changed")
+            raise ReplayConflictError("Program replay effect name/arguments changed")
         return True, row[2]
 
     def get_effect(
@@ -131,7 +132,7 @@ class ProgramStore:
                 previous = self._intents.get(key)
                 if previous is not None:
                     if previous != (name, args_edn):
-                        raise ValueError("Program replay intent name/arguments changed")
+                        raise ReplayConflictError("Program replay intent name/arguments changed")
                     return False
                 self._intents[key] = (name, args_edn)
                 return True
@@ -142,7 +143,7 @@ class ProgramStore:
                 ).fetchone()
                 if previous is not None:
                     if previous != (name, args_edn):
-                        raise ValueError("Program replay intent name/arguments changed")
+                        raise ReplayConflictError("Program replay intent name/arguments changed")
                     return False
                 connection.execute(
                     "INSERT INTO intents VALUES (?,?,?,?)", (run_id, index, name, args_edn)
@@ -164,7 +165,7 @@ class ProgramStore:
         ).fetchone()
         if existing is not None:
             if existing != (name, args_edn, result_edn):
-                raise ValueError("Program effect result conflicts with committed record")
+                raise ReplayConflictError("Program effect result conflicts with committed record")
             return
         connection.execute(
             "INSERT INTO effects VALUES (?,?,?,?,?)", (run_id, index, name, args_edn, result_edn)
@@ -178,7 +179,9 @@ class ProgramStore:
                 key = (run_id, index)
                 value = (name, args_edn, result_edn)
                 if key in self._effects and self._effects[key] != value:
-                    raise ValueError("Program effect result conflicts with committed record")
+                    raise ReplayConflictError(
+                        "Program effect result conflicts with committed record"
+                    )
                 self._effects[key] = value
                 return
             with self._connection() as connection:

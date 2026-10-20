@@ -55,8 +55,13 @@ from typing import Any
 
 from tlon.operations.core import Operation
 from tlon.operations.filesystem import filesystem_operation_definitions
+from tlon.operations.identity import identity_operation_definitions
 from tlon.operations.mail import mail_operation_definitions
+from tlon.operations.memory import memory_operation_definitions
+from tlon.operations.observability import observability_operation_definitions
 from tlon.operations.shell import shell_operation_definitions
+from tlon.operations.state import state_operation_definitions
+from tlon.operations.tasks import task_operation_definitions
 from tlon.operations.time import time_operation_definitions
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -699,7 +704,23 @@ def operation_domains() -> dict[str, list[Operation]]:
         "filesystem": list(filesystem_operation_definitions()),
         "shell": list(shell_operation_definitions()),
         "time": list(time_operation_definitions()),
+        "memory": list(memory_operation_definitions()),
+        "tasks": list(task_operation_definitions()),
+        "identity": list(identity_operation_definitions()),
+        "observability": list(observability_operation_definitions()),
+        "state": list(state_operation_definitions()),
     }
+
+
+def _schema_type(schema: Any) -> str:
+    if type(schema) is bool:
+        return "JSON" if schema else "不可满足"
+    kind = schema["type"]
+    if isinstance(kind, list):
+        return " / ".join(kind)
+    if kind == "array":
+        return f"array[{_schema_type(schema['items'])}]"
+    return str(kind)
 
 
 def render_operations(domain: str) -> str:
@@ -709,18 +730,16 @@ def render_operations(domain: str) -> str:
         blocks.extend([f"### {operation.name}", operation.description])
         for label, schema in (("输入", operation.input_schema), ("输出", operation.output_schema)):
             blocks.append(f"{label}：")
+            if type(schema) is bool:
+                blocks.append("任意严格 JSON 值。" if schema else "拒绝所有值。")
+                continue
             rows = ["| 字段 | 类型 | 必填 | 说明 |", "|---|---|---|---|"]
             required = schema.get("required", [])
             for name, field in schema["properties"].items():
-                kind = field["type"]
-                if isinstance(kind, list):
-                    kind = " / ".join(kind)
-                if kind == "array":
-                    item_type = field["items"]["type"]
-                    kind = f"array[{item_type}]"
+                kind = _schema_type(field)
                 constraints = [
                     f"{key}={value}"
-                    for key, value in field.items()
+                    for key, value in (field.items() if isinstance(field, dict) else [])
                     if key
                     not in {
                         "type",
@@ -731,7 +750,7 @@ def render_operations(domain: str) -> str:
                         "description",
                     }
                 ]
-                description = field.get("description", "")
+                description = field.get("description", "") if isinstance(field, dict) else ""
                 details = "; ".join(([description] if description else []) + constraints) or "—"
                 rows.append(
                     f"| `{name}` | {_cell(str(kind))} | {'是' if name in required else '否'} | "

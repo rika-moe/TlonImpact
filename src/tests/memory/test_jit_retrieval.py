@@ -263,7 +263,7 @@ async def test_delete_claim_removes_vector(tmp_path: Path) -> None:
     assert manager._index.indexed_ids() == set()
 
 
-# ===== searchMemories =====
+# ===== memory-search =====
 
 
 async def test_search_memories_vector_path_exposes_source_sessions(

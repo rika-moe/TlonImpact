@@ -12,18 +12,27 @@ from typing import Any
 
 from tlon.agents.session_journal import SessionJournal
 from tlon.base.paths import TlonPaths
-from tlon.tools.memory.read_session import (
+from tlon.memory.manager import MemoryManager
+from tlon.memory.models import MemoryConfig
+from tlon.memory.session_digest import (
     _RESPONSE_MAX,
     _RESPONSES_LIMIT,
     _TOTAL_MAX,
-    ReadSessionTool,
     render_session_digest,
 )
+from tlon.operations.adapters import OperationTool
+from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.memory import make_memory_operations
 
 
-def _tool(tmp_path: Path) -> tuple[ReadSessionTool, SessionJournal]:
+def _tool(tmp_path: Path) -> tuple[OperationTool, SessionJournal]:
     journal = SessionJournal("agent1", TlonPaths(home=tmp_path))
-    return ReadSessionTool(journal), journal
+    memory = MemoryManager("agent1", MemoryConfig(), tmp_path / "agent1")
+    executor = OperationExecutor(
+        OperationRegistry(make_memory_operations(memory, journal)),
+        CallContext("agent1", "run", "call"),
+    )
+    return OperationTool(executor, "session-read"), journal
 
 
 async def _write_session(
@@ -90,7 +99,7 @@ async def test_missing_session_is_a_clean_error(tmp_path: Path) -> None:
 
     assert result.success is False
     assert "agent1-nope" in (result.error or "")
-    assert "不存在" in (result.message or "")
+    assert result.data["outcome"] == "rejected"
 
 
 async def test_long_reply_is_clipped(tmp_path: Path) -> None:
@@ -155,9 +164,14 @@ class _BrokenLogs:
 
 
 async def test_journal_failure_is_a_clean_error(tmp_path: Path) -> None:
-    tool = ReadSessionTool(_BrokenLogs())
+    memory = MemoryManager("agent1", MemoryConfig(), tmp_path / "agent1")
+    executor = OperationExecutor(
+        OperationRegistry(make_memory_operations(memory, _BrokenLogs())),
+        CallContext("agent1", "run", "call"),
+    )
+    tool = OperationTool(executor, "session-read")
 
     result = await tool.execute(session_id="agent1-x")
 
     assert result.success is False
-    assert "disk gone" in (result.message or "")
+    assert "disk gone" in (result.error or "")

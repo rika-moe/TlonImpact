@@ -65,8 +65,13 @@ from contextvars import ContextVar
 from typing import Any, Protocol, TypedDict
 
 from tlon.operations.filesystem import filesystem_operation_definitions
+from tlon.operations.identity import identity_operation_definitions
 from tlon.operations.mail import mail_builtin_definitions
+from tlon.operations.memory import memory_operation_definitions
+from tlon.operations.observability import observability_operation_definitions
 from tlon.operations.shell import shell_builtin_definitions
+from tlon.operations.state import state_operation_definitions
+from tlon.operations.tasks import task_operation_definitions
 from tlon.operations.time import time_operation_definitions
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlosure.builtins import (
@@ -597,6 +602,14 @@ MEMBER_ACTION_NAMES = frozenset(
         "shell-check",
         "time-now",
     }
+) | frozenset(
+    operation.name
+    for operation in (
+        *memory_operation_definitions(),
+        *task_operation_definitions(),
+        *identity_operation_definitions(),
+        *observability_operation_definitions(),
+    )
 )
 
 
@@ -722,16 +735,6 @@ def make_member_builtins(
             for agent_id in host.start_all_candidates()
         ]
 
-    def _state_get(env: dict[str, Any], key: Any) -> ActionRequest:
-        if type(key) is not str or not key:
-            raise EvalError("state-get key must be a nonempty string")
-        return _record(ActionRequest(kind="state_get", data={"key": key}))
-
-    def _state_put(env: dict[str, Any], key: Any, value: Any) -> ActionRequest:
-        if type(key) is not str or not key:
-            raise EvalError("state-put key must be a nonempty string")
-        return _record(ActionRequest(kind="state_put", data={"key": key, "value": value}))
-
     def _options(name: str, options: Any, required: set[str], optional: set[str]) -> dict[str, Any]:
         if not isinstance(options, dict) or any(not isinstance(key, Keyword) for key in options):
             raise EvalError(f"{name} options must be a keyword map")
@@ -759,13 +762,19 @@ def make_member_builtins(
         **shell_builtin_definitions(),
         **{
             operation.name: Builtin(fn=_unavailable_operation, pure=False)
-            for operation in (*filesystem_operation_definitions(), *time_operation_definitions())
+            for operation in (
+                *filesystem_operation_definitions(),
+                *time_operation_definitions(),
+                *state_operation_definitions(),
+                *memory_operation_definitions(),
+                *task_operation_definitions(),
+                *identity_operation_definitions(),
+                *observability_operation_definitions(),
+            )
         },
         **TRIGGER_BUILTINS,
         **SCRIPT_BUILTINS,
         **ARITHMETIC_BUILTINS,
-        "state-get": Builtin(_state_get, pure=False),
-        "state-put": Builtin(_state_put, pure=False),
         "llm-call": Builtin(_llm_call, pure=False),
         "run-loop": Builtin(_run_loop, pure=False),
         "spawn": Builtin(_spawn, pure=False),

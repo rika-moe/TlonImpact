@@ -1,6 +1,6 @@
 # 统一操作：分阶段实施计划
 
-状态：2026-10-19 完整方案已认可；用户已授权创建分支、提交设计 PR 并开工 EPIC A。P1 最小契约已通过 #184 合并 main；P2 邮件双入口切换已通过 #185 合并 main；P3a 已实现并通过本地验收，待 PR 审查与合并；合并仍由人类确认。
+状态：2026-10-19 完整方案已认可；用户已授权创建分支、提交设计 PR 并开工 EPIC A。P1 最小契约已通过 #184 合并 main；P2 邮件双入口切换已通过 #185 合并 main；P3a 已通过 #186 合并 main；P3b 已完成本地验收，待 PR 审查，合并仍由人类确认。
 
 设计权威：[operations](operations.md)；决策：[ADR 0044](../decisions/0044-unified-operations.md)。代码基线为 `d35c3a546a5e3dacef331b5d39d3e1cc7efd4e9a`。GitHub 跟踪链接见本文末尾；Issue/PR 负责验收证据，不复制一份持续漂移的设计。
 
@@ -73,7 +73,7 @@
 
 依赖：P3a。
 
-主要位置：`tools/memory/*`、`tools/tasks/*`、`tools/agents/contacts.py`、`tools/agents/update_persona.py`、`tools/observability/*`、`agents/assembly.py`。
+主要位置：`tools/memory/*`、`tools/tasks/*`、`identity/contacts.py`、`identity/persona.py`、`tools/observability/*`、`agents/assembly.py`。
 
 实施：复用现有 manager/provider，逐项给出输出 schema 和 read/write 分类，保持身份绑定与隐私边界；私有结构化 state-get/state-put 纳入同一契约，保留 state-put 与结果原子提交。
 
@@ -199,7 +199,7 @@ EPIC B 完成标准：目标设计完成；工具只是入口，复合能力可�
 - [EPIC A #180](https://github.com/rika-moe/TlonImpact/issues/180)：P1、P2、P3a/P3b/P3c、P4，六个串行 PR。
 - [EPIC B #181](https://github.com/rika-moe/TlonImpact/issues/181)：依赖 A，P5-P8，四个串行 PR。
 
-P1 已通过 [#184](https://github.com/rika-moe/TlonImpact/pull/184) 合并 main。P2 已通过 [#185](https://github.com/rika-moe/TlonImpact/pull/185) 合并 main。P3a 已实现，本地完整质量门与真实 Docker/dream/SDK 冒烟通过，待 PR 审查合并；P3b-P8 未实施。关联的 [#173](https://github.com/rika-moe/TlonImpact/issues/173) 继续保留为长期工作方式/习惯学习方向，本计划不将其一并关闭。
+P1 已通过 [#184](https://github.com/rika-moe/TlonImpact/pull/184) 合并 main。P2 已通过 [#185](https://github.com/rika-moe/TlonImpact/pull/185) 合并 main。P3a 已通过 #186 合并 main；P3b 正在实现与验证，P3c-P8 未实施。关联的 [#173](https://github.com/rika-moe/TlonImpact/issues/173) 继续保留为长期工作方式/习惯学习方向，本计划不将其一并关闭。
 
 ## P3a 实施细化（2026-10-20）
 
@@ -215,3 +215,17 @@ L0 仅装配时间；L1 装配文件和时间；L2 加 Shell。无装置的已�
 主会话复核并执行完整 `scripts/check_all.sh`：14/14 全绿，单元 2463 passed / 15 skipped，集成 34 passed。真实 Docker 的 L1 文件柜不启动即可完成五种文件操作；L2 命令成功、非零退出、后台结果查询、取消清理通过，祖先 symlink 越界读写拒绝。真实 dream + SDK 给 Adam 发信，回复线程及标读持久化通过。测试容器、临时 TLON_HOME 和服务均清理，8080 无残留。SDK 冒烟使用服务端身份和显式 X-Tlon-WebUI 标头，未修改既有默认认证问题。
 
 迁移时统一 schema 会明确拒绝越界参数；目录改为先排序再截断，搜索每行展示保留原 200 字符。Docker 路径检查与 I/O 仍有 TOCTOU，未声称原子路径安全。非幂等 intent 是 P3a 验收所需的最小防重跑记录，通用调用恢复与预算仍留给 P4；P3b 及以后未开工。
+
+## P3b 实施细化（2026-10-20）
+
+P3a #186 已合入 main。本阶段将记忆、任务、人格/联系人和观测接入同一 Operation 契约，删除所属旧 Tool 实现与旧名，不加别名。操作名为 memory-remember/search/forget、session-read；task-create/list/start/pause/complete/remove/current；persona-update、contacts-read/upsert；metrics-read、mail-stats、reputation-read、social-health、traces-list、trace-read。参数保持 snake_case，复用成员绑定的 MemoryManager、TaskManager、SessionJournal 和只读观测 provider，不允许覆盖拥有者身份；公开声誉/trace 查询仍可显式指定观察对象。
+
+state-get/state-put 保留名字，改为同一具名对象输入（key，以及写入时的 value），没有位置参数兼容。状态值是严格 JSON，DSL 对象键按原拼写投影；通过 JSON Schema 原生 boolean 子 schema 表达任意 JSON 值，仍由现有 JSON 边界拒绝闭包、Symbol、循环、非有限数等。输入根仍必须为闭合 object，不引入 $ref、远程 schema 或隐式转换。旧状态 ActionRequest 分发删除。
+
+程序 state-put 复用 ProgramStore 中“状态 + 该次调用结果”的同一事务；宿主调用上下文携带程序效果位置，模型入口不能伪造。模型入口以宿主 call_id 在同一 ProgramStore 的 effects 表中保留事务回执，复用原子状态写入；同调用重试不会覆盖后来的状态，不另建状态调用日志。模型会话仍由原 journal 记录分发与结果，不自动重放未知调用。普通领域写入沿用 P3a 的非幂等 intent 保护；不在本阶段建设 P4 的通用预算/并发排序框架。人格文件仍仅限自身 identity/soul，RULES 不可写；联系人和记忆/任务保持私有，社会观测保留原有公开口径，不能借统一入口扩权。
+
+P3b 持久化复核：任务与 ClaimStore 均先原子保存私有快照，再发布内存状态；写失败向调用方传播 unknown，提交后丢失回执则重新读取磁盘事实。ClaimStore 保留逻辑追加语义，物理存储改为完整 JSONL 快照原子替换，不再采用物理 append 或失败后 fallback。任务暂停原因与状态在同一次提交保存。状态写复用事务回执，并以类型化 ReplayConflictError 区分重放冲突和未知写入结果。
+
+### P3b 本地验收（2026-10-20）
+
+主会话复核后完整 `bash scripts/check_all.sh` 14/14 全绿：单元 2500 passed / 15 skipped，集成 34 passed，前端检查及构建均通过。真实隔离 dream + SDK 邮件链覆盖新领域操作并核对实际文件、状态与收件箱，资源已清理；确定性 DSL 冒烟未调用真实模型，SDK 显式携带服务端要求的标头。Markdown 本地链接/围栏与 diff 检查通过。修复与 #186 同类的 scheduling 测试 SQLite 表初始化等待竞态；P3c/P4 未开工，默认仍由人类合并。

@@ -11,6 +11,9 @@ from tlon.agents.member_spec import MemberRule, MemberSpec
 from tlon.agents.program_driver import ProgramDriver
 from tlon.agents.program_store import ProgramStore
 from tlon.agents.vocabulary import make_member_builtins
+from tlon.operations.adapters import DSLAdapter
+from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.state import make_state_operations
 from tlosure.builtins import ActionRequest, EvalError
 from tlosure.edn import Keyword, dumps, loads
 
@@ -26,46 +29,56 @@ def store(request: Any, tmp_path: Path) -> ProgramStore:
     return ProgramStore(tmp_path / "program.sqlite3" if request.param else None)
 
 
+def driver(store: ProgramStore, execute: Any, *, run_id: str = "run") -> ProgramDriver:
+    adapter = DSLAdapter(
+        OperationExecutor(
+            OperationRegistry(make_state_operations(store)), CallContext("a", "member", "member")
+        )
+    )
+    return ProgramDriver(
+        store,
+        run_id,
+        {**make_member_builtins(), **adapter.builtins()},
+        execute,
+        operations=adapter,
+        member_id="a",
+    )
+
+
 async def test_replay_returns_saved_results_without_repeating_effects(store: ProgramStore) -> None:
-    output: list[str] = []
-
-    async def execute(request: ActionRequest, name: str, index: int, args: str) -> Any:
-        if request.kind == "state_get":
-            return "saved"
-        output.append(request.data["value"])
-        return {Keyword("status"): "accepted"}
-
-    program = rule('(let [text (state-get "text")] (state-put "delivered" text))')
-    driver = ProgramDriver(store, "run", make_member_builtins(), execute)
-    await driver.run(program, {})
-    assert output == ["saved"]
-    forbidden = AsyncMock(side_effect=AssertionError("replayed effects must not run"))
-    await ProgramDriver(store, "run", make_member_builtins(), forbidden).run(program, {})
+    store.atomic_state_put_record("setup", 0, "state-put", "[]", "text", "saved")
+    program = rule(
+        '(let [text (state-get {:key "text"})] (state-put {:key "delivered" :value text}))'
+    )
+    forbidden = AsyncMock(side_effect=AssertionError("state operations bypass legacy dispatcher"))
+    await driver(store, forbidden).run(program, {})
+    assert store.state_get("delivered") == "saved"
+    store.atomic_state_put_record("change", 0, "state-put", "[]", "delivered", "new")
+    await driver(store, forbidden).run(program, {})
+    assert store.state_get("delivered") == "new"
     forbidden.assert_not_awaited()
 
 
 async def test_state_read_freezes_branch_when_current_state_changes(store: ProgramStore) -> None:
-    state = {"enabled": True}
+    store.atomic_state_put_record("setup", 0, "state-put", "[]", "enabled", True)
     attempts = 0
     output: list[str] = []
 
     async def execute(request: ActionRequest, name: str, index: int, args: str) -> Any:
         nonlocal attempts
-        if request.kind == "state_get":
-            return state["enabled"]
         attempts += 1
         if attempts == 1:
             raise asyncio.CancelledError()
-        output.append(request.data["value"])
+        output.append(request.data["prompt"])
         return None
 
     program = rule(
-        '(if (state-get "enabled") (state-put "delivered" "original") (state-put "delivered" "changed"))'
+        '(if (state-get {:key "enabled"}) (llm-call {:prompt "original" :max-tokens 1}) (llm-call {:prompt "changed" :max-tokens 1}))'
     )
     with pytest.raises(asyncio.CancelledError):
-        await ProgramDriver(store, "run", make_member_builtins(), execute).run(program, {})
-    state["enabled"] = False
-    await ProgramDriver(store, "run", make_member_builtins(), execute).run(program, {})
+        await driver(store, execute).run(program, {})
+    store.atomic_state_put_record("change", 0, "state-put", "[]", "enabled", False)
+    await driver(store, execute).run(program, {})
     assert output == ["original"]
 
 
@@ -92,25 +105,20 @@ async def test_unrecorded_failure_retries_same_effect_index(store: ProgramStore)
         attempts.append(index)
         raise OSError("submission status unknown")
 
-    program = rule('(state-put "edition:a" "paper")')
+    program = rule('(llm-call {:prompt "paper" :max-tokens 1})')
     for _ in range(2):
         with pytest.raises(OSError, match="submission status unknown"):
             await ProgramDriver(store, "run", make_member_builtins(), fail).run(program, {})
     assert attempts == [0, 0]
     assert store.get_effect(
-        "run",
-        0,
-        "state-put",
-        dumps(["edition:a", "paper"]),
+        "run", 0, "llm-call", dumps([{Keyword("prompt"): "paper", Keyword("max-tokens"): 1}])
     ) == (False, None)
 
 
 async def test_bad_builtin_arity_is_terminal_expression_error(store: ProgramStore) -> None:
     execute = AsyncMock()
-    with pytest.raises(EvalError, match="invalid arguments"):
-        await ProgramDriver(store, "bad-arity", make_member_builtins(), execute).run(
-            rule('(state-get "one" "extra")'), {}
-        )
+    with pytest.raises(EvalError, match="exactly one"):
+        await driver(store, execute, run_id="bad-arity").run(rule('(state-get "one" "extra")'), {})
     execute.assert_not_awaited()
 
 
@@ -118,11 +126,5 @@ async def test_unknown_host_runtime_error_retains_original_type(store: ProgramSt
     execute = AsyncMock(side_effect=RuntimeError("response lost after commit"))
     with pytest.raises(RuntimeError, match="response lost"):
         await ProgramDriver(store, "unknown", make_member_builtins(), execute).run(
-            rule('(state-put "stable" "paper")'), {}
+            rule('(llm-call {:prompt "paper" :max-tokens 1})'), {}
         )
-    assert store.get_effect(
-        "unknown",
-        0,
-        "state-put",
-        dumps(["stable", "paper"]),
-    ) == (False, None)

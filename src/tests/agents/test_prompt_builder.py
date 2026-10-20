@@ -13,10 +13,10 @@ def test_protocol_declares_external_mail_rule() -> None:
 
 
 def test_protocol_declares_persona_self_edit() -> None:
-    """The protocol must point members at updatePersona for persona
+    """The protocol must point members at persona-update for persona
     self-edits (ADR 0024) and keep RULES.md human-edited — never back at
     the pre-#100 "ask the human to edit the file" wording."""
-    assert "updatePersona" in _PROTOCOL
+    assert "persona-update" in _PROTOCOL
     assert "留痕" in _PROTOCOL
     assert "RULES.md 不可自改" in _PROTOCOL
     assert "告知用户修改" not in _PROTOCOL

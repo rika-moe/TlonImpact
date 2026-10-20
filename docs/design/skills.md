@@ -31,7 +31,7 @@ Skill 是"按需加载的技能包"：一个文件夹 + 一个 `SKILL.md`，教 
 
 当前内置：
 
-- **explain-decision**：可问责性接口。被问「你为什么这么决定」时，教 agent 用 `listTraces`/`getTrace`、`searchMemories`、`mail-search` 三条证据源取证，并按「论断必附出处、无据明说不编造、区分事实与推断」的纪律组织回答。
+- **explain-decision**：可问责性接口。被问「你为什么这么决定」时，教 agent 用 `traces-list`/`trace-read`、`memory-search`、`mail-search` 三条证据源取证，并按「论断必附出处、无据明说不编造、区分事实与推断」的纪律组织回答。
 
 ## SKILL.md 格式
 
