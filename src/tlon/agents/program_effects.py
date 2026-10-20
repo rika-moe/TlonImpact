@@ -1,6 +1,5 @@
 """Generic I/O adapters for member programs; business policy belongs in DSL."""
 
-import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -40,18 +39,6 @@ class ProgramEffects:
         args_edn: str,
     ) -> Any:
         data = request.data
-        if request.kind == "state_get":
-            return await asyncio.to_thread(store.state_get, data["key"])
-        if request.kind == "state_put":
-            return await asyncio.to_thread(
-                store.atomic_state_put_record,
-                run_id,
-                index,
-                "state-put",
-                args_edn,
-                data["key"],
-                data["value"],
-            )
         if request.kind == "llm_call":
             if self._llm_client is None or self._system_prompt is None:
                 raise EvalError("llm-call requires member model services")

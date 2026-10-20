@@ -93,11 +93,11 @@ def _digest_task_content(scribe_id: str, human_addresses: list[str]) -> str:
     return f"""这是系统发出的周期性任务邮件（digest scheduler）。你（{scribe_id}，书记员）本期任务：把全社会的近期活动蒸馏成一份文摘，发给全体人类成员——人类从「读全部邮件」退为「读摘要 + 处置例外」，你的文摘就是他们的主要入口。
 
 可用工具（全部只读，按需要调用，不必全用）：
-- getMetrics：社会指标快照（LLM 调用量、邮件量等计数）。
-- listTraces / getTrace：近期各成员的会话与工具调用轨迹、token 消耗——看谁做了什么、代价多大。
-- getReputation：各成员的声誉与邮件行为（收发量、回复率、致谢）。
-- getMailStats：你自己的通信统计。
-- getSocialHealth：孤儿邮件清单——发出多天无回复、可能需要人类介入推动的邮件。
+- metrics-read：社会指标快照（LLM 调用量、邮件量等计数）。
+- traces-list / trace-read：近期各成员的会话与工具调用轨迹、token 消耗——看谁做了什么、代价多大。
+- reputation-read：各成员的声誉与邮件行为（收发量、回复率、致谢）。
+- mail-stats：你自己的通信统计。
+- social-health：孤儿邮件清单——发出多天无回复、可能需要人类介入推动的邮件。
 - listStagingPrototypes：待人类批准的原型提案（agent 写好、:trusted false，等人类决策）。
 
 文效应覆盖三块内容：

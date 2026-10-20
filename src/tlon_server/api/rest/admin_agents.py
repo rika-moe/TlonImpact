@@ -189,7 +189,7 @@ class AdminAgentHandlers(RestHandlerBase):
         ``deepseek/deepseek-chat``. The behavior comes from the prototype
         (behavior genome); ``persona`` (identity/profile/behavior) is
         optional creation-time seed data (ADR 0006). IDENTITY and SOUL
-        are self-editable via ``updatePersona`` (ADR 0024); RULES is
+        are self-editable via ``persona-update`` (ADR 0024); RULES is
         maintained by humans.
         The new member is hot-adopted by the registry.
 

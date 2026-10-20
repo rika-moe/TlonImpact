@@ -81,9 +81,16 @@ async def test_admin_sleep_wake_drain_wait_and_terminal_death(tmp_path: Path) ->
                         assert snapshot is not None
                         if database.exists():
                             with sqlite3.connect(database) as connection:
-                                runs = connection.execute(
-                                    "SELECT rule_edn,completed,error FROM runs"
-                                ).fetchall()
+                                initialized = connection.execute(
+                                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='runs'"
+                                ).fetchone()
+                                runs = (
+                                    connection.execute(
+                                        "SELECT rule_edn,completed,error FROM runs"
+                                    ).fetchall()
+                                    if initialized
+                                    else []
+                                )
                             boot_finished = any(
                                 ':name "boot"' in source and completed
                                 for source, completed, _ in runs

@@ -21,6 +21,8 @@ class CallContext:
     member_id: str
     run_id: str
     call_id: str
+    effect_index: int | None = None
+    arguments_edn: str | None = None
 
 
 Handler = Callable[[CallContext, dict[str, Any]], Any]
@@ -49,7 +51,7 @@ class Operation:
         name: str,
         description: str,
         input_schema: dict[str, Any],
-        output_schema: dict[str, Any],
+        output_schema: dict[str, Any] | bool,
         handler: Handler | AsyncHandler,
         *,
         effects: frozenset[Effect] = frozenset(),
@@ -85,8 +87,8 @@ class Operation:
         return cast(dict[str, Any], json.loads(self._input_json))
 
     @property
-    def output_schema(self) -> dict[str, Any]:
-        return cast(dict[str, Any], json.loads(self._output_json))
+    def output_schema(self) -> dict[str, Any] | bool:
+        return cast(dict[str, Any] | bool, json.loads(self._output_json))
 
 
 class OperationRegistry:

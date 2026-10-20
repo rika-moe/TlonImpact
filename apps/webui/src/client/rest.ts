@@ -788,7 +788,7 @@ export class RestClient {
   }
 
   /** Create a member from a prototype. `persona` is seeded here at creation;
-   * afterwards IDENTITY/SOUL are self-editable via updatePersona (ADR 0024);
+   * afterwards IDENTITY/SOUL are self-editable via persona-update (ADR 0024);
    * RULES remains human-maintained —
    * humans can view and edit all three files through the WebUI / REST API.
    * `model` is required (ADR 0016): provider/model form, member-level. */

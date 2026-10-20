@@ -5,7 +5,7 @@ from the society's mail files on each call — the endorsement signal
 (``Mail.endorsing``) is the only raw material. The computation reads
 the organization mail domain, so it lives in the agents layer; the
 tools layer consumes it through the ``ReputationProvider`` port
-(``tlon.tools.observability.ports``).
+(``tlon.observability.ports``).
 
 Read-only discipline: other members' mailboxes are only opened when
 they already exist on disk — a reputation query never creates a
@@ -19,9 +19,9 @@ from typing import Any
 
 from tlon.agents.mail_stats import collect_mail_stats
 from tlon.base.paths import TlonPaths
+from tlon.observability.ports import ReputationProvider
 from tlon.organization.mail.mail import HUMAN_ID_PREFIX, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
-from tlon.tools.observability.ports import ReputationProvider
 
 #: Cap on the top-endorsed-mails list (payload bloat guard).
 TOP_ENDORSED_CAP = 5

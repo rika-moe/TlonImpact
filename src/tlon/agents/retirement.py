@@ -21,8 +21,8 @@ from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
-from tlon.tools.tasks.manager import TaskManager
-from tlon.tools.tasks.models import TaskStatus
+from tlon.tasks.manager import TaskManager
+from tlon.tasks.models import TaskStatus
 
 logger = get_logger(__name__)
 

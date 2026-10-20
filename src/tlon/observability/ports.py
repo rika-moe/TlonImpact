@@ -1,11 +1,4 @@
-"""Ports for the observability tools (dependency inversion, ).
-
-The mail-stats computation lives in the agents layer
-(``tlon.agents.mail_stats``) because it reads the organization mail
-domain; declaring the provider signature here keeps ``tlon.tools`` free
-of any ``tlon.organization`` import (same precedent as
-``tools/prototypes/ports.py``, ).
-"""
+"""Read-only provider signatures for member and society observations."""
 
 from collections.abc import Awaitable, Callable
 from typing import Any

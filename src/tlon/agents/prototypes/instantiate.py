@@ -103,7 +103,7 @@ def instantiate(
     # spec is total, so there is nothing to merge). Unified member model
     # (ADR 0006): prototypes carry no persona — a member's persona files
     # are seeded at creation (wizard role cards) and member-owned
-    # afterwards (self-editable via updatePersona, ADR 0024), not part
+    # afterwards (self-editable via persona-update, ADR 0024), not part
     # of the behavior genome.
     config_dir = p.agent_config_dir(agent_id)
     config_dir.mkdir(parents=True, exist_ok=True)

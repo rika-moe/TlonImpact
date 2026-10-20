@@ -35,11 +35,11 @@ from typing import TYPE_CHECKING, Any
 from tlon.base.events.event import Event, EventType
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
+from tlon.observability.ports import OrphanMailProvider
 from tlon.organization.mail.guardian_provider import GuardianAgentInfoProvider
 from tlon.organization.mail.mail import address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.mail.resolver import RecipientResolver
-from tlon.tools.observability.ports import OrphanMailProvider
 
 if TYPE_CHECKING:
     from tlon.base.config import AgentInfoProvider
@@ -347,7 +347,7 @@ class PublicHealthMonitor:
         """Scan every member's mailbox for unanswered old thread roots.
 
         The scan itself is the module-level pure collector
-        (:func:`collect_orphan_mails` — shared with the ``getSocialHealth``
+        (:func:`collect_orphan_mails` — shared with the ``social-health``
         observability tool); this method supplies the roster and the
         monitor's thresholds. See there for the orphan definition.
 

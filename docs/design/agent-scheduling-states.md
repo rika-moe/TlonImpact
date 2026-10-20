@@ -65,7 +65,7 @@ stateDiagram-v2
 
 这会比现有 `mail-send(is_complete=true)` 多一次模型工具调用轮次，是解耦的成本。本轮不预设批处理或“发信后自动 finish”的隐藏优化。可以发多封邮件后结束，也可以完全不发信直接结束或睡眠。删除 `silence`，由 `finishTurn` 承担不回信结束工作的语义，不保留别名。
 
-业务任务的 `pauseTask` / `completeTask` 只改变任务记录，不代表成员睡眠或本次会话结束；继续保持独立。
+业务任务的 `task-pause` / `task-complete` 只改变任务记录，不代表成员睡眠或本次会话结束；继续保持独立。
 
 ## 4. 邮件与调度的关系
 

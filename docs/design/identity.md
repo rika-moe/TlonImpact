@@ -33,7 +33,7 @@
 
 每成员 `~/.tlon/{id}/config/` 下三个人格文件，两种待遇：
 
-- `IDENTITY.md`（自我定义：名字、自称、身份叙述、当前自认的角色）/ `SOUL.md`（价值观、性格、语气、表达与判断倾向）——**成员自主**：经 `updatePersona` 工具自由修改，只能读写自己的，工具层结构性禁止访问他人文件。变更落 ledger 事件（agent_id / file / hash）——可问责是放权的前提。
+- `IDENTITY.md`（自我定义：名字、自称、身份叙述、当前自认的角色）/ `SOUL.md`（价值观、性格、语气、表达与判断倾向）——**成员自主**：经 `persona-update` 工具自由修改，只能读写自己的，工具层结构性禁止访问他人文件。变更落 ledger 事件（agent_id / file / hash）——可问责是放权的前提。
 - `RULES.md`（必须遵循的工作规则、流程与明确约束）——人类编辑，成员不可自改。自然语言规则影响模型行为；工具权限和资源限制仍由运行配置与代码执行。
 
 三者分工：IDENTITY 回答「我如何定义自己」，SOUL 回答「我重视什么、如何表达和判断」，RULES 回答「我必须遵循哪些工作规则」。身份叙述是成员自述，不代表系统认证；例如「我是研究者」属于 IDENTITY，「重视证据、愿意修正判断」属于 SOUL，「报告必须附来源」属于 RULES。
@@ -89,10 +89,10 @@ WebUI 创建与编辑成员时统一展示这三个文件及上述定义。编�
 
 | 机制 | 位置 |
 | --- | --- |
-| 人格自编辑工具 `updatePersona`（自写 IDENTITY/SOUL，私有） | [src/tlon/tools/agents/update_persona.py](../../src/tlon/tools/agents/update_persona.py) |
-| 人格变更留痕（ledger 事件） | [src/tlon/base/ledger.py](../../src/tlon/base/ledger.py)（`persona_update` 记录）+ [src/tlon/tools/agents/update_persona.py](../../src/tlon/tools/agents/update_persona.py) 写侧 |
+| 人格自编辑工具 `persona-update`（自写 IDENTITY/SOUL，私有） | [src/tlon/identity/persona.py](../../src/tlon/identity/persona.py) |
+| 人格变更留痕（ledger 事件） | [src/tlon/base/ledger.py](../../src/tlon/base/ledger.py)（`persona_update` 记录）+ [src/tlon/identity/persona.py](../../src/tlon/identity/persona.py) 写侧 |
 | 联系簿一等文件 `CONTACTS.md` 路径与缺省 | [src/tlon/base/paths.py](../../src/tlon/base/paths.py) `agent_contacts_file`（缺省语义：文件不存在即空联系簿，不 eager 创建） |
-| 联系簿读写工具 `readContacts` / `updateContact`（私有） | [src/tlon/tools/agents/contacts.py](../../src/tlon/tools/agents/contacts.py)（`updateContact` 为条目级 upsert——同名更新地址/描述、节内自由文本保留、空描述删条目，不做整本重写） |
+| 联系簿读写工具 `contacts-read` / `contacts-upsert`（私有） | [src/tlon/identity/contacts.py](../../src/tlon/identity/contacts.py)（`contacts-upsert` 为条目级 upsert——同名更新地址/描述、节内自由文本保留、空描述删条目，不做整本重写） |
 | prompt 注入：「联系簿」段取代「团队成员」段 | [src/tlon/agents/context_builder.py](../../src/tlon/agents/context_builder.py)、`prompt_builder.py`、`prompt_context.py`（只注入自己的 CONTACTS.md，缺省即空；mtime 签名不再含他人 SOUL） |
 | all@ 展开删除、无效地址拒绝 | [src/tlon/organization/mail/post_office.py](../../src/tlon/organization/mail/post_office.py)（无效地址整封拒绝） |
 | 统一成员寻址工具 `listMembers` | [src/tlon/tools/agents/list_members.py](../../src/tlon/tools/agents/list_members.py)（与 DSL 共用邮局目录，只输出公开 id / name / address） |

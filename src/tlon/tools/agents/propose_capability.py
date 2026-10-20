@@ -33,8 +33,13 @@ from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.operations.filesystem import filesystem_operation_definitions
+from tlon.operations.identity import identity_operation_definitions
 from tlon.operations.mail import mail_operation_definitions
+from tlon.operations.memory import memory_operation_definitions
+from tlon.operations.observability import observability_operation_definitions
 from tlon.operations.shell import shell_operation_definitions
+from tlon.operations.state import state_operation_definitions
+from tlon.operations.tasks import task_operation_definitions
 from tlon.operations.time import time_operation_definitions
 from tlon.tools.agents.ports import CapabilityProposalError, CapabilitySummary
 from tlon.tools.agents.propose_behavior import _extract_edn, _render_digest
@@ -61,8 +66,6 @@ _ACTION_WORDS = [
     "spawn",
     "start",
     "start-all",
-    "state-get",
-    "state-put",
     "stop",
 ]
 
@@ -71,6 +74,11 @@ for definitions in (
     filesystem_operation_definitions,
     shell_operation_definitions,
     time_operation_definitions,
+    memory_operation_definitions,
+    task_operation_definitions,
+    identity_operation_definitions,
+    observability_operation_definitions,
+    state_operation_definitions,
 ):
     _ACTION_WORDS.extend(operation.name for operation in definitions())
 

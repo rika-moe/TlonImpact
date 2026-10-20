@@ -225,7 +225,7 @@ export class RestClient {
   }
 
   /** Create a member from a prototype. `persona` is seeded here at creation;
-   * afterwards it is member-owned (self-editable via updatePersona, ADR 0024) —
+   * afterwards it is member-owned (self-editable via persona-update, ADR 0024) —
    * humans can still edit via REST PATCH or `tlon mirror`. */
   async createAgent(body: {
     prototype: string;

@@ -147,7 +147,7 @@ stage 继续声明数据，外部效果由引擎执行；区别在于工具回�
 
 条目来自两个来源，合并管理：
 
-- **内置条目**（代码注册，内容可在 tick 时现算）。目前的实例是「社会文摘」：每隔一个间隔（默认一天）给书记员（`ji-shuheng`，scribe 原型）发一封「社会文摘周期任务」邮件，正文自带完整工作指令与人类收件人清单（tick 时从 `known_human_ids()` 现算）；书记员的 LLM 调观测工具（getMetrics / listTraces+getTrace / getReputation / getSocialHealth / listStagingPrototypes）汇总，再一封 mail-send 发给全体已知人类。书记员未注册或尚无已知人类时 tick 记日志跳过——没有读者就没有文摘。
+- **内置条目**（代码注册，内容可在 tick 时现算）。目前的实例是「社会文摘」：每隔一个间隔（默认一天）给书记员（`ji-shuheng`，scribe 原型）发一封「社会文摘周期任务」邮件，正文自带完整工作指令与人类收件人清单（tick 时从 `known_human_ids()` 现算）；书记员的 LLM 调观测工具（metrics-read / traces-list+trace-read / reputation-read / social-health / listStagingPrototypes）汇总，再一封 mail-send 发给全体已知人类。书记员未注册或尚无已知人类时 tick 记日志跳过——没有读者就没有文摘。
 - **声明式条目**（`~/.tlon/cron.yaml`，启动时读一次，改动需重启生效；文件不存在 = 无声明条目）。每条目声明静态正文和两种 schedule 之一：`interval_seconds: N`（每 N 秒，首轮也等 N 秒后）或 `cron: "分 时 日 月 周"`（标准 5 字段 cron 表达式，本地时区，用 croniter 计算下次触发）。`to` 是成员 id（agent id 或 `human:<username>`）。配置非法的条目（缺字段、两种 schedule 都写或都不写、cron 表达式解析失败）在启动时记 warning 拒绝，不影响其他条目；目标成员不存在时 tick 记日志跳过。示例：
 
 ```yaml
@@ -168,7 +168,7 @@ stage 继续声明数据，外部效果由引擎执行；区别在于工具回�
 
 周期任务同样调用统一邮局：周期信号不需要专用通道，tick 与正常通信同构——它先落盘（有投递幂等和未读语义保底）、可唤醒睡眠中的收件人、在 trace 树上可见。postmaster 没有自己的邮箱，系统发件不留 sent 副本，通道干净。
 
-配套的两个只读工具把「待人类处置」可查询化：`getSocialHealth`（[tools/observability/social_health.py](../../src/tlon/tools/observability/social_health.py)）按需实时返回孤儿邮件清单（与 `PublicHealthMonitor` 的 MAIL_ORPHAN_SCAN 共用同一个采集器，派生不存储）；`listStagingPrototypes`（[tools/prototypes/list_staging.py](../../src/tlon/tools/prototypes/list_staging.py)）列出原型暂存区里待人类信任批准的提案。人类由此从「读全部邮件」退为「读摘要 + 处置例外」。
+配套的两个只读工具把「待人类处置」可查询化：`social-health`（[operations/observability.py](../../src/tlon/operations/observability.py)）按需实时返回孤儿邮件清单（与 `PublicHealthMonitor` 的 MAIL_ORPHAN_SCAN 共用同一个采集器，派生不存储）；`listStagingPrototypes`（[tools/prototypes/list_staging.py](../../src/tlon/tools/prototypes/list_staging.py)）列出原型暂存区里待人类信任批准的提案。人类由此从「读全部邮件」退为「读摘要 + 处置例外」。
 
 ## 死亡归档清点
 

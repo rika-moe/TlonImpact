@@ -8,25 +8,25 @@
    :actions
    [(defn accept-submission [mail]
       (let [id (mail-field mail :id)
-            submissions (or (state-get "submissions") {})]
+            submissions (or (state-get {:key "submissions"}) {})]
         (when (= (get submissions id) nil)
-          (state-put "submissions"
-            (assoc submissions id {:source-id id
+          (state-put {:key "submissions"
+            :value (assoc submissions id {:source-id id
                                    :from (mail-field mail :from)
-                                   :content (mail-field mail :content)}))
-          (state-put "pending" (conj (or (state-get "pending") []) id)))))
+                                   :content (mail-field mail :content)})})
+          (state-put {:key "pending" :value (conj (or (state-get {:key "pending"}) []) id)}))))
 
     (defn freeze-edition [period subscribers]
       (let [key (str "edition:" period)
-            frozen (state-get key)]
+            frozen (state-get {:key key})]
         (if frozen
           frozen
-          (let [ids (or (state-get "pending") [])
-                submissions (or (state-get "submissions") {})
+          (let [ids (or (state-get {:key "pending"}) [])
+                submissions (or (state-get {:key "submissions"}) {})
                 stories (map id (get submissions id) ids)]
             (if (= (count ids) 0)
-              (state-put key {:period period :content "" :source-ids []
-                              :subscribers subscribers :delivered {}})
+              (state-put {:key key :value {:period period :content "" :source-ids []
+                              :subscribers subscribers :delivered {}}})
               (let [result (llm-call
                              {:prompt (str "请用中文编辑以下投稿为一份简报。区分投稿人的陈述和已核实事实，"
                                            "不要补写投稿未提供的事实。仅返回非空正文，不生成来源编号。投稿："
@@ -38,34 +38,34 @@
                         {:period period
                          :content (str body "\n\n投稿来源（原始邮件 ID）：\n" (join "\n" ids))
                          :source-ids ids :subscribers subscribers :delivered {}}]
-                    (state-put key snapshot)
-                    (state-put "pending" [])
+                    (state-put {:key key :value snapshot})
+                    (state-put {:key "pending" :value []})
                     snapshot))))))))
 
     (defn deliver-edition [period edition]
       (when (and edition (> (count (get edition :source-ids)) 0))
         (let [key (str "edition:" period)]
           (map address
-            (let [current (state-get key)]
+            (let [current (state-get {:key key})]
               (when (= (get (get current :delivered) address) nil)
                 (let [receipt (mail-send
                                 {:to [address] :subject (str "报纸：" period)
                                  :content (get edition :content)
                                  :request_id (str "edition:" period ":" address)})]
                   (when (get receipt :mail_id)
-                    (state-put key
-                      (assoc current :delivered
-                        (assoc (get current :delivered) address receipt)))))))
+                    (state-put {:key key
+                      :value (assoc current :delivered
+                        (assoc (get current :delivered) address receipt))})))))
             (get edition :subscribers)))))
 
     (let [sender (mail-field msg :from)
           subject (mail-field msg :subject)
-          subscribers (or (state-get "subscribers") [])]
+          subscribers (or (state-get {:key "subscribers"}) [])]
       (when (= subject "subscribe")
         (when (not (contains? subscribers sender))
-          (state-put "subscribers" (conj subscribers sender))))
+          (state-put {:key "subscribers" :value (conj subscribers sender)})))
       (when (= subject "unsubscribe")
-        (state-put "subscribers" (filter address (not (= address sender)) subscribers)))
+        (state-put {:key "subscribers" :value (filter address (not (= address sender)) subscribers)}))
       (when (= subject "submit")
         (accept-submission msg))
       (when (and (from? msg "operator@tlon.internal")

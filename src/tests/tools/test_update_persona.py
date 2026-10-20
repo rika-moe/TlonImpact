@@ -7,7 +7,7 @@ import pytest
 
 from tlon.base.ledger import LedgerWriter, collect_agent_ledger, read_ledger
 from tlon.base.paths import TlonPaths
-from tlon.tools.agents.update_persona import UpdatePersonaTool
+from tlon.operations.identity import make_identity_operations
 
 AGENT_ID = "a-001"
 
@@ -19,7 +19,7 @@ def paths(tmp_path):
 
 @pytest.fixture
 def tool(paths):
-    return UpdatePersonaTool(tlon_paths=paths, agent_id=AGENT_ID)
+    return _tool(paths, "persona-update")
 
 
 class TestUpdatePersonaTool:
@@ -53,7 +53,7 @@ class TestUpdatePersonaTool:
         result = await tool.execute(file="rules", content="x")
 
         assert result.success is False
-        assert "RULES.md" in result.error
+        assert "rules" in result.error
 
     async def test_empty_content_rejected(self, tool, paths):
         for content in ("", "   \n\t  "):
@@ -164,3 +164,16 @@ class TestPersonaLedgerAudit:
             for line in paths.agent_ledger_file(AGENT_ID).read_text(encoding="utf-8").splitlines()
         ]
         assert [r["event"] for r in raw] == ["llm_call", "persona_update"]
+
+
+def _tool(paths, name):
+    from tlon.operations.adapters import OperationTool
+    from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+
+    return OperationTool(
+        OperationExecutor(
+            OperationRegistry(make_identity_operations(paths, AGENT_ID)),
+            CallContext(AGENT_ID, "run", "call"),
+        ),
+        name,
+    )

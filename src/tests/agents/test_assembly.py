@@ -188,7 +188,7 @@ class TestExecutionLevelAssembly:
         names = set(caps.tool_executor.list_tools()) | {op.name for op in caps.operations}
         assert names.isdisjoint(DEVICE_TOOLS)
         # 其余工具照常装配
-        assert {"time-now", "rememberFact"} <= names
+        assert {"time-now", "memory-remember"} <= names
         # Mail tools bind later in MemberRuntime, with its actual mailbox/PostOffice.
         assert "mail-send" not in names
 

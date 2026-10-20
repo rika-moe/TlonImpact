@@ -84,7 +84,7 @@ def write_staging_prototype(
     rules-form ``behavior.tlon`` — prototypes carry no persona (unified
     member model, ADR 0006); a member's persona files are seeded at
     creation and member-owned afterwards (self-editable via
-    ``updatePersona``, ADR 0024), never part of the behavior genome.
+    ``persona-update``, ADR 0024), never part of the behavior genome.
 
     The behavior text may be a write-side template: when it declares
     ``:parameters`` and references ``${var}`` placeholders, the declaration

@@ -167,7 +167,7 @@ class MembersFacade:
 
         Writes the instance's behavior/config (instantiate), then the
         self files (creation-time seeding, ADR 0006). IDENTITY and SOUL
-        are member-owned and self-editable via ``updatePersona`` (ADR
+        are member-owned and self-editable via ``persona-update`` (ADR
         0024); RULES is maintained by humans. The caller hot-adopts the
         new member separately (``adopt``) so it can report the adopt
         result.

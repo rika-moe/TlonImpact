@@ -30,7 +30,7 @@ from tlon.base.config import AgentConfig
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
-from tlon.tools.tasks.manager import TaskManager
+from tlon.tasks.manager import TaskManager
 from tlosure.edn import loads
 
 AGENT = "agent1"
@@ -256,7 +256,7 @@ async def test_empty_contact_book_gets_empty_state_section(tmp_path: Path) -> No
 
 
 async def test_contact_book_edit_rebuilds_prompt_cache(tmp_path: Path) -> None:
-    """The mtime signature covers CONTACTS.md — an updateContact write
+    """The mtime signature covers CONTACTS.md — an contacts-upsert write
     takes effect at the next assembly (no restart)."""
     tlon_paths = TlonPaths(home=tmp_path)
     builder, _ = _make_builder(tmp_path, "[(persona)]")

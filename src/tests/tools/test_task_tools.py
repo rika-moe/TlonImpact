@@ -1,17 +1,4 @@
-"""Tests for the task Tool wrapper classes (tlon.tools.tasks.*).
-
-These test the thin Tool layer around TaskManager: argument forwarding,
-ToolResult shaping, and metadata. TaskManager's own behavior is covered by
-src/tests/tasks/test_manager.py and test_models.py and is not re-tested here.
-
-Error-path contract (issue #3): the tools no longer swallow exceptions —
-an unexpected failure inside ``execute`` propagates to ToolExecutor, whose
-single fallback turns it into ``ToolResult(success=False, error="Execution
-error: ...")`` with a stack-logged error (see
-src/tests/agents/test_tool_executor.py). Expected domain errors (task not
-found, wrong status) are still expressed as failure ToolResults and are
-asserted as such here.
-"""
+"""Task operation projection and domain transition regressions."""
 
 from pathlib import Path
 from unittest.mock import Mock
@@ -19,399 +6,138 @@ from unittest.mock import Mock
 import pytest
 
 from tlon.base.paths import TlonPaths
-from tlon.tools.tasks.complete_task import CompleteTaskTool
-from tlon.tools.tasks.create_task import CreateTaskTool
-from tlon.tools.tasks.get_current_task import GetCurrentTaskTool
-from tlon.tools.tasks.list_tasks import ListTasksTool
-from tlon.tools.tasks.manager import TaskManager
-from tlon.tools.tasks.pause_task import PauseTaskTool
-from tlon.tools.tasks.remove_task import RemoveTaskTool
-from tlon.tools.tasks.start_task import StartTaskTool
+from tlon.operations.adapters import OperationTool
+from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.tasks import make_task_operations
+from tlon.tasks.manager import TaskManager
 
 
 @pytest.fixture
 def manager(tmp_path: Path) -> TaskManager:
-    return TaskManager(agent_id="test-agent", tlon_paths=TlonPaths(home=tmp_path))
+    return TaskManager("test-agent", TlonPaths(home=tmp_path))
 
 
-class TestToolMetadata:
-    """Each tool's schema must match what its execute() consumes."""
-
-    @pytest.mark.parametrize(
-        ("tool_cls", "name", "required"),
-        [
-            (CreateTaskTool, "createTask", ["title"]),
-            (CompleteTaskTool, "completeTask", ["task_id"]),
-            (GetCurrentTaskTool, "getCurrentTask", []),
-            (ListTasksTool, "listTasks", []),
-            (PauseTaskTool, "pauseTask", ["task_id"]),
-            (RemoveTaskTool, "removeTask", ["task_id"]),
-            (StartTaskTool, "startTask", ["task_id"]),
-        ],
+def tool(manager: TaskManager, action: str) -> OperationTool:
+    executor = OperationExecutor(
+        OperationRegistry(make_task_operations(manager)),
+        CallContext(manager.agent_id, "run", "call"),
     )
-    def test_name_and_required(
-        self, manager: TaskManager, tool_cls: type, name: str, required: list[str]
-    ):
-        tool = tool_cls(manager)
-
-        assert tool.name == name
-        assert tool.parameters["type"] == "object"
-        assert tool.parameters.get("required", []) == required
-
-    def test_openai_definition(self, manager: TaskManager):
-        definition = CreateTaskTool(manager).to_openai_definition()
-
-        assert definition["type"] == "function"
-        assert definition["function"]["name"] == "createTask"
-        assert "title" in definition["function"]["parameters"]["properties"]
+    return OperationTool(executor, f"task-{action}")
 
 
-class TestCreateTaskTool:
-    async def test_execute_creates_task(self, manager: TaskManager):
-        tool = CreateTaskTool(manager)
-
-        result = await tool.execute(title="设计登录 API", description="定义端点")
-
-        assert result.success is True
-        assert result.data == {
-            "task_id": "t-001",
-            "title": "设计登录 API",
-            "status": "todo",
-        }
-        assert "设计登录 API" in result.message
-        assert "t-001" in result.message
-
-    async def test_description_defaults_to_empty(self, manager: TaskManager):
-        tool = CreateTaskTool(manager)
-
-        result = await tool.execute(title="任务")
-
-        assert result.success is True
-        assert manager.get_task("t-001").description == ""
-
-    async def test_forwards_arguments_to_manager(self, manager: TaskManager):
-        spy = Mock(wraps=manager.create_task)
-        manager.create_task = spy
-        tool = CreateTaskTool(manager)
-
-        await tool.execute(title="标题", description="描述")
-
-        spy.assert_called_once_with("标题", "描述")
-
-    async def test_execute_error_propagates(self, manager: TaskManager):
-        manager.create_task = Mock(side_effect=RuntimeError("disk full"))
-        tool = CreateTaskTool(manager)
-
-        with pytest.raises(RuntimeError, match="disk full"):
-            await tool.execute(title="任务")
+@pytest.mark.parametrize(
+    "action,required",
+    [
+        ("create", ["title"]),
+        ("list", []),
+        ("current", []),
+        ("start", ["task_id"]),
+        ("pause", ["task_id"]),
+        ("complete", ["task_id"]),
+        ("remove", ["task_id"]),
+    ],
+)
+def test_metadata(manager: TaskManager, action: str, required: list[str]) -> None:
+    value = tool(manager, action)
+    definition = value.to_openai_definition()["function"]
+    assert definition["name"] == f"task-{action}"
+    assert definition["parameters"]["required"] == required
+    assert definition["parameters"]["additionalProperties"] is False
 
 
-class TestStartTaskTool:
-    async def test_execute_starts_task(self, manager: TaskManager):
-        manager.create_task("任务A")
-        tool = StartTaskTool(manager)
+async def test_lifecycle_preserves_all_fields_and_progress(manager: TaskManager) -> None:
+    create = await tool(manager, "create").execute(title="任务", description="描述")
+    assert create.success and create.data["task"]["status"] == "todo"
+    assert create.data["task"]["description"] == "描述"
+    await tool(manager, "start").execute(task_id="t-001")
+    paused = await tool(manager, "pause").execute(task_id="t-001", reason="保存进度")
+    assert paused.success and paused.data["task"]["pause_count"] == 1
+    assert "[Paused] 保存进度" in paused.data["task"]["description"]
+    current = await tool(manager, "current").execute()
+    assert current.data["task"]["status"] == "paused"
+    await tool(manager, "start").execute(task_id="t-001")
+    complete = await tool(manager, "complete").execute(task_id="t-001", result="交付物")
+    assert complete.success and complete.data["task"]["result"] == "交付物"
+    assert complete.data["task"]["completed_at"]
+    removed = await tool(manager, "remove").execute(task_id="t-001")
+    assert removed.success and manager.get_task("t-001") is None
 
-        result = await tool.execute(task_id="t-001")
 
-        assert result.success is True
-        assert result.data == {
-            "task_id": "t-001",
-            "title": "任务A",
-            "status": "doing",
-        }
-        assert "任务A" in result.message
+async def test_auto_pause_and_defaults(manager: TaskManager) -> None:
+    await tool(manager, "create").execute(title="A")
+    await tool(manager, "create").execute(title="B")
+    assert manager.get_task("t-001").description == ""
+    await tool(manager, "start").execute(task_id="t-001")
+    second = await tool(manager, "start").execute(task_id="t-002")
+    assert second.data["auto_paused"]["id"] == "t-001"
+    assert second.data["task"]["status"] == "doing"
 
-    async def test_auto_pauses_current_task(self, manager: TaskManager):
-        manager.create_task("任务A")
-        manager.create_task("任务B")
+
+@pytest.mark.parametrize("action", ["start", "pause", "complete", "remove"])
+async def test_missing_task_is_rejected(manager: TaskManager, action: str) -> None:
+    result = await tool(manager, action).execute(task_id="missing")
+    assert not result.success and "not found" in result.error
+    assert result.data["outcome"] == "rejected"
+
+
+@pytest.mark.parametrize(
+    "action,status",
+    [
+        ("pause", "todo"),
+        ("complete", "todo"),
+        ("remove", "todo"),
+        ("start", "done"),
+        ("complete", "done"),
+        ("pause", "done"),
+        ("remove", "doing"),
+    ],
+)
+async def test_wrong_status_is_rejected(manager: TaskManager, action: str, status: str) -> None:
+    manager.create_task("A")
+    if status in ("doing", "done"):
         manager.start_task("t-001")
-        tool = StartTaskTool(manager)
-
-        result = await tool.execute(task_id="t-002")
-
-        assert result.success is True
-        assert result.data["task_id"] == "t-002"
-        assert result.data["auto_paused"] == {"task_id": "t-001", "title": "任务A"}
-        assert "自动暂停" in result.message
-
-    async def test_task_not_found(self, manager: TaskManager):
-        tool = StartTaskTool(manager)
-
-        result = await tool.execute(task_id="t-999")
-
-        assert result.success is False
-        assert result.error == "Task not found: t-999"
-
-    async def test_execute_error_propagates(self, manager: TaskManager):
-        manager.start_task = Mock(side_effect=RuntimeError("boom"))
-        tool = StartTaskTool(manager)
-
-        with pytest.raises(RuntimeError, match="boom"):
-            await tool.execute(task_id="t-001")
-
-
-class TestPauseTaskTool:
-    async def test_execute_pauses_doing_task(self, manager: TaskManager):
-        manager.create_task("任务A")
-        manager.start_task("t-001")
-        tool = PauseTaskTool(manager)
-
-        result = await tool.execute(task_id="t-001", reason="去修紧急 bug")
-
-        assert result.success is True
-        assert result.data == {
-            "task_id": "t-001",
-            "title": "任务A",
-            "status": "paused",
-            "pause_count": 1,
-        }
-        assert "去修紧急 bug" in result.message
-
-    async def test_reason_appended_to_description(self, manager: TaskManager):
-        manager.create_task("任务A", "原始描述")
-        manager.start_task("t-001")
-        tool = PauseTaskTool(manager)
-
-        await tool.execute(task_id="t-001", reason="进度 50%")
-
-        assert "[Paused] 进度 50%" in manager.get_task("t-001").description
-
-    async def test_task_not_found(self, manager: TaskManager):
-        tool = PauseTaskTool(manager)
-
-        result = await tool.execute(task_id="t-999")
-
-        assert result.success is False
-        assert result.error == "Task not found: t-999"
-
-    async def test_cannot_pause_non_doing_task(self, manager: TaskManager):
-        manager.create_task("任务A")
-        tool = PauseTaskTool(manager)
-
-        result = await tool.execute(task_id="t-001")
-
-        assert result.success is False
-        assert "Cannot pause task with status 'todo'" in result.error
-
-    async def test_execute_error_propagates(self, manager: TaskManager):
-        manager.create_task("任务A")
-        manager.start_task("t-001")
-        manager.pause_task = Mock(side_effect=RuntimeError("boom"))
-        tool = PauseTaskTool(manager)
-
-        with pytest.raises(RuntimeError, match="boom"):
-            await tool.execute(task_id="t-001")
-
-
-class TestCompleteTaskTool:
-    async def test_execute_completes_doing_task(self, manager: TaskManager):
-        manager.create_task("任务A")
-        manager.start_task("t-001")
-        tool = CompleteTaskTool(manager)
-
-        result = await tool.execute(task_id="t-001", result="已完成实现")
-
-        assert result.success is True
-        assert result.data["task_id"] == "t-001"
-        assert result.data["title"] == "任务A"
-        assert result.data["status"] == "done"
-        assert "duration_minutes" in result.data
-        assert result.data["pause_count"] == 0
-        assert "任务A" in result.message
-
-    async def test_forwards_result_summary_to_manager(self, manager: TaskManager):
-        manager.create_task("任务A")
-        manager.start_task("t-001")
-        spy = Mock(wraps=manager.complete_task)
-        manager.complete_task = spy
-        tool = CompleteTaskTool(manager)
-
-        await tool.execute(task_id="t-001", result="摘要")
-
-        spy.assert_called_once_with("t-001", "摘要")
-
-    async def test_task_not_found(self, manager: TaskManager):
-        tool = CompleteTaskTool(manager)
-
-        result = await tool.execute(task_id="t-999")
-
-        assert result.success is False
-        assert result.error == "Task not found: t-999"
-
-    async def test_cannot_complete_todo_task(self, manager: TaskManager):
-        manager.create_task("任务A")
-        tool = CompleteTaskTool(manager)
-
-        result = await tool.execute(task_id="t-001")
-
-        assert result.success is False
-        assert "hasn't been started" in result.error
-
-    async def test_cannot_complete_already_done_task(self, manager: TaskManager):
-        manager.create_task("任务A")
-        manager.start_task("t-001")
+    if status == "done":
         manager.complete_task("t-001")
-        tool = CompleteTaskTool(manager)
-
-        result = await tool.execute(task_id="t-001")
-
-        assert result.success is False
-        assert result.error == "Task t-001 is already completed"
-
-    async def test_execute_error_propagates(self, manager: TaskManager):
-        manager.get_task = Mock(side_effect=RuntimeError("boom"))
-        tool = CompleteTaskTool(manager)
-
-        with pytest.raises(RuntimeError, match="boom"):
-            await tool.execute(task_id="t-001")
+    result = await tool(manager, action).execute(task_id="t-001")
+    assert not result.success and result.data["outcome"] == "rejected"
 
 
-class TestRemoveTaskTool:
-    async def test_execute_removes_done_task(self, manager: TaskManager):
-        manager.create_task("任务A")
+async def test_list_filter_and_empty_current(manager: TaskManager) -> None:
+    assert (await tool(manager, "current").execute()).data == {"task": None}
+    assert (await tool(manager, "list").execute()).data["stats"]["total"] == 0
+    manager.create_task("A")
+    manager.create_task("B")
+    manager.start_task("t-001")
+    listing = await tool(manager, "list").execute(filter="doing")
+    assert listing.data["stats"]["total"] == 2
+    assert [task["id"] for task in listing.data["tasks"]] == ["t-001"]
+
+
+@pytest.mark.parametrize(
+    "action,method",
+    [
+        ("create", "create_task"),
+        ("start", "start_task"),
+        ("pause", "pause_task"),
+        ("complete", "complete_task"),
+        ("remove", "remove_task"),
+    ],
+)
+async def test_write_failure_is_unknown(manager: TaskManager, action: str, method: str) -> None:
+    manager.create_task("A")
+    if action in ("pause", "complete", "remove"):
         manager.start_task("t-001")
+    if action == "remove":
         manager.complete_task("t-001")
-        tool = RemoveTaskTool(manager)
-
-        result = await tool.execute(task_id="t-001")
-
-        assert result.success is True
-        assert result.data == {"task_id": "t-001", "title": "任务A"}
-        assert manager.get_task("t-001") is None
-
-    async def test_task_not_found(self, manager: TaskManager):
-        tool = RemoveTaskTool(manager)
-
-        result = await tool.execute(task_id="t-999")
-
-        assert result.success is False
-        assert result.error == "Task not found: t-999"
-
-    async def test_cannot_remove_non_done_task(self, manager: TaskManager):
-        manager.create_task("任务A")
-        tool = RemoveTaskTool(manager)
-
-        result = await tool.execute(task_id="t-001")
-
-        assert result.success is False
-        assert "Cannot remove task with status 'todo'" in result.error
-
-    async def test_execute_error_propagates(self, manager: TaskManager):
-        manager.get_task = Mock(side_effect=RuntimeError("boom"))
-        tool = RemoveTaskTool(manager)
-
-        with pytest.raises(RuntimeError, match="boom"):
-            await tool.execute(task_id="t-001")
+    setattr(manager, method, Mock(side_effect=OSError("disk full")))
+    args = {"title": "A"} if action == "create" else {"task_id": "t-001"}
+    result = await tool(manager, action).execute(**args)
+    assert not result.success and "disk full" in result.error
+    assert result.data == {"outcome": "unknown", "call_id": "call", "retry_safe": False}
 
 
-class TestGetCurrentTaskTool:
-    async def test_no_current_task(self, manager: TaskManager):
-        tool = GetCurrentTaskTool(manager)
-
-        result = await tool.execute()
-
-        assert result.success is True
-        assert result.data == {"has_task": False}
-        assert "没有进行中的任务" in result.message
-
-    async def test_returns_doing_task(self, manager: TaskManager):
-        manager.create_task("任务A", "描述")
-        manager.start_task("t-001")
-        tool = GetCurrentTaskTool(manager)
-
-        result = await tool.execute()
-
-        assert result.success is True
-        assert result.data["has_task"] is True
-        task = result.data["task"]
-        assert task["id"] == "t-001"
-        assert task["title"] == "任务A"
-        assert task["description"] == "描述"
-        assert task["status"] == "doing"
-        assert task["started_at"]
-        assert isinstance(task["elapsed_minutes"], int)
-        assert task["pause_count"] == 0
-
-    async def test_falls_back_to_paused_task(self, manager: TaskManager):
-        manager.create_task("任务A")
-        manager.start_task("t-001")
-        manager.pause_task("t-001")
-        tool = GetCurrentTaskTool(manager)
-
-        result = await tool.execute()
-
-        assert result.success is True
-        assert result.data["task"]["status"] == "paused"
-
-    async def test_execute_error_propagates(self, manager: TaskManager):
-        manager.get_current_task = Mock(side_effect=RuntimeError("boom"))
-        tool = GetCurrentTaskTool(manager)
-
-        with pytest.raises(RuntimeError, match="boom"):
-            await tool.execute()
-
-
-class TestListTasksTool:
-    async def test_empty_list(self, manager: TaskManager):
-        tool = ListTasksTool(manager)
-
-        result = await tool.execute()
-
-        assert result.success is True
-        assert result.data["total"] == 0
-        assert result.data["tasks"] == []
-        assert "0个" in result.message
-
-    async def test_lists_tasks_with_stats(self, manager: TaskManager):
-        manager.create_task("任务A")
-        manager.create_task("任务B")
-        manager.start_task("t-001")
-        tool = ListTasksTool(manager)
-
-        result = await tool.execute()
-
-        assert result.success is True
-        assert result.data["total"] == 2
-        assert result.data["doing"] == 1
-        assert result.data["todo"] == 1
-        assert result.data["tasks"] == [
-            {"id": "t-001", "title": "任务A", "status": "doing"},
-            {"id": "t-002", "title": "任务B", "status": "todo"},
-        ]
-
-    @pytest.mark.parametrize(
-        ("filter_value", "expected_status_filter"),
-        [("all", None), ("doing", "doing"), ("todo", "todo")],
-    )
-    async def test_filter_forwarded_to_manager(
-        self,
-        manager: TaskManager,
-        filter_value: str,
-        expected_status_filter: str | None,
-    ):
-        list_spy = Mock(wraps=manager.list_tasks)
-        stats_spy = Mock(wraps=manager.get_stats)
-        manager.list_tasks = list_spy
-        manager.get_stats = stats_spy
-        tool = ListTasksTool(manager)
-
-        await tool.execute(filter=filter_value)
-
-        list_spy.assert_called_once_with(expected_status_filter)
-        stats_spy.assert_called_once_with()
-
-    async def test_filter_defaults_to_all(self, manager: TaskManager):
-        list_spy = Mock(wraps=manager.list_tasks)
-        manager.list_tasks = list_spy
-        tool = ListTasksTool(manager)
-
-        await tool.execute()
-
-        list_spy.assert_called_once_with(None)
-
-    async def test_execute_error_propagates(self, manager: TaskManager):
-        manager.list_tasks = Mock(side_effect=RuntimeError("boom"))
-        tool = ListTasksTool(manager)
-
-        with pytest.raises(RuntimeError, match="boom"):
-            await tool.execute()
+@pytest.mark.parametrize("action,method", [("list", "list_tasks"), ("current", "get_current_task")])
+async def test_read_failure_propagates(manager: TaskManager, action: str, method: str) -> None:
+    setattr(manager, method, Mock(side_effect=RuntimeError("read failed")))
+    with pytest.raises(RuntimeError, match="read failed"):
+        await tool(manager, action).execute()

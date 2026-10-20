@@ -182,7 +182,8 @@ class TestAtomicPersist:
             raise OSError("simulated crash")
 
         monkeypatch.setattr(os, "replace", boom)
-        assert await store.delete_claim("c-001") is True
+        with pytest.raises(OSError, match="simulated crash"):
+            await store.delete_claim("c-001")
 
         assert store.claims_file.read_bytes() == original
         assert not store.claims_file.with_name(store.claims_file.name + ".tmp").exists()
@@ -203,7 +204,8 @@ class TestAtomicPersist:
         monkeypatch.setattr(json, "dumps", boom)
         # Deleting c-001 leaves c-002 in cache, so the rewrite actually
         # reaches the (failing) serialization of a remaining item.
-        assert await store.delete_claim("c-001") is True
+        with pytest.raises(OSError, match="simulated crash"):
+            await store.delete_claim("c-001")
 
         assert store.claims_file.read_bytes() == original
         assert not store.claims_file.with_name(store.claims_file.name + ".tmp").exists()

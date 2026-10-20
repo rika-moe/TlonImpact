@@ -808,7 +808,7 @@ class MemoryManager:
             if len(matches) > 5:
                 lines.append(f"- … 等共 {len(matches)} 条")
             lines.append("")
-            lines.append("调用 forget(query='...', confirm=True) 确认删除。")
+            lines.append("调用 memory-forget，参数 query 为检索词、confirm 为 true，确认删除。")
             return "\n".join(lines)
 
         # Delete mode

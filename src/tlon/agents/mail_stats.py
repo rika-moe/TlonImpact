@@ -2,7 +2,7 @@
 
 The computation reads the organization mail domain, so it lives in the
 agents layer; the tools layer consumes it through the ``MailStatsProvider``
-port (``tlon.tools.observability.ports``). Read-only: only the subject
+port (``tlon.observability.ports``). Read-only: only the subject
 agent's own mailbox is scanned (``Mailbox.sent`` / ``Mailbox.inbox``).
 """
 
@@ -10,9 +10,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from tlon.base.paths import TlonPaths
+from tlon.observability.ports import MailStatsProvider
 from tlon.organization.mail.mail import address_for_member
 from tlon.organization.mail.mailbox import Mailbox
-from tlon.tools.observability.ports import MailStatsProvider
 
 #: Cap on the never-replied address list (payload bloat guard).
 NEVER_REPLIED_CAP = 20

@@ -1,6 +1,6 @@
 # 记忆系统设计
 
-Tlon 的记忆不是检索增强的附件，而是 agent 会话循环的一部分：session journal（ADR 0007）是交互的唯一真相，已完成的 session 成批蒸馏成 claim（自然语言断言）进入长期记忆，下一轮对话再把它们拼回上下文。本文解释这套系统为什么长现在这样，以当前实现为准（存储层在 [src/tlon/memory/](../../src/tlon/memory)，agent 侧工具在 [src/tlon/tools/memory/](../../src/tlon/tools/memory)，反思在 [src/tlon/agents/reflection.py](../../src/tlon/agents/reflection.py)）。设计选择的历史见 [ADR 0017](../decisions/0017-claim-based-memory.md)；会话 journal 的事实与恢复契约见 [runtime.md](./runtime.md)。
+Tlon 的记忆不是检索增强的附件，而是 agent 会话循环的一部分：session journal（ADR 0007）是交互的唯一真相，已完成的 session 成批蒸馏成 claim（自然语言断言）进入长期记忆，下一轮对话再把它们拼回上下文。本文解释这套系统为什么长现在这样，以当前实现为准（存储层在 [src/tlon/memory/](../../src/tlon/memory)，agent 侧工具在 [src/tlon/tools/memory/](../../src/tlon/operations/memory.py)，反思在 [src/tlon/agents/reflection.py](../../src/tlon/agents/reflection.py)）。设计选择的历史见 [ADR 0017](../decisions/0017-claim-based-memory.md)；会话 journal 的事实与恢复契约见 [runtime.md](./runtime.md)。
 
 ## 定位：可审计的个体记忆
 
@@ -26,9 +26,9 @@ Tlon 的记忆不是检索增强的附件，而是 agent 会话循环的一部�
 
 [memory/manager.py](../../src/tlon/memory/manager.py) 的 `MemoryManager` 是统一入口，持有唯一的存储 [memory/claim_store.py](../../src/tlon/memory/claim_store.py) 的 `ClaimStore`：`memory/claims.jsonl`，每行一条 claim。
 
-记忆有三个入口：系统自动批量蒸馏（`maybe_distill_completed_sessions`）与 agent 主动记录（`rememberFact`，立即写一条 claim）与反思补记（`record_claim`）——长期层允许多方填充，因为它本来就是筛选后的判断而不是原始记录。
+记忆有三个入口：系统自动批量蒸馏（`maybe_distill_completed_sessions`）与 agent 主动记录（`memory-remember`，立即写一条 claim）与反思补记（`record_claim`）——长期层允许多方填充，因为它本来就是筛选后的判断而不是原始记录。
 
-存储格式是 JSONL，写入策略是**追加优先，而非严格 append-only**。`add_claim` 追加新行；supersede 更新旧 claim 的生命周期字段，`forget` / 反思可显式删除，二者都以临时文件 + `os.replace` 原子重写。追加失败也尝试全量持久化。加载逐行解析，坏行告警后跳过；不能把这种容错理解为零数据丢失保证。claims 没有容量淘汰上限，自动失效保留旧条目，显式删除仍会删除。
+存储格式是 JSONL，写入策略是**逻辑追加、物理原子快照**。`add_claim` 添加新条目；supersede 更新旧 claim 的生命周期字段，`forget` / 反思可显式删除，所有变更都以临时文件 + `os.replace` 原子重写，提交后才发布缓存。写失败向调用方传播，若提交后丢失回执则重读磁盘事实。加载逐行解析，坏行告警后跳过；不能把这种容错理解为零数据丢失保证。claims 没有容量淘汰上限，自动失效保留旧条目，显式删除仍会删除。
 
 store 一把 `asyncio.Lock`，以缓存服务运行时读写，`claims.jsonl` 承担持久内容；写入失败由存储层记录日志，不能将内存更新等同于已持久提交。`MemoryManager.load` 还有一层配置加载语义：`memory/config.json` 是**唯一的**记忆调参面——存在时以磁盘文件为准（绑定 `agent_id`），不存在时用构造传入的 `MemoryConfig`（生产装配传默认值）落盘初始化。配置字段见 [配置参考](../reference/config-reference.md)。
 
@@ -52,7 +52,7 @@ Distiller 的输入是 **session 事件投影**（`SessionProjection`，[memory/
 
 ### claim 生命周期：冲突判定，失效不删除
 
-**两条写入路径过同一套冲突判定**——批量蒸馏落盘前与 `rememberFact` 写 claim 前，都先走 `MemoryManager._resolve_conflicts`：
+**两条写入路径过同一套冲突判定**——批量蒸馏落盘前与 `memory-remember` 写 claim 前，都先走 `MemoryManager._resolve_conflicts`：
 
 1. **候选检索**：新 claim 文本 embed 后查向量索引，只取相似度 ≥ 0.75（余弦）的 **active** 旧 claim 作为候选（每条约 3 条）。阈值用于缩小需要 LLM 判断的候选范围，低于阈值直接 ADD 以控制成本；相似度不是同一事实或矛盾关系的逻辑保证。阈值与候选数是 `memory/config.json` 的 `conflict` 段调参（`similarity_threshold` / `candidate_limit`，默认值 0.75 / 3 即上述数字）。
 2. **一次批量判定**：有候选才把整批新 claim（编号）+ 全部候选旧 claim（id + 日期 + 文本）交给 `Distiller.judge_conflicts` **一次** LLM 调用判定（借鉴 Mem0 的 ADD/UPDATE 路由）——不是每条一次调用。
@@ -70,7 +70,7 @@ Distiller 的输入是 **session 事件投影**（`SessionProjection`，[memory/
 
 - **纯派生视图**。真相只有 `claims.jsonl`；索引可整个删掉，下次启动从 active claims 全量重建。索引库的 `vec_meta` 表记录 embedding 模型标识 + 维度，`MemoryManager.load` 与当前配置比对——换模型（向量空间互不兼容）即自动全量重建，重建就是 N 次 embedding 调用，无数据迁移。
 - **降级是一等公民**。未配置 `embedding_model_name`、embedding 调用失败、索引重建失败，检索一律降级为「最近 N 条」时间序注入——部分 provider 没有 embedding 端点，记忆与会话绝不能因此挂掉。写入路径同样宽容：`add_claim` 后同步尝试 embed 入库，失败只记日志（claim 仍可被时间序检索到）；load 时对缺向量的 active claims 做 backfill、对已被删 claim 的残留向量做清理。
-- **同步尝试入索引**。蒸馏落盘与 `rememberFact` 之后尝试 embed 入库；成功后下一轮可走向量检索，失败仍按前述规则降级，不能保证任何故障下都立即命中。
+- **同步尝试入索引**。蒸馏落盘与 `memory-remember` 之后尝试 embed 入库；成功后下一轮可走向量检索，失败仍按前述规则降级，不能保证任何故障下都立即命中。
 
 ## 上下文注入
 
@@ -87,11 +87,11 @@ Distiller 的输入是 **session 事件投影**（`SessionProjection`，[memory/
 
 ## agent 侧接口
 
-agent 通过 [src/tlon/tools/memory/](../../src/tlon/tools/memory) 下的四个工具读写自己的记忆，全部在 `assemble_member_capabilities`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配成员服务时注册；前三个直接持有本 agent 的 `MemoryManager` 实例，`readSession` 持有本 agent 的 session journal（`SessionLogReader` 端口）：
+agent 通过 [src/tlon/tools/memory/](../../src/tlon/operations/memory.py) 下的四个工具读写自己的记忆，全部在 `assemble_member_capabilities`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配成员服务时注册；前三个直接持有本 agent 的 `MemoryManager` 实例，`session-read` 持有本 agent 的 session journal（`SessionLogReader` 端口）：
 
-- `rememberFact`（`remember_fact.py` 的 `RememberFactTool`）——立即写一条 claim（参数为 `fact` 文本与 `importance`）。新 claim 不在当前 session 重新注入（注入只在 session 首步构建一次），但经 `searchMemories` 立即可查，下个 session 进 JIT 注入。
-- `searchMemories`（`search_memories.py` 的 `SearchMemoriesTool`）——向量检索：query embed 后按相似度取 top-k active claims，每条结果带日期与 `source_session_ids` 来源引用；索引不可用时降级关键词子串匹配。
-- `readSession`（`read_session.py` 的 `ReadSessionTool`）——claim → 来源的回读通道：按 session id 读该会话的 journal，渲染为有界摘要（触发语 + 各轮回复 + 工具活动；触发截 300 字、每轮回复截 600 字、最多列 12 轮、总量硬上限 12000 字符）。claim 是压缩指针，journal 是原文真相（ReadAgent 模式）。
+- `memory-remember`（`remember_fact.py` 的 `RememberFactTool`）——立即写一条 claim（参数为 `fact` 文本与 `importance`）。新 claim 不在当前 session 重新注入（注入只在 session 首步构建一次），但经 `memory-search` 立即可查，下个 session 进 JIT 注入。
+- `memory-search`（`search_memories.py` 的 `SearchMemoriesTool`）——向量检索：query embed 后按相似度取 top-k active claims，每条结果带日期与 `source_session_ids` 来源引用；索引不可用时降级关键词子串匹配。
+- `session-read`（`read_session.py` 的 `ReadSessionTool`）——claim → 来源的回读通道：按 session id 读该会话的 journal，渲染为有界摘要（触发语 + 各轮回复 + 工具活动；触发截 300 字、每轮回复截 600 字、最多列 12 轮、总量硬上限 12000 字符）。claim 是压缩指针，journal 是原文真相（ReadAgent 模式）。
 - `forget`（`forget_memory.py` 的 `ForgetMemoryTool`）——删除记忆；默认预览模式（只报匹配），`confirm: true` 才真正删。两步确认是给 LLM 的防误删闸门。
 
 工具的读写都只落在本 agent 的目录——`MemoryManager` 构造时绑定 `agent_id`，工具层没有跨 agent 访问的入口。记忆私有性在这一层是结构性保证，不是约定。
@@ -156,7 +156,7 @@ ADR 0017 的业界调研结论：主流现成 memory 产品无可直接引入者
 - **可解释**——每条 claim 都记着 `source_session_ids`，可疑的断言可以回到 journal 逐事件核对。
 - **可编辑**——JSONL 是纯文本，人类可以直接打开审计、改错、删除；`forget` 工具的两步确认也建立在「记忆是可枚举条目」之上。
 - **可审计**——落盘即事实。`~/.tlon/{agent_id}/memory/` 下的文件与 `sessions.sqlite3` 就是 agent 经历与记得的全部，没有第二个真相；旧 `sessions/` JSONL 只是不参与运行时的离线档案（ADR 0032）。
-- **有边界的重建**——journal 能重新提供自动蒸馏的输入，但重跑 LLM 不保证相同产物；主动 `rememberFact` 与反思写入也会产生 claim，不能宣称全部 claims 可由 journal 无损重建。可完全丢弃并重建的是向量索引。
+- **有边界的重建**——journal 能重新提供自动蒸馏的输入，但重跑 LLM 不保证相同产物；主动 `memory-remember` 与反思写入也会产生 claim，不能宣称全部 claims 可由 journal 无损重建。可完全丢弃并重建的是向量索引。
 
 ### 为什么蒸馏用 LLM 而不是规则
 
