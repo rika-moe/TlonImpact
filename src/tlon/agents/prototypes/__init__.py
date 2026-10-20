@@ -17,7 +17,7 @@ genome):
   ``(lessons)`` context section injects it
 - ``REVIEW.md`` — optional (heterogeneous review, see
   docs/design/prototypes.md): peer-review
-  records appended by ``reviewPrototype`` while the prototype is staged.
+  records appended by ``prototype-review`` while the prototype is staged.
   Metadata reading never touches it, so listing stays free; approval's
   whole-directory move carries it into the trusted library.
 

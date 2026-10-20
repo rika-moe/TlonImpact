@@ -34,13 +34,13 @@ async def test_real_contacts_two_members_two_entrances(tmp_path: Path) -> None:
         BuiltinCall("contacts-upsert", adapter.builtins()["contacts-upsert"], [args], {})
     )
     assert json_value(result, edn_keys=True)["action"] == "added"
-    read = await OperationTool(alice, "contacts-read").execute()
+    read = await OperationTool(alice, "contacts-read").execute_context({})
     assert read.success and read.data["entries"] == 1 and "靠谱" in read.data["content"]
-    other = await OperationTool(bob, "contacts-read").execute()
+    other = await OperationTool(bob, "contacts-read").execute_context({})
     assert other.success and other.data["entries"] == 0
     assert not paths.agent_contacts_file("bob").exists()
-    invalid = await OperationTool(alice, "contacts-upsert").execute(
-        name="x", address="y", description="z", member_id="bob"
+    invalid = await OperationTool(alice, "contacts-upsert").execute_context(
+        {"name": "x", "address": "y", "description": "z", "member_id": "bob"}
     )
     assert not invalid.success
     with pytest.raises(InputError):
@@ -69,10 +69,12 @@ async def test_persona_two_entrances_and_write_failure_receipt(tmp_path: Path) -
     assert paths.agent_soul_file("alice").read_text() == "认真"
     assert not paths.agent_soul_file("bob").exists()
     with patch.object(Path, "write_text", side_effect=OSError("disk failure")):
-        result = await OperationTool(alice, "persona-update").execute(
-            file="identity", content="自己"
+        result = await OperationTool(alice, "persona-update").execute_context(
+            {"file": "identity", "content": "自己"}
         )
     assert not result.success
     assert result.data == {"outcome": "unknown", "call_id": "call-alice", "retry_safe": False}
-    invalid = await OperationTool(alice, "persona-update").execute(file="rules", content="x")
+    invalid = await OperationTool(alice, "persona-update").execute_context(
+        {"file": "rules", "content": "x"}
+    )
     assert not invalid.success and "InputError" in invalid.error

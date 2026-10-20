@@ -12,9 +12,10 @@ from tlon.agents.program_driver import ProgramDriver
 from tlon.agents.program_store import ProgramStore
 from tlon.agents.vocabulary import make_member_builtins
 from tlon.operations.adapters import DSLAdapter
-from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
+from tlon.operations.model import model_operation_definitions
 from tlon.operations.state import make_state_operations
-from tlosure.builtins import ActionRequest, EvalError
+from tlosure.builtins import EvalError
 from tlosure.edn import Keyword, dumps, loads
 
 
@@ -29,11 +30,29 @@ def store(request: Any, tmp_path: Path) -> ProgramStore:
     return ProgramStore(tmp_path / "program.sqlite3" if request.param else None)
 
 
-def driver(store: ProgramStore, execute: Any, *, run_id: str = "run") -> ProgramDriver:
-    adapter = DSLAdapter(
-        OperationExecutor(
-            OperationRegistry(make_state_operations(store)), CallContext("a", "member", "member")
+def driver(
+    store: ProgramStore,
+    execute: Any,
+    *,
+    run_id: str = "run",
+    model: Any = None,
+    token_budget: int = 4096,
+) -> ProgramDriver:
+    definitions = list(make_state_operations(store))
+    if model is not None:
+        definitions.extend(
+            Operation(
+                op.name,
+                op.description,
+                op.input_schema,
+                op.output_schema,
+                model,
+                effects=op.effects,
+            )
+            for op in model_operation_definitions()
         )
+    adapter = DSLAdapter(
+        OperationExecutor(OperationRegistry(definitions), CallContext("a", "member", "member"))
     )
     return ProgramDriver(
         store,
@@ -42,6 +61,7 @@ def driver(store: ProgramStore, execute: Any, *, run_id: str = "run") -> Program
         execute,
         operations=adapter,
         member_id="a",
+        token_budget=token_budget,
     )
 
 
@@ -64,55 +84,54 @@ async def test_state_read_freezes_branch_when_current_state_changes(store: Progr
     attempts = 0
     output: list[str] = []
 
-    async def execute(request: ActionRequest, name: str, index: int, args: str) -> Any:
+    async def execute(context: CallContext, args: dict[str, Any]) -> Any:
         nonlocal attempts
         attempts += 1
         if attempts == 1:
             raise asyncio.CancelledError()
-        output.append(request.data["prompt"])
-        return None
+        output.append(args["prompt"])
+        return {"content": "ok", "usage": {}}
 
     program = rule(
-        '(if (state-get {:key "enabled"}) (llm-call {:prompt "original" :max-tokens 1}) (llm-call {:prompt "changed" :max-tokens 1}))'
+        '(if (state-get {:key "enabled"}) (model-call {:prompt "original" :max_tokens 1}) (model-call {:prompt "changed" :max_tokens 1}))'
     )
-    with pytest.raises(asyncio.CancelledError):
-        await driver(store, execute).run(program, {})
+    # Simulate a crash after the read was committed but before model dispatch.
+    store.record_effect("run", 0, "state-get", dumps([{Keyword("key"): "enabled"}]), "true")
     store.atomic_state_put_record("change", 0, "state-put", "[]", "enabled", False)
-    await driver(store, execute).run(program, {})
+    attempts = 1
+    await driver(store, AsyncMock(), model=execute).run(program, {})
     assert output == ["original"]
 
 
 async def test_token_budget_counts_recorded_calls_after_restart(store: ProgramStore) -> None:
     allowances: list[int] = []
 
-    async def execute(request: ActionRequest, name: str, index: int, args: str) -> Any:
-        allowances.append(request.data["max_tokens"])
-        return {Keyword("content"): "answer"}
+    async def execute(context: CallContext, args: dict[str, Any]) -> Any:
+        allowances.append(args["max_tokens"])
+        return {"content": "answer", "usage": {}}
 
-    program = rule(" ".join('(llm-call {:prompt "question" :max-tokens 4})' for _ in range(3)))
+    program = rule(" ".join('(model-call {:prompt "question" :max_tokens 4})' for _ in range(3)))
     for _ in range(2):
         with pytest.raises(EvalError, match="budget exhausted"):
-            await ProgramDriver(store, "run", make_member_builtins(), execute, token_budget=5).run(
-                program, {}
-            )
+            await driver(store, AsyncMock(), model=execute, token_budget=5).run(program, {})
     assert allowances == [4, 1]
 
 
-async def test_unrecorded_failure_retries_same_effect_index(store: ProgramStore) -> None:
-    attempts: list[int] = []
+async def test_unrecorded_model_dispatch_is_not_repeated(store: ProgramStore) -> None:
+    attempts: list[str] = []
 
-    async def fail(request: ActionRequest, name: str, index: int, args: str) -> Any:
-        attempts.append(index)
-        raise OSError("submission status unknown")
+    async def fail(context: CallContext, args: dict[str, Any]) -> Any:
+        attempts.append(context.call_id)
+        raise RuntimeError("submission status unknown")
 
-    program = rule('(llm-call {:prompt "paper" :max-tokens 1})')
-    for _ in range(2):
-        with pytest.raises(OSError, match="submission status unknown"):
-            await ProgramDriver(store, "run", make_member_builtins(), fail).run(program, {})
-    assert attempts == [0, 0]
-    assert store.get_effect(
-        "run", 0, "llm-call", dumps([{Keyword("prompt"): "paper", Keyword("max-tokens"): 1}])
-    ) == (False, None)
+    program = rule('(model-call {:prompt "paper" :max_tokens 1})')
+    from tlon.operations.schema import UnknownOutcomeError
+
+    with pytest.raises(RuntimeError, match="submission status unknown"):
+        await driver(store, AsyncMock(), model=fail).run(program, {})
+    with pytest.raises(UnknownOutcomeError, match="automatic retry refused"):
+        await driver(store, AsyncMock(), model=fail).run(program, {})
+    assert len(attempts) == 1
 
 
 async def test_bad_builtin_arity_is_terminal_expression_error(store: ProgramStore) -> None:
@@ -126,5 +145,8 @@ async def test_unknown_host_runtime_error_retains_original_type(store: ProgramSt
     execute = AsyncMock(side_effect=RuntimeError("response lost after commit"))
     with pytest.raises(RuntimeError, match="response lost"):
         await ProgramDriver(store, "unknown", make_member_builtins(), execute).run(
-            rule('(llm-call {:prompt "paper" :max-tokens 1})'), {}
+            rule(
+                "(run-loop (quote {:context {:sections []} :stages [(think) (act)] :until (iteration-limit-reached?) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 10 :reflect {:enabled false :interval-minutes 15}}))"
+            ),
+            {},
         )

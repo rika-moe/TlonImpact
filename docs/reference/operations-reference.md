@@ -1,10 +1,10 @@
-# Operation 调用契约（P1–P3b）
+# Operation 调用契约（P1–P3c）
 
-当前状态：P1、P2、P3a 已分别通过 #184/#185/#186 合入 main。P3b 将记忆、任务、人格/联系人、观测及私有状态接入相同边界，待完整验收与 PR；生命周期/提案/模型调用仍待 P3c，Capability artifact 尚未转换为复合 Operation。目标设计见 [operations](../design/operations.md)，实施顺序见 [operations-plan](../design/operations-plan.md)。
+当前状态：P1、P2、P3a、P3b 已分别通过 #184/#185/#186/#187 合入 main。P3c 将生命周期、演化与模型调用接入相同边界，并删除旧 Tool 机制；当前待完整验收与 PR。Capability artifact 尚未转换为复合 Operation。目标设计见 [operations](../design/operations.md)，实施顺序见 [operations-plan](../design/operations-plan.md)。
 
 ## 定义和执行
 
-`tlon.operations.core.Operation` 接收 name、description、input_schema、output_schema、handler、effects、retry_safe、default_timeout。schema 在准入时自检并保存为不可变 JSON 字符串；公开属性每次返回独立副本。名称满足 `[A-Za-z_][A-Za-z0-9_-]*`，最长 64 字符，不得使用 nil/true/false 或覆盖语言特殊形式、通用内置函数。
+`tlon.operations.core.Operation` 接收 name、description、input_schema、output_schema、handler、effects、retry_safe、default_timeout、control。schema 在准入时自检并保存为不可变 JSON 字符串；公开属性每次返回独立副本。名称满足 `[A-Za-z_][A-Za-z0-9_-]*`，最长 64 字符，不得使用 nil/true/false 或覆盖语言特殊形式、通用内置函数。
 
 空 effects 表示纯计算：handler 是同步 `(CallContext, dict[str, Any]) -> Any`。非空 effects 是 read/write 集合：handler 必须是 async，并由异步执行边界等待结果。纯 handler 返回 awaitable 会被拒绝，不能把异步 IO 谎报为纯计算。注册表固定定义集合，同名拒绝；宿主给不同成员构造 scoped handler 和 `CallContext(member_id, run_id, call_id)`，上下文不在业务参数或 DSL env 内。
 
@@ -22,13 +22,13 @@
 
 DSL：`DSLAdapter.builtins()` 提供实际 purity 的 Builtin；调用形式为 `(operation-name {:parameter value})`，严格一个对象参数。纯操作直接由 Evaluator 调用；read/write 经 `eval_async(..., adapter.handle)` 悬挂并恢复。同步 Evaluator 不得执行效果操作。普通语言函数 API 不变。
 
-Tool：`OperationTool(executor, name)` 从同一契约投影协议定义，可注册到既有 ToolExecutor。它覆盖旧浅层 validate_arguments，把校验一次性留给共享调用边界；不另写校验规则。业务参数 `self` 也可使用。协议投影修改不改变操作定义。
+Tool：`OperationTool(executor, name)` 从同一契约投影协议定义，可注册到既有 ToolExecutor。它只提供协议定义与 execute_context，校验一次性留给共享调用边界；不另写校验规则。业务参数 `self` 也可使用。协议投影修改不改变操作定义。
 
 JSON 边界只接受 None、精确 bool/int/有限 float/str/list/dict；最大嵌套 100，循环数据拒绝。DSL 额外允许 Keyword map key，按原拼写转换为 string；返回对象键中能由现有 EDN parser 完整往返的键转为 Keyword；邮箱地址、空串、空格、Unicode 等不能表示为关键字的键保留字符串，字符串值不变。Keyword 值、Symbol、Closure、Form、tuple、NaN/Infinity 均拒绝。解析 EDN map 与 assoc/conj 构造 map 时，Keyword/string/Symbol 等相等但类型不同的键在写入 dict 前拒绝，避免静默覆盖；同型重复键沿既有语义保留末值。已经被外部 Python dict 覆盖的信息无法恢复，不宣称能够检测。
 
 输入错误为 InputError，输出错误为 OutputError，均继承 OperationError/EvalError，DSL 保留结构化异常类型；Tool 转为失败 ToolResult。领域的明确拒收使用 RejectedError，结果未知使用 UnknownOutcomeError；二者继承 OperationError 并携带 data，unknown 保留 request_id。Tool 入口保留这些结构化信息。该结构化错误同样用于文件和 Shell；不宣称已有通用重试机制。
 
-Tool 协议根参数必须是 JSON object 的字符串键。OperationTool 在 ToolExecutor 中直接接收参数对象，根级非字符串键和嵌套非 JSON 值均由共享边界返回 InputError；尚未切换的旧 Tool 保留原关键字参数派发。
+Tool 协议根参数必须是 JSON object 的字符串键。OperationTool 在 ToolExecutor 中直接接收参数对象，根级非字符串键和嵌套非 JSON 值均由共享边界返回 InputError。旧 Tool 基类与关键字参数派发入口已删除。
 
 ## 邮件 P2
 
@@ -62,3 +62,11 @@ state-get/state-put 使用一个对象参数，例如 `(state-get {:key "edition
 state-put 将状态与该次调用结果放在 ProgramStore 的同一事务；程序使用宿主 run/ordinal，工具使用宿主 call_id 的独立效果记录。同调用相同参数重试返回原值，不覆盖后来的状态；同调用不同参数拒绝。普通领域写入仍按非幂等 intent 保护，结果不确定保留 unknown 和 call_id，不能把失败当作未产生副作用。
 
 任务落盘通过临时文件、fsync 和原子 replace；写失败不再伪报成功。人格文件写成功而账本追加失败时，保留成功回执并显式告警。保持原有 TaskManager 单实例同步调用模型；未扩展为跨进程任务写入协调器，也未修改其原有损坏文件读取策略。
+
+## 生命周期、演化与模型 P3c
+
+[lifecycle](../../src/tlon/operations/lifecycle.py)、[evolution](../../src/tlon/operations/evolution.py)、[model](../../src/tlon/operations/model.py) 共用成员注册表。旧 camelCase 名称删除；模型调用为 `(model-call {:prompt "任务" :max_tokens 256})`，输出使用 snake_case，session recipe 的 `:max-tokens` 配置保持原有含义。
+
+`control` 是 Operation 的控制声明元数据，和 read/write 效果分开。完成、睡眠、退出由同一契约返回声明，LoopDriver 或程序根执行器应用调度；DSL 嵌套组合拒绝控制操作，模型的一轮也只允许独立控制调用，不能夹带普通工具。动态 ToolView、复合 Capability 和统一预算仍留在后续阶段。
+
+程序 `model-call` 保留 ProgramDriver 的规则额度：实际输出上限为请求值、程序剩余额度与成员客户端 `llm.max_tokens` 的最小值，重放仍预留已记录调用额度。模型 Tool 调用不处在程序规则预算内，但仍受成员客户端上限与实际计费约束。模型调用记非幂等 intent，分发后结果未知不自动重发；一般根调用预算仍属于 P4。

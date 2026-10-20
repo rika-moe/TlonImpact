@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from tests.mail_helpers import make_office
@@ -20,14 +21,14 @@ from tlon.agents.vocabulary import STAGE_COND_BUILTINS
 from tlon.base.events.event_bus import EventBus
 from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.base.paths import TlonPaths
+from tlon.lifecycle.service import LifecycleService
 from tlon.operations.adapters import OperationTool
-from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
+from tlon.operations.lifecycle import make_lifecycle_operations
 from tlon.operations.mail import make_mail_operations
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.mail.member_mail import MemberMailService
-from tlon.tools.agents.scheduling import FinishTurnTool
-from tlon.tools.base import ToolResult
 from tlon.tools.spill import ToolSpill
 from tlosure.edn import loads
 
@@ -66,7 +67,7 @@ def _make_driver(
     services.think = AsyncMock(
         side_effect=[
             *responses,
-            LLMResponse(content=None, tool_calls=[_tc("finish", "finishTurn")]),
+            LLMResponse(content=None, tool_calls=[_tc("finish", "finish-turn")]),
         ]
     )
     services.session_span = lambda session: contextlib.nullcontext()
@@ -82,17 +83,43 @@ def _make_driver(
     )
     mail_service.send = AsyncMock(wraps=mail_service.send)
     operations = OperationExecutor(
-        OperationRegistry(make_mail_operations(mail_service)), CallContext("agent1", "test", "test")
+        OperationRegistry(
+            (
+                *make_mail_operations(mail_service),
+                *make_lifecycle_operations(LifecycleService("agent1")),
+            )
+        ),
+        CallContext("agent1", "test", "test"),
     )
     tool_executor = ToolExecutor()
     for operation in operations.registry.definitions():
         tool_executor.register_tool(OperationTool(operations, operation.name))
-    tool_executor.register_tool(FinishTurnTool())
-    working_tool = MagicMock()
-    working_tool.name = "someTool"
-    working_tool.validate_arguments.return_value = []
-    working_tool.execute = AsyncMock(return_value=ToolResult(success=True, data={"ok": True}))
-    tool_executor.register_tool(working_tool)
+
+    async def work(context: CallContext, args: dict[str, Any]) -> dict[str, bool]:
+        return {"ok": True}
+
+    working = Operation(
+        "someTool",
+        "Test work",
+        {
+            "type": "object",
+            "properties": {"a": {"type": "integer"}},
+            "required": [],
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+            "additionalProperties": False,
+        },
+        work,
+        effects=frozenset({"read"}),
+    )
+    work_executor = OperationExecutor(
+        OperationRegistry([working]), CallContext("agent1", "test", "test")
+    )
+    tool_executor.register_tool(OperationTool(work_executor, "someTool"))
 
     journal = SessionJournal("agent1", TlonPaths(home=tmp_path))
     driver = LoopDriver(
@@ -142,7 +169,7 @@ class TestAttemptsCompletion:
         assert attempts_completion(_completing("reply")) is False
 
     def test_finish_turn_alone_completes(self) -> None:
-        response = LLMResponse(content=None, tool_calls=[_tc("c1", "finishTurn")])
+        response = LLMResponse(content=None, tool_calls=[_tc("c1", "finish-turn")])
         assert attempts_completion(response) is True
 
     def test_progress_mail_does_not_complete(self) -> None:
@@ -158,7 +185,7 @@ class TestAttemptsCompletion:
         response = LLMResponse(
             content=None,
             tool_calls=[
-                _tc("c1", "finishTurn"),
+                _tc("c1", "finish-turn"),
                 _tc("c2", "someTool"),
             ],
         )
@@ -244,7 +271,7 @@ class TestCompletionGate:
         conflict = LLMResponse(
             content=None,
             tool_calls=[
-                _tc("c1", "finishTurn"),
+                _tc("c1", "finish-turn"),
                 _tc("c2", "someTool"),
             ],
         )
@@ -279,7 +306,7 @@ class TestCompletionGate:
 
     async def test_finish_decision_does_not_trigger_mail_critique(self, tmp_path: Path) -> None:
         driver, _, executor, services = _make_driver(
-            tmp_path, [LLMResponse(content=None, tool_calls=[_tc("c1", "finishTurn")])]
+            tmp_path, [LLMResponse(content=None, tool_calls=[_tc("c1", "finish-turn")])]
         )
         session = AgentSession(session_id="agent1-finish", trigger_content="notice")
         await _drive(driver, session)

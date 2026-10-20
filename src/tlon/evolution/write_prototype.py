@@ -11,8 +11,8 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from tlon.base.logger import get_logger
-from tlon.tools.base import Tool, ToolResult
-from tlon.tools.prototypes.ports import PrototypeError, PrototypeSummary
+from tlon.evolution.ports import PrototypeError, PrototypeSummary
+from tlon.operations.schema import RejectedError
 
 logger = get_logger(__name__)
 
@@ -37,9 +37,7 @@ _BEHAVIOR_HINT = (
 NearKinCheck = Callable[[str, str | None], "tuple[str, float] | None"]
 
 
-def _check_near_kin(
-    near_kin: NearKinCheck | None, behavior: str, parent: str | None
-) -> ToolResult | None:
+def _check_near_kin(near_kin: NearKinCheck | None, behavior: str, parent: str | None) -> None:
     """Near-kin rejection (): a reskin-level duplicate is turned away.
 
     ``parent`` is exempted from the comparison — a child resembling its
@@ -58,16 +56,11 @@ def _check_near_kin(
     if hit is None:
         return None
     kin_name, ratio = hit
-    return ToolResult(
-        success=False,
-        data={},
-        error=f"near-kin of prototype '{kin_name}' (similarity {ratio:.2f})",
-        message=(f"与 '{kin_name}' 相似度 {ratio:.2f}，请做出实质差异或改为提案改进它"),
-    )
+    raise RejectedError(f"near-kin of prototype '{kin_name}' (similarity {ratio:.2f})", {})
 
 
-class WritePrototypeTool(Tool):
-    """Tool to author a new behavior prototype (pure-data spec).
+class PrototypeWriter:
+    """Service to author a new behavior prototype (pure-data spec).
 
     Accepts one unified rules-form behavior.tlon program. Prototypes carry no persona (unified member
     model, ADR 0006). The prototype lands in
@@ -85,58 +78,6 @@ class WritePrototypeTool(Tool):
         solvency: Callable[[str], Awaitable[bool]] | None = None,
         near_kin: NearKinCheck | None = None,
     ) -> None:
-        super().__init__(
-            name="writePrototype",
-            description=(
-                "创作一个新的 behavior prototype（纯行为规约，无人格），写入 staging 区。"
-                "规则统一使用 on、when、actions；会话通过 run-loop 动作调用。"
-                "新 prototype 默认不可信：需人类批准（ops/WebUI）后才能被 spawnAgent 使用。"
-                "behavior 是 v1 schema 的纯数据 EDN（只描述行为，无法授予工具）。"
-                "可声明 :parameters 以支持 spawn 时参数化。"
-                "可选 parent 记录谱系（从哪个既有原型派生），generation 由服务端推导。"
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "behavior": {
-                        "type": "string",
-                        "description": (
-                            "行为规约（EDN 字符串）。统一 on/when/actions；会话使用 run-loop 动作。"
-                            "可选 :parameters，引用变量用 ${name}。"
-                        ),
-                    },
-                    "display_name": {
-                        "type": "string",
-                        "description": "必填行为标签，描述怎样行动；不赋予职业、职位或社会身份",
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "一句话描述这个原型的行为定位",
-                    },
-                    "parent": {
-                        "type": "string",
-                        "description": (
-                            "父原型系统 ID（本原型从哪个原型派生而来；留空表示新的根原型）。"
-                            "父原型必须已存在（trusted 库或 staging 区皆可），"
-                            "generation 由服务端自动推导为父代 + 1"
-                        ),
-                    },
-                    "proposal_note": {
-                        "type": "string",
-                        "description": "本代变更说明：相对父原型改了什么、为什么",
-                    },
-                    "lessons": {
-                        "type": "string",
-                        "description": (
-                            "随包教训：退休成员蒸馏出的经验，落盘为原型的 "
-                            "LESSONS.md；实例化时拷贝给新成员，由 spec 的 (lessons) "
-                            "context section 注入对话"
-                        ),
-                    },
-                },
-                "required": ["behavior", "display_name"],
-            },
-        )
         self._author_id = author_id
         self._writer = writer
         # Author's bloodline + solvency gate (): an insolvent
@@ -163,27 +104,13 @@ class WritePrototypeTool(Tool):
             logger.warning("solvency_check_failed", prototype=prototype, error=str(e))
             return True
 
-    async def execute(self, **kwargs: Any) -> ToolResult:
+    async def execute(self, **kwargs: Any) -> dict[str, Any]:
         if "name" in kwargs:
-            return ToolResult(
-                success=False,
-                data={},
-                error="name is system-generated; provide display_name instead",
-            )
+            raise RejectedError("name is system-generated; provide display_name instead", {})
         if not isinstance(kwargs.get("display_name"), str) or not kwargs["display_name"].strip():
-            return ToolResult(
-                success=False, data={}, error="display_name must be a non-empty behavior label"
-            )
+            raise RejectedError("display_name must be a non-empty behavior label", {})
         if self._prototype is not None and not await self._solvent(self._prototype):
-            return ToolResult(
-                success=False,
-                data={},
-                error=f"bloodline '{self._prototype}' is insolvent",
-                message=(
-                    f"血脉 '{self._prototype}' 已失去偿付能力（长期入不敷出），提案资格被暂停。"
-                    "先用手上成员做出被 endorse 的产出，恢复偿付能力后再提案。"
-                ),
-            )
+            raise RejectedError(f"bloodline '{self._prototype}' is insolvent", {})
 
         behavior: str = kwargs["behavior"]
         display_name: str = kwargs["display_name"]
@@ -196,9 +123,7 @@ class WritePrototypeTool(Tool):
         # Near-kin check (): the exempted parent is the explicit
         # ``parent`` argument when given, else the author's own prototype
         # (explicit parent > own prototype).
-        near_kin_rejection = _check_near_kin(self._near_kin, behavior, parent or self._prototype)
-        if near_kin_rejection is not None:
-            return near_kin_rejection
+        _check_near_kin(self._near_kin, behavior, parent or self._prototype)
         try:
             info = self._writer(
                 behavior,
@@ -210,12 +135,7 @@ class WritePrototypeTool(Tool):
                 lessons=lessons,
             )
         except PrototypeError as e:
-            return ToolResult(
-                success=False,
-                data={"hint": hint},
-                error=str(e),
-                message=f"prototype 校验失败，未写入: {e}",
-            )
+            raise RejectedError(str(e), {"hint": hint}) from e
 
         data: dict[str, Any] = {
             "name": info.name,
@@ -225,11 +145,4 @@ class WritePrototypeTool(Tool):
             "generation": info.generation,
             "status": "pending_approval",
         }
-        return ToolResult(
-            success=True,
-            data=data,
-            message=(
-                f"prototype '{info.name}' 已写入 staging 区（不可信）。"
-                "需人类在「规约审批」（ops/WebUI）中批准后才能 spawn。"
-            ),
-        )
+        return data

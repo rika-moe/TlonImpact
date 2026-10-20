@@ -26,7 +26,7 @@ class _Projection:
         self._docker_runtime = device
         self._allowed_paths = ["/workspace"]
 
-    async def execute(self, **arguments):
+    async def execute_context(self, arguments):
         service = MemberFilesystemService(
             self._docker_config, self._docker_runtime, self._allowed_paths, self._allowed_paths
         )
@@ -34,7 +34,7 @@ class _Projection:
         executor = OperationExecutor(
             OperationRegistry([operation]), CallContext("alice", "run", "call")
         )
-        return await OperationTool(executor, operation.name).execute(**arguments)
+        return await OperationTool(executor, operation.name).execute_context({**arguments})
 
 
 def _projection(name, config=None, device=None):
@@ -95,7 +95,7 @@ class TestReadFileTool:
         content = "Line 1\nLine 2\nLine 3\n"
         read_tool._docker_runtime.read_file.return_value = content.encode("utf-8")
 
-        result = await read_tool.execute(file_path="test.txt")
+        result = await read_tool.execute_context({"file_path": "test.txt"})
 
         assert result.success is True
         assert result.data["file_path"] == "test.txt"
@@ -109,7 +109,7 @@ class TestReadFileTool:
         content = "\n".join([f"Line {i}" for i in range(1, 21)]) + "\n"
         read_tool._docker_runtime.read_file.return_value = content.encode("utf-8")
 
-        result = await read_tool.execute(file_path="test.txt", offset=5, limit=3)
+        result = await read_tool.execute_context({"file_path": "test.txt", "offset": 5, "limit": 3})
 
         assert result.success is True
         assert result.data["read_lines"] == 3
@@ -122,7 +122,7 @@ class TestReadFileTool:
         lines = [f"Line {i}" for i in range(1, 201)]
         read_tool._docker_runtime.read_file.return_value = ("\n".join(lines)).encode("utf-8")
 
-        result = await read_tool.execute(file_path="test.txt", limit=50)
+        result = await read_tool.execute_context({"file_path": "test.txt", "limit": 50})
 
         assert result.success is True
         assert result.data["read_lines"] == 50
@@ -132,7 +132,7 @@ class TestReadFileTool:
         lines = [f"Line {i}" for i in range(1, 600)]
         read_tool._docker_runtime.read_file.return_value = ("\n".join(lines)).encode("utf-8")
 
-        result = await read_tool.execute(file_path="test.txt", limit=1000)
+        result = await read_tool.execute_context({"file_path": "test.txt", "limit": 1000})
 
         assert result.success is False
         assert "500" in result.error
@@ -140,7 +140,7 @@ class TestReadFileTool:
     async def test_read_file_not_found(self, read_tool):
         read_tool._docker_runtime.read_file.side_effect = FileNotFoundError("not found")
 
-        result = await read_tool.execute(file_path="missing.txt")
+        result = await read_tool.execute_context({"file_path": "missing.txt"})
 
         assert result.success is False
         assert "not found" in result.error.lower()
@@ -148,7 +148,7 @@ class TestReadFileTool:
     async def test_read_runtime_error(self, read_tool):
         read_tool._docker_runtime.read_file.side_effect = RuntimeError("container crashed")
 
-        result = await read_tool.execute(file_path="test.txt")
+        result = await read_tool.execute_context({"file_path": "test.txt"})
 
         assert result.success is False
         assert "container crashed" in result.error.lower()
@@ -156,7 +156,7 @@ class TestReadFileTool:
     async def test_read_runtime_not_initialized(self, read_tool):
         read_tool._docker_runtime = None
 
-        result = await read_tool.execute(file_path="test.txt")
+        result = await read_tool.execute_context({"file_path": "test.txt"})
 
         assert result.success is False
         assert "not initialized" in result.error.lower()
@@ -174,9 +174,8 @@ class TestWriteFileTool:
     async def test_write_new_file(self, write_tool):
         write_tool._docker_runtime.file_exists.return_value = False
 
-        result = await write_tool.execute(
-            file_path="new_file.txt",
-            content="Hello, world!",
+        result = await write_tool.execute_context(
+            {"file_path": "new_file.txt", "content": "Hello, world!"}
         )
 
         assert result.success is True
@@ -194,9 +193,8 @@ class TestWriteFileTool:
         #40）——工具自身不再 shell out mkdir。"""
         write_tool._docker_runtime.file_exists.return_value = False
 
-        result = await write_tool.execute(
-            file_path="deep/nested/file.txt",
-            content="nested",
+        result = await write_tool.execute_context(
+            {"file_path": "deep/nested/file.txt", "content": "nested"}
         )
 
         assert result.success is True
@@ -209,9 +207,8 @@ class TestWriteFileTool:
     async def test_overwrite_existing_file(self, write_tool):
         write_tool._docker_runtime.file_exists.return_value = True
 
-        result = await write_tool.execute(
-            file_path="existing.txt",
-            content="new content",
+        result = await write_tool.execute_context(
+            {"file_path": "existing.txt", "content": "new content"}
         )
 
         assert result.success is True
@@ -220,7 +217,7 @@ class TestWriteFileTool:
     async def test_write_runtime_not_initialized(self, write_tool):
         write_tool._docker_runtime = None
 
-        result = await write_tool.execute(file_path="test.txt", content="x")
+        result = await write_tool.execute_context({"file_path": "test.txt", "content": "x"})
 
         assert result.success is False
         assert "not initialized" in result.error.lower()
@@ -239,10 +236,12 @@ class TestEditFileTool:
         original = "def old_func():\n    return 1\n\ndef another():\n    pass\n"
         edit_tool._docker_runtime.read_file.return_value = original.encode("utf-8")
 
-        result = await edit_tool.execute(
-            file_path="editable.py",
-            old_string="def old_func():\n    return 1",
-            new_string="def new_func():\n    return 42",
+        result = await edit_tool.execute_context(
+            {
+                "file_path": "editable.py",
+                "old_string": "def old_func():\n    return 1",
+                "new_string": "def new_func():\n    return 42",
+            }
         )
 
         assert result.success is True
@@ -258,10 +257,12 @@ class TestEditFileTool:
     async def test_edit_old_string_not_found(self, edit_tool):
         edit_tool._docker_runtime.read_file.return_value = b"some content"
 
-        result = await edit_tool.execute(
-            file_path="test.py",
-            old_string="this does not exist",
-            new_string="replacement",
+        result = await edit_tool.execute_context(
+            {
+                "file_path": "test.py",
+                "old_string": "this does not exist",
+                "new_string": "replacement",
+            }
         )
 
         assert result.success is False
@@ -271,10 +272,8 @@ class TestEditFileTool:
     async def test_edit_old_string_ambiguous(self, edit_tool):
         edit_tool._docker_runtime.read_file.return_value = b"repeat\nrepeat\nend\n"
 
-        result = await edit_tool.execute(
-            file_path="ambiguous.py",
-            old_string="repeat",
-            new_string="changed",
+        result = await edit_tool.execute_context(
+            {"file_path": "ambiguous.py", "old_string": "repeat", "new_string": "changed"}
         )
 
         assert result.success is False
@@ -284,10 +283,8 @@ class TestEditFileTool:
     async def test_edit_file_not_found(self, edit_tool):
         edit_tool._docker_runtime.read_file.side_effect = FileNotFoundError("not found")
 
-        result = await edit_tool.execute(
-            file_path="missing.py",
-            old_string="old",
-            new_string="new",
+        result = await edit_tool.execute_context(
+            {"file_path": "missing.py", "old_string": "old", "new_string": "new"}
         )
 
         assert result.success is False
@@ -296,10 +293,8 @@ class TestEditFileTool:
     async def test_edit_runtime_not_initialized(self, edit_tool):
         edit_tool._docker_runtime = None
 
-        result = await edit_tool.execute(
-            file_path="test.py",
-            old_string="old",
-            new_string="new",
+        result = await edit_tool.execute_context(
+            {"file_path": "test.py", "old_string": "old", "new_string": "new"}
         )
 
         assert result.success is False
@@ -329,7 +324,7 @@ class TestListDirectoryTool:
             ]
         )
 
-        result = await list_tool.execute(path=".")
+        result = await list_tool.execute_context({"path": "."})
 
         assert result.success is True
         assert result.data["count"] == 3
@@ -354,7 +349,7 @@ class TestListDirectoryTool:
         ]
         list_tool._docker_runtime.fetch_archive.return_value = _make_dir_tar(members)
 
-        result = await list_tool.execute(path=".", max_entries=5)
+        result = await list_tool.execute_context({"path": ".", "max_entries": 5})
 
         assert result.success is True
         assert result.data["count"] == 5
@@ -366,7 +361,7 @@ class TestListDirectoryTool:
             "Path not found in container: /workspace/missing"
         )
 
-        result = await list_tool.execute(path="missing")
+        result = await list_tool.execute_context({"path": "missing"})
 
         assert result.success is False
         assert "not found" in result.error.lower()
@@ -377,7 +372,7 @@ class TestListDirectoryTool:
             [("README.md", b"content", _epoch("2026-09-04T09:10"))]
         )
 
-        result = await list_tool.execute(path="README.md")
+        result = await list_tool.execute_context({"path": "README.md"})
 
         assert result.success is False
         assert "not a directory" in result.error.lower()
@@ -385,7 +380,7 @@ class TestListDirectoryTool:
     async def test_list_runtime_not_initialized(self, list_tool):
         list_tool._docker_runtime = None
 
-        result = await list_tool.execute(path=".")
+        result = await list_tool.execute_context({"path": "."})
 
         assert result.success is False
         assert "not initialized" in result.error.lower()
@@ -417,7 +412,7 @@ class TestSearchFilesTool:
             ]
         )
 
-        result = await search_tool.execute(pattern="main", path="src")
+        result = await search_tool.execute_context({"pattern": "main", "path": "src"})
 
         assert result.success is True
         assert result.data["count"] == 2
@@ -447,7 +442,7 @@ class TestSearchFilesTool:
             ]
         )
 
-        result = await search_tool.execute(pattern="main", path="src")
+        result = await search_tool.execute_context({"pattern": "main", "path": "src"})
 
         assert result.success is True
         assert [m["file"] for m in result.data["matches"]] == ["/workspace/src/ok.txt"]
@@ -458,7 +453,7 @@ class TestSearchFilesTool:
             [("main.py", b"def main():\n", 0.0)]
         )
 
-        result = await search_tool.execute(pattern="main", path="src/main.py")
+        result = await search_tool.execute_context({"pattern": "main", "path": "src/main.py"})
 
         assert result.success is True
         assert result.data["matches"] == [
@@ -471,7 +466,7 @@ class TestSearchFilesTool:
             [("big.js", long_line.encode() + b"\n", 0.0)]
         )
 
-        result = await search_tool.execute(pattern="x+", path="big.js")
+        result = await search_tool.execute_context({"pattern": "x+", "path": "big.js"})
 
         assert result.success is True
         text = result.data["matches"][0]["text"]
@@ -484,7 +479,9 @@ class TestSearchFilesTool:
             [("f.py", content, 0.0)]
         )
 
-        result = await search_tool.execute(pattern="match", path="f.py", max_results=5)
+        result = await search_tool.execute_context(
+            {"pattern": "match", "path": "f.py", "max_results": 5}
+        )
 
         assert result.success is True
         assert result.data["count"] == 5
@@ -496,7 +493,7 @@ class TestSearchFilesTool:
             [("src", None, 0.0), ("src/a.txt", b"hello\n", 0.0)]
         )
 
-        result = await search_tool.execute(pattern="nothing_here", path="src")
+        result = await search_tool.execute_context({"pattern": "nothing_here", "path": "src"})
 
         assert result.success is True
         assert result.data["count"] == 0
@@ -516,7 +513,7 @@ class TestSearchFilesTool:
             ]
         )
 
-        result = await search_tool.execute(pattern="*.py", mode="filename")
+        result = await search_tool.execute_context({"pattern": "*.py", "mode": "filename"})
 
         assert result.success is True
         assert result.data["matches"] == [
@@ -530,7 +527,7 @@ class TestSearchFilesTool:
             [("workspace", None, 0.0), ("workspace/Main.PY", b"", 0.0)]
         )
 
-        result = await search_tool.execute(pattern="*.py", mode="filename")
+        result = await search_tool.execute_context({"pattern": "*.py", "mode": "filename"})
 
         assert result.data["matches"] == ["/workspace/Main.PY"]
 
@@ -539,20 +536,22 @@ class TestSearchFilesTool:
             [("main.py", b"", 0.0)]
         )
 
-        result = await search_tool.execute(pattern="*.py", mode="filename", path="src/main.py")
+        result = await search_tool.execute_context(
+            {"pattern": "*.py", "mode": "filename", "path": "src/main.py"}
+        )
 
         assert result.success is False
         assert "not found" in result.error.lower()
 
     async def test_search_invalid_mode(self, search_tool):
-        result = await search_tool.execute(pattern="x", mode="sideways")
+        result = await search_tool.execute_context({"pattern": "x", "mode": "sideways"})
 
         assert result.success is False
         assert "content" in result.error.lower()
         search_tool._docker_runtime.fetch_archive.assert_not_awaited()
 
     async def test_search_bad_regex(self, search_tool):
-        result = await search_tool.execute(pattern="([")
+        result = await search_tool.execute_context({"pattern": "(["})
 
         assert result.success is False
         assert "search failed" in result.error.lower()
@@ -563,7 +562,7 @@ class TestSearchFilesTool:
             "Path not found in container: /workspace/missing"
         )
 
-        result = await search_tool.execute(pattern="x", path="missing")
+        result = await search_tool.execute_context({"pattern": "x", "path": "missing"})
 
         assert result.success is False
         assert "not found" in result.error.lower()
@@ -571,7 +570,7 @@ class TestSearchFilesTool:
     async def test_search_runtime_not_initialized(self, search_tool):
         search_tool._docker_runtime = None
 
-        result = await search_tool.execute(pattern="x")
+        result = await search_tool.execute_context({"pattern": "x"})
 
         assert result.success is False
         assert "not initialized" in result.error.lower()
@@ -649,7 +648,7 @@ class TestFilesystemToolSandbox:
         tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
 
-        result = await tool.execute(file_path="/etc/passwd")
+        result = await tool.execute_context({"file_path": "/etc/passwd"})
 
         assert result.success is False
         assert "outside the allowed paths" in result.error
@@ -661,7 +660,7 @@ class TestFilesystemToolSandbox:
         tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
 
-        result = await tool.execute(file_path="../../etc/shadow")
+        result = await tool.execute_context({"file_path": "../../etc/shadow"})
 
         assert result.success is False
         assert "outside the allowed paths" in result.error
@@ -673,7 +672,7 @@ class TestFilesystemToolSandbox:
         tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
 
-        result = await tool.execute(file_path="/usr/bin/evil", content="x")
+        result = await tool.execute_context({"file_path": "/usr/bin/evil", "content": "x"})
 
         assert result.success is False
         assert "outside the allowed paths" in result.error
@@ -685,7 +684,9 @@ class TestFilesystemToolSandbox:
         tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
 
-        result = await tool.execute(file_path="../secret.txt", old_string="a", new_string="b")
+        result = await tool.execute_context(
+            {"file_path": "../secret.txt", "old_string": "a", "new_string": "b"}
+        )
 
         assert result.success is False
         assert "outside the allowed paths" in result.error
@@ -697,7 +698,7 @@ class TestFilesystemToolSandbox:
         tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
 
-        result = await tool.execute(path="/etc")
+        result = await tool.execute_context({"path": "/etc"})
 
         assert result.success is False
         assert "outside the allowed paths" in result.error
@@ -709,7 +710,7 @@ class TestFilesystemToolSandbox:
         tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
 
-        result = await tool.execute(pattern="x", path="../../etc")
+        result = await tool.execute_context({"pattern": "x", "path": "../../etc"})
 
         assert result.success is False
         assert "outside the allowed paths" in result.error
@@ -722,7 +723,7 @@ class TestFilesystemToolSandbox:
         tool._docker_runtime = _make_mock_runtime()
         tool._docker_runtime.read_file.return_value = b"hello\n"
 
-        result = await tool.execute(file_path="/workspace//a/./b.txt")
+        result = await tool.execute_context({"file_path": "/workspace//a/./b.txt"})
 
         assert result.success is True
         tool._docker_runtime.read_file.assert_awaited_once_with("/workspace/a/b.txt")
@@ -733,11 +734,11 @@ class TestFilesystemToolSandbox:
         tool._allowed_paths = ["/workspace", "/data/shared"]
         tool._docker_runtime = _make_mock_runtime()
 
-        ok = await tool.execute(file_path="/data/shared/out.txt", content="x")
+        ok = await tool.execute_context({"file_path": "/data/shared/out.txt", "content": "x"})
         assert ok.success is True
         tool._docker_runtime.write_file.assert_awaited_once_with("/data/shared/out.txt", b"x")
 
-        rejected = await tool.execute(file_path="/etc/cron.d/job", content="x")
+        rejected = await tool.execute_context({"file_path": "/etc/cron.d/job", "content": "x"})
         assert rejected.success is False
         assert "outside the allowed paths" in rejected.error
 
@@ -765,7 +766,7 @@ class TestAgentHomeAccess:
         tool = self._make("file-read", self._READ_PATHS)
         tool._docker_runtime.read_file.return_value = b":rules []\n"
 
-        result = await tool.execute(file_path="/tlon-home/config/behavior.tlon")
+        result = await tool.execute_context({"file_path": "/tlon-home/config/behavior.tlon"})
 
         assert result.success is True
         tool._docker_runtime.read_file.assert_awaited_once_with("/tlon-home/config/behavior.tlon")
@@ -774,7 +775,7 @@ class TestAgentHomeAccess:
         tool = self._make("file-read", self._READ_PATHS)
         tool._docker_runtime.read_file.return_value = b"{}\n"
 
-        result = await tool.execute(file_path="/tlon-home/mail/inbox.jsonl")
+        result = await tool.execute_context({"file_path": "/tlon-home/mail/inbox.jsonl"})
 
         assert result.success is True
 
@@ -784,7 +785,7 @@ class TestAgentHomeAccess:
             [("tlon-home", None, 0.0), ("tlon-home/config", None, _epoch("2026-09-05T14:32"))]
         )
 
-        result = await tool.execute(path="/tlon-home")
+        result = await tool.execute_context({"path": "/tlon-home"})
 
         assert result.success is True
         tool._docker_runtime.fetch_archive.assert_awaited_once_with("/tlon-home")
@@ -798,7 +799,7 @@ class TestAgentHomeAccess:
             ]
         )
 
-        result = await tool.execute(pattern="defrule", path="/tlon-home/config")
+        result = await tool.execute_context({"pattern": "defrule", "path": "/tlon-home/config"})
 
         assert result.success is True
         assert result.data["matches"][0]["file"] == "/tlon-home/config/behavior.tlon"
@@ -806,7 +807,9 @@ class TestAgentHomeAccess:
     async def test_write_own_home_rejected(self):
         tool = self._make("file-write", self._WRITE_PATHS)
 
-        result = await tool.execute(file_path="/tlon-home/config/behavior.tlon", content="x")
+        result = await tool.execute_context(
+            {"file_path": "/tlon-home/config/behavior.tlon", "content": "x"}
+        )
 
         assert result.success is False
         assert "read-only" in result.error
@@ -815,8 +818,8 @@ class TestAgentHomeAccess:
     async def test_edit_own_home_rejected(self):
         tool = self._make("file-edit", self._WRITE_PATHS)
 
-        result = await tool.execute(
-            file_path="/tlon-home/memory/config.json", old_string="a", new_string="b"
+        result = await tool.execute_context(
+            {"file_path": "/tlon-home/memory/config.json", "old_string": "a", "new_string": "b"}
         )
 
         assert result.success is False
@@ -830,7 +833,7 @@ class TestAgentHomeAccess:
         tool = self._make("file-read", self._READ_PATHS)
 
         for path in ("/etc/passwd", "/tlon-home-other/config/agent.yaml"):
-            result = await tool.execute(file_path=path)
+            result = await tool.execute_context({"file_path": path})
 
             assert result.success is False
             assert "outside the allowed paths" in result.error

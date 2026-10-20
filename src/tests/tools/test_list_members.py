@@ -3,8 +3,11 @@
 import threading
 from typing import Any
 
+from tlon.lifecycle.service import LifecycleService
+from tlon.operations.adapters import OperationTool
+from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.lifecycle import make_lifecycle_operations
 from tlon.organization.mail.resolver import MemberAddress
-from tlon.tools.agents.list_members import ListMembersTool
 
 
 class _DirectoryStub:
@@ -28,13 +31,20 @@ class _DirectoryStub:
 
 async def test_public_projection_and_nonblocking_query() -> None:
     directory = _DirectoryStub()
-    tool = ListMembersTool(directory=directory)
+    tool = OperationTool(
+        OperationExecutor(
+            OperationRegistry(
+                make_lifecycle_operations(LifecycleService("self", directory=directory))
+            ),
+            CallContext("self", "test", "test"),
+        ),
+        "member-list",
+    )
 
-    result = await tool.execute()
+    result = await tool.execute_context({})
 
-    assert tool.name == "listMembers"
+    assert tool.name == "member-list"
     assert result.success is True
-    assert result.message == "共 3 个成员"
     assert result.data == [
         {"id": "adam", "name": "Adam", "address": "adam@tlon.internal"},
         {"id": "rika", "name": "rika", "address": "rika@tlon.internal"},

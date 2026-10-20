@@ -47,7 +47,7 @@ async def test_real_tools_sleep_wake_finish_and_permanent_exit(tmp_path: Path) -
             return response("mail-mark-read", {"mail_ids": [mail.id for mail in unread]})
         if calls == 3:
             return response(
-                "sleepUntil",
+                "sleep-until",
                 {
                     "wake_at": (datetime.now(UTC) + timedelta(seconds=2)).isoformat(),
                     "reason": "稍后继续",
@@ -58,9 +58,9 @@ async def test_real_tools_sleep_wake_finish_and_permanent_exit(tmp_path: Path) -
             unread = store.mails(member_id, "unread")
             return response("mail-mark-read", {"mail_ids": [mail.id for mail in unread]})
         if calls == 5:
-            return response("finishTurn", {})
+            return response("finish-turn", {})
         if calls == 6:
-            return response("exitAgent", {"reason": "测试完成"})
+            return response("exit-agent", {"reason": "测试完成"})
         raise AssertionError(f"Unexpected inference after call {calls}: {kwargs}")
 
     async with _server(tmp_path) as (url, app):
@@ -121,7 +121,7 @@ async def test_real_tools_sleep_wake_finish_and_permanent_exit(tmp_path: Path) -
                 await wait_state("waiting")
                 assert calls == 5
                 assert not store.mails(member_id, "unread")
-                assert len(store.mails("human:alice")) == 1  # finishTurn sent no mail
+                assert len(store.mails("human:alice")) == 1  # finish-turn sent no mail
                 await _send_mail(http, url, "现在永久退出", to=[member_id])
                 await wait_state("dead")
                 assert calls == 6

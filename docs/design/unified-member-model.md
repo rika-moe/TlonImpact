@@ -27,7 +27,7 @@ spec 的权威范围是可执行规则：触发、条件、会话配方、上下
 
 ### 保留历史与显式治理
 
-自动空闲排空只释放运行实例，成员仍可由符合 spec 的新邮件唤醒。经 exitAgent 或管理 API 的主动终止则是永久死亡：拒收新信、不再启动，历史保留。两者都不隐式删除成员档案。
+自动空闲排空只释放运行实例，成员仍可由符合 spec 的新邮件唤醒。经 exit-agent 或管理 API 的主动终止则是永久死亡：拒收新信、不再启动，历史保留。两者都不隐式删除成员档案。
 
 人类治理有独立的显式删除通道（`DELETE /admin/config/agents/{agent_id}`）。因此保留策略应理解为「自动生命周期不删除」，不能表述成「任何情况下永不删除」。
 
@@ -35,7 +35,7 @@ spec 的权威范围是可执行规则：触发、条件、会话配方、上下
 
 成员对外为 active、waiting、sleeping、dead 四态。active 包括 LLM、工具执行与结果等待；waiting 可因符合规则的邮件激活；sleeping 在持久 UTC 期限之前不处理邮件；dead 拒收新信，保留历史。内部 session 的 WAITING 指工具等待，归属成员 active。实例装卸与启动属于诊断，不能显示为额外调度状态。
 
-finishTurn 结束自己的本次工作；sleepUntil 定时睡眠；exitAgent 自我退出。普通成员没有管理他人的状态工具。管理终止先排空，强制取消和提前唤醒均不提供。完整转换、持久化与竞争契约见 [agent-scheduling-states.md](agent-scheduling-states.md) 和 [ADR 0039](../decisions/0039-four-state-scheduling.md)。
+finish-turn 结束自己的本次工作；sleep-until 定时睡眠；exit-agent 自我退出。普通成员没有管理他人的状态工具。管理终止先排空，强制取消和提前唤醒均不提供。完整转换、持久化与竞争契约见 [agent-scheduling-states.md](agent-scheduling-states.md) 和 [ADR 0039](../decisions/0039-four-state-scheduling.md)。
 
 ### 统一装配与按需加载
 
@@ -43,7 +43,7 @@ finishTurn 结束自己的本次工作；sleepUntil 定时睡眠；exitAgent 自
 
 ### 经验传到下一代
 
-成员反思和长期记忆为提案提供材料。`proposeBehavior` 读取自身行为、记忆 digest 和教训，根据变更意图起草完整 spec，写入 staging 并记录父原型与变更说明；它不直接更新自身。
+成员反思和长期记忆为提案提供材料。`behavior-propose` 读取自身行为、记忆 digest 和教训，根据变更意图起草完整 spec，写入 staging 并记录父原型与变更说明；它不直接更新自身。
 
 永久退休会触发 `LessonsDistiller` 离线蒸馏归档记忆，产出 `memory/lessons.md`；`RetirementCeremony` 记录交接清点事件，不再发送死亡后的告别信。教训可作为原型 `LESSONS.md` 随包传递，实例化后落入新成员 `config/LESSONS.md`，由 spec 的 `(lessons)` section 显式注入。这是受控的教训继承，不是任意跨成员私有记忆读取，也不是原型携带完整知识库。
 
@@ -55,7 +55,7 @@ finishTurn 结束自己的本次工作；sleepUntil 定时睡眠；exitAgent 自
 
 见习成员有三项收紧：
 
-1. 不注册 `spawnAgent` / `writePrototype` / `proposeBehavior` / `proposeCapability` 四个工具；`reviewPrototype` 保留为咨询工具。
+1. 不注册 `member-spawn` / `prototype-write` / `behavior-propose` / `capability-propose` 四个工具；`prototype-review` 保留为咨询工具。
 2. DSL spawn 仍经 SpawnManager，按 spawner id 判定见习，最终每会话配额收紧到最多 1；完整预算定义见 [prototypes.md](prototypes.md#spawn-预算落盘账本)。
 3. 撰写发信抄送 mentor（`spawned_by` 对应地址）；已在收件人或抄送中时不重复加入。MemberRuntime 与 EffectExecutor 两条发信路径均应用，转发不抄送。
 

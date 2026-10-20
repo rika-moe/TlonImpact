@@ -13,7 +13,7 @@ from tlon.agents.member_spec import MemberSpec
 from tlon.agents.prototypes.catalog import get_prototype_info, seed_prototypes
 from tlon.agents.prototypes.instantiate import instantiate
 from tlon.base.paths import TlonPaths
-from tlon.tools.prototypes.ports import PrototypeError
+from tlon.evolution.ports import PrototypeError
 from tlosure.edn import loads
 
 

@@ -10,7 +10,7 @@ from typing import Any
 from tlon.agents.behavior_template import ParameterSpec, analyze
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
-from tlon.tools.prototypes.ports import PrototypeError
+from tlon.evolution.ports import PrototypeError
 from tlosure.edn import loads
 
 logger = get_logger(__name__)

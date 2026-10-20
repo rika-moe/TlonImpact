@@ -14,7 +14,7 @@ from tlon.base.logger import get_logger
 from tlon.base.tracing.trace_context import start_span
 from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext
-from tlon.tools.base import Tool, ToolResult
+from tlon.tools.base import ToolResult
 
 logger = get_logger(__name__)
 
@@ -27,16 +27,15 @@ class ToolExecutor:
 
     Example:
         >>> executor = ToolExecutor()
-        >>> executor.register_tool(ExecuteBashTool(docker_config, docker_runtime))
-        >>> await executor.initialize()
+        >>> executor.register_tool(OperationTool(operations, "shell-run"))
         >>> result = await executor.execute("shell-run", {"command": "ls"})
     """
 
     def __init__(self) -> None:
         """Initialize the tool executor."""
-        self._tools: dict[str, Tool] = {}
+        self._tools: dict[str, OperationTool] = {}
 
-    def register_tool(self, tool: Tool) -> None:
+    def register_tool(self, tool: OperationTool) -> None:
         """Register a tool.
 
         Args:
@@ -63,7 +62,7 @@ class ToolExecutor:
             return True
         return False
 
-    def get_tool(self, tool_name: str) -> Tool:
+    def get_tool(self, tool_name: str) -> OperationTool:
         """Get a tool by name.
 
         Args:
@@ -160,7 +159,7 @@ class ToolExecutor:
                 "tool_result",
                 tool_name=tool_name,
                 success=result.success,
-                result=result.to_dict() if hasattr(result, "to_dict") else str(result),
+                result=result.to_dict(),
             )
             return result
 
@@ -181,21 +180,8 @@ class ToolExecutor:
             logger.error("tool_not_found", tool_name=tool_name)
             return ToolResult(success=False, data={}, error=f"Tool not found: {tool_name}")
 
-        # Validate arguments against JSON Schema before execution
-        validation_errors = tool.validate_arguments(arguments)
-        if isinstance(validation_errors, list) and len(validation_errors) > 0:
-            error_msg = "; ".join(validation_errors)
-            logger.warning("tool_validation_failed", tool_name=tool_name, error=error_msg)
-            return ToolResult(
-                success=False,
-                data={},
-                error=f"Argument validation failed: {error_msg}",
-            )
-
         try:
-            if isinstance(tool, OperationTool):
-                return await tool.execute_context(arguments, context)
-            return await tool.execute(**arguments)
+            return await tool.execute_context(arguments, context)
         except Exception as e:
             logger.error("tool_error", tool_name=tool_name, error=str(e), exc_info=True)
             return ToolResult(
@@ -203,20 +189,3 @@ class ToolExecutor:
                 data={},
                 error=f"Execution error: {str(e)}",
             )
-
-    async def initialize(self) -> None:
-        """Initialize all registered tools."""
-        logger.info("tool_executor_initializing", tool_count=len(self._tools))
-        for tool in self._tools.values():
-            try:
-                await tool.initialize()
-            except Exception as e:
-                logger.warning("tool_initialize_failed", tool_name=tool.name, error=str(e))
-        logger.info("tool_executor_ready", tool_count=len(self._tools))
-
-    async def shutdown(self) -> None:
-        """Shutdown all registered tools."""
-        logger.info("tool_executor_shutdown")
-        for tool in self._tools.values():
-            await tool.shutdown()
-        logger.info("tool_executor_shutdown_complete")

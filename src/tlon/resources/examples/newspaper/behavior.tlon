@@ -27,11 +27,11 @@
             (if (= (count ids) 0)
               (state-put {:key key :value {:period period :content "" :source-ids []
                               :subscribers subscribers :delivered {}}})
-              (let [result (llm-call
+              (let [result (model-call
                              {:prompt (str "请用中文编辑以下投稿为一份简报。区分投稿人的陈述和已核实事实，"
                                            "不要补写投稿未提供的事实。仅返回非空正文，不生成来源编号。投稿："
                                            stories)
-                              :max-tokens 2000})
+                              :max_tokens 2000})
                     body (get result :content)]
                 (when (and body (content-matches? body "\\S"))
                   (let [snapshot

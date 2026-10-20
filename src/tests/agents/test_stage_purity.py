@@ -88,7 +88,7 @@ class TestStagePurity:
         svc = _make_services()
         session = AgentSession(session_id="s1", trigger_content="trigger")
         session.set_last_llm_response(LLMResponse(content="working"))
-        tc = ToolCall(id="t1", function_name="finishTurn", arguments={})
+        tc = ToolCall(id="t1", function_name="finish-turn", arguments={})
         result = ToolResult(
             success=True, data={"scheduling_request": {"action": "finish", "reason": ""}}
         )
@@ -238,12 +238,12 @@ class TestEngineApplication:
         assert session.iteration == 1
 
     async def test_act_collect_finish_turn_completes_without_mail(self) -> None:
-        """finishTurn is a completion signal: loop ends, no mail, no final
+        """finish-turn is a completion signal: loop ends, no mail, no final
         reply."""
         svc = _make_services()
         session = AgentSession(session_id="s1", trigger_content="trigger")
         session.set_last_llm_response(LLMResponse(content="working"))
-        tc = ToolCall(id="t1", function_name="finishTurn", arguments={})
+        tc = ToolCall(id="t1", function_name="finish-turn", arguments={})
         result = ToolResult(
             success=True, data={"scheduling_request": {"action": "finish", "reason": ""}}
         )
@@ -255,15 +255,15 @@ class TestEngineApplication:
         assert session.is_completed is False
 
     async def test_act_step_finish_turn_conflicts_with_send_email(self) -> None:
-        """A finishTurn round must be the only tool call:
-        finishTurn + mail-send in the same round is
+        """A finish-turn round must be the only tool call:
+        finish-turn + mail-send in the same round is
         refused with a corrective prompt."""
         svc = _make_services()
         session = AgentSession(session_id="s1", trigger_content="trigger")
         response = LLMResponse(
             content="done",
             tool_calls=[
-                ToolCall(id="s1", function_name="finishTurn", arguments={}),
+                ToolCall(id="s1", function_name="finish-turn", arguments={}),
                 ToolCall(id="m1", function_name="mail-send", arguments={}),
             ],
         )
@@ -275,7 +275,7 @@ class TestEngineApplication:
         assert outcome.advance_iteration is True
 
 
-@pytest.mark.parametrize("ending", ["finishTurn", "sleepUntil", "exitAgent"])
+@pytest.mark.parametrize("ending", ["finish-turn", "sleep-until", "exit-agent"])
 async def test_scheduling_request_cannot_share_a_round(ending: str) -> None:
     svc = _make_services()
     session = AgentSession(session_id="s-mixed", trigger_content="work")
@@ -293,12 +293,19 @@ async def test_scheduling_request_cannot_share_a_round(ending: str) -> None:
 
 
 async def test_failed_sleep_does_not_end_work() -> None:
-    from tlon.tools.agents.scheduling import SleepUntilTool
+    from tlon.lifecycle.service import LifecycleService
+    from tlon.operations.adapters import OperationTool
+    from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+    from tlon.operations.lifecycle import make_lifecycle_operations
 
     svc = _make_services()
     session = AgentSession(session_id="s-invalid-sleep", trigger_content="work")
-    call = ToolCall(id="sleep", function_name="sleepUntil", arguments={"wake_at": "yesterday"})
-    result = await SleepUntilTool().execute(**call.arguments)
+    call = ToolCall(id="sleep", function_name="sleep-until", arguments={"wake_at": "yesterday"})
+    executor = OperationExecutor(
+        OperationRegistry(make_lifecycle_operations(LifecycleService("agent1"))),
+        CallContext("agent1", "s", "call"),
+    )
+    result = await OperationTool(executor, "sleep-until").execute_context(call.arguments)
     outcome = await act_stage_collect(svc, session, [(call, result)])
     assert not outcome.complete
     assert not outcome.scratch_updates

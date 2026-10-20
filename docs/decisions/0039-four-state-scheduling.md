@@ -1,5 +1,6 @@
 # ADR 0039：成员四态调度与邮件工具解耦
 
+> P3c 当前实现：宿主能力统一定义为 Operation；Tool 与 DSL 共用定义和执行边界。旧工具名和类名仅记录当时设计，当前入口见 [工具手册](../reference/tools-reference.md)。
 状态：已接受，已实现（2026-10-18）。用户确认全部三项接口与权限选择。详细契约见 [agent-scheduling-states](../design/agent-scheduling-states.md)。
 
 后续修订：[ADR 0041](0041-admin-scheduling-controls.md) 允许管理员提前唤醒，并增加等待、定时睡眠管理操作；普通邮件仍不能提前唤醒。

@@ -8,7 +8,7 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 
 - 调度、并发、持久化、LLM 调用、Docker 和权限检查留在宿主机制层；策略组合已有机制。
 - 查询只暴露受控视图，不向 DSL 开放任意 Python 属性或方法调用。
-- 非邮件效果词产出 `ActionRequest` 数据；邮件直接进入共享 Operation；异步求值在调用处交给宿主执行，记录实际结果后继续表达式。参数形状在构造请求时校验；配额、信任和实时状态仍由执行侧检查。
+- 宿主效果统一进入 Operation，仅 `run-loop` 保留 `ActionRequest` 配方声明；异步求值在调用处交给宿主执行，记录实际结果后继续表达式。参数形状在构造请求时校验；配额、信任和实时状态仍由执行侧检查。
 - 每个语境有自己的词汇注册表、符号作用域和 fuel 预算；新增词汇必须明确适用语境。
 - 函数可以返回动作意图，也可以在函数体内调用效果词。动作位置不再靠语法分区枚举；纯语境通过可见词汇约束效果。
 - tlosure 核心保持宿主无关；领域端口位于 tlon。纯度标记描述效果权限，不能将“读取宿主状态”误解成可重放的常量计算。
@@ -23,7 +23,7 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 
 ### 效果
 
-`spawn`、`start`、`stop`、`start-all`、`run-loop`、`state-get`、`state-put`、`llm-call` 保留 `ActionRequest` 路径。邮件五操作通过 DSLAdapter 的 BuiltinCall 直接进入共享 OperationExecutor 和成员邮件服务，结果仍由 ProgramStore 记录；不再创建邮件 ActionRequest。
+生命周期、邮件、模型、状态与其他领域操作通过 DSLAdapter 的 BuiltinCall 进入同一 OperationExecutor，结果由 ProgramStore 记录。只有 `run-loop` 保留 ActionRequest，交由宿主会话执行器运行配方。旧 spawn/start/stop/start-all 入口已由 member-spawn/start/stop/start-all 命名参数操作替代。
 
 生产程序使用可暂停求值内核，函数、条件和传统循环中的效果都在各自调用处执行，返回值可绑定到 `let` 或用于 `if`。同步入口和 collector 可分析效果意图；ADR 0042 中先完整求值再执行的生产流程由 [ADR 0043](../decisions/0043-newspaper-member-workflow.md) 替代。完整恢复边界见 [runtime](runtime.md)。
 
@@ -31,10 +31,10 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 | --- | --- |
 | `(state-get {:key "key"})` | 成员私有状态值，缺失为 `nil`；读取结果参与重放 |
 | `(state-put {:key "key" :value value})` | 返回写入值；状态与该效果结果同事务提交 |
-| `(llm-call {:prompt "任务数据" :max-tokens 256})` | `{:content "..." :usage {...}}`；不附工具，保留人格、RULES 与协议，额度受成员与规则预算约束 |
+| `(model-call {:prompt "任务数据" :max_tokens 256})` | `{:content "..." :usage {...}}`；不附工具，保留人格、RULES 与协议，额度受成员与规则预算约束 |
 | `(mail-send {:to ["地址"] :content "正文" :request_id "稳定键"})` | 真实邮局回执；拒收抛 RejectedError，未知抛 UnknownOutcomeError，均带结构化 data |
 
-`mail-send` 可选 `:subject` 和 `:request_id`；邮件参数/结果键保留 snake_case，如 `:mail_id`、`:request_id`、`:local_recipients`。`llm-call` 仍使用既有 `:completion-tokens` 等键。`mail-field` 是纯的字段适配器，从真实触发邮件读取 ID、发件地址、主题、正文等白名单字段；不开放对象属性访问。
+`mail-send` 可选 `:subject` 和 `:request_id`；邮件参数/结果键保留 snake_case，如 `:mail_id`、`:request_id`、`:local_recipients`。`model-call` 的 usage 保留 provider 的 snake_case 键，如 `:completion_tokens`。`mail-field` 是纯的字段适配器，从真实触发邮件读取 ID、发件地址、主题、正文等白名单字段；不开放对象属性访问。
 
 ### 环境
 

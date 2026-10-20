@@ -278,7 +278,7 @@ class TestArenaReport:
         flags = [
             {
                 "kind": "spawn-attempt",
-                "detail": "调用了 spawnAgent",
+                "detail": "调用了 member-spawn",
                 "evidence": "sessions/s.jsonl#seq-3",
             }
         ]

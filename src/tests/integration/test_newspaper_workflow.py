@@ -10,13 +10,13 @@ import pytest
 from tests.mail_helpers import make_office
 from tlon.agents.member_spec import MemberSpec
 from tlon.agents.program_driver import ProgramDriver
-from tlon.agents.program_effects import ProgramEffects
 from tlon.agents.program_store import ProgramStore
 from tlon.agents.vocabulary import make_member_builtins, rule_env
 from tlon.base.events.event_bus import EventBus
 from tlon.operations.adapters import DSLAdapter
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
 from tlon.operations.mail import make_mail_operations
+from tlon.operations.model import make_model_operations
 from tlon.operations.state import make_state_operations
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
@@ -52,10 +52,6 @@ class NewspaperHarness:
                 )
             )
         )
-        self.effects = ProgramEffects(
-            llm_client=self.llm,
-            system_prompt=AsyncMock(return_value="保留投稿来源，诚实编辑。"),
-        )
         self.crash_after_address: str | None = None
         self.fail_before_address: str | None = None
 
@@ -90,13 +86,21 @@ class NewspaperHarness:
         service.send = interrupted_send
         operations = DSLAdapter(
             OperationExecutor(
-                OperationRegistry((*make_mail_operations(service), *make_state_operations(self.store))),
+                OperationRegistry(
+                    (
+                        *make_mail_operations(service),
+                        *make_state_operations(self.store),
+                        *make_model_operations(
+                            self.llm, AsyncMock(return_value="保留投稿来源，诚实编辑。")
+                        ),
+                    )
+                ),
                 CallContext("newspaper", run_id, run_id),
             )
         )
 
         async def effect(request: ActionRequest, name: str, index: int, args: str) -> Any:
-            return await self.effects.execute(request, run_id, run_id, index, self.store, args)
+            raise AssertionError("all newspaper effects use shared operations")
 
         await ProgramDriver(
             self.store,
@@ -209,10 +213,6 @@ async def test_member_runtime_recovers_a_read_publication_before_program_complet
     paper = NewspaperHarness(tmp_path)
     bus = EventBus()
     paper.office = make_office(bus, tmp_path, ["newspaper", "a", "reporter", "operator"])
-    paper.effects = ProgramEffects(
-        llm_client=paper.llm,
-        system_prompt=AsyncMock(return_value="诚实编辑，保留来源。"),
-    )
 
     def runtime() -> MemberRuntime:
         member = MemberRuntime(
@@ -225,7 +225,21 @@ async def test_member_runtime_recovers_a_read_publication_before_program_complet
             post_office=paper.office,
             tlon_paths=TlonPaths(home=tmp_path),
         )
-        member._program_effects = paper.effects
+        adapter = DSLAdapter(
+            OperationExecutor(
+                OperationRegistry(
+                    (
+                        *member._operations._executor.registry.definitions(),
+                        *make_model_operations(
+                            paper.llm, AsyncMock(return_value="诚实编辑，保留来源。")
+                        ),
+                    )
+                ),
+                CallContext("newspaper", "member", "member"),
+            )
+        )
+        member._operations = adapter
+        member._builtins.update(adapter.builtins())
         return member
 
     member = runtime()
@@ -431,7 +445,10 @@ async def test_terminal_expression_error_preserves_effects_and_does_not_block_ne
         assert failed.error
         assert member._program_store.pending() == []
         found, recorded = member._program_store.get_effect(
-            run_id, 0, "state-put", dumps(({Keyword("key"): "seen", Keyword("value"): broken.mail.id},))
+            run_id,
+            0,
+            "state-put",
+            dumps(({Keyword("key"): "seen", Keyword("value"): broken.mail.id},)),
         )
         assert found and loads(recorded) == broken.mail.id
         assert [mail.id for mail in await mailbox.unread()] == [broken.mail.id]
@@ -446,7 +463,10 @@ async def test_terminal_expression_error_preserves_effects_and_does_not_block_ne
         assert failed_after.error == failed.error
         assert not failed_after.completed
         assert member._program_store.get_effect(
-            run_id, 0, "state-put", dumps(({Keyword("key"): "seen", Keyword("value"): broken.mail.id},))
+            run_id,
+            0,
+            "state-put",
+            dumps(({Keyword("key"): "seen", Keyword("value"): broken.mail.id},)),
         ) == (found, recorded)
     finally:
         await member.shutdown()

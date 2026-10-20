@@ -5,9 +5,8 @@ Handwritten narrative stays
 handwritten; only the drift-prone inventories are generated:
 
 - ``tool-registry`` in docs/reference/tools-reference.md — the
-  member's tool registration table, in the exact registration order of
-  ``assemble_member_capabilities`` (agents/assembly.py), joined
-  with the ``Tool`` subclasses under src/tlon/tools/.
+  member tool inventory from the shared operation definitions;
+  domain tables use those same input and output schemas.
 - ``event-types`` in docs/reference/api-reference.md — the flat EventType
   enum table from base/events/event.py (wire value + trailing comment).
 - ``dsl-special-forms`` / ``dsl-builtins-core`` / ``dsl-builtins-arithmetic``
@@ -48,16 +47,20 @@ from __future__ import annotations
 
 import argparse
 import ast
+import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from tlon.operations.core import Operation
+from tlon.operations.evolution import evolution_operation_definitions
 from tlon.operations.filesystem import filesystem_operation_definitions
 from tlon.operations.identity import identity_operation_definitions
+from tlon.operations.lifecycle import lifecycle_operation_definitions
 from tlon.operations.mail import mail_operation_definitions
 from tlon.operations.memory import memory_operation_definitions
+from tlon.operations.model import model_operation_definitions
 from tlon.operations.observability import observability_operation_definitions
 from tlon.operations.shell import shell_operation_definitions
 from tlon.operations.state import state_operation_definitions
@@ -68,8 +71,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC = REPO_ROOT / "src" / "tlon"
 TLOSURE_SRC = REPO_ROOT / "src" / "tlosure"
 SERVER_SRC = REPO_ROOT / "src" / "tlon_server"
-TOOLS_DIR = SRC / "tools"
-REGISTRY_FILE = SRC / "agents" / "assembly.py"
 EVENTS_FILE = SRC / "base" / "events" / "event.py"
 EVAL_FILE = TLOSURE_SRC / "eval.py"
 BUILTINS_FILE = TLOSURE_SRC / "builtins.py"
@@ -116,110 +117,6 @@ def _literal(node: ast.expr) -> Any:
             if k is not None
         }
     raise GenerationError(f"non-literal expression at line {node.lineno}: {ast.dump(node)[:120]}")
-
-
-@dataclass(frozen=True)
-class ToolInfo:
-    class_name: str
-    tool_name: str
-    file: Path
-    domain: str  # subpackage under src/tlon/tools/
-
-
-def _extract_tool_info(class_def: ast.ClassDef, file: Path) -> ToolInfo:
-    """Pull name/description/parameters out of a Tool subclass's
-    ``super().__init__(...)`` call."""
-    init_fn = next(
-        (n for n in class_def.body if isinstance(n, ast.FunctionDef) and n.name == "__init__"),
-        None,
-    )
-    if init_fn is None:
-        raise GenerationError(f"{file}: {class_def.name} has no __init__")
-    for node in ast.walk(init_fn):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        is_super_init = (
-            isinstance(func, ast.Attribute)
-            and func.attr == "__init__"
-            and isinstance(func.value, ast.Call)
-            and isinstance(func.value.func, ast.Name)
-            and func.value.func.id == "super"
-        )
-        if not is_super_init:
-            continue
-        kwargs = {kw.arg: _literal(kw.value) for kw in node.keywords if kw.arg}
-        if "name" not in kwargs:
-            raise GenerationError(
-                f"{file}: {class_def.name} super().__init__ lacks a name= literal"
-            )
-        return ToolInfo(
-            class_name=class_def.name,
-            tool_name=str(kwargs["name"]),
-            file=file,
-            domain=file.parent.name,
-        )
-    raise GenerationError(f"{file}: {class_def.name} has no super().__init__ call")
-
-
-def scan_tools() -> dict[str, ToolInfo]:
-    """Inventory every direct ``Tool`` subclass under src/tlon/tools/."""
-    inventory: dict[str, ToolInfo] = {}
-    for file in sorted(TOOLS_DIR.rglob("*.py")):
-        if file.name == "__init__.py":
-            continue
-        tree = ast.parse(file.read_text(encoding="utf-8"), filename=str(file))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.ClassDef):
-                continue
-            if any(isinstance(b, ast.Name) and b.id == "Tool" for b in node.bases):
-                info = _extract_tool_info(node, file)
-                inventory[info.class_name] = info
-    return inventory
-
-
-def registration_order() -> list[str]:
-    """Class names in the exact order ``assemble_member_capabilities`` registers them."""
-    tree = ast.parse(REGISTRY_FILE.read_text(encoding="utf-8"), filename=str(REGISTRY_FILE))
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
-            node.name == "assemble_member_capabilities"
-        ):
-            # Track simple `var = XxxTool(...)` bindings so registrations via
-            # a variable (`register_tool(execute_bash_tool)`) resolve too.
-            bindings: dict[str, str] = {}
-            for child in ast.walk(node):
-                if (
-                    isinstance(child, ast.Assign)
-                    and len(child.targets) == 1
-                    and isinstance(child.targets[0], ast.Name)
-                    and isinstance(child.value, ast.Call)
-                    and isinstance(child.value.func, ast.Name)
-                ):
-                    bindings[child.targets[0].id] = child.value.func.id
-            found: list[tuple[int, str]] = []
-            for call in ast.walk(node):
-                if not isinstance(call, ast.Call):
-                    continue
-                func = call.func
-                if not (
-                    isinstance(func, ast.Attribute) and func.attr == "register_tool" and call.args
-                ):
-                    continue
-                arg = call.args[0]
-                if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name):
-                    found.append((call.lineno, arg.func.id))
-                elif isinstance(arg, ast.Name) and arg.id in bindings:
-                    found.append((call.lineno, bindings[arg.id]))
-                else:
-                    raise GenerationError(
-                        f"{REGISTRY_FILE}:{call.lineno} register_tool() with an "
-                        "unresolvable argument — teach the generator or keep "
-                        "registrations as `XxxTool(...)` / a plain local variable"
-                    )
-            # ast.walk is BFS, not source order — sort by line number.
-            return [class_name for _, class_name in sorted(found)]
-    raise GenerationError(f"{REGISTRY_FILE}: assemble_member_capabilities not found")
 
 
 @dataclass(frozen=True)
@@ -664,18 +561,7 @@ def env_vars() -> list[EnvVarInfo]:
 
 def render_tool_registry() -> str:
     """Registration table for docs/reference/tools-reference.md."""
-    inventory = scan_tools()
     rows: list[str] = []
-    for index, class_name in enumerate(registration_order(), start=1):
-        info = inventory.get(class_name)
-        if info is None:
-            raise GenerationError(f"registered tool class {class_name} not found under {TOOLS_DIR}")
-        rel = info.file.relative_to(REPO_ROOT).as_posix()
-        under_pkg = info.file.relative_to(SRC).as_posix()
-        link = f"[{under_pkg}](../../{rel})"
-        rows.append(
-            f"| {index} | `{info.tool_name}` | {link} 的 `{info.class_name}` | {info.domain} |"
-        )
     for domain, definitions in operation_domains().items():
         for operation in definitions:
             rows.append(
@@ -687,8 +573,8 @@ def render_tool_registry() -> str:
     domains = operation_domains()
     device_count = len(domains["filesystem"]) + len(domains["shell"])
     header = (
-        f"满配成员注册 {count} 个工具（尚未切换的 Tool 按 assembly 顺序，"
-        f"共享 Operation 按域列出；L0 不注册 {device_count} 个装置操作，"
+        f"满配成员注册 {count} 个工具（由共享 Operation 按域列出；"
+        f"L0 不注册 {device_count} 个装置操作，"
         f"L1 注册 {len(domains['filesystem'])} 个文件操作，L2 再增加 "
         f"{len(domains['shell'])} 个 Shell 操作；时间不依赖装置）：{GENERATED_NOTE}\n\n"
         "| # | 工具名 | 实现 | 域 |\n"
@@ -709,6 +595,9 @@ def operation_domains() -> dict[str, list[Operation]]:
         "identity": list(identity_operation_definitions()),
         "observability": list(observability_operation_definitions()),
         "state": list(state_operation_definitions()),
+        "lifecycle": list(lifecycle_operation_definitions()),
+        "evolution": list(evolution_operation_definitions()),
+        "model": list(model_operation_definitions()),
     }
 
 
@@ -732,6 +621,11 @@ def render_operations(domain: str) -> str:
             blocks.append(f"{label}：")
             if type(schema) is bool:
                 blocks.append("任意严格 JSON 值。" if schema else "拒绝所有值。")
+                continue
+            if schema.get("type") != "object":
+                blocks.append(
+                    "```json\n" + json.dumps(schema, ensure_ascii=False, indent=2) + "\n```"
+                )
                 continue
             rows = ["| 字段 | 类型 | 必填 | 说明 |", "|---|---|---|---|"]
             required = schema.get("required", [])
@@ -1042,9 +936,8 @@ def render_dsl_action_kinds() -> str:
     ]
     header = (
         f"效果 builtin 实际产出的 `ActionRequest` 形状（{len(kinds)} 种 kind，"
-        f"生成自 `vocabulary.py` 的调用点；`start-all` 不产出自己的 kind——"
-        f"它按宿主查询 `start_all_candidates` 的候选集展开为多个 "
-        f'`kind="start"` 请求；生产程序在效果调用处执行并返回实际结果）：{GENERATED_NOTE}\n\n'
+        f"生成自 `vocabulary.py` 的调用点；仅用于会话配方声明，"
+        f"普通宿主操作通过 Operation 执行）：{GENERATED_NOTE}\n\n"
         "| kind | data 字段 |\n"
         "|---|---|"
     )

@@ -9,8 +9,8 @@ triggers a birth-socialization mail to the newborn) and guardian-inbox
 postmaster senders excluded). Wake is no longer
 Adam's line — wake-on-mail lives in the registry as a spec-derived
 mechanized policy (see ``test_registry.py``). The registry is stubbed
-with its read-only interfaces (``get_agent`` / ``get_config`` /
-``get_all`` / ``get_all_ids`` / ``boot_candidates`` / ``is_lazy``).
+with its query and scheduling-admission interfaces; lifecycle decisions
+continue through the actual operation adapter and event bus.
 """
 
 import asyncio
@@ -29,14 +29,14 @@ from tlon.organization.mail.resolver import RecipientResolver
 
 
 class _RegistryStub:
-    """The registry's read-only query surface Adam is injected with."""
+    """Explicit registry query and scheduling ports used by Adam runtime."""
 
     def __init__(
         self,
         configs: dict[str, AgentConfig],
         running: set[str] | None = None,
         boot_eligible: set[str] | None = None,
-    ):
+    ) -> None:
         self._configs = configs
         self._running = running or set()
         self._boot_eligible = boot_eligible or set()
@@ -44,8 +44,18 @@ class _RegistryStub:
         # yellow page carries no prototype metadata); None here is never
         # hit either way.
         self._paths = None
+        self.scheduling_publications: list[str] = []
 
-    def get_agent(self, agent_id: str):
+    def can_schedule(self, member_id: str) -> bool:
+        # Like the real registry, admission does not require an activation
+        # config: Adam is a bus member outside the activation table.
+        return True
+
+    async def publish_scheduling_state(self, member_id: str) -> None:
+        # Real get_agent_status returns None for Adam, so no state fact is emitted.
+        self.scheduling_publications.append(member_id)
+
+    def get_agent(self, agent_id: str) -> str | None:
         return "running" if agent_id in self._running else None
 
     def get_config(self, agent_id: str) -> AgentConfig | None:
@@ -112,10 +122,13 @@ class TestAdamDecisions:
         starts: list[Event] = []
         bus.subscribe(EventType.AGENT_START_REQUEST, lambda e: starts.append(e))
 
-        await adam.initialize()  # the :boot rule runs start-all here
+        assert adam._registry is registry
+        await adam.initialize()  # boot executes member-start-all via LifecycleService
         await _wait_for(lambda: len(starts) == 1)
         assert starts[0].payload.agent_id == "worker-1"
         assert starts[0].payload.reason == "boot"
+        assert registry.scheduling_publications
+        assert set(registry.scheduling_publications) == {"adam"}
 
         await adam.shutdown()
 
@@ -216,13 +229,13 @@ class TestAdamDecisions:
         assert mail.from_address == "adam@tlon.internal"
         assert mail.to == ["c-xin-1a2b3c4d@tlon.internal"]
         # Greeting names the newborn and points it at its own discovery
-        # channels (its contact book, the listMembers yellow page); the
+        # channels (its contact book, the member-list yellow page); the
         # roster is no longer embedded (docs/design/mail.md).
         assert "小新" in mail.content
         assert "：\n\n欢迎出生。" in mail.content
         assert "worker-1（worker-1）" not in mail.content
         assert "contacts-upsert" in mail.content
-        assert "listMembers" in mail.content
+        assert "member-list" in mail.content
         assert "adam@tlon.internal" in mail.content
 
         await adam.shutdown()

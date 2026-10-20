@@ -59,7 +59,7 @@ WebUI / Operator / Python SDK / Telegram
 | `tlon.organization` | 邮局、邮箱、地址解析与人类/外部适配；不依赖其他业务域 |
 | `tlon.memory` | claim 存储、蒸馏与检索；不依赖 agents/organization/tools/sandbox |
 | `tlon.sandbox` | 执行装置与资源监控；不依赖 agents/organization/memory/tools |
-| `tlon.operations` | P1 共享操作契约、成员作用域调用与 DSL/Tool 薄入口；尚未接生产装配，不依赖 agents/server/client/launcher。见 [reference](reference/operations-reference.md) |
+| `tlon.operations` | 共享操作契约、成员作用域调用与 DSL/Tool 薄入口，生产宿主操作已统一装配，不依赖 agents/server/client/launcher。见 [reference](reference/operations-reference.md) |
 | `tlon.tools` | 成员工具；不得依赖 agents/server/client/launcher/prototypes，生命周期操作经注入端口 |
 | `tlon.agents` | 成员装配、调度、会话循环和策略接入；不依赖 server/client/launcher/prototypes |
 | `tlon.prototypes` | 随包携带的原型数据，启动时播种；不是原型管理服务 |
@@ -71,6 +71,8 @@ WebUI / Operator / Python SDK / Telegram
 ## 当前实现：装配与生命周期
 
 进程入口创建 `TlonPaths` 与 `Settings` 快照。[ServerApp](../src/tlon_server/serverapp.py) 初始化进程级 tracing/metrics，再调用 [build_runtime](../src/tlon/api/bootstrap.py)。runtime 装配包含播种原型与技能、基础设施、邮局、注册表、退休服务、Adam 与通道适配器，并返回 facade。首启不自动创建标准团队。
+
+Adam 作为内置策略成员，持有同一个 `AgentRegistry`，通过共享 `LifecycleService` 查询 boot 候选并发布启停请求；宿主状态查询仍由 `RegistryQueries` 提供。Adam 不进入注册表的激活表和生命周期枚举，但列入公开成员寻址目录。注册表的调度准入不要求成员配置存在；Adam 没有普通成员状态快照时不发布调度状态事件。
 
 serving 侧在 facade 上装配客户端会话、通知服务、通讯录和 HTTP 服务；`start()` 才打开监听端口。关闭时先停止 serving，再关闭 runtime 组件，最后结束进程级观测设施。详细顺序、异常清理及资源所有权见 [基础设施设计](design/infrastructure.md)。成员的启动与退休不是进程启停，见 [运行时](design/runtime.md) 和 [成员模型](design/unified-member-model.md)。
 
@@ -119,4 +121,4 @@ serving 侧在 facade 上装配客户端会话、通知服务、通讯录和 HTT
 完整目标与尚未实现的动态工具视图、复合操作及统一预算见[实施计划](design/operations-plan.md)；当前调用契约见[Operation reference](reference/operations-reference.md)。
 
 
-P3b 已将记忆/会话回读、任务、人格/联系人、只读观测及 state-get/state-put 接入相同 Operation 目录。成员身份由宿主绑定，操作输入不能改写拥有者；公开观察与私有资源保持各自边界。state-put 的两入口复用同一 ProgramStore 原子状态及效果记录，TaskManager 已移至 `tlon.tasks`。剩余生命周期、模型和提案操作按 P3c 切换，统一预算/通用恢复仍属于 P4。
+P3b 已将记忆/会话回读、任务、人格/联系人、只读观测及 state-get/state-put 接入相同 Operation 目录。成员身份由宿主绑定，操作输入不能改写拥有者；公开观察与私有资源保持各自边界。state-put 的两入口复用同一 ProgramStore 原子状态及效果记录，TaskManager 已移至 `tlon.tasks`。P3c 继续统一生命周期、模型和提案操作并删除旧 Tool 机制；统一预算/通用恢复仍属于 P4。

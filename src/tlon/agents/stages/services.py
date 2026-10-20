@@ -130,7 +130,7 @@ class StageServices:
         with contextlib.ExitStack() as stack:
             # session_id is also bound so tools executing within this round
             # (background tasks inherit contextvars) can attribute their
-            # work to the session — e.g. spawnAgent's per-session quota.
+            # work to the session — e.g. member-spawn's per-session quota.
             stack.enter_context(bound_contextvars(agent_id=self.identity.id, session_id=session.id))
             if trace_id:
                 stack.enter_context(continue_trace(trace_id, carrier.get("span_id")))

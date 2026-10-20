@@ -18,7 +18,7 @@ from tlon.agents.prototypes.staging import _validate_behavior
 from tlon.base.identifiers import new_prototype_id
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
-from tlon.tools.prototypes.ports import PrototypeError
+from tlon.evolution.ports import PrototypeError
 from tlosure.edn import Keyword, dumps, loads
 
 logger = get_logger(__name__)

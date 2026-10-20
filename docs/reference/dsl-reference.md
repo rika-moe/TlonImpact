@@ -122,7 +122,7 @@
 
 求值器机制本身——特殊形式白名单、fuel 计量与终止保证、效果交接与 `ActionRequest` 数据机制——是语言规范，见 [tlosure-reference.md](./tlosure-reference.md) 第 2 节，不在这里重复。本节只记 tlon 宿主侧的闸与记账方式（"DSL 描述，引擎执行"）：
 
-- 动作 builtin（`pure=False`，见第 4.5 节）只校验参数并产出 `ActionRequest` 数据，由宿主在调用边界执行并返回实际结果；tlosure 不直接执行系统 I/O。
+- 宿主操作由 DSLAdapter 投影为 builtin，在调用边界交给 OperationExecutor 执行并返回实际结果；仅 `run-loop` 保留 ActionRequest，tlosure 不直接执行系统 I/O。
 - 环境值对表达式不透明：没有属性/方法访问语法，`Mail` 只能经 builtin 检查。
 - map 是数据：键保持字面量，值会被求值——动作选项 map 里可嵌表达式，如 `{:agent (get event :agent_id)}`。
 - **动作位置校验**：`validate_member_actions` 使用全量成员词汇，支持条件、函数和传统循环；`defn` 按顺序向后续表达式引入名字。生产程序对每次实际经过的调用进行效果交接；同步分析仍可使用 collector。纯门控只能使用纯子集词汇。
@@ -206,7 +206,7 @@
 
 ### 4.3 `STAGE_COND_BUILTINS`（stage `:if` 谓词）
 
-环境 `{state, scratch, round}`；scratch 是会话暂存区，round 同时提供 completing 与 sending_mail：前者表示单独的 finishTurn/sleepUntil/exitAgent，后者表示将派发邮件工具。`completing?` 与 `sending-mail?` 是独立谓词；交付评审应使用后者。
+环境 `{state, scratch, round}`；scratch 是会话暂存区，round 同时提供 completing 与 sending_mail：前者表示单独的 finish-turn/sleep-until/exit-agent，后者表示将派发邮件工具。`completing?` 与 `sending-mail?` 是独立谓词；交付评审应使用后者。
 
 <!-- BEGIN GENERATED: dsl-builtins-stage-cond -->
 `STAGE_COND_BUILTINS`（8 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
@@ -257,7 +257,7 @@
 | --- | --- |
 | `(state-get {:key "key"})` | 成员私有状态；缺失返回 `nil`，读取结果被记录供重放 |
 | `(state-put {:key "key" :value value})` | 写入值；状态更新与效果记录同事务提交 |
-| `(llm-call {:prompt "任务数据" :max-tokens 256})` | `{:content "..." :usage {...}}`，usage 使用 `:completion-tokens` 等关键字 |
+| `(model-call {:prompt "任务数据" :max_tokens 256})` | `{:content "..." :usage {...}}`，usage 保留 provider 的 snake_case 键，如 `:completion_tokens` |
 
 邮件是统一 Operation，不再构造旧邮件 `ActionRequest`。DSL 使用一个命名参数 map，键与 JSON Tool 参数均为 snake_case：
 
@@ -271,30 +271,20 @@
 
 `:subject`、`:request_id` 可省略；宿主默认生成稳定调用 ID。回复显式传 `:in_reply_to`，收件人显式传 `:to`，不会隐式从触发邮件推断。完整参数以 [邮件操作 schema](../../src/tlon/operations/mail.py) 为权威。拒收和未知结果分别抛带结构化 data 的 `RejectedError` / `UnknownOutcomeError`，不返回伪成功；Tool 入口将同一错误投影为失败结果。请求 ID 相同但内容不同会冲突。邮局已有回执覆盖已入箱而程序尚未记结果的崩溃窗口；unknown 必须复用原 request_id 重试。接受只证明本地信箱提交，网关字段不证明外部送达。
 
-`llm-call` 不附工具，保留人格、RULES 和协议。输出上限不超过请求值、规则剩余额度和成员 `llm.max_tokens`；每次调用按请求上限预留共享额度，重放也预留。已记录结果直接复用，未记录的上游成功可能导致再次调用。
+`model-call` 不附工具，保留人格、RULES 和协议。输出上限不超过请求值、规则剩余额度和成员 `llm.max_tokens`；每次调用按请求上限预留共享额度，重放也预留。已记录结果直接复用；模型调用属于非幂等写入，已分发但未记录结果时保留 unknown，不自动重发。
 
 `mail-field` 读取真实 `Mail` 的 `:id`、`:from`、`:to`、`:cc`、`:subject`、`:content`、`:timestamp`、`:thread-id`、`:in-reply-to`、`:forward-of`、`:endorsing`；非邮件值返回 `nil`，未知字段报错。随包 [报社示例](../../src/tlon/resources/examples/newspaper/README.md) 演示先冻结期刊再逐人幂等投递，不自动创建默认成员。
 
-以下非邮件动作由 `make_member_builtins` 注入，邮件 Operation 由成员装配追加。所有规则共用这些词；它们可以出现在函数、条件和传统循环中。效果执行受实时权限和四态门控约束。
+宿主操作由成员 OperationRegistry 统一追加，均接收一个命名参数 map；完整清单与 schema 见[工具手册](tools-reference.md)。`member-spawn`、`member-start`、`member-stop`、`member-start-all` 替代旧位置参数动作入口。普通操作可在函数、条件和循环中组合；控制操作 `finish-turn`、`sleep-until`、`exit-agent` 必须独立位于规则根动作，不能嵌入组合表达式。
 
-| 名称 | 签名 | 语义 |
-|---|---|---|
-| `spawn` | `(spawn prototype [options])` | 经注册表从原型派生一个新成员（统一成员模型，ADR 0006：与手建成员同构、永不删除）；`prototype` 必填字符串，`options` 只允许 `{:name "..."}`；无名时自动生成 `"{prototype}-{随机4位}"` |
-| `start` | `(start {:agent id :reason s})` | 发布启动请求；`:agent` / `:reason` 均为必填非空字符串 |
-| `stop` | `(stop {:agent id :reason s})` | 发布停止请求；参数同上 |
-| `start-all` | `(start-all {:reason s})` | 对"声明了 `:on :boot` 的成员"集合逐个发启动请求；**不允许 `:agent`**；候选集展开依赖宿主查询注入——无宿主的注册表运行时会抛 `EvalError` |
-| `run-loop` | `(run-loop (quote {...}))` | 请求按独立配方运行一次会话，结束后继续剩余效果；可用于任意事件、条件及传统循环 |
+`run-loop` 保持 `(run-loop (quote {...}))` 形式，声明一次独立配方会话；这是当前唯一 ActionRequest 动作，参数仍由会话配方校验。
 
 <!-- BEGIN GENERATED: dsl-action-kinds -->
-效果 builtin 实际产出的 `ActionRequest` 形状（5 种 kind，生成自 `vocabulary.py` 的调用点；`start-all` 不产出自己的 kind——它按宿主查询 `start_all_candidates` 的候选集展开为多个 `kind="start"` 请求；生产程序在效果调用处执行并返回实际结果）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+效果 builtin 实际产出的 `ActionRequest` 形状（1 种 kind，生成自 `vocabulary.py` 的调用点；仅用于会话配方声明，普通宿主操作通过 Operation 执行）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | kind | data 字段 |
 |---|---|
 | `run_loop` | `recipe` |
-| `spawn` | `prototype`、`name` |
-| `start` | `agent_id`、`reason` |
-| `stop` | `agent_id`、`reason` |
-| `llm_call` | `prompt`、`max_tokens` |
 <!-- END GENERATED: dsl-action-kinds -->
 
 ### 4.6 宿主查询端口（闭包注入）
@@ -387,7 +377,7 @@ stage form：`(name)` 或 `(name {opts})`。所有 stage 支持 `:if <表达式>
 | stage | 语义（实现见 [src/tlon/agents/stages/](../../src/tlon/agents/stages)） |
 |---|---|
 | `think` | 一次 LLM 调用，产出本轮响应（进响应链）。成功：清零连续错误计数。失败：记一次错误 + 推进迭代，不发邮件，由 `:until` 后续终止循环 |
-| `act` | 声明并发工具执行并收集结果；邮件工具只投递，不完成会话。finishTurn/sleepUntil/exitAgent 必须单独一轮，成功后记录调度意图并完成当前会话；混用其他工具整轮拒绝。 |
+| `act` | 声明并发工具执行并收集结果；邮件工具只投递，不完成会话。finish-turn/sleep-until/exit-agent 必须单独一轮，成功后记录调度意图并完成当前会话；混用其他工具整轮拒绝。 |
 | `plan` | 额外一次 LLM 调用生成 ≤ `:max-steps` 步计划；写入 `scratch.plan` 并以 `[执行计划]` 用户消息入上下文。失败软降级（跳过，不记错误） |
 | `critique` | 额外一次 LLM 评审：评审输入 = 会话 context + 本轮待审输出（完整调用参数、调用编号及运行时执行状态，以普通文本渲染为 assistant 消息；草稿不是执行回执）+ 评审指令；首行去空白后必须恰好是 `PASS`/`FAIL`，结论写入 `scratch.critique = {:passed bool :feedback str}`；首行无法解析时跳过本次评审（记 warning、清除旧 verdict——`critique-passed?` 与 `critique-failed?` 均不成立，revise 不触发），不记录为 PASS。异常同样清除旧 verdict；完成动作是否要求明确 PASS 由后续 stage 的 `:if` 决定。失败软降级 |
 | `revise` | 不调 LLM；仅在 FAIL 时把评审意见、完整待审输出及真实执行状态以普通用户消息喂回上下文，供下一轮 `think` 修正；空意见也保留草稿和未执行说明，不伪造工具调用/回执。消费过的 verdict 随之清除（`scratch.critique` 置 nil），避免陈旧 FAIL 在 critique 被条件跳过的后续轮次重复触发 |

@@ -29,7 +29,8 @@ from tlon.base.tracing import otel
 from tlon.base.tracing.jsonl_exporter import JsonlSpanExporter
 from tlon.base.tracing.trace_context import continue_trace, get_current_trace, start_span
 from tlon.base.tracing.trace_store import FileTraceStore
-from tlon.tools.base import Tool, ToolResult
+from tlon.operations.adapters import OperationTool
+from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
 
 
 @pytest.fixture
@@ -267,34 +268,28 @@ async def test_llm_request_span_failure(
     assert any(e.name == "exception" for e in llm_span.events)
 
 
-class _EchoTool(Tool):
-    def __init__(self) -> None:
-        super().__init__(
-            name="echo",
-            description="Echo back the input",
-            parameters={
-                "type": "object",
-                "properties": {"text": {"type": "string"}},
-                "required": ["text"],
-            },
-        )
+def _projection(name: str) -> OperationTool:
+    def handler(context: CallContext, arguments: dict[str, Any]) -> Any:
+        if name == "boom":
+            raise RuntimeError("kaboom")
+        return {"echo": arguments["text"]}
 
-    async def execute(self, **kwargs: Any) -> ToolResult:
-        return ToolResult(success=True, data={"echo": kwargs["text"]})
-
-
-class _BoomTool(Tool):
-    def __init__(self) -> None:
-        super().__init__(name="boom", description="Always fails", parameters={"type": "object"})
-
-    async def execute(self, **kwargs: Any) -> ToolResult:
-        raise RuntimeError("kaboom")
+    properties = {"text": {"type": "string"}} if name == "echo" else {}
+    operation = Operation(
+        name,
+        "Tracing test",
+        {"type": "object", "properties": properties, "required": [], "additionalProperties": False},
+        True,
+        handler,
+    )
+    execution = OperationExecutor(OperationRegistry([operation]), CallContext("a", "r", "c"))
+    return OperationTool(execution, name)
 
 
 async def test_tool_span_success(memory_spans: InMemorySpanExporter) -> None:
     """tool.{name} span records name, argument summary and success."""
     executor = ToolExecutor()
-    executor.register_tool(_EchoTool())
+    executor.register_tool(_projection("echo"))
 
     result = await executor.execute("echo", {"text": "hi"})
     assert result.success
@@ -311,7 +306,7 @@ async def test_tool_span_success(memory_spans: InMemorySpanExporter) -> None:
 async def test_tool_span_failure(memory_spans: InMemorySpanExporter) -> None:
     """A failing tool sets ERROR status and tool.error on the span."""
     executor = ToolExecutor()
-    executor.register_tool(_BoomTool())
+    executor.register_tool(_projection("boom"))
 
     result = await executor.execute("boom", {})
     assert not result.success

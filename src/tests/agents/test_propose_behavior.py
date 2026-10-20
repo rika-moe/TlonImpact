@@ -1,8 +1,8 @@
-"""proposeBehavior — the experience entry of the generation channel ().
+"""behavior-propose — the experience entry of the generation channel ().
 
 The tool drafts the next-generation spec itself: one LLM call fed with the
 member's own behavior.tlon + memory digest + lessons + the caller's intent,
-then through the same staging write gate as ``writePrototype``. Failures
+then through the same staging write gate as ``prototype-write``. Failures
 (garbage draft, invalid spec, name conflict) come back as ``success=False``
 for the outer ReAct loop to retry — the tool never retries internally.
 """
@@ -10,6 +10,7 @@ for the outer ReAct loop to retry — the tool never retries internally.
 from pathlib import Path
 from typing import Any
 
+from tests.evolution_helpers import make_behavior_tool
 from tlon.agents.prototypes.management import write_trusted_prototype
 from tlon.agents.prototypes.staging import write_staging_prototype
 from tlon.agents.session_journal import SessionJournal
@@ -17,7 +18,7 @@ from tlon.base.llm_client import LLMResponse
 from tlon.base.paths import TlonPaths
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
-from tlon.tools.agents.propose_behavior import ProposeBehaviorTool
+from tlon.operations.adapters import OperationTool
 
 _CURRENT_SPEC = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
 _DRAFT_SPEC = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["y@tlon.internal"]})]}]}\n'
@@ -43,10 +44,10 @@ def _make_tool(
     prototype: str | None = None,
     memory: MemoryManager | None = None,
     solvency: Any = None,
-) -> ProposeBehaviorTool:
+) -> OperationTool:
     if memory is None:
         memory = MemoryManager(agent_id, MemoryConfig(), data_dir=p.agent_dir(agent_id))
-    return ProposeBehaviorTool(
+    return make_behavior_tool(
         agent_id=agent_id,
         prototype=prototype,
         author_id=agent_id,
@@ -80,7 +81,9 @@ class TestProposeBehavior:
         memory = MemoryManager(agent_id, MemoryConfig(), data_dir=p.agent_dir(agent_id))
         await memory.remember_fact("用户偏好简短回复")
         tool = _make_tool(p, agent_id, llm, memory=memory, prototype=created_1.name)
-        result = await tool.execute(intent="把转发目标换成 y，x 已退休", display_name="二代")
+        result = await tool.execute_context(
+            {"intent": "把转发目标换成 y，x 已退休", "display_name": "二代"}
+        )
         assert result.success, result.error
         assert result.data == {
             "name": result.data["name"],
@@ -114,7 +117,7 @@ class TestProposeBehavior:
         _write_behavior(p, agent_id)
         llm = _FakeLLM(_DRAFT_SPEC)
         tool = _make_tool(p, agent_id, llm, prototype=None)
-        result = await tool.execute(intent="起步", display_name="定址转发")
+        result = await tool.execute_context({"intent": "起步", "display_name": "定址转发"})
         assert result.success, result.error
         assert not (p.prototypes_staging_dir() / result.data["name"] / "LESSONS.md").exists()
 
@@ -124,7 +127,7 @@ class TestProposeBehavior:
         agent_id = "c-base-00000001"
         _write_behavior(p, agent_id)
         tool = _make_tool(p, agent_id, _FakeLLM("我觉得应该这样改……"))
-        result = await tool.execute(intent="改", display_name="定址转发")
+        result = await tool.execute_context({"intent": "改", "display_name": "定址转发"})
         assert not result.success
         assert "EDN" in result.error
         assert not p.prototypes_staging_dir().exists()
@@ -136,7 +139,7 @@ class TestProposeBehavior:
         agent_id = "c-base-00000001"
         _write_behavior(p, agent_id)
         tool = _make_tool(p, agent_id, _FakeLLM(_INVALID_SPEC), prototype=None)
-        result = await tool.execute(intent="改", display_name="定址转发")
+        result = await tool.execute_context({"intent": "改", "display_name": "定址转发"})
         assert not result.success
         assert "unknown function or special form: jump" in result.error
         assert "hint" in result.data
@@ -148,7 +151,7 @@ class TestProposeBehavior:
         agent_id = "manual-member"
         _write_behavior(p, agent_id)
         tool = _make_tool(p, agent_id, _FakeLLM(_DRAFT_SPEC), prototype=None)
-        result = await tool.execute(intent="起步", display_name="定址转发")
+        result = await tool.execute_context({"intent": "起步", "display_name": "定址转发"})
         assert result.success, result.error
         assert result.data["parent"] is None
         assert result.data["generation"] == 1
@@ -163,7 +166,7 @@ class TestProposeBehavior:
             "tlon.agents.prototypes.staging.new_prototype_id", lambda: created_1.name
         )
         tool = _make_tool(p, agent_id, _FakeLLM(_DRAFT_SPEC))
-        result = await tool.execute(intent="改", display_name="定址转发")
+        result = await tool.execute_context({"intent": "改", "display_name": "定址转发"})
         assert not result.success
         assert "already exists" in result.error
 
@@ -182,7 +185,7 @@ class TestProposeSolvency:
 
         llm = _FakeLLM(_DRAFT_SPEC)
         tool = _make_tool(p, agent_id, llm, solvency=_insolvent, prototype="broke")
-        result = await tool.execute(intent="改", display_name="定址转发")
+        result = await tool.execute_context({"intent": "改", "display_name": "定址转发"})
         assert not result.success
         assert "insolvent" in result.error
         assert llm.calls == []
@@ -201,7 +204,7 @@ class TestProposeSolvency:
         tool = _make_tool(
             p, agent_id, _FakeLLM(_DRAFT_SPEC), solvency=_boom, prototype=created_1.name
         )
-        result = await tool.execute(intent="改", display_name="定址转发")
+        result = await tool.execute_context({"intent": "改", "display_name": "定址转发"})
         assert result.success, result.error
 
 
@@ -216,7 +219,7 @@ async def test_propose_rejects_old_name_or_missing_label_before_drafting(tmp_pat
         {"intent": "改"},
         {"intent": "改", "display_name": "  "},
     ):
-        result = await tool.execute(**args)
+        result = await tool.execute_context(args)
         assert not result.success
         assert "name" in result.error
     assert llm.calls == []

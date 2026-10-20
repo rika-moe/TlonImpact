@@ -192,7 +192,10 @@ class TestExecutionLevelAssembly:
         # Mail tools bind later in MemberRuntime, with its actual mailbox/PostOffice.
         assert "mail-send" not in names
 
-        await caps.tool_executor.shutdown()
+        if caps.shell_service is not None:
+            await caps.shell_service.shutdown()
+        if caps.docker_runtime is not None:
+            caps.docker_runtime.close()
 
     async def test_l1_registers_file_tools_without_bash(
         self, tlon_paths: TlonPaths, monkeypatch: pytest.MonkeyPatch
@@ -207,7 +210,10 @@ class TestExecutionLevelAssembly:
         assert names >= FILE_TOOLS
         assert names.isdisjoint(BASH_TOOLS)
 
-        await caps.tool_executor.shutdown()
+        if caps.shell_service is not None:
+            await caps.shell_service.shutdown()
+        if caps.docker_runtime is not None:
+            caps.docker_runtime.close()
 
     async def test_l2_registers_device_tools(self, tlon_paths: TlonPaths) -> None:
         caps = await self._assemble(tlon_paths, "L2")
@@ -215,4 +221,66 @@ class TestExecutionLevelAssembly:
         names = set(caps.tool_executor.list_tools()) | {op.name for op in caps.operations}
         assert names >= DEVICE_TOOLS
 
-        await caps.tool_executor.shutdown()
+        if caps.shell_service is not None:
+            await caps.shell_service.shutdown()
+        if caps.docker_runtime is not None:
+            caps.docker_runtime.close()
+
+
+async def test_real_assembly_evolution_writes_use_injected_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exercise the assembled writer bindings, not hand-built test partials."""
+    from unittest.mock import AsyncMock
+
+    from tlon.agents.prototypes.staging import list_staging_prototypes
+    from tlon.base.llm_client import LLMResponse
+    from tlon.operations.adapters import OperationTool
+    from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+
+    paths = TlonPaths(home=tmp_path / "member-home")
+    other_paths = TlonPaths(home=tmp_path / "other-home")
+    spec = '{:version 1 :rules [{:name "boot" :on :boot :actions []}]}'
+    config = AgentConfig(
+        id="author",
+        name="author",
+        llm=LLMConfig(model_name="test/model", context_window=64000),
+        docker=DockerRuntimeConfig(level="L0"),
+    )
+    monkeypatch.setattr(
+        "tlon.agents.assembly.policy_trust_provider", lambda _paths: AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(
+        "tlon.agents.assembly.policy_solvency_provider", lambda _paths: AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr("tlon.agents.assembly.find_near_kin", lambda *_args, **_kwargs: None)
+    caps = await assemble_member_capabilities(
+        config,
+        registry=None,
+        agent_info=_FakeAgentInfo({config.id: config}),
+        tlon_paths=paths,
+    )
+    executor = OperationExecutor(
+        OperationRegistry(caps.operations), CallContext(config.id, "run", "call")
+    )
+    written = await OperationTool(executor, "prototype-write").execute_context(
+        {"behavior": spec, "display_name": "direct"}
+    )
+    assert written.success, written.error
+    behavior_file = paths.agent_behavior_file(config.id)
+    behavior_file.parent.mkdir(parents=True, exist_ok=True)
+    behavior_file.write_text(spec)
+    monkeypatch.setattr(caps.llm_client, "chat", AsyncMock(return_value=LLMResponse(content=spec)))
+    proposed = await OperationTool(executor, "behavior-propose").execute_context(
+        {"intent": "keep behavior", "display_name": "draft"}
+    )
+    assert proposed.success, proposed.error
+    proposals = list_staging_prototypes(paths)
+    assert {proposal.name for proposal in proposals} == {
+        written.data["name"],
+        proposed.data["name"],
+    }
+    assert all(proposal.author == config.id and proposal.trusted is False for proposal in proposals)
+    assert list_staging_prototypes(other_paths) == []
+    assert not other_paths.prototypes_staging_dir().exists()
+    assert not paths.prototypes_dir().exists()

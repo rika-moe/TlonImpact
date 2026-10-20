@@ -80,7 +80,7 @@ async def test_digest_covers_trigger_replies_tools_and_end(tmp_path: Path) -> No
         tools=["file-search", "file-read", "file-read"],
     )
 
-    result = await tool.execute(session_id=sid)
+    result = await tool.execute_context({"session_id": sid})
 
     assert result.success is True
     digest = result.data["digest"]
@@ -95,7 +95,7 @@ async def test_digest_covers_trigger_replies_tools_and_end(tmp_path: Path) -> No
 async def test_missing_session_is_a_clean_error(tmp_path: Path) -> None:
     tool, _ = _tool(tmp_path)
 
-    result = await tool.execute(session_id="agent1-nope")
+    result = await tool.execute_context({"session_id": "agent1-nope"})
 
     assert result.success is False
     assert "agent1-nope" in (result.error or "")
@@ -107,7 +107,7 @@ async def test_long_reply_is_clipped(tmp_path: Path) -> None:
     sid = "agent1-long"
     await _write_session(journal, sid, replies=["长" * (_RESPONSE_MAX * 2)])
 
-    result = await tool.execute(session_id=sid)
+    result = await tool.execute_context({"session_id": sid})
 
     assert result.success is True
     digest = result.data["digest"]
@@ -122,7 +122,7 @@ async def test_reply_count_is_capped(tmp_path: Path) -> None:
     replies = [f"第{i}条回复" for i in range(_RESPONSES_LIMIT + 3)]
     await _write_session(journal, sid, replies=replies)
 
-    result = await tool.execute(session_id=sid)
+    result = await tool.execute_context({"session_id": sid})
 
     assert result.success is True
     digest = result.data["digest"]
@@ -171,7 +171,7 @@ async def test_journal_failure_is_a_clean_error(tmp_path: Path) -> None:
     )
     tool = OperationTool(executor, "session-read")
 
-    result = await tool.execute(session_id="agent1-x")
+    result = await tool.execute_context({"session_id": "agent1-x"})
 
     assert result.success is False
     assert "disk gone" in (result.error or "")

@@ -98,7 +98,7 @@ def _digest_task_content(scribe_id: str, human_addresses: list[str]) -> str:
 - reputation-read：各成员的声誉与邮件行为（收发量、回复率、致谢）。
 - mail-stats：你自己的通信统计。
 - social-health：孤儿邮件清单——发出多天无回复、可能需要人类介入推动的邮件。
-- listStagingPrototypes：待人类批准的原型提案（agent 写好、:trusted false，等人类决策）。
+- prototype-staging-list：待人类批准的原型提案（agent 写好、:trusted false，等人类决策）。
 
 文效应覆盖三块内容：
 1. 谁做了什么：本期各成员的主要活动与值得一提的进展（简洁，一事一句）。
@@ -108,7 +108,7 @@ def _digest_task_content(scribe_id: str, human_addresses: list[str]) -> str:
 本期人类收件人地址（全发）：
 {recipients}
 
-发信方式：一封 mail-send，to 填以上全部人类地址，检查投信结果后单独调用 finishTurn。不要回复本邮件（postmaster 是系统地址，没有邮箱）。"""
+发信方式：一封 mail-send，to 填以上全部人类地址，检查投信结果后单独调用 finish-turn。不要回复本邮件（postmaster 是系统地址，没有邮箱）。"""
 
 
 class CronScheduler:

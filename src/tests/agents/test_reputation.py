@@ -186,7 +186,7 @@ async def test_public_member_query_resolves_internal_mailbox(tlon_paths: TlonPat
         CallContext(TARGET, "run", "call"),
     )
     tool = OperationTool(executor, "reputation-read")
-    result = await tool.execute(member_id="rika")
+    result = await tool.execute_context({"member_id": "rika"})
     assert result.success
     assert result.data["member_id"] == "rika"
     assert result.data["address"] == "rika@tlon.internal"
@@ -196,6 +196,6 @@ async def test_public_member_query_resolves_internal_mailbox(tlon_paths: TlonPat
     assert "human:" not in str(result.data)
     # The same address precedence as delivery: a configured member wins.
     roster.append("rika")
-    other = await tool.execute(member_id="rika")
+    other = await tool.execute_context({"member_id": "rika"})
     assert other.data["endorsements_given"] == 0
     assert other.data["mail_behavior"]["total_sent"] == 0

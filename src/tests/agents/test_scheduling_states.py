@@ -285,7 +285,7 @@ async def test_self_exit_overrides_admin_drain(registry: AgentRegistry) -> None:
 async def test_no_admin_operation_revives_terminal_member(
     registry: AgentRegistry, operation: str, terminal: str
 ) -> None:
-    from tlon.tools.agents.ports import StopRejectedError
+    from tlon.lifecycle.ports import StopRejectedError
 
     if terminal == "retired":
         await registry.stop_member("member", "operator")
@@ -307,7 +307,7 @@ async def test_no_admin_operation_revives_terminal_member(
 
 @pytest.mark.parametrize("operation", ["wake", "wait", "sleep"])
 async def test_admin_operation_unknown_member(registry: AgentRegistry, operation: str) -> None:
-    from tlon.tools.agents.ports import StopRejectedError
+    from tlon.lifecycle.ports import StopRejectedError
 
     with pytest.raises(StopRejectedError) as error:
         if operation == "sleep":
@@ -387,7 +387,7 @@ async def test_wait_checks_mail_queued_during_drain(registry: AgentRegistry) -> 
 async def test_conflicting_admin_transitions_are_rejected(registry: AgentRegistry) -> None:
     from types import SimpleNamespace
 
-    from tlon.tools.agents.ports import StopRejectedError
+    from tlon.lifecycle.ports import StopRejectedError
 
     with pytest.raises(StopRejectedError):
         await registry.wake_member("member")

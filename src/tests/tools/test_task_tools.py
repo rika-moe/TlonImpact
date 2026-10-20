@@ -46,36 +46,40 @@ def test_metadata(manager: TaskManager, action: str, required: list[str]) -> Non
 
 
 async def test_lifecycle_preserves_all_fields_and_progress(manager: TaskManager) -> None:
-    create = await tool(manager, "create").execute(title="任务", description="描述")
+    create = await tool(manager, "create").execute_context({"title": "任务", "description": "描述"})
     assert create.success and create.data["task"]["status"] == "todo"
     assert create.data["task"]["description"] == "描述"
-    await tool(manager, "start").execute(task_id="t-001")
-    paused = await tool(manager, "pause").execute(task_id="t-001", reason="保存进度")
+    await tool(manager, "start").execute_context({"task_id": "t-001"})
+    paused = await tool(manager, "pause").execute_context(
+        {"task_id": "t-001", "reason": "保存进度"}
+    )
     assert paused.success and paused.data["task"]["pause_count"] == 1
     assert "[Paused] 保存进度" in paused.data["task"]["description"]
-    current = await tool(manager, "current").execute()
+    current = await tool(manager, "current").execute_context({})
     assert current.data["task"]["status"] == "paused"
-    await tool(manager, "start").execute(task_id="t-001")
-    complete = await tool(manager, "complete").execute(task_id="t-001", result="交付物")
+    await tool(manager, "start").execute_context({"task_id": "t-001"})
+    complete = await tool(manager, "complete").execute_context(
+        {"task_id": "t-001", "result": "交付物"}
+    )
     assert complete.success and complete.data["task"]["result"] == "交付物"
     assert complete.data["task"]["completed_at"]
-    removed = await tool(manager, "remove").execute(task_id="t-001")
+    removed = await tool(manager, "remove").execute_context({"task_id": "t-001"})
     assert removed.success and manager.get_task("t-001") is None
 
 
 async def test_auto_pause_and_defaults(manager: TaskManager) -> None:
-    await tool(manager, "create").execute(title="A")
-    await tool(manager, "create").execute(title="B")
+    await tool(manager, "create").execute_context({"title": "A"})
+    await tool(manager, "create").execute_context({"title": "B"})
     assert manager.get_task("t-001").description == ""
-    await tool(manager, "start").execute(task_id="t-001")
-    second = await tool(manager, "start").execute(task_id="t-002")
+    await tool(manager, "start").execute_context({"task_id": "t-001"})
+    second = await tool(manager, "start").execute_context({"task_id": "t-002"})
     assert second.data["auto_paused"]["id"] == "t-001"
     assert second.data["task"]["status"] == "doing"
 
 
 @pytest.mark.parametrize("action", ["start", "pause", "complete", "remove"])
 async def test_missing_task_is_rejected(manager: TaskManager, action: str) -> None:
-    result = await tool(manager, action).execute(task_id="missing")
+    result = await tool(manager, action).execute_context({"task_id": "missing"})
     assert not result.success and "not found" in result.error
     assert result.data["outcome"] == "rejected"
 
@@ -98,17 +102,17 @@ async def test_wrong_status_is_rejected(manager: TaskManager, action: str, statu
         manager.start_task("t-001")
     if status == "done":
         manager.complete_task("t-001")
-    result = await tool(manager, action).execute(task_id="t-001")
+    result = await tool(manager, action).execute_context({"task_id": "t-001"})
     assert not result.success and result.data["outcome"] == "rejected"
 
 
 async def test_list_filter_and_empty_current(manager: TaskManager) -> None:
-    assert (await tool(manager, "current").execute()).data == {"task": None}
-    assert (await tool(manager, "list").execute()).data["stats"]["total"] == 0
+    assert (await tool(manager, "current").execute_context({})).data == {"task": None}
+    assert (await tool(manager, "list").execute_context({})).data["stats"]["total"] == 0
     manager.create_task("A")
     manager.create_task("B")
     manager.start_task("t-001")
-    listing = await tool(manager, "list").execute(filter="doing")
+    listing = await tool(manager, "list").execute_context({"filter": "doing"})
     assert listing.data["stats"]["total"] == 2
     assert [task["id"] for task in listing.data["tasks"]] == ["t-001"]
 
@@ -131,7 +135,7 @@ async def test_write_failure_is_unknown(manager: TaskManager, action: str, metho
         manager.complete_task("t-001")
     setattr(manager, method, Mock(side_effect=OSError("disk full")))
     args = {"title": "A"} if action == "create" else {"task_id": "t-001"}
-    result = await tool(manager, action).execute(**args)
+    result = await tool(manager, action).execute_context({**args})
     assert not result.success and "disk full" in result.error
     assert result.data == {"outcome": "unknown", "call_id": "call", "retry_safe": False}
 
@@ -140,4 +144,4 @@ async def test_write_failure_is_unknown(manager: TaskManager, action: str, metho
 async def test_read_failure_propagates(manager: TaskManager, action: str, method: str) -> None:
     setattr(manager, method, Mock(side_effect=RuntimeError("read failed")))
     with pytest.raises(RuntimeError, match="read failed"):
-        await tool(manager, action).execute()
+        await tool(manager, action).execute_context({})

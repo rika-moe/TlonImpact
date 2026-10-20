@@ -87,7 +87,7 @@ class TestGetMetricsTool:
         }
         tool = _tool("metrics-read", snapshot=lambda: snapshot_data)
 
-        result = await tool.execute()
+        result = await tool.execute_context({})
 
         assert result.success
         assert result.data["metrics"]["tlon.llm.calls"]["points"] == [
@@ -173,7 +173,7 @@ class TestListTracesTool:
         store = _FakeTraceStore([_trace("t1", AGENT_ID), _trace("t2", "b-002")])
         tool = _tool("traces-list", trace_store=store, agent_id=AGENT_ID)
 
-        result = await tool.execute()
+        result = await tool.execute_context({})
 
         assert result.success
         assert store.list_calls[-1]["source"] == AGENT_ID
@@ -185,7 +185,7 @@ class TestListTracesTool:
         store = _FakeTraceStore([_trace("t1", AGENT_ID), _trace("t2", "b-002")])
         tool = _tool("traces-list", trace_store=store, agent_id=AGENT_ID)
 
-        result = await tool.execute(source="b-002")
+        result = await tool.execute_context({"source": "b-002"})
 
         assert result.success
         assert store.list_calls[-1]["source"] == "b-002"
@@ -196,10 +196,10 @@ class TestListTracesTool:
         store = _FakeTraceStore([])
         tool = _tool("traces-list", trace_store=store, agent_id=AGENT_ID)
 
-        result = await tool.execute(limit=LIST_TRACES_MAX_LIMIT + 500)
+        result = await tool.execute_context({"limit": LIST_TRACES_MAX_LIMIT + 500})
         assert not result.success
         assert not store.list_calls
-        await tool.execute(limit=LIST_TRACES_MAX_LIMIT)
+        await tool.execute_context({"limit": LIST_TRACES_MAX_LIMIT})
         assert store.list_calls[-1]["limit"] == LIST_TRACES_MAX_LIMIT
 
     def test_tool_schema(self):
@@ -215,7 +215,7 @@ class TestGetTraceTool:
         store = _FakeTraceStore([_trace("t1", AGENT_ID)])
         tool = _tool("trace-read", trace_store=store)
 
-        result = await tool.execute(trace_id="t1")
+        result = await tool.execute_context({"trace_id": "t1"})
 
         assert result.success
         tree = result.data["span_tree"]
@@ -229,7 +229,7 @@ class TestGetTraceTool:
     async def test_unknown_trace_fails(self):
         tool = _tool("trace-read", trace_store=_FakeTraceStore([]))
 
-        result = await tool.execute(trace_id="missing")
+        result = await tool.execute_context({"trace_id": "missing"})
 
         assert not result.success
         assert "missing" in result.error
@@ -317,7 +317,7 @@ class TestGetMailStatsTool:
         await _seed_mailbox(mailbox)
         tool = _tool("mail-stats", provider=mail_stats_provider(tlon_paths), agent_id=AGENT_ID)
 
-        result = await tool.execute()
+        result = await tool.execute_context({})
 
         assert result.success
         assert result.data["correspondents"][BOB]["avg_first_reply_seconds"] == 300.0
@@ -340,7 +340,7 @@ class TestGetMailStatsTool:
             }
 
         tool = _tool("mail-stats", provider=provider, agent_id=AGENT_ID)
-        result = await tool.execute()
+        result = await tool.execute_context({})
 
         assert result.success
         assert seen == [AGENT_ID]
@@ -383,7 +383,7 @@ class TestGetReputationTool:
         seen: list[str] = []
         tool = _tool("reputation-read", provider=self._fake_provider(seen), member_id=AGENT_ID)
 
-        result = await tool.execute()
+        result = await tool.execute_context({})
 
         assert result.success
         assert seen == [AGENT_ID]
@@ -394,7 +394,7 @@ class TestGetReputationTool:
         seen: list[str] = []
         tool = _tool("reputation-read", provider=self._fake_provider(seen), member_id=AGENT_ID)
 
-        result = await tool.execute(member_id="b-002")
+        result = await tool.execute_context({"member_id": "b-002"})
 
         assert result.success
         assert seen == ["b-002"]
@@ -433,7 +433,7 @@ class TestGetSocialHealthTool:
         )
         tool = self._tool(tlon_paths, [AGENT_ID])
 
-        result = await tool.execute()
+        result = await tool.execute_context({})
 
         assert result.success
         assert result.data["scanned_members"] == [AGENT_ID, "adam"]
@@ -447,7 +447,7 @@ class TestGetSocialHealthTool:
         await mailbox.append_sent(_mail("f1", OWN, [BOB], fresh, thread_id="f1"))
         tool = self._tool(tlon_paths, [AGENT_ID])
 
-        result = await tool.execute()
+        result = await tool.execute_context({})
 
         assert result.success
         assert result.data["orphan_count"] == 0
@@ -457,7 +457,7 @@ class TestGetSocialHealthTool:
     async def test_read_only_scan_creates_no_mailbox(self, tlon_paths: TlonPaths):
         tool = self._tool(tlon_paths, ["ghost-member"])
 
-        result = await tool.execute()
+        result = await tool.execute_context({})
 
         assert result.success
         assert result.data["scanned_members"] == ["adam", "ghost-member"]
@@ -501,7 +501,7 @@ async def test_metrics_member_view_hides_categories_and_preserves_totals() -> No
             },
         }
     }
-    result = await _tool("metrics-read", snapshot=lambda: snapshot).execute()
+    result = await _tool("metrics-read", snapshot=lambda: snapshot).execute_context({})
     metrics = result.data["metrics"]
     assert metrics["tlon.mail.sent"]["points"] == [
         {"attributes": {"member_id": "rika"}, "value": 2},
@@ -521,6 +521,6 @@ async def test_reputation_rejects_internal_identity_inputs(arguments: dict[str, 
     tool = _tool(
         "reputation-read", provider=TestGetReputationTool._fake_provider(seen), member_id=AGENT_ID
     )
-    result = await tool.execute(**arguments)
+    result = await tool.execute_context({**arguments})
     assert not result.success
     assert seen == []

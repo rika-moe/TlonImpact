@@ -1,12 +1,4 @@
-"""Ports for the agent lifecycle tools (dependency inversion, ).
-
-The spawn, self-scheduling and directory tools live in ``tlon.tools`` while their implementation
-(``AgentRegistry``) lives in ``tlon.agents``. To keep the dependency
-one-directional (agents → tools), the slice of the registry the tools need
-is declared here as a ``Protocol``, together with the rejection errors both
-sides share. The registry satisfies the protocol structurally; the assembler
-(``assemble_member_capabilities`` in ``tlon.agents.assembly``) injects it.
-"""
+"""Ports and rejection types for member lifecycle services."""
 
 from typing import Any, Protocol
 
@@ -25,30 +17,6 @@ class SpawnRejectedError(ValueError):
     def __init__(self, reason: str, message: str) -> None:
         super().__init__(message)
         self.reason = reason
-
-
-class CapabilityProposalError(ValueError):
-    """Capability staging-write rejection (parse / validation / name conflict).
-
-    Raised by ``tlon.agents.capabilities`` (its ``CapabilityError``
-    subclasses this) and caught by the capability tools; declared here so
-    ``tlon.tools`` stays free of ``tlon.agents`` imports — the
-    ``PrototypeError`` precedent (``tools/prototypes/ports.py``).
-    """
-
-
-class CapabilitySummary(Protocol):
-    """Read-only view of a staged capability's metadata used by the tools.
-
-    ``agents.capabilities.info.CapabilityInfo`` satisfies it structurally;
-    the assembler injects ``write_staging_capability`` as a plain callable.
-    """
-
-    @property
-    def name(self) -> str: ...
-
-    @property
-    def trusted(self) -> bool: ...
 
 
 class StopRejectedError(ValueError):

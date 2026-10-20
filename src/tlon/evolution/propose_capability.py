@@ -1,8 +1,8 @@
 """Propose a capability word from lived experience (issue #30, see
 docs/design/capabilities.md 「#30：突变晋升通道」).
 
-``proposeCapability`` is the experience entry of the capability channel —
-the capability-side counterpart of ``proposeBehavior``: a mutation is born
+``capability-propose`` is the experience entry of the capability channel —
+the capability-side counterpart of ``behavior-propose``: a mutation is born
 as a tlosure artifact, drafted by the agent directly from its intent and
 its own experience (memory digest + distilled lessons; no behavior.tlon
 draft — a capability word needs no behavior spec). One dedicated LLM call
@@ -12,7 +12,7 @@ namespace/purity load gate + ``:examples`` sandbox assertions), so the
 trust model is unchanged: nothing becomes trusted vocabulary until a
 human approves.
 
-No near-kin check (unlike ``proposeBehavior``): near-kin guards against
+No near-kin check (unlike ``behavior-propose``): near-kin guards against
 reskin-level convergence of long behavior specs across bloodlines; the
 capability vocabulary is a few dozen words, same-name is a hard
 structural rejection, and reviewers see the full artifact plus its
@@ -22,29 +22,32 @@ follows bloodline solvency (the existing social contract).
 
 No retry inside the tool — validation/extraction failures come back
 verbatim (with the schema hint) and the outer ReAct loop is the retry
-mechanism (the ``proposeBehavior`` precedent).
+mechanism (the ``behavior-propose`` precedent).
 """
 
-import re
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
+from tlon.evolution.ports import CapabilityProposalError, CapabilitySummary
+from tlon.evolution.propose_behavior import _extract_edn, _render_digest
+from tlon.operations.evolution import evolution_operation_definitions
 from tlon.operations.filesystem import filesystem_operation_definitions
 from tlon.operations.identity import identity_operation_definitions
+from tlon.operations.lifecycle import lifecycle_operation_definitions
 from tlon.operations.mail import mail_operation_definitions
 from tlon.operations.memory import memory_operation_definitions
+from tlon.operations.model import model_operation_definitions
 from tlon.operations.observability import observability_operation_definitions
+from tlon.operations.schema import RejectedError
 from tlon.operations.shell import shell_operation_definitions
 from tlon.operations.state import state_operation_definitions
 from tlon.operations.tasks import task_operation_definitions
 from tlon.operations.time import time_operation_definitions
-from tlon.tools.agents.ports import CapabilityProposalError, CapabilitySummary
-from tlon.tools.agents.propose_behavior import _extract_edn, _render_digest
-from tlon.tools.base import Tool, ToolResult
 from tlosure.builtins import ARITHMETIC_BUILTINS, CORE_BUILTINS
+from tlosure.edn import Keyword, loads
 
 if TYPE_CHECKING:
     from tlon.memory.manager import MemoryManager, SessionLogReader
@@ -57,19 +60,14 @@ logger = get_logger(__name__)
 _PURE_WORDS = sorted({**CORE_BUILTINS, **ARITHMETIC_BUILTINS})
 
 #: The member action words a non-pure impl may additionally compose
-#: (``MEMBER_ACTION_NAMES`` in ``agents/vocabulary.py``; ``tlon.tools``
-#: cannot import ``tlon.agents``, so the names are restated here under a
-#: test anchor against the real registry).
-_ACTION_WORDS = [
-    "llm-call",
-    "run-loop",
-    "spawn",
-    "start",
-    "start-all",
-    "stop",
-]
+#: Derived from host definitions, excluding controls and session orchestration.
+#: A test anchors this projection against the capability admission registry.
+_ACTION_WORDS: list[str] = []
 
 for definitions in (
+    evolution_operation_definitions,
+    lifecycle_operation_definitions,
+    model_operation_definitions,
     mail_operation_definitions,
     filesystem_operation_definitions,
     shell_operation_definitions,
@@ -80,7 +78,7 @@ for definitions in (
     observability_operation_definitions,
     state_operation_definitions,
 ):
-    _ACTION_WORDS.extend(operation.name for operation in definitions())
+    _ACTION_WORDS.extend(operation.name for operation in definitions() if not operation.control)
 
 _ARTIFACT_HINT = (
     "artifact 是一个 v1 schema 的 EDN map，形状：\n"
@@ -100,7 +98,7 @@ _ARTIFACT_HINT = (
     f"- :pure true 的 :impl 只能组合这 {len(_PURE_WORDS)} 个纯词："
     f"{' '.join(_PURE_WORDS)}。\n"
     f"- :pure false 的 :impl 可另组合以下动作词：{' '.join(_ACTION_WORDS)}"
-    "（产出 ActionRequest 数据）。\n"
+    "（返回操作真实结果；禁止封装 run-loop、finish-turn、sleep-until、exit-agent）。\n"
     "- :examples 仅 :pure true 可携带：{:args [字面数据] :expect 值} 的"
     "输入/输出断言，准入时在沙盒求值器跑——鼓励纯词携带 :examples 自证"
     "（评审看到的不只是声称做什么，还有做到了什么）。\n"
@@ -120,8 +118,8 @@ _DRAFT_SYSTEM_PROMPT = (
 )
 
 
-class ProposeCapabilityTool(Tool):
-    """Tool to propose a capability word from lived experience.
+class CapabilityProposer:
+    """Service to propose a capability word from lived experience.
 
     The member supplies only the intent and the word name; the tool reads
     its memory digest and distilled lessons, drafts a complete capability
@@ -144,31 +142,6 @@ class ProposeCapabilityTool(Tool):
         solvency: Callable[[str], Awaitable[bool]] | None = None,
         trusted_words: Callable[[], str] | None = None,
     ) -> None:
-        super().__init__(
-            name="proposeCapability",
-            description=(
-                "基于自己的个体经验提出一个新能力词（capability，突变晋升通道的经验入口）。"
-                "只需给出能力意图与词名：工具内部读你的记忆（claims 与蒸馏教训），"
-                "由一次独立的起草调用产出完整的 capability artifact（tlosure "
-                "(fn [...] ...) 实现），经 staging 闸写入（proposal_note 记意图）。"
-                "同名即拒——想改进既有词请换个新名字。提案不可信：需人类批准（ops/WebUI）"
-                "批准后，全社会成员下次 wake 才能在自己的 spec 里组合它。"
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "intent": {
-                        "type": "string",
-                        "description": "能力意图：想造一个什么词、解决什么问题（自然语言，记为 proposal_note）",
-                    },
-                    "name": {
-                        "type": "string",
-                        "description": "词名（字母起头，后接字母/数字/'-'/'_'；同名即拒，改进既有词请换新名）",
-                    },
-                },
-                "required": ["intent", "name"],
-            },
-        )
         self._agent_id = agent_id
         self._prototype = prototype
         self._author_id = author_id
@@ -177,7 +150,7 @@ class ProposeCapabilityTool(Tool):
         self._logs = logs
         self._writer = writer
         self._paths = tlon_paths
-        # Solvency gate (same social contract as proposeBehavior): an
+        # Solvency gate (same social contract as behavior-propose): an
         # insolvent bloodline loses proposal eligibility. None = always
         # eligible.
         self._solvency = solvency
@@ -199,17 +172,9 @@ class ProposeCapabilityTool(Tool):
             logger.warning("solvency_check_failed", prototype=prototype, error=str(e))
             return True
 
-    async def execute(self, **kwargs: Any) -> ToolResult:
+    async def execute(self, **kwargs: Any) -> dict[str, Any]:
         if self._prototype is not None and not await self._solvent(self._prototype):
-            return ToolResult(
-                success=False,
-                data={},
-                error=f"bloodline '{self._prototype}' is insolvent",
-                message=(
-                    f"血脉 '{self._prototype}' 已失去偿付能力（长期入不敷出），提案资格被暂停。"
-                    "先用手上成员做出被 endorse 的产出，恢复偿付能力后再提案。"
-                ),
-            )
+            raise RejectedError(f"bloodline '{self._prototype}' is insolvent", {})
 
         intent: str = kwargs["intent"]
         name: str = kwargs["name"]
@@ -236,23 +201,17 @@ class ProposeCapabilityTool(Tool):
 
         draft = _extract_edn(response.content or "")
         if draft is None:
-            return ToolResult(
-                success=False,
-                data={},
-                error="起草调用未产出 EDN artifact（响应中没有 { ... } map）",
-                message="起草失败：LLM 响应不含 artifact，请重试",
-            )
+            raise RejectedError("起草调用未产出 EDN artifact（响应中没有 { ... } map）", {})
 
         # The word name is the caller-chosen identity: the draft's :name
         # must match it exactly, otherwise the staging directory would
         # fork from the requested name — feed back for a re-draft.
-        if not re.search(r':name\s+"' + re.escape(name) + r'"', draft):
-            return ToolResult(
-                success=False,
-                data={},
-                error=f"起草产物的 :name 与指定词名 '{name}' 不一致",
-                message="起草失败：artifact 的 :name 不是指定的词名，请重起草",
-            )
+        try:
+            artifact = loads(draft)
+        except ValueError as error:
+            raise RejectedError(str(error), {"hint": _ARTIFACT_HINT}) from error
+        if not isinstance(artifact, dict) or artifact.get(Keyword("name")) != name:
+            raise RejectedError(f"起草产物的 :name 与指定词名 '{name}' 不一致", {})
 
         try:
             info = self._writer(
@@ -261,12 +220,7 @@ class ProposeCapabilityTool(Tool):
                 proposal_note=intent,
             )
         except CapabilityProposalError as e:
-            return ToolResult(
-                success=False,
-                data={"hint": _ARTIFACT_HINT},
-                error=str(e),
-                message=f"capability 校验失败，未写入: {e}",
-            )
+            raise RejectedError(str(e), {"hint": _ARTIFACT_HINT}) from e
 
         logger.info(
             "capability_proposed",
@@ -274,16 +228,8 @@ class ProposeCapabilityTool(Tool):
             name=info.name,
             author_id=self._author_id,
         )
-        return ToolResult(
-            success=True,
-            data={
-                "name": info.name,
-                "trusted": info.trusted,
-                "status": "pending_approval",
-            },
-            message=(
-                f"能力词 '{info.name}' 已写入 staging 区（不可信）。"
-                "等待人类在能力审批（ops/WebUI）中批准；批准后全社会成员下次 wake "
-                "即可在自己的 spec 里组合它。"
-            ),
-        )
+        return {
+            "name": info.name,
+            "trusted": info.trusted,
+            "status": "pending_approval",
+        }

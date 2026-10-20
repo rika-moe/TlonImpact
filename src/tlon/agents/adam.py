@@ -12,14 +12,14 @@ into the evaluator. Five policy lines live in the spec:
 1. boot — after initialize(), every registered member whose spec
    declares ``:on :boot`` (phase E: spec-derived, see ``boot_candidates``)
    that is not running gets an AGENT_START_REQUEST{reason="boot"}. The
-   ``start-all`` action expands the candidate set in Python — the DSL
+   ``member-start-all`` operation expands the candidate set in Python — the DSL
    never executes iteration, iteration is a builtin.
 2. drain — the registry's AGENT_IDLE fact event is turned into an
    AGENT_STOP_REQUEST{reason="drain"}.
 3. welcome (birth socialization, ADR 0003) — AGENT_SPAWNED triggers a
    welcome mail to the newborn member: a greeting naming the new member,
    pointers to its own discovery surfaces (its contact book and the
-   listMembers addressing yellow page) and the static communication
+   member-list addressing yellow page) and the static communication
    conventions. The recipient address
    is assembled in the spec with ``str`` — mail-send recipients are mail
    addresses (``Mail.create`` rejects bare ids). Adam is v1's mentor:
@@ -52,12 +52,11 @@ authority for both the boot set and the wake gate.
 
 Adam is a built-in Member (``member_id="adam"``; its spec has no loop
 rule): it does not come from
-any user spec file, is not registered in the agent registry, and does
-not appear in MemberDirectory. It holds no run-state of its own — the
-injected query closures (the shared ``RegistryQueries`` implementation,
-imported from the registry module) read the registry's read-only
-interfaces (``get_agent`` / ``get_config`` / ``get_all``) instead of
-reconstructing state from events. Lifecycle decisions carry no dedup
+any user spec file. It stays outside the registry's activation table and
+is discoverable through the public member directory. Adam holds the same
+registry as ordinary runtimes: ``LifecycleService`` uses its boot candidates
+and publishes start/stop requests, while ``RegistryQueries`` reads registry
+state without reconstructing it from events. Lifecycle decisions carry no dedup
 state either: the registry executes requests idempotently.
 
 The dependency is one-directional: Adam imports the registry; the
@@ -76,10 +75,10 @@ from tlon.organization.mail.post_office import PostOffice
 from tlosure.edn import loads
 
 #: Adam's policy, as data. Parsed once per assembly by
-#: :func:`make_adam`. Five rules: boot (start-all), drain (idle → stop),
+#: :func:`make_adam`. Five rules: boot (member-start-all), drain (idle → stop),
 #: welcome (ADR 0003 — a birth-socialization mail to every spawned
 #: member; it points the newborn at its system prompt's team section and
-#: the listMembers tool for discovering peers, the conventions are static
+#: the member-list tool for discovering peers, the conventions are static
 #: text), guardian-inbox (docs/design/mail.md 「守护者信箱」 — a fixed
 #: acknowledgement reply to mail
 #: addressed to Adam; postmaster senders are excluded so a bounce never
@@ -89,11 +88,11 @@ ADAM_SPEC_EDN = r"""
 {:version 1
  :rules
  [{:name "boot" :on :boot
-   :actions [(start-all {:reason "boot"})]}
+   :actions [(member-start-all {:reason "boot"})]}
   {:name "drain" :on :agent-idle
-   :actions [(stop {:agent (get event :agent_id) :reason "drain"})]}
+   :actions [(member-stop {:agent_id (get event :agent_id) :reason "drain"})]}
   {:name "noisy-circuit-breaker" :on :agent-noisy
-   :actions [(stop {:agent (get event :agent_id) :reason "noisy-circuit-breaker"})]}
+   :actions [(member-stop {:agent_id (get event :agent_id) :reason "noisy-circuit-breaker"})]}
   {:name "welcome" :on :agent-spawned
    :actions
    [(mail-send
@@ -104,7 +103,7 @@ ADAM_SPEC_EDN = r"""
             "认识其他成员：通信即结识——把对一个人的认识记进你自己的联系簿"
             "（contacts-upsert：名字 / 地址 / 我对 ta 的描述），"
             "它会注入你的系统提示词；"
-            "查谁的地址用 listMembers 成员寻址黄页（公开 id / 名字 / 地址），黄页可以引用和转告，不认证职务，也不公开私人材料。\n\n"
+            "查谁的地址用 member-list 成员寻址黄页（公开 id / 名字 / 地址），黄页可以引用和转告，不认证职务，也不公开私人材料。\n\n"
             "通信惯例：\n"
             "- 成员之间以邮件往来，收件人写对方的名字或地址（名字@tlon.internal）。\n"
             "- 有事找守护者，写信到 adam@tlon.internal。\n")})]}
@@ -114,7 +113,7 @@ ADAM_SPEC_EDN = r"""
    [(mail-send
       {:to [(mail-field msg :from)]
        :in_reply_to (mail-field msg :id)
-       :content "已收到你的来信。\n\n我是 Adam，这个世界的守护者。守护规则的执行者当前是人类：staging 原型提案由人类在管理面审批，成员只通过 exitAgent 管理自己的退出；终止其他成员由人类管理端处理。\n\n本信箱是留言箱——这封回信仅确认收讫。"})
+       :content "已收到你的来信。\n\n我是 Adam，这个世界的守护者。守护规则的执行者当前是人类：staging 原型提案由人类在管理面审批，成员只通过 exit-agent 管理自己的退出；终止其他成员由人类管理端处理。\n\n本信箱是留言箱——这封回信仅确认收讫。"})
     (mail-mark-read {:mail_ids [(mail-field msg :id)]})]}]}
 """
 
@@ -127,24 +126,21 @@ def make_adam(
 ) -> MemberRuntime:
     """Assemble Adam: the built-in spec plus registry query closures.
 
-    Adam uses rule effects and registry query closures: it
-    holds no registry reference beyond the injected query closures — the
-    shared ``RegistryQueries`` implementation imported from the registry
-    module (one-directional dependency: Adam → registry, never reverse).
+    Adam receives the registry for shared lifecycle operations and query
+    closures. It remains outside the registry's activation table; the
+    dependency stays one-directional: Adam → registry, never reverse.
 
     Args:
         event_bus: Event bus for subscriptions and request publishing
-        agent_registry: The registry to query (read-only interfaces) and
-            to address with start/stop requests
+        agent_registry: Shared lifecycle and query services; start/stop decisions
+            still publish requests through the event bus
         tlon_paths: Path resolver. Adam's mailbox lives at
             ``~/.tlon/adam/mail/`` (docs/design/mail.md 「守护者信箱」) —
             read-marking and the boot unread replay come from it.
     """
     builtins = make_member_builtins(RegistryQueries(agent_registry))
     spec = MemberSpec.from_edn(loads(ADAM_SPEC_EDN))
-    # Single-validator gate with the host builtins: the boot rule's
-    # ``start-all`` action needs the registry host for candidate expansion,
-    # which the host-less rule-based branch would reject.
+    # Query closures and shared Operation names use the same load-time gate.
     spec = validate_member_spec(spec, builtins=builtins)
     return MemberRuntime(
         member_id="adam",
@@ -154,6 +150,7 @@ def make_adam(
         builtins=builtins,
         mailbox=Mailbox(tlon_paths.mail_database_file(), "adam"),
         capabilities=None,
+        registry=agent_registry,
         tlon_paths=tlon_paths,
         post_office=post_office,
     )

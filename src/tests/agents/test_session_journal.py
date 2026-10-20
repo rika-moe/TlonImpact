@@ -28,10 +28,14 @@ from tlon.agents.scheduler import SessionScheduler
 from tlon.agents.session import AgentSession, SessionState
 from tlon.agents.session_journal import INTERRUPTED_ERROR, SessionJournal
 from tlon.agents.stages.outcome import StageOutcome
+from tlon.agents.tool_executor import ToolExecutor
 from tlon.agents.trigger import AgentIdentity
 from tlon.base.config import AgentConfig
 from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.base.paths import TlonPaths
+from tlon.operations.adapters import OperationTool
+from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
+from tlon.operations.schema import OperationError
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.base import ToolResult
@@ -403,7 +407,7 @@ class TestFindUnfinished:
 def _make_driver(
     tmp_path: Path,
     responses: list[LLMResponse],
-    tool_execute: object = None,
+    tool_execute: Callable[[str, dict[str, Any], CallContext], Any] | None = None,
     edn: str = SESSION_PROGRAM_EDN,
     is_human_sender: Callable[[str], bool] = lambda address: True,
 ) -> tuple[LoopDriver, SessionJournal, MagicMock, MagicMock]:
@@ -426,18 +430,46 @@ def _make_driver(
     executor.send_mail = AsyncMock(return_value=receipt)
     executor.publish = AsyncMock()
 
-    tool_executor = MagicMock()
-    tool_executor.execute = AsyncMock(
-        side_effect=tool_execute
-        or (
-            lambda name, args: ToolResult(
-                success=True,
-                data={"scheduling_request": {"action": "finish", "reason": ""}}
-                if name == "finishTurn"
-                else {"ok": name},
+    async def invoke(name: str, args: dict[str, Any], context: CallContext) -> Any:
+        if tool_execute is None:
+            return (
+                {"scheduling_request": {"action": "finish", "reason": ""}}
+                if name == "finish-turn"
+                else {"ok": name}
             )
+        result = await tool_execute(name, args, context)
+        if not result.success:
+            raise OperationError(result.error)
+        return result.data
+
+    def definition(name: str) -> Operation:
+        async def handler(context: CallContext, arguments: dict[str, Any]) -> Any:
+            return await invoke(name, arguments, context)
+
+        return Operation(
+            name,
+            "Journal test operation",
+            {
+                "type": "object",
+                "properties": {"command": {"type": "string"}},
+                "required": [],
+                "additionalProperties": False,
+            },
+            True,
+            handler,
+            effects=frozenset({"read"}),
+            control=name == "finish-turn",
         )
+
+    execution = OperationExecutor(
+        OperationRegistry(
+            definition(name) for name in ("someTool", "slowTool", "shell-run", "finish-turn")
+        ),
+        CallContext("agent1", "test", "test"),
     )
+    tool_executor = ToolExecutor()
+    for operation in execution.registry.definitions():
+        tool_executor.register_tool(OperationTool(execution, operation.name))
 
     on_complete = MagicMock()
     on_complete.run = AsyncMock()
@@ -484,7 +516,7 @@ class TestDriverJournaling:
         mail = _mail()
         response = LLMResponse(
             content="done",
-            tool_calls=[_tc("c1", "finishTurn", {})],
+            tool_calls=[_tc("c1", "finish-turn", {})],
         )
         driver, journal, _, services = _make_driver(tmp_path, [response])
         services.build_context = AsyncMock(
@@ -521,7 +553,7 @@ class TestDriverJournaling:
         mail = _mail()
         response = LLMResponse(
             content="done",
-            tool_calls=[_tc("c1", "finishTurn", {})],
+            tool_calls=[_tc("c1", "finish-turn", {})],
         )
         driver, journal, _, services = _make_driver(tmp_path, [response])
         session = _session("agent1-resp", mail)
@@ -542,7 +574,7 @@ class TestDriverJournaling:
         mail = _mail()
         response = LLMResponse(
             content="done",
-            tool_calls=[_tc("c1", "finishTurn", {})],
+            tool_calls=[_tc("c1", "finish-turn", {})],
         )
 
         async def tool_execute(name: str, args: dict, context: Any = None) -> ToolResult:
@@ -590,11 +622,11 @@ class TestDriverJournaling:
         )
         round2 = LLMResponse(
             content="done",
-            tool_calls=[_tc("c2", "finishTurn", {})],
+            tool_calls=[_tc("c2", "finish-turn", {})],
         )
 
         async def tool_execute(name: str, args: dict, context: Any = None) -> ToolResult:
-            if name == "finishTurn":
+            if name == "finish-turn":
                 return ToolResult(
                     success=True,
                     data={"scheduling_request": {"action": "finish", "reason": ""}},
@@ -633,7 +665,7 @@ class TestCrashRecovery:
         round1 = LLMResponse(content="working", tool_calls=[fast, slow])
         round2 = LLMResponse(
             content="done",
-            tool_calls=[_tc("c2", "finishTurn", {})],
+            tool_calls=[_tc("c2", "finish-turn", {})],
         )
 
         executed: list[str] = []
@@ -643,7 +675,7 @@ class TestCrashRecovery:
             executed.append(name)
             if name == "slowTool":
                 await never.wait()  # in-flight when the "process" dies
-            if name == "finishTurn":
+            if name == "finish-turn":
                 return ToolResult(
                     success=True,
                     data={"scheduling_request": {"action": "finish", "reason": ""}},
@@ -681,7 +713,7 @@ class TestCrashRecovery:
         await _drive(driver, resumed)
         assert resumed.is_completed
         assert executed.count("someTool") == 1  # replayed, not re-run
-        assert executed.count("finishTurn") == 1
+        assert executed.count("finish-turn") == 1
         executor.send_mail.assert_not_awaited()
         # The healed log replays cleanly end to end.
         final = await journal.resume(sid)
@@ -959,7 +991,7 @@ class TestTokenBudget:
         )
         round3 = LLMResponse(
             content="done",
-            tool_calls=[_tc("c1", "finishTurn", {})],
+            tool_calls=[_tc("c1", "finish-turn", {})],
             usage={"prompt_tokens": 600, "completion_tokens": 100, "total_tokens": 700},
         )
 
@@ -1024,7 +1056,7 @@ class TestConsecutiveErrorLimit:
         working = LLMResponse(content="working")  # no tool calls: act advances
         final = LLMResponse(
             content="done",
-            tool_calls=[_tc("c-final", "finishTurn", {})],
+            tool_calls=[_tc("c-final", "finish-turn", {})],
         )
 
         async def tool_execute(name: str, args: dict, context: Any = None) -> ToolResult:

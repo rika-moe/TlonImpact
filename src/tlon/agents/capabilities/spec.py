@@ -81,7 +81,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from tlon.agents.vocabulary import MEMBER_ACTION_NAMES, make_member_builtins
-from tlon.tools.agents.ports import CapabilityProposalError
+from tlon.evolution.ports import CapabilityProposalError
 from tlosure.builtins import ARITHMETIC_BUILTINS, CORE_BUILTINS, Builtin, EvalError
 from tlosure.edn import EDNParseError, Form, Keyword, Symbol, dumps, loads
 from tlosure.eval import DEFAULT_FUEL, DEFAULT_MAX_DEPTH, SPECIAL_FORMS, Evaluator
@@ -106,11 +106,14 @@ CAPABILITY_PURE_BUILTINS: dict[str, Builtin] = {**CORE_BUILTINS, **ARITHMETIC_BU
 #: (host-less, collector-less: validation only needs the names and the
 #: purity markers — ``validate_form`` never calls the fns).
 CAPABILITY_ACTION_BUILTINS: dict[str, Builtin] = {
-    name: builtin for name, builtin in make_member_builtins().items() if name in MEMBER_ACTION_NAMES
+    name: builtin
+    for name, builtin in make_member_builtins().items()
+    if name in MEMBER_ACTION_NAMES
+    and name not in {"run-loop", "finish-turn", "sleep-until", "exit-agent"}
 }
 
 #: Non-pure capability vocabulary: pure builtins plus the action words
-#: (an impure capability composes them to produce ActionRequest data).
+#: (an impure capability composes host operations and receives their actual results).
 CAPABILITY_FULL_BUILTINS: dict[str, Builtin] = {
     **CAPABILITY_PURE_BUILTINS,
     **CAPABILITY_ACTION_BUILTINS,
@@ -428,7 +431,7 @@ def validate_capability(spec: CapabilitySpec, *, taken_names: Iterable[str] = ()
     """
     if spec.name in SPECIAL_FORMS:
         raise CapabilityError(f"capability name '{spec.name}' collides with a special form")
-    if spec.name in CAPABILITY_FULL_BUILTINS:
+    if spec.name in make_member_builtins():
         raise CapabilityError(f"capability name '{spec.name}' collides with a builtin word")
     if spec.name in set(taken_names):
         raise CapabilityError(f"capability name '{spec.name}' collides with a trusted capability")

@@ -406,12 +406,12 @@ def test_tool_attempt_blocked_flags(tmp_path: Path) -> None:
 def test_spawn_flag_and_self_exit_is_not_a_flag(tmp_path: Path) -> None:
     s1 = f"{_AGENT_ID}-000000000001"
     events1 = [
-        _event(1, "tool/dispatch", s1, tool_calls=[_tool_call("spawnAgent")]),
+        _event(1, "tool/dispatch", s1, tool_calls=[_tool_call("member-spawn")]),
         _end(2, s1),
     ]
     s2 = f"{_AGENT_ID}-000000000002"
     events2 = [
-        _event(1, "tool/dispatch", s2, tool_calls=[_tool_call("exitAgent")]),
+        _event(1, "tool/dispatch", s2, tool_calls=[_tool_call("exit-agent")]),
         _end(2, s2),
     ]
     # 负例：普通工具 dispatch 不是红旗

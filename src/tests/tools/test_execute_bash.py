@@ -34,14 +34,14 @@ async def test_task_isolation_shutdown_and_cancellation():
     device.run.side_effect = run
     service, run_tool, check = service_and_tools(device)
     other, _, other_check = service_and_tools(device)
-    started = await run_tool.execute(command="sleep", background=True)
+    started = await run_tool.execute_context({"command": "sleep", "background": True})
     task_id = started.data["task_id"]
-    assert (await check.execute(task_id=task_id)).data["status"] == "running"
-    assert not (await other_check.execute(task_id=task_id)).success
+    assert (await check.execute_context({"task_id": task_id})).data["status"] == "running"
+    assert not (await other_check.execute_context({"task_id": task_id})).success
     task = service._tasks[task_id]
     await service.shutdown()
     assert task.cancelled()
-    assert not (await check.execute(task_id=task_id)).success
+    assert not (await check.execute_context({"task_id": task_id})).success
     assert not other._tasks
 
 
@@ -49,13 +49,13 @@ async def test_finished_output_retained_and_nonzero_is_failure():
     device = AsyncMock()
     device.run.return_value = ExecutionResult(3, "partial", "boom")
     service, run, check = service_and_tools(device)
-    foreground = await run.execute(command="false")
+    foreground = await run.execute_context({"command": "false"})
     assert not foreground.success
     assert foreground.data["stdout"] == "partial"
-    started = await run.execute(command="false", background=True)
+    started = await run.execute_context({"command": "false", "background": True})
     await service._tasks[started.data["task_id"]]
     for _ in range(2):
-        result = await check.execute(task_id=started.data["task_id"])
+        result = await check.execute_context({"task_id": started.data["task_id"]})
         assert not result.success
         assert result.data["exit_code"] == 3
         assert result.data["stderr"] == "boom"
@@ -73,12 +73,12 @@ async def test_running_quota_and_finished_retention():
     device.run.side_effect = run
     service, tool, _ = service_and_tools(device)
     for _ in range(20):
-        assert (await tool.execute(command="wait", background=True)).success
-    assert not (await tool.execute(command="overflow", background=True)).success
+        assert (await tool.execute_context({"command": "wait", "background": True})).success
+    assert not (await tool.execute_context({"command": "overflow", "background": True})).success
     gate.set()
     await asyncio.gather(*service._tasks.values())
     for _ in range(55):
-        result = await tool.execute(command="done", background=True)
+        result = await tool.execute_context({"command": "done", "background": True})
         await service._tasks[result.data["task_id"]]
         await asyncio.sleep(0)
     assert len(service._tasks) == 50
@@ -88,7 +88,7 @@ async def test_running_quota_and_finished_retention():
 @pytest.mark.parametrize("level,device", [("L0", AsyncMock()), ("L1", AsyncMock()), ("L2", None)])
 async def test_level_and_unavailable_device_rejected(level, device):
     _, run, _ = service_and_tools(device, level)
-    assert not (await run.execute(command="true")).success
+    assert not (await run.execute_context({"command": "true"})).success
     if device is not None:
         device.run.assert_not_called()
 
@@ -96,6 +96,6 @@ async def test_level_and_unavailable_device_rejected(level, device):
 @pytest.mark.parametrize("timeout", [0, 301, True, "60"])
 async def test_timeout_schema_is_shared_boundary(timeout):
     _, run, _ = service_and_tools(AsyncMock())
-    result = await run.execute(command="true", timeout=timeout)
+    result = await run.execute_context({"command": "true", "timeout": timeout})
     assert not result.success
     assert "InputError" in result.error

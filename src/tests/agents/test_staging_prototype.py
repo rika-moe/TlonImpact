@@ -3,7 +3,7 @@
 ``write_staging_prototype`` validates before anything touches disk: EDN
 parse + ``MemberSpec.from_edn`` + the single ``validate_member_spec``
 validator (host-less registry — Adam's host predicates must not pass).
-Also covers the ``listStagingPrototypes`` tool (): the staging
+Also covers the ``prototype-staging-list`` tool (): the staging
 proposals an agent's digest can surface as pending human decisions.
 """
 
@@ -11,12 +11,11 @@ from pathlib import Path
 
 import pytest
 
+from tests.evolution_helpers import make_staging_tool, make_write_tool
 from tlon.agents.prototypes.management import write_trusted_prototype
 from tlon.agents.prototypes.staging import list_staging_prototypes, write_staging_prototype
 from tlon.base.paths import TlonPaths
-from tlon.tools.agents.write_prototype import WritePrototypeTool
-from tlon.tools.prototypes.list_staging import ListStagingPrototypesTool
-from tlon.tools.prototypes.ports import PrototypeError
+from tlon.evolution.ports import PrototypeError
 
 
 class TestWriteStagingValidation:
@@ -47,7 +46,7 @@ VALID_SPEC = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delive
 
 
 class TestListStagingPrototypesTool:
-    """listStagingPrototypes (): untrusted proposals awaiting the
+    """prototype-staging-list (): untrusted proposals awaiting the
     human trust decision, listed with author for audit."""
 
     async def test_lists_staged_proposals(self, tmp_path):
@@ -59,8 +58,8 @@ class TestListStagingPrototypesTool:
             author_id="lin-zhiyao",
             tlon_paths=p,
         )
-        tool = ListStagingPrototypesTool(lister=lambda: list_staging_prototypes(p))
-        result = await tool.execute()
+        tool = make_staging_tool(lister=lambda: list_staging_prototypes(p))
+        result = await tool.execute_context({})
         assert result.success
         assert result.data == [
             {
@@ -75,15 +74,15 @@ class TestListStagingPrototypesTool:
 
     async def test_empty_staging(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        tool = ListStagingPrototypesTool(lister=lambda: list_staging_prototypes(p))
-        result = await tool.execute()
+        tool = make_staging_tool(lister=lambda: list_staging_prototypes(p))
+        result = await tool.execute_context({})
         assert result.success
         assert result.data == []
 
     def test_tool_schema(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        tool = ListStagingPrototypesTool(lister=lambda: list_staging_prototypes(p))
-        assert tool.name == "listStagingPrototypes"
+        tool = make_staging_tool(lister=lambda: list_staging_prototypes(p))
+        assert tool.name == "prototype-staging-list"
         assert tool.parameters["required"] == []
 
 
@@ -148,18 +147,18 @@ class TestStagingLineageFields:
 
 
 class TestWritePrototypeToolLessons:
-    """writePrototype passes the optional ``lessons`` parameter through to
+    """prototype-write passes the optional ``lessons`` parameter through to
     the staging writer (docs/design/prototypes.md): the prototype lands
     with LESSONS.md."""
 
     async def test_lessons_passthrough(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        tool = WritePrototypeTool(
+        tool = make_write_tool(
             author_id="adam",
             writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
         )
-        result = await tool.execute(
-            behavior=VALID_SPEC, lessons="- 教训\n", display_name="定址转发"
+        result = await tool.execute_context(
+            {"behavior": VALID_SPEC, "lessons": "- 教训\n", "display_name": "定址转发"}
         )
         assert result.success
         lessons_file = p.prototypes_staging_dir() / result.data["name"] / "LESSONS.md"
@@ -167,11 +166,11 @@ class TestWritePrototypeToolLessons:
 
     async def test_no_lessons_no_file(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        tool = WritePrototypeTool(
+        tool = make_write_tool(
             author_id="adam",
             writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
         )
-        result = await tool.execute(behavior=VALID_SPEC, display_name="定址转发")
+        result = await tool.execute_context({"behavior": VALID_SPEC, "display_name": "定址转发"})
         assert result.success
         assert not (p.prototypes_staging_dir() / result.data["name"] / "LESSONS.md").exists()
 
@@ -187,13 +186,13 @@ class TestWritePrototypeSolvency:
         async def _insolvent(prototype: str) -> bool:
             return False
 
-        tool = WritePrototypeTool(
+        tool = make_write_tool(
             author_id="adam",
             writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
             prototype="broke",
             solvency=_insolvent,
         )
-        result = await tool.execute(behavior=VALID_SPEC, display_name="定址转发")
+        result = await tool.execute_context({"behavior": VALID_SPEC, "display_name": "定址转发"})
         assert not result.success
         assert "insolvent" in result.error
         assert not p.prototypes_staging_dir().exists()
@@ -204,13 +203,13 @@ class TestWritePrototypeSolvency:
         async def _boom(prototype: str) -> bool:
             raise OSError("fitness derivation broke")
 
-        tool = WritePrototypeTool(
+        tool = make_write_tool(
             author_id="adam",
             writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
             prototype="broke",
             solvency=_boom,
         )
-        result = await tool.execute(behavior=VALID_SPEC, display_name="定址转发")
+        result = await tool.execute_context({"behavior": VALID_SPEC, "display_name": "定址转发"})
         assert result.success, result.error
 
     async def test_manual_member_never_gated(self, tmp_path):
@@ -221,13 +220,13 @@ class TestWritePrototypeSolvency:
         async def _insolvent(prototype: str) -> bool:
             return False
 
-        tool = WritePrototypeTool(
+        tool = make_write_tool(
             author_id="adam",
             writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
             prototype=None,
             solvency=_insolvent,
         )
-        result = await tool.execute(behavior=VALID_SPEC, display_name="定址转发")
+        result = await tool.execute_context({"behavior": VALID_SPEC, "display_name": "定址转发"})
         assert result.success, result.error
 
 
@@ -235,7 +234,7 @@ async def test_write_tool_rejects_old_name_and_requires_behavior_label(tmp_path:
     from unittest.mock import Mock
 
     writer = Mock()
-    tool = WritePrototypeTool(author_id="adam", writer=writer)
+    tool = make_write_tool(author_id="adam", writer=writer)
     assert "name" not in tool.parameters["properties"]
     assert "display_name" in tool.parameters["required"]
     for args in (
@@ -243,7 +242,7 @@ async def test_write_tool_rejects_old_name_and_requires_behavior_label(tmp_path:
         {"behavior": VALID_SPEC},
         {"display_name": "  ", "behavior": VALID_SPEC},
     ):
-        result = await tool.execute(**args)
+        result = await tool.execute_context(args)
         assert not result.success
         assert "name" in result.error
     writer.assert_not_called()

@@ -36,7 +36,7 @@ def test_protocol_declares_subjective_identity() -> None:
 
 def test_protocol_distinguishes_public_directory_from_private_material() -> None:
     """Address discovery is public without expanding access to private files or mail."""
-    assert "listMembers" in _PROTOCOL
+    assert "member-list" in _PROTOCOL
     assert "member-roster" in _PROTOCOL
     assert "可以查询、引用和转告名字与地址" in _PROTOCOL
     assert "尚不了解来信者不构成禁止其查询公开黄页的理由" in _PROTOCOL

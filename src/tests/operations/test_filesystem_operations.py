@@ -75,16 +75,16 @@ async def test_dsl_write_model_read_and_unique_unicode_edit():
         {},
     )
     await adapter.handle(call)
-    result = await OperationTool(executor, "file-read").execute(
-        file_path="notes/中文.txt", offset=2, limit=1
+    result = await OperationTool(executor, "file-read").execute_context(
+        {"file_path": "notes/中文.txt", "offset": 2, "limit": 1}
     )
     assert result.success and result.data["content"] == "第二行"
-    result = await OperationTool(executor, "file-edit").execute(
-        file_path="notes/中文.txt", old_string="第二行", new_string="完成"
+    result = await OperationTool(executor, "file-edit").execute_context(
+        {"file_path": "notes/中文.txt", "old_string": "第二行", "new_string": "完成"}
     )
     assert result.success and device.files["/workspace/notes/中文.txt"].decode().endswith("完成\n")
-    result = await OperationTool(executor, "file-edit").execute(
-        file_path="notes/中文.txt", old_string="不存在", new_string="bad"
+    result = await OperationTool(executor, "file-edit").execute_context(
+        {"file_path": "notes/中文.txt", "old_string": "不存在", "new_string": "bad"}
     )
     assert not result.success and device.writes == 2
 
@@ -104,7 +104,9 @@ async def test_write_loss_reports_unknown_with_stable_identity():
 )
 async def test_level_and_write_path_reject_before_effect(level, path):
     device, executor = bound(level)
-    result = await OperationTool(executor, "file-write").execute(file_path=path, content="bad")
+    result = await OperationTool(executor, "file-write").execute_context(
+        {"file_path": path, "content": "bad"}
+    )
     assert not result.success and not device.files
 
 
@@ -195,7 +197,7 @@ async def test_directory_sorting_precedes_truncation():
                 entry.type = tarfile.DIRTYPE
             archive.addfile(entry)
     device.fetch_archive = AsyncMock(return_value=buffer.getvalue())
-    result = await OperationTool(executor, "file-list").execute(max_entries=1)
+    result = await OperationTool(executor, "file-list").execute_context({"max_entries": 1})
     assert result.success
     assert result.data["entries"][0]["name"] == "a-dir"
     assert result.data["truncated"]

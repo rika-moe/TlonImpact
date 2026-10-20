@@ -17,7 +17,7 @@
 | 数据形态 | **tlosure 函数 artifact**（`{:name :args :impl (fn ...)}`），非宿主代码、非 WASM |
 | 信任通道 | **staging + 人工批准**原样套用（与原型同一模式） |
 | 权限 | **不放大**：能力产出 ActionRequest 数据，引擎按**调用者**的配额与信任级执行 |
-| 能力天花板 | **复合可进化、原语不可进化**：组合既有词汇的能力走本通道；新增模型服务、IO、Docker 或异步机制等宿主原语仍需 Python + 人类写 + 发版；可组合已准入的 llm-call 等动作 |
+| 能力天花板 | **复合可进化、原语不可进化**：组合既有词汇的能力走本通道；新增模型服务、IO、Docker 或异步机制等宿主原语仍需 Python + 人类写 + 发版；可组合已准入的 model-call 等动作 |
 | env 契约 | **最小化：只见 args**，零注入 |
 | artifact 粒度 | **一个 artifact 一个词** |
 | 语境可见性 | 准入声明纯度；纯词可进门控语境，非纯词仅 `:actions` |
@@ -56,7 +56,7 @@
 - **存储**：受信库 `~/.tlon/capabilities/` + staging 区 `~/.tlon/capabilities-staging/`，目录布局、元数据（`meta.tlon`）、REVIEW.md、批准移动（staging → 受信库）全部对齐原型通道（[prototypes.md](./prototypes.md)、`agents/prototypes/staging.py` 模式）
 - **信任模型同构**：受信是默认（人类手写进受信库即可信），staging 写入显式 `:trusted false`；approve/reject 是纯人类决定
 - **动态验证 = `:examples` 断言**：artifact 携带 `{:args [...] :expect ...}` 输入/输出对，准入校验时在沙盒求值器跑断言（纯词 + fuel 计量，天然安全）——评审看到的不只是「它声称做什么」，还有「它做到了什么」。更重的行为验证（携带该能力的 staging 原型进演武场，轨迹即证据，见 [arena.md](./arena.md)）留作后续独立项
-- **异质评审**可复用 reviewPrototype 的模式（独立模型血线的评审意见，advisory）
+- **异质评审**可复用 prototype-review 的模式（独立模型血线的评审意见，advisory）
 
 ## 语境可见性与纯度
 
@@ -86,13 +86,13 @@
 ## 信任边界（不做什么）
 
 - **权限不放大**：能力产出的是 ActionRequest **数据**，引擎按调用者身份执行——一个能力词做不到调用者本人做不到的事
-- **能力不能新增宿主原语**：`:impl` 可组合已准入动作，包括 llm-call、state-get/state-put 等；模型服务、IO、Docker 或异步机制的新增实现仍在 Python 宿主层。fuel 不约束宿主内部成本，模型调用还受程序驱动的 token 预算限制
+- **能力不能新增宿主原语**：`:impl` 可组合已准入动作，包括 model-call、state-get/state-put 等；模型服务、IO、Docker 或异步机制的新增实现仍在 Python 宿主层。fuel 不约束宿主内部成本，模型调用还受程序驱动的 token 预算限制
 - **v1 能力词只在 DSL 语境**（spec 的 rules/actions），不进 LLM 工具面——ToolExecutor 注册（LLM 可动态调用的工具）需要 参数 schema → tool schema 的映射设计，是独立后续决策。这收窄了 issue #45 原清单的「ToolExecutor 从 artifact 注册」一项：DSL 词汇先行，当前使用入口是成员 **spec** 中的词汇组合
 - 能力引能力（`:impl` 引用其他能力词）v1 不做
 
 ## 当前提案机制
 
-突变直接起草为 tlosure artifact：成员从意图、记忆 digest 与 lessons 生成 `:impl`，不以 workspace 程序为起点。`proposeCapability` 由 [tools/agents/propose_capability.py](../../src/tlon/tools/agents/propose_capability.py) 的 `ProposeCapabilityTool` 实现：
+突变直接起草为 tlosure artifact：成员从意图、记忆 digest 与 lessons 生成 `:impl`，不以 workspace 程序为起点。`capability-propose` 由 [evolution/propose_capability.py](../../src/tlon/evolution/propose_capability.py) 的 `CapabilityProposer` 实现：
 
 1. 在起草前执行血脉偿付政策检查；政策求值异常采用既定 fail-open 处理。
 2. 一次 LLM 起草调用提取 EDN，并核对词名必须等于申请名称。

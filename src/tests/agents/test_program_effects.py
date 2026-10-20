@@ -7,15 +7,16 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from tlon.agents.program_effects import ProgramEffects
 from tlon.agents.program_store import ProgramStore
 from tlon.agents.vocabulary import make_member_builtins
 from tlon.base.config import LLMConfig
 from tlon.base.llm_client import LLMClient
+from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.model import make_model_operations
 from tlon.operations.schema import ReplayConflictError
 from tlon.organization.mail.mail import Mail
-from tlosure.builtins import ActionRequest, EvalError
-from tlosure.edn import Keyword, loads
+from tlosure.builtins import EvalError
+from tlosure.edn import loads
 from tlosure.eval import eval_form
 
 
@@ -69,16 +70,12 @@ async def test_llm_effect_keeps_system_prompt_and_disables_tools() -> None:
         )
     )
     system = AsyncMock(return_value="identity + rules + protocol")
-    effects = ProgramEffects(llm_client=client, system_prompt=system)
-    result = await effects.execute(
-        ActionRequest("llm_call", {"prompt": "source data", "max_tokens": 12}),
-        "unused",
-        "run",
-        0,
-        ProgramStore(None),
-        "[]",
+    executor = OperationExecutor(
+        OperationRegistry(make_model_operations(client, system)),
+        CallContext("a", "run", "call", effect_index=0),
     )
-    assert result[Keyword("usage")][Keyword("completion-tokens")] == 4
+    result = await executor.call("model-call", {"prompt": "source data", "max_tokens": 12})
+    assert result["usage"]["completion_tokens"] == 4
     kwargs = client.chat.await_args.kwargs
     assert kwargs["system_prompt"] == "identity + rules + protocol"
     assert kwargs["tools"] is None and kwargs["max_tokens"] == 12
@@ -111,8 +108,6 @@ def test_program_words_validate_and_mail_field_uses_real_mail() -> None:
     assert eval_form(loads("(mail-field msg :content)"), {"msg": None}, builtins) is None
     with pytest.raises(EvalError, match="unknown field"):
         eval_form(loads("(mail-field msg :made-up)"), {"msg": mail}, builtins)
-    with pytest.raises(EvalError, match="positive integer"):
-        eval_form(loads('(llm-call {:prompt "x" :max-tokens true})'), {}, builtins)
     assert not builtins["state-get"].pure
 
 

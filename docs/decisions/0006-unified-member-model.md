@@ -1,5 +1,6 @@
 # ADR 0006：统一成员模型——一类成员 + 世代更替
 
+> P3c 当前实现：宿主能力统一定义为 Operation；Tool 与 DSL 共用定义和执行边界。旧工具名和类名仅记录当时设计，当前入口见 [工具手册](../reference/tools-reference.md)。
 > 原型及新成员的技术 ID 与行为显示名由 [ADR 0035](0035-generated-ids-and-behavior-prototypes.md) 修订；历史职业名和 ID 示例不再是当前创建接口。
 
 > 阅读定位：本文保留当时的选择与理由；当前设计见 [unified-member-model](../design/unified-member-model.md)、[prototypes](../design/prototypes.md)。当前适用范围：统一成员与世代模型；人格边界由 ADR 0024 澄清，档案保留不排除人类显式治理删除。完整关系见 [决策索引](README.md)。
