@@ -1,5 +1,7 @@
 # ADR 0008：上下文压力管理——存储不动，视图分级减压
 
+> P4b 当前说明：程序 output 根保持获准输出预留不退款；session total 根统一覆盖 stage、压缩及工具内模型调用，按可靠 usage 结算，未知保留预留。ProgramStore 保存模型回执与额度事实，journal 只投影；预算与 UTC deadline 冻结，进程取消不是永久撤销。本文保留历史，现行契约见 [执行作用域](../design/execution-scope.md)。
+
 > 阅读定位：本文保留当时的选择与理由；当前设计见 [runtime](../design/runtime.md)、[memory](../design/memory.md)。当前适用范围：减压模型保留；anchor 由 ADR 0017、唤醒模板由 ADR 0028 修订。完整关系见 [决策索引](README.md)。
 
 状态：已接受（2026-08-22，方向讨论拍板）；2026-09-17 经 ADR 0017（阶段 4）修订 anchor 语义：`(knowledge)` 段移出 anchor——knowledge 消息固定为整个 context 的最后一条（触发消息之后），anchor 只含其余 sections + 触发消息（ADR 0028 起为固定唤醒模板「你有 N 封未读邮件」，不再含邮件本体），`session/start` 事件显式携带 `anchor_len` 字段

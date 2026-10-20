@@ -58,7 +58,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from tlon.agents.assembly import assemble_member_capabilities
+from tlon.agents.assembly import assemble_member_services
 from tlon.agents.capabilities.bridge import load_capability_builtins
 from tlon.agents.cron import CronScheduler
 from tlon.agents.health import PublicHealthMonitor
@@ -547,7 +547,7 @@ class AgentRegistry(Component):
         """Assemble and start one agent (unified member model, ADR 0006).
 
         This is the sole assembler for members and their infrastructure.
-        Every member gets the full capability set (``assemble_member_capabilities`` in
+        Every member gets its assembled services (``assemble_member_services`` in
         ``agents/assembly.py``: LLM client, memory, task manager, Docker
         runtime, tools). The same rule executor handles all members;
         session services are used only when a program requests them.
@@ -587,7 +587,7 @@ class AgentRegistry(Component):
             spec = load_member_spec(agent_id, tlon_paths=self._paths, builtins=builtins)
             self._profiles[agent_id] = spec  # cache the profile (phase E)
             mailbox = Mailbox(self._paths.mail_database_file(), config.id)
-            capabilities = await assemble_member_capabilities(
+            services = await assemble_member_services(
                 config,
                 registry=self,
                 agent_info=self._agent_info,
@@ -603,7 +603,7 @@ class AgentRegistry(Component):
                 spec=spec,
                 builtins=builtins,
                 mailbox=mailbox,
-                capabilities=capabilities,
+                services=services,
                 registry=self,
                 post_office=self._post_office,
             )

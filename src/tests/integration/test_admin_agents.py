@@ -72,9 +72,16 @@ async def test_agent_config_crud_lifecycle(inproc_server: tuple[str, Path]) -> N
                         status = await status_response.json()
                     if database.exists():
                         with sqlite3.connect(database) as connection:
-                            runs = connection.execute(
-                                "SELECT rule_edn,completed,error FROM runs"
-                            ).fetchall()
+                            schema_ready = connection.execute(
+                                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='runs'"
+                            ).fetchone()
+                            runs = (
+                                connection.execute(
+                                    "SELECT rule_edn,completed,error FROM runs"
+                                ).fetchall()
+                                if schema_ready
+                                else []
+                            )
                         boot_finished = any(
                             ':name "boot"' in source and completed for source, completed, _ in runs
                         )

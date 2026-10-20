@@ -48,13 +48,13 @@ def registry_identity(builtins: dict[str, "Builtin"]) -> str:
     definitions = {
         name: {
             "pure": builtin.pure,
-            "params": builtin.closure.params,
-            "rest": builtin.closure.rest,
-            "body": dumps(builtin.closure.body),
-            "env": dumps(builtin.closure.env),
+            "read_only": builtin.read_only,
+            "params": builtin.closure.params if builtin.closure else None,
+            "rest": builtin.closure.rest if builtin.closure else None,
+            "body": dumps(builtin.closure.body) if builtin.closure else None,
+            "env": dumps(builtin.closure.env) if builtin.closure else None,
         }
         for name, builtin in sorted(builtins.items())
-        if builtin.closure is not None
     }
     payload = json.dumps([runtime_identity(), definitions], sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(payload.encode()).hexdigest()

@@ -3,11 +3,17 @@
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
 from typing import Any
 
 from tlon.agents.member_spec import MemberRule
 from tlon.agents.program_store import ProgramStore
+from tlon.base.execution import (
+    BudgetExceededError,
+    ExecutionDeadlineError,
+    ExecutionScope,
+    bind_execution,
+    current_execution,
+)
 from tlon.operations.adapters import DSLAdapter
 from tlon.operations.control import CONTROL_NAMES, validate_control_forms
 from tlon.operations.core import CallContext
@@ -17,7 +23,6 @@ from tlosure.edn import Form, dumps, loads
 from tlosure.eval import DEFAULT_FUEL, DEFAULT_MAX_DEPTH, DEFAULT_WHEN_FUEL, Evaluator
 
 ExecuteEffect = Callable[[ActionRequest, str, int, str], Awaitable[Any]]
-_HOST_QUERIES = frozenset({"sleeping?", "running?", "lazy?", "member-roster"})
 
 
 class ProgramDriver:
@@ -35,6 +40,7 @@ class ProgramDriver:
         member_id: str = "",
         on_operation: Callable[[], None] | None = None,
         on_control: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        execution_scope: ExecutionScope | None = None,
     ) -> None:
         self.on_control = on_control
         self._control_allowed = False
@@ -43,16 +49,26 @@ class ProgramDriver:
         self.on_operation = on_operation
         self.store = store
         self.run_id = run_id
-        self.builtins = {
-            name: replace(builtin, pure=False) if name in _HOST_QUERIES else builtin
-            for name, builtin in builtins.items()
-        }
+        self.builtins = dict(builtins)
         self.execute = execute
         self.index = 0
-        self.remaining_tokens = token_budget
+        self.execution_scope = execution_scope or ExecutionScope(
+            store, run_id, token_budget, "output", parent=current_execution()
+        )
 
     async def run(self, rule: MemberRule, env: dict[str, Any]) -> None:
+        with bind_execution(self.execution_scope):
+            try:
+                await self._run(rule, env)
+            except (BudgetExceededError, ExecutionDeadlineError) as error:
+                raise EvalError(str(error)) from error
+            except asyncio.CancelledError:
+                self.execution_scope.cancel()
+                raise
+
+    async def _run(self, rule: MemberRule, env: dict[str, Any]) -> None:
         await asyncio.to_thread(self.store.ensure_root, self.run_id)
+        await self.execution_scope.initialize()
         validate_control_forms(rule.actions)
         self._control_allowed = False
         shared = (
@@ -96,24 +112,9 @@ class ProgramDriver:
             )
             found, result = await self.operations.replay(call, context)
             if not found:
-                if call.name == "model-call" and self.remaining_tokens <= 0:
-                    raise EvalError("member program LLM output budget exhausted")
                 if self.on_operation is not None:
                     self.on_operation()
-                dispatched_call = call
-                if call.name == "model-call":
-                    dispatched_call = replace(
-                        call,
-                        args=[
-                            {
-                                **inputs,
-                                "max_tokens": min(inputs["max_tokens"], self.remaining_tokens),
-                            }
-                        ],
-                    )
-                result = await self.operations.handle(dispatched_call, context)
-            if call.name == "model-call":
-                self._charge(result, call)
+                result = await self.operations.handle(call, context)
             if call.name in CONTROL_NAMES and self.on_control is not None:
                 await self.on_control(json_value(result, edn_keys=True)["scheduling_request"])
             return result
@@ -123,6 +124,7 @@ class ProgramDriver:
         if found:
             assert result_edn is not None
             return loads(result_edn)
+        self.execution_scope.check()
         try:
             request = call.invoke()
         except (TypeError, ValueError) as error:
@@ -130,7 +132,8 @@ class ProgramDriver:
         # Closure-backed words run through the kernel. Host query functions
         # return ordinary values; action constructors return request data.
         if isinstance(request, ActionRequest):
-            result = await self.execute(request, call.name, index, args_edn)
+            with bind_execution(self.execution_scope.child(f"call:{index}:{call.name}")):
+                result = await self.execute(request, call.name, index, args_edn)
         elif isinstance(request, list) and all(isinstance(item, ActionRequest) for item in request):
             result = []
             for offset, item in enumerate(request):
@@ -140,15 +143,4 @@ class ProgramDriver:
         await asyncio.to_thread(
             self.store.record_effect, self.run_id, index, call.name, args_edn, dumps(result)
         )
-        if call.name == "model-call":
-            self._charge(result, call)
         return result
-
-    def _charge(self, result: Any, call: BuiltinCall) -> None:
-        # Reserve the requested output allowance. Missing provider usage can
-        # never make the next call free; replay applies the same reservation.
-        requested = next(
-            (value for key, value in call.args[0].items() if str(key) == "max_tokens"),
-            self.remaining_tokens,
-        )
-        self.remaining_tokens -= min(requested, self.remaining_tokens)

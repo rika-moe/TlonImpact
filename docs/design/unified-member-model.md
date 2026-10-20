@@ -39,7 +39,7 @@ finish-turn 结束自己的本次工作；sleep-until 定时睡眠；exit-agent 
 
 ### 统一装配与按需加载
 
-装配由 `assemble_member_capabilities` 统一组织，按配置和信任等级构造服务，模型调用与容器启动按需发生。程序是否调用模型不改变装配或权限模型。L0 不创建执行装置，L1 不注册 shell 工具，见 [execution-device](execution-device.md)。
+装配由 `assemble_member_services` 统一组织，按配置和信任等级构造服务，模型调用与容器启动按需发生。程序是否调用模型不改变装配或权限模型。L0 不创建执行装置，L1 不注册 shell 工具，见 [execution-device](execution-device.md)。
 
 ### 经验传到下一代
 

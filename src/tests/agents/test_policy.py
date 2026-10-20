@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from tlon.agents.assembly import REPRODUCTION_TOOLS, assemble_member_capabilities
+from tlon.agents.assembly import REPRODUCTION_TOOLS, assemble_member_services
 from tlon.agents.member_runtime import MemberRuntime
 from tlon.agents.member_spec import MemberSpec
 from tlon.agents.policy import (
@@ -324,7 +324,7 @@ class TestAssemblyToolSubset:
             llm=LLMConfig(model_name="test/model"),
         )
         yaml_save(config, tlon_paths.tlon_home())
-        caps = await assemble_member_capabilities(
+        caps = await assemble_member_services(
             config,
             registry=None,  # type: ignore[arg-type]
             agent_info=_FakeAgentInfo({"rookie": config}),  # type: ignore[arg-type]
@@ -338,7 +338,7 @@ class TestAssemblyToolSubset:
                 loads('{:version 1 :rules [{:name "boot" :on :boot :actions []}]}')
             ),
             builtins=make_member_builtins(),
-            capabilities=caps,
+            services=caps,
         )
         return caps, runtime
 

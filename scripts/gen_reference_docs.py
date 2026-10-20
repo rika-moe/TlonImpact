@@ -953,7 +953,7 @@ class HostQueryPort:
 
 def host_query_ports() -> list[HostQueryPort]:
     """Closure-injected host queries: the ``builtins["<word>"] = Builtin(
-    lambda ..., pure=True)`` assignments inside ``make_member_builtins``,
+    lambda ..., pure=False, read_only=True)`` assignments inside ``make_member_builtins``,
     joined with the method docstrings of the ``ScriptHostQueries``
     protocol."""
     tree = _parse(VOCABULARY_FILE)
@@ -1002,9 +1002,16 @@ def host_query_ports() -> list[HostQueryPort]:
                 "Builtin(lambda ...) — teach the generator"
             )
         pure_kwargs = [kw for kw in call.keywords if kw.arg == "pure"]
-        if len(pure_kwargs) != 1 or _literal(pure_kwargs[0].value) is not True:
+        readonly_kwargs = [kw for kw in call.keywords if kw.arg == "read_only"]
+        if (
+            len(pure_kwargs) != 1
+            or _literal(pure_kwargs[0].value) is not False
+            or len(readonly_kwargs) != 1
+            or _literal(readonly_kwargs[0].value) is not True
+        ):
             raise GenerationError(
-                f"{VOCABULARY_FILE}:{node.lineno} builtins[{word!r}] lacks pure=True"
+                f"{VOCABULARY_FILE}:{node.lineno} builtins[{word!r}] must declare "
+                "pure=False, read_only=True"
             )
         body = call.args[0].body
         if not (
@@ -1042,7 +1049,7 @@ def render_bridge_query_ports() -> str:
     rows = [f"| `{p.word}` | `host.{p.method}` | {_cell(p.doc)} |" for p in ports]
     header = (
         f"`make_member_builtins` 在调用方注入 `host` 时追加 {len(ports)} 个宿主查询"
-        f"（`pure=True`，只读注册表或投递目录、无宿主即不注册这些词；说明取自 "
+        f"（`pure=False, read_only=True`，只读注册表或投递目录、无宿主即不注册这些词；说明取自 "
         f"`ScriptHostQueries` 协议方法的 docstring）：{GENERATED_NOTE}\n\n"
         "| DSL 词 | 宿主方法 | 说明 |\n"
         "|---|---|---|"

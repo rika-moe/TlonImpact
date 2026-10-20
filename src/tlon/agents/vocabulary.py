@@ -17,7 +17,8 @@ module is their single source of truth:
   ``member-roster`` / the ``start-all`` candidate set). They read registry
   state or the delivery directory, so they are never registered module-level; the implementation
   (``RegistryQueries`` in ``tlon.agents/agent_registry.py``) is injected at
-  assembly time.
+  assembly time. Queries are non-pure suspended reads with ``read_only``
+  condition admission; the driver never changes their registration metadata.
 - **Effect ports** (DSL → host, effects-as-data) — the action family
   (names in :data:`MEMBER_ACTION_NAMES`, ``pure=False``): each validates
   its arguments and produces :class:`ActionRequest` data without performing
@@ -688,10 +689,16 @@ def make_member_builtins(
         "run-loop": Builtin(_run_loop, pure=False),
     }
     if host is not None:
-        builtins["sleeping?"] = Builtin(lambda env, aid: host.is_sleeping(aid), pure=True)
-        builtins["running?"] = Builtin(lambda env, aid: host.is_running(aid), pure=True)
-        builtins["lazy?"] = Builtin(lambda env, aid: host.is_lazy(aid), pure=True)
-        builtins["member-roster"] = Builtin(lambda env: host.member_roster(), pure=True)
+        builtins["sleeping?"] = Builtin(
+            lambda env, aid: host.is_sleeping(aid), pure=False, read_only=True
+        )
+        builtins["running?"] = Builtin(
+            lambda env, aid: host.is_running(aid), pure=False, read_only=True
+        )
+        builtins["lazy?"] = Builtin(lambda env, aid: host.is_lazy(aid), pure=False, read_only=True)
+        builtins["member-roster"] = Builtin(
+            lambda env: host.member_roster(), pure=False, read_only=True
+        )
     return builtins
 
 

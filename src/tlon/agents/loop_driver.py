@@ -63,6 +63,12 @@ from tlon.agents.vocabulary import (
     stage_cond_env,
 )
 from tlon.base.events.event import EventType
+from tlon.base.execution import (
+    BudgetExceededError,
+    UnknownModelOutcomeError,
+    bind_execution,
+    current_execution,
+)
 from tlon.base.llm_client import ContextWindowExceededError, LLMResponse, ToolCall
 from tlon.base.logger import get_logger
 from tlon.operations.core import CallContext
@@ -172,6 +178,13 @@ class LoopDriver:
         When tools complete, collect_session_results transitions back to ACTIVE.
         """
         log = self._services.logger
+        scope = current_execution()
+        if scope is not None and scope.root_id == session.id and not session.has_pending_tools:
+            usage = await asyncio.to_thread(scope.store.budget_usage, scope.root_id)
+            if usage["pending_count"]:
+                raise UnknownModelOutcomeError(
+                    "Session has unresolved model requests; automatic continuation refused"
+                )
 
         # Build context on first call (after LLM error: skip rebuild). The
         # session/start event is journaled before the context lands in
@@ -180,14 +193,17 @@ class LoopDriver:
         # reads it back for the chain-wake comparison).
         if not session.context:
             build_id = await self._journal.verify_root(session.id)
-            built = await self._services.build_context(
-                session.trigger_content, session.responsibility
-            )
+            scope = current_execution()
+            with bind_execution(scope.child("context-build") if scope else None):
+                built = await self._services.build_context(
+                    session.trigger_content, session.responsibility
+                )
             await self._journal.append(
                 session.id,
                 "session/start",
                 agent_id=self._identity.id,
                 build_id=build_id,
+                execution_deadline=scope.deadline if scope is not None else None,
                 trigger_content=session.trigger_content,
                 recipe=session.recipe_source,
                 source_mail_id=session.source_mail_id,
@@ -212,7 +228,12 @@ class LoopDriver:
         # Context pressure check (ADR 0008): prune/summarize the
         # model-facing view before this step's LLM calls when the estimated
         # size crosses the threshold. Journaled before mutating (ADR 0007).
-        await self._pressure.maybe_compact(session)
+        scope = current_execution()
+        with bind_execution(
+            scope.child(f"round:{session.iteration}:compaction:pre-step") if scope else None
+        ):
+            await self._pressure.maybe_compact(session)
+        await self._sync_token_projection(session)
 
         loop = self._loop
 
@@ -224,7 +245,7 @@ class LoopDriver:
         # Replies go to the human senders of the responsibility set only
         # (ADR 0027, anchor revised by ADR 0028 决策 7).
         iteration_capped = session.iteration >= loop.max_iterations
-        token_capped = session.token_usage >= loop.max_tokens
+        token_capped = current_execution() is None and session.token_usage >= loop.max_tokens
         if iteration_capped or token_capped:
             if token_capped:
                 log.warning(
@@ -258,7 +279,7 @@ class LoopDriver:
         # stages pass it through untouched).
         response: LLMResponse | None = None
         start_iteration = session.iteration
-        for stage_form in loop.stages:
+        for stage_index, stage_form in enumerate(loop.stages):
             name = str(stage_form[0])
             opts: dict[str, Any] = stage_form[1] if len(stage_form) > 1 else {}
             handler = self._stages.get(name)
@@ -269,25 +290,43 @@ class LoopDriver:
             if not self._stage_condition_met(session, name, opts, response):
                 continue
             log.debug("loop_stage_start", session_id=session.id, stage=name)
+            scope = current_execution()
+            stage_path = f"round:{session.iteration}:stage:{stage_index}:{name}"
+            forced_path = (*scope.path, f"{stage_path}:compaction:forced") if scope else None
+            events = await self._journal.read_events(session.id) if scope else []
+            compacted = any(
+                event["type"] == "context/compact"
+                and event.get("execution_path") == list(forced_path or ())
+                for event in events
+            )
+            attempt = 1 if compacted else 0
             try:
-                outcome = await handler(session, response, opts)
-            except ContextWindowExceededError:
-                # Emergency path (ADR 0008): the stage's LLM call was
-                # rejected for context length. Stages re-raise this error
-                # instead of folding it into their record_error fallback so
-                # the engine can act on it: force one full compaction
-                # (tightened keep window) and retry the stage exactly once.
-                # A second failure is NOT caught here — it propagates to
-                # the scheduler's session_error handler, which journals
-                # session/end (the pre-existing fatal path for a stage that
-                # cannot produce an outcome at all).
-                log.warning(
-                    "loop_stage_context_window_exceeded",
-                    session_id=session.id,
-                    stage=name,
+                try:
+                    with bind_execution(
+                        scope.child(f"{stage_path}:attempt:{attempt}") if scope else None
+                    ):
+                        outcome = await handler(session, response, opts)
+                except ContextWindowExceededError:
+                    if attempt == 1:
+                        raise
+                    log.warning(
+                        "loop_stage_context_window_exceeded", session_id=session.id, stage=name
+                    )
+                    with bind_execution(
+                        scope.child(f"{stage_path}:compaction:forced") if scope else None
+                    ):
+                        await self._pressure.maybe_compact(session, force=True)
+                    with bind_execution(scope.child(f"{stage_path}:attempt:1") if scope else None):
+                        outcome = await handler(session, response, opts)
+            except BudgetExceededError:
+                await self._sync_token_projection(session)
+                content = resource_limit_notice(
+                    session, "max_tokens", self._loop.replies.get("iteration_limit")
                 )
-                await self._pressure.maybe_compact(session, force=True)
-                outcome = await handler(session, response, opts)
+                await self._send_termination_reply(session, "max_tokens", content)
+                await self._journal.append(session.id, "session/end", reason="max_tokens")
+                session.mark_completed()
+                return
             response = await self._apply_outcome(session, response, outcome)
             if name == "think" and outcome.response is None:
                 # think failed: error recorded; until terminates the
@@ -342,7 +381,9 @@ class LoopDriver:
             # "errors" value is absolute, so replay restores the reset.
             await self._journal.append(session.id, "errors", value=0)
             session.reset_errors()
-        if outcome.token_usage > 0:
+        if current_execution() is not None:
+            await self._sync_token_projection(session)
+        elif outcome.token_usage > 0:
             # Session token budget (ADR 0023): the journaled "tokens"
             # value is the post-accumulation absolute total, same pattern
             # as iteration/errors.
@@ -377,13 +418,28 @@ class LoopDriver:
                     for tc in outcome.tool_dispatches
                 },
             )
-            tasks = {}
+            tasks: dict[str, asyncio.Task[Any]] = {}
+            previous_write: asyncio.Task[Any] | None = None
             for tc in outcome.tool_dispatches:
-                tasks[tc.id] = asyncio.create_task(
-                    self.execute_one_tool(
-                        session.id, tc, self._operation_context(session.id, tc, session.iteration)
+                writes = (
+                    self._tool_executor.has_tool(tc.function_name)
+                    and "write" in self._tool_executor.get_tool(tc.function_name).effects
+                )
+                context = self._operation_context(session.id, tc, session.iteration)
+                task = asyncio.create_task(
+                    self._execute_declared_tool(
+                        session.id,
+                        tc,
+                        context,
+                        previous_write if writes else None,
                     )
                 )
+                tasks[tc.id] = task
+                if writes:
+                    previous_write = task
+            # Register every child before the first await so cancellation cannot orphan it.
+            session.dispatch_tools(outcome.tool_dispatches, tasks)
+            for tc in outcome.tool_dispatches:
                 await self._executor.publish(
                     EventType.TOOL_EXECUTE_START,
                     payload={
@@ -393,7 +449,6 @@ class LoopDriver:
                     },
                     source=self._identity.id,
                 )
-            session.dispatch_tools(outcome.tool_dispatches, tasks)
             await self._journal.append(session.id, "state", value=SessionState.WAITING.value)
             session.mark_waiting()
         if outcome.complete:
@@ -474,6 +529,9 @@ class LoopDriver:
                 )
                 continue
             try:
+                scope = current_execution()
+                if scope is not None:
+                    scope.check()
                 await self._executor.send_mail(
                     MailDraft(
                         to=[sender],
@@ -587,6 +645,16 @@ class LoopDriver:
             return False
         return True
 
+    async def _sync_token_projection(self, session: AgentSession) -> None:
+        scope = current_execution()
+        if scope is None or scope.root_id != session.id:
+            return
+        usage = await asyncio.to_thread(scope.store.budget_usage, scope.root_id)
+        used = int(usage["used"])
+        if used != session.token_usage:
+            await self._journal.append(session.id, "tokens", value=used)
+            session.add_tokens(used - session.token_usage)
+
     async def collect_session_results(self, session: AgentSession) -> None:
         """Collect completed background tools for a WAITING session.
 
@@ -622,6 +690,18 @@ class LoopDriver:
             )
         outcome = await act_stage_collect(self._services, session, completed)
         await self._apply_outcome(session, None, outcome)
+
+    async def _execute_declared_tool(
+        self,
+        session_id: str,
+        tc: ToolCall,
+        context: CallContext,
+        previous_write: asyncio.Task[Any] | None,
+    ) -> tuple[ToolCall, ToolResult]:
+        if previous_write is not None:
+            # A waiting child must not cancel the preceding write on its own cancellation.
+            await asyncio.shield(asyncio.gather(previous_write, return_exceptions=True))
+        return await self.execute_one_tool(session_id, tc, context)
 
     async def execute_one_tool(
         self,
@@ -668,6 +748,7 @@ class LoopDriver:
             f"session:{session_id}:round:{iteration}:{tc.id}",
             call_path=(f"round:{iteration}", f"tool:{tc.id}"),
             origin="tool",
+            execution=current_execution(),
         )
 
     def _operation_recovery(
@@ -717,6 +798,7 @@ class LoopDriver:
             metadata["call_id"],
             call_path=tuple(metadata["call_path"]),
             origin="tool",
+            execution=current_execution(),
         )
         _, result = await self.execute_one_tool(session_id, tc, context, journal_result=False)
         return result

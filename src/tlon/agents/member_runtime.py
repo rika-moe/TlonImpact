@@ -33,6 +33,7 @@ from tlon.base.config import DEFAULT_CONTEXT_WINDOW, AgentConfig
 from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
+from tlon.base.execution import ExecutionScope, bind_execution, current_execution
 from tlon.base.llm_client import LLMClient, ToolCall
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
@@ -79,7 +80,7 @@ class MemberState(Enum):
 
 
 @dataclass
-class MemberCapabilities:
+class MemberServices:
     """Services available to a member program; assembled lazily by the runtime."""
 
     config: AgentConfig
@@ -122,7 +123,7 @@ class MemberRuntime(Member):
         builtins: dict[str, Builtin],
         mailbox: Mailbox | None = None,
         post_office: PostOffice | None = None,
-        capabilities: MemberCapabilities | None = None,
+        services: MemberServices | None = None,
         registry: "AgentRegistry | None" = None,
         tlon_paths: TlonPaths | None = None,
     ) -> None:
@@ -139,7 +140,7 @@ class MemberRuntime(Member):
                 read-marking (None only for bare test instances; Adam
                 carries ``~/.tlon/adam/mail/`` — docs/design/mail.md
                 「守护者信箱」)
-            capabilities: The member's capability set (LLM/memory/tools).
+            services: The member's capability set (LLM/memory/tools).
                 Programs request sessions explicitly with run-loop.
                 Bare host-service members may omit these services.
             registry: Agent registry for ``spawn`` actions (None, e.g.
@@ -152,17 +153,17 @@ class MemberRuntime(Member):
         self._builtins = builtins
         self._mailbox = mailbox
         self._post_office = post_office
-        self._capabilities = capabilities
-        self._paths = capabilities.tlon_paths if capabilities else tlon_paths
+        self._services = services
+        self._paths = services.tlon_paths if services else tlon_paths
         self._program_store = ProgramStore(
             self._paths.agent_program_database_file(member_id) if self._paths else None,
             build_id=registry_identity(builtins),
         )
         self._registry = (
-            registry if registry is not None else (capabilities.registry if capabilities else None)
+            registry if registry is not None else (services.registry if services else None)
         )
         self._program_trigger: Event | None = None
-        operations = list(capabilities.operations) if capabilities else []
+        operations = list(services.operations) if services else []
         operations.extend(
             make_lifecycle_operations(
                 LifecycleService(
@@ -174,20 +175,20 @@ class MemberRuntime(Member):
                     start_all_candidates=self._registry.boot_candidates
                     if self._registry is not None
                     else None,
-                    apprentice=not capabilities.is_full if capabilities is not None else False,
+                    apprentice=not services.is_full if services is not None else False,
                 )
             )
         )
         operations.extend(make_state_operations(self._program_store))
-        if capabilities is not None:
+        if services is not None:
             operations.extend(
-                make_model_operations(capabilities.llm_client, self._program_system_prompt)
+                make_model_operations(services.llm_client, self._program_system_prompt)
             )
         if not any(operation.name == "time-now" for operation in operations):
             operations.extend(time_operation_definitions())
         if mailbox is not None and post_office is not None:
             mail_service = MemberMailService(
-                member_id, mailbox, post_office, capabilities.mentor_cc if capabilities else None
+                member_id, mailbox, post_office, services.mentor_cc if services else None
             )
             operations.extend(make_mail_operations(mail_service))
         operation_executor = OperationExecutor(
@@ -197,19 +198,19 @@ class MemberRuntime(Member):
         )
         self._operations = DSLAdapter(operation_executor)
         self._builtins = {**builtins, **self._operations.builtins()}
-        if capabilities is not None:
+        if services is not None:
             for operation in operation_executor.registry.definitions():
-                if not capabilities.is_full and operation.name in {
+                if not services.is_full and operation.name in {
                     "member-spawn",
                     "prototype-write",
                     "behavior-propose",
                     "capability-propose",
                 }:
                     continue
-                capabilities.tool_executor.register_tool(
+                services.tool_executor.register_tool(
                     OperationTool(operation_executor, operation.name)
                 )
-        self._mentor_cc = capabilities.mentor_cc if capabilities is not None else None
+        self._mentor_cc = services.mentor_cc if services is not None else None
         # Rule idle bookkeeping (registry drain): initialize time
         # and the last executed rule action, both monotonic.
         self._initialized_at: float | None = None
@@ -233,30 +234,59 @@ class MemberRuntime(Member):
         self._program_task: asyncio.Task[None] | None = None
         self._deferred_boot: list[MemberRule] = []
         self._journal = (
-            SessionJournal(
-                member_id, capabilities.tlon_paths, verify_root=self._verify_session_root
-            )
-            if capabilities
+            SessionJournal(member_id, services.tlon_paths, verify_root=self._verify_session_root)
+            if services
             else (
                 SessionJournal(member_id, tlon_paths, verify_root=self._verify_session_root)
                 if tlon_paths is not None
                 else None
             )
         )
-        if capabilities is not None:
+        if services is not None:
             assert self._journal is not None
             self._journal.resolve_dispatch = self._resolve_session_dispatch
-            self._assemble_scheduler(capabilities)
+            self._assemble_scheduler(services)
+
+    def _maintenance_execution(self, purpose: str) -> ExecutionScope:
+        limit = (
+            self._services.config.llm.max_tokens
+            if self._services and self._services.config.llm
+            else 4096
+        )
+        return ExecutionScope(
+            self._program_store, f"maintenance:{purpose}:{uuid.uuid4().hex}", limit, "output"
+        )
+
+    async def _session_execution(self, session_id: str, recipe: SessionRecipe) -> ExecutionScope:
+        parent = current_execution()
+        deadline = parent.effective_deadline() if parent is not None else None
+        assert self._journal is not None
+        events = await self._journal.read_events(session_id)
+        start = next((event for event in events if event["type"] == "session/start"), None)
+        if start is not None:
+            deadline = start.get("execution_deadline")
+        scope = ExecutionScope(
+            self._program_store,
+            session_id,
+            recipe.max_tokens,
+            "total",
+            deadline=deadline,
+            parent=parent,
+        )
+        await scope.initialize()
+        return scope
 
     async def _resolve_session_dispatch(
         self, session_id: str, tool_call: ToolCall, metadata: dict[str, Any]
     ) -> ToolResult:
-        assert self._journal is not None and self._capabilities is not None
+        assert self._journal is not None and self._services is not None
         events = await self._journal.read_events(session_id)
         start = next(event for event in events if event["type"] == "session/start")
         recipe = SessionRecipe.from_edn(loads(start["recipe"]))
-        driver = self._assemble_session(self._capabilities, recipe)
-        return await driver.resolve_dispatch(session_id, tool_call, metadata)
+        driver = self._assemble_session(self._services, recipe)
+        scope = await self._session_execution(session_id, recipe)
+        with bind_execution(scope):
+            return await driver.resolve_dispatch(session_id, tool_call, metadata)
 
     async def _verify_session_root(self, session_id: str) -> str:
         await asyncio.to_thread(self._program_store.ensure_root, session_id)
@@ -310,9 +340,9 @@ class MemberRuntime(Member):
     async def initialize(self) -> None:
         """Load services, recover sessions, and start the one program worker."""
         self._state = MemberState.INITIALIZING
-        if self._capabilities is not None:
-            await self._capabilities.memory.load()
-            self._capabilities.task_manager.load()
+        if self._services is not None:
+            await self._services.memory.load()
+            self._services.task_manager.load()
         self._initialized = True
         self._initialized_at = time.monotonic()
         if self._scheduler is not None:
@@ -356,15 +386,15 @@ class MemberRuntime(Member):
                 # free-floating task survives the member.
                 await self._reflection.shutdown()
             self.unsubscribe_all()
-            if self._capabilities is not None:
-                if self._capabilities.shell_service is not None:
-                    await self._capabilities.shell_service.shutdown()
+            if self._services is not None:
+                if self._services.shell_service is not None:
+                    await self._services.shell_service.shutdown()
                 # Shell tasks first (a background command may still be using
                 # the runtime), then the Docker client — its connection
                 # pool must not leak across sleep→wake re-assembly
                 # (docs/design/execution-device.md). A close failure is
                 # logged, never blocking.
-                docker_runtime = self._capabilities.docker_runtime
+                docker_runtime = self._services.docker_runtime
                 if docker_runtime is not None:
                     try:
                         docker_runtime.close()
@@ -666,8 +696,8 @@ class MemberRuntime(Member):
             member_id=self._member_id,
             on_operation=self._record_activity,
             on_control=self._apply_program_control,
-            token_budget=self._capabilities.config.llm.max_tokens
-            if self._capabilities and self._capabilities.config.llm
+            token_budget=self._services.config.llm.max_tokens
+            if self._services and self._services.config.llm
             else 4096,
         )
         try:
@@ -791,20 +821,20 @@ class MemberRuntime(Member):
             )
 
     async def _rescan_loop(self) -> None:
-        interval = (
-            self._capabilities.config.mail_rescan_interval_seconds if self._capabilities else 30
-        )
+        interval = self._services.config.mail_rescan_interval_seconds if self._services else 30
         while True:
             await asyncio.sleep(interval)
             await self._scan_unread_mail()
 
-    def _assemble_scheduler(self, caps: MemberCapabilities) -> None:
+    def _assemble_scheduler(self, caps: MemberServices) -> None:
         assert self._journal is not None
         registry = self._registry
 
         async def check_reflection() -> None:
             if self._reflection is not None:
-                await self._reflection.check_trigger()
+                scope = self._maintenance_execution("reflection")
+                with bind_execution(scope):
+                    await self._reflection.check_trigger()
 
         def note_interaction() -> None:
             if self._reflection is not None:
@@ -833,6 +863,8 @@ class MemberRuntime(Member):
             if registry
             else None,
             resume_invocation=self._resume_invocation,
+            execution_factory=self._session_execution,
+            maintenance_factory=self._maintenance_execution,
         )
 
     async def _run_session_effect(
@@ -876,8 +908,8 @@ class MemberRuntime(Member):
             dumps(None),
         )
 
-    def _assemble_session(self, caps: MemberCapabilities, recipe: SessionRecipe) -> LoopDriver:
-        """Assemble the session engine from capabilities — the injected
+    def _assemble_session(self, caps: MemberServices, recipe: SessionRecipe) -> LoopDriver:
+        """Assemble the session engine from services — the injected
         services, plain data, and closures over the event bus — never a
         back-reference to this runtime."""
         registry = caps.registry
@@ -954,7 +986,7 @@ class MemberRuntime(Member):
             spill=ToolSpill(caps.tlon_paths, self._member_id),
             # Context pressure relief (ADR 0008): same journal, the
             # model's context window — resolved to an int at assembly
-            # (ADR 0012 phase 2); the fallback covers capabilities built
+            # (ADR 0012 phase 2); the fallback covers services built
             # without assembly (tests), whose config.llm may be None.
             pressure=ContextPressure(
                 caps.llm_client,

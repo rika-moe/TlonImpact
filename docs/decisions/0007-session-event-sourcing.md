@@ -1,5 +1,7 @@
 # ADR 0007：Session 事件溯源——append-only 日志是 session 的唯一真相
 
+> P4b 当前说明：程序 output 根保持获准输出预留不退款；session total 根统一覆盖 stage、压缩及工具内模型调用，按可靠 usage 结算，未知保留预留。ProgramStore 保存模型回执与额度事实，journal 只投影；预算与 UTC deadline 冻结，进程取消不是永久撤销。本文保留历史，现行契约见 [执行作用域](../design/execution-scope.md)。
+
 > P4a 当前说明：session journal 保留会话历史；DSL 与模型 Tool 的叶子操作提交统一由 ProgramStore roots/invocations 判定，state 与同次回执原子提交。恢复核对构建和契约指纹，未知非幂等写不自动重做。本文保留历史决策，现行边界见 [调用恢复](../design/invocation-recovery.md)。
 
 > 阅读定位：本文保留当时的选择与理由；当前设计见 [runtime](../design/runtime.md)。当前适用范围：事件溯源保留；session 身份/触发语由 ADR 0028 修订，JSONL 物理存储由 ADR 0032 替代。完整关系见 [决策索引](README.md)。

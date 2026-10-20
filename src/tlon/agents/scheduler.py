@@ -2,6 +2,8 @@
 
 import asyncio
 import contextlib
+import hashlib
+import json
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractContextManager
@@ -13,9 +15,16 @@ from tlon.agents.member_spec import SessionRecipe
 from tlon.agents.session import AgentSession, SessionState
 from tlon.agents.session_journal import SessionJournal, SessionReplay
 from tlon.base.config import AgentConfig
+from tlon.base.execution import (
+    ExecutionScope,
+    UnknownModelOutcomeError,
+    bind_execution,
+    current_execution,
+)
 from tlon.base.llm_client import ToolCall
 from tlon.base.logger import get_logger
 from tlon.memory.manager import MemoryManager
+from tlon.operations.schema import UnknownOutcomeError
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.base import ToolResult
@@ -44,6 +53,8 @@ class SessionScheduler:
         state_changed: Callable[[], Awaitable[None]] | None = None,
         apply_scheduling_request: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
         resume_invocation: Callable[[AgentSession], Awaitable[None]] | None = None,
+        execution_factory: Callable[[str, SessionRecipe], Awaitable[ExecutionScope]] | None = None,
+        maintenance_factory: Callable[[str], ExecutionScope] | None = None,
     ) -> None:
         self._config = config
         self._id = config.id
@@ -58,6 +69,9 @@ class SessionScheduler:
         self._state_changed = state_changed
         self._apply_scheduling_request = apply_scheduling_request
         self._resume_invocation = resume_invocation
+        self._execution_factory = execution_factory
+        self._maintenance_factory = maintenance_factory
+        self._execution_scope: ExecutionScope | None = None
         self._session: AgentSession | None = None
         self._loop_driver: LoopDriver | None = None
         self._maintenance_running = False
@@ -82,6 +96,10 @@ class SessionScheduler:
             self._worker_task.result()
 
     async def stop(self) -> None:
+        if self._execution_scope is not None:
+            self._execution_scope.cancel()
+        if self._session is not None:
+            await self._session.cancel_pending()
         if self._worker_task is not None:
             self._worker_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -166,8 +184,23 @@ class SessionScheduler:
         carrier: dict[str, str | None] | None,
         invocation: dict[str, Any],
     ) -> None:
+        effect = invocation.get("program_effect")
+        if effect is not None:
+            key = json.dumps([effect["run_id"], effect["index"]], separators=(",", ":"))
+            session_id = f"{self._id}-program-{hashlib.sha256(key.encode()).hexdigest()[:24]}"
+            replay = await self._journal.resume(session_id)
+            if replay is not None:
+                if replay.completed:
+                    return
+                frozen = SessionRecipe.from_edn(loads(replay.recipe_source))
+                await self._drive(
+                    await self._restore_session(replay), frozen, replay.pending_collect or None
+                )
+                return
+        else:
+            session_id = f"{self._id}-{uuid.uuid4().hex[:12]}"
         session = AgentSession(
-            f"{self._id}-{uuid.uuid4().hex[:12]}",
+            session_id,
             trigger,
             carrier=carrier,
             responsibility=responsibility,
@@ -178,6 +211,26 @@ class SessionScheduler:
         await self._drive(session, recipe)
 
     async def _drive(
+        self,
+        session: AgentSession,
+        recipe: SessionRecipe,
+        pending_collect: list[tuple[ToolCall, ToolResult]] | None = None,
+    ) -> None:
+        scope = (
+            await self._execution_factory(session.id, recipe)
+            if self._execution_factory
+            else current_execution()
+        )
+        self._execution_scope = scope
+        try:
+            with bind_execution(scope):
+                await self._drive_scoped(session, recipe, pending_collect)
+        finally:
+            if scope is not None and self._execution_factory is not None:
+                scope.cancel()
+            self._execution_scope = None
+
+    async def _drive_scoped(
         self,
         session: AgentSession,
         recipe: SessionRecipe,
@@ -202,6 +255,13 @@ class SessionScheduler:
                             await self._loop_driver.collect_session_results(session)
                         else:
                             await self._loop_driver.step_session(session)
+                except UnknownModelOutcomeError as error:
+                    raise UnknownOutcomeError(
+                        str(error),
+                        {"call_id": session.id, "outcome": "unknown", "retry_safe": False},
+                    ) from error
+                except UnknownOutcomeError:
+                    raise
                 except Exception as error:
                     logger.error(
                         "session_error", session_id=session.id, error=str(error), exc_info=True
@@ -320,7 +380,13 @@ class SessionScheduler:
         sessions stay pending because the watermark never advanced.
         """
         try:
-            claim_count = await self._memory.maybe_distill_completed_sessions(self._journal)
+            scope = (
+                self._maintenance_factory("distill")
+                if self._maintenance_factory
+                else current_execution()
+            )
+            with bind_execution(scope):
+                claim_count = await self._memory.maybe_distill_completed_sessions(self._journal)
         except Exception as e:
             logger.error("session_distillation_check_failed", error=str(e), exc_info=True)
             return

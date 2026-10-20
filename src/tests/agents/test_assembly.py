@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from tlon.agents.assembly import _build_llm_config, assemble_member_capabilities
+from tlon.agents.assembly import _build_llm_config, assemble_member_services
 from tlon.base.config import (
     DEFAULT_CONTEXT_WINDOW,
     AgentConfig,
@@ -168,7 +168,7 @@ class TestExecutionLevelAssembly:
             llm=LLMConfig(model_name="test/model"),
             docker=DockerRuntimeConfig(level=level),
         )
-        return await assemble_member_capabilities(
+        return await assemble_member_services(
             config,
             registry=None,  # type: ignore[arg-type]
             agent_info=_FakeAgentInfo({config.id: config}),  # type: ignore[arg-type]
@@ -254,7 +254,7 @@ async def test_real_assembly_evolution_writes_use_injected_paths(
         "tlon.agents.assembly.policy_solvency_provider", lambda _paths: AsyncMock(return_value=True)
     )
     monkeypatch.setattr("tlon.agents.assembly.find_near_kin", lambda *_args, **_kwargs: None)
-    caps = await assemble_member_capabilities(
+    caps = await assemble_member_services(
         config,
         registry=None,
         agent_info=_FakeAgentInfo({config.id: config}),

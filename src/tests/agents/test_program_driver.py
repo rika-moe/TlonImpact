@@ -1,6 +1,7 @@
 """Durable effects replay as values while unfinished work remains resumable."""
 
 import asyncio
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
@@ -11,6 +12,7 @@ from tlon.agents.member_spec import MemberRule, MemberSpec
 from tlon.agents.program_driver import ProgramDriver
 from tlon.agents.program_store import ProgramStore
 from tlon.agents.vocabulary import make_member_builtins
+from tlon.base.execution import ExecutionScope, current_execution
 from tlon.operations.adapters import DSLAdapter
 from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
 from tlon.operations.model import model_operation_definitions
@@ -124,14 +126,21 @@ async def test_token_budget_counts_recorded_calls_after_restart(store: ProgramSt
     allowances: list[int] = []
 
     async def execute(context: CallContext, args: dict[str, Any]) -> Any:
-        allowances.append(args["max_tokens"])
-        return {"content": "answer", "usage": {}}
+        scope = current_execution()
+        assert scope is not None
+
+        async def complete(allowance: int) -> dict[str, Any]:
+            allowances.append(allowance)
+            return {"content": "answer", "usage": {}}
+
+        return await scope.model_call(args, args["max_tokens"], complete)
 
     program = rule(" ".join('(model-call {:prompt "question" :max_tokens 4})' for _ in range(3)))
     for _ in range(2):
-        with pytest.raises(EvalError, match="budget exhausted"):
+        with pytest.raises(EvalError, match="allowance exhausted"):
             await driver(store, AsyncMock(), model=execute, token_budget=5).run(program, {})
     assert allowances == [4, 1]
+    assert store.budget_usage("run")["used"] == 5
 
 
 async def test_unrecorded_model_dispatch_is_not_repeated(store: ProgramStore) -> None:
@@ -167,3 +176,12 @@ async def test_unknown_host_runtime_error_retains_original_type(store: ProgramSt
             ),
             {},
         )
+
+
+async def test_expired_program_scope_stops_before_new_state_write(store: ProgramStore) -> None:
+    program = rule('(state-put {:key "after-deadline" :value true})')
+    running = driver(store, AsyncMock())
+    running.execution_scope = ExecutionScope(store, "run", 4096, "output", deadline=time.time() - 1)
+    with pytest.raises(EvalError, match="deadline exhausted"):
+        await running.run(program, {})
+    assert store.state_get("after-deadline") is None

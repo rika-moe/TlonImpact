@@ -43,6 +43,7 @@ architecture 区分规范与当前实现；design 负责当前领域模型和机
 
 - [统一操作与可组合行为](design/operations.md)：能力定义与 DSL/LLM 入口分离、共享执行、复合依赖及动态工具视图。
 - [分阶段实施计划](design/operations-plan.md)：两个串行 EPIC、分阶段独立 PR 任务及验收标准；方案已认可并获准开工 EPIC A，按阶段验收推进。
+- [执行作用域与共享额度](design/execution-scope.md)：P4b 预算预留、取消/截止、声明顺序与可重入写边界。
 - [调用记录与恢复](design/invocation-recovery.md)：P4a 唯一叶子回执、冻结身份、unknown 与会话重放边界。
 - [ADR 0044](decisions/0044-unified-operations.md)：接受方向与目标替代范围。上述目标不代替下方 reference 的当前机制。
 

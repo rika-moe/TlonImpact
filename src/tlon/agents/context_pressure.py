@@ -30,8 +30,15 @@ from typing import Any
 
 from tlon.agents.session import AgentSession
 from tlon.agents.session_journal import SessionJournal
+from tlon.base.execution import (
+    BudgetExceededError,
+    ExecutionDeadlineError,
+    UnknownModelOutcomeError,
+    current_execution,
+)
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
+from tlon.operations.schema import RecoveryMismatchError
 
 logger = get_logger(__name__)
 
@@ -177,6 +184,13 @@ class ContextPressure:
             if not summary_text:
                 raise ValueError("empty summary")
             message = {"role": "user", "content": f"{SUMMARY_MARKER}\n\n{summary_text}"}
+        except (
+            BudgetExceededError,
+            ExecutionDeadlineError,
+            UnknownModelOutcomeError,
+            RecoveryMismatchError,
+        ):
+            raise
         except Exception as e:
             logger.warning(
                 "context_summary_failed", session_id=session.id, error=str(e), exc_info=True
@@ -194,6 +208,7 @@ class ContextPressure:
         new_context: list[dict[str, Any]],
     ) -> None:
         """Journal the compaction, then mutate the session — never the reverse."""
+        scope = current_execution()
         await self._journal.append(
             session.id,
             "context/compact",
@@ -202,6 +217,7 @@ class ContextPressure:
             tokens_before=tokens_before,
             tokens_after=tokens_after,
             context=new_context,
+            execution_path=list(scope.path) if scope is not None else None,
         )
         session.context = new_context
         logger.info(

@@ -149,7 +149,7 @@ def make_adam(
         spec=spec,
         builtins=builtins,
         mailbox=Mailbox(tlon_paths.mail_database_file(), "adam"),
-        capabilities=None,
+        services=None,
         registry=agent_registry,
         tlon_paths=tlon_paths,
         post_office=post_office,

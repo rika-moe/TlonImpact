@@ -26,6 +26,10 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
 from tlon.base.config import LLMConfig
+from tlon.base.execution import (
+    ModelRequestRejectedError,
+    current_execution,
+)
 from tlon.base.ledger import LedgerWriter
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
@@ -34,13 +38,16 @@ from tlon.base.tracing.trace_context import start_span
 logger = get_logger(__name__)
 
 
-class ContextWindowExceededError(Exception):
+class ContextWindowExceededError(ModelRequestRejectedError):
     """The provider rejected the request because the context is too long.
 
     Raised instead of retrying (ADR 0008): a context-length 4xx can never
     succeed on retry — the engine (LoopDriver) catches it, force-compacts
     the session context, and retries the stage once.
     """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, "ContextWindowExceededError")
 
 
 #: Substrings (case-insensitive) that mark a provider error as a
@@ -270,6 +277,85 @@ class LLMClient:
         cache_prefix_len: int | None = None,
         max_tokens: int | None = None,
     ) -> LLMResponse:
+        scope = current_execution()
+        if scope is None:
+            return await self._chat_accounted(
+                system_prompt,
+                messages,
+                tools,
+                timeout,
+                purpose,
+                session_id,
+                cache_prefix_len,
+                max_tokens,
+            )
+        requested = (
+            min(self.config.max_tokens, max_tokens)
+            if max_tokens is not None
+            else self.config.max_tokens
+        )
+        request = {
+            "model": self.config.model_name,
+            "api_base": self.config.api_base,
+            "messages": [{"role": "system", "content": system_prompt}, *messages],
+            "tools": tools,
+            "timeout": timeout if timeout is not None else self.config.request_timeout,
+            "purpose": purpose,
+            "cache_prefix_len": cache_prefix_len,
+            "max_tokens": max_tokens,
+            "member_max_tokens": self.config.max_tokens,
+        }
+
+        async def execute(allowance: int) -> dict[str, Any]:
+            response = await self._chat_accounted(
+                system_prompt,
+                messages,
+                tools,
+                timeout,
+                purpose,
+                session_id,
+                cache_prefix_len,
+                allowance,
+            )
+            return response.to_dict()
+
+        try:
+            estimated_input = (
+                litellm.token_counter(
+                    model=self.config.model_name or "",
+                    messages=request["messages"],
+                )
+                + (
+                    litellm.token_counter(
+                        model=self.config.model_name or "",
+                        text=json.dumps(tools, ensure_ascii=False, separators=(",", ":")),
+                    )
+                    if tools
+                    else 0
+                )
+                if scope.measure == "total"
+                else 0
+            )
+            response = await scope.model_call(
+                request, requested, execute, estimated_input=estimated_input
+            )
+        except ModelRequestRejectedError as error:
+            if error.error_type == "ContextWindowExceededError":
+                raise ContextWindowExceededError(str(error)) from error
+            raise
+        return LLMResponse.from_dict(response)
+
+    async def _chat_accounted(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        timeout: float | None = None,
+        purpose: str | None = None,
+        session_id: str | None = None,
+        cache_prefix_len: int | None = None,
+        max_tokens: int | None = None,
+    ) -> LLMResponse:
         """Send a chat completion request with retry logic.
 
         Args:
@@ -341,13 +427,16 @@ class LLMClient:
                     span.set_attribute("llm.usage.completion_tokens", completion_tokens)
                 span.set_attribute("llm.usage.cached_tokens", cached_tokens)
                 span.set_attribute("llm.usage.cache_write_tokens", cache_write_tokens)
-                await self._record_usage(
-                    response,
-                    purpose=purpose,
-                    session_id=session_id,
-                    duration_ms=duration_ms,
-                    cpu_ms=cpu_ms,
-                )
+                try:
+                    await self._record_usage(
+                        response,
+                        purpose=purpose,
+                        session_id=session_id,
+                        duration_ms=duration_ms,
+                        cpu_ms=cpu_ms,
+                    )
+                except Exception as error:
+                    logger.warning("ledger_append_failed", error=str(error))
 
             logger.info(
                 "llm_response",
@@ -480,6 +569,8 @@ class LLMClient:
                 return self._parse_response(response)
 
             except RateLimitError as e:
+                if current_execution() is not None:
+                    raise ModelRequestRejectedError(str(e), type(e).__name__) from e
                 # Rate limit - retry with backoff
                 last_error = e
                 logger.warning(
@@ -490,6 +581,8 @@ class LLMClient:
                 )
 
             except Timeout as e:
+                if current_execution() is not None:
+                    raise
                 # Timeout - retry (litellm's Timeout subclasses openai's
                 # APITimeoutError; litellm has no APITimeoutError of its own)
                 last_error = e
@@ -501,6 +594,8 @@ class LLMClient:
                 )
 
             except APIConnectionError as e:
+                if current_execution() is not None:
+                    raise
                 # Connection error - retry (must come before APIError, its parent class)
                 last_error = e
                 logger.warning(
@@ -522,9 +617,13 @@ class LLMClient:
                     logger.error("llm_context_window_exceeded", error=str(e))
                     raise ContextWindowExceededError(str(e)) from e
                 logger.error("llm_error", error=str(e))
+                if current_execution() is not None:
+                    raise ModelRequestRejectedError(str(e), type(e).__name__) from e
                 raise
 
             except APIError as e:
+                if current_execution() is not None:
+                    raise
                 # API error - may be transient, retry
                 last_error = e
                 logger.warning(
