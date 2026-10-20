@@ -25,7 +25,7 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 
 生命周期、邮件、模型、状态与其他领域操作通过 DSLAdapter 的 BuiltinCall 进入同一 OperationExecutor，结果由 ProgramStore 记录。只有 `run-loop` 保留 ActionRequest，交由宿主会话执行器运行配方。旧 spawn/start/stop/start-all 入口已由 member-spawn/start/stop/start-all 命名参数操作替代。
 
-生产程序使用可暂停求值内核，函数、条件和传统循环中的效果都在各自调用处执行，返回值可绑定到 `let` 或用于 `if`。同步入口和 collector 可分析效果意图；ADR 0042 中先完整求值再执行的生产流程由 [ADR 0043](../decisions/0043-newspaper-member-workflow.md) 替代。完整恢复边界见 [runtime](runtime.md)。
+生产程序使用可暂停求值内核，函数、条件和传统循环中的效果都在各自调用处执行，返回值可绑定到 `let` 或用于 `if`。同步入口和 collector 可分析效果意图；ADR 0042 中先完整求值再执行的生产流程由 [ADR 0043](../decisions/0043-newspaper-member-workflow.md) 替代。完整恢复边界见 [调用恢复](invocation-recovery.md) 与 [runtime](runtime.md)。P4a 统一两入口叶子操作回执到 ProgramStore，run-loop 和旧宿主查询仍沿用 effects；不将这些桥接查询误称为已经完成 Operation 化。
 
 | 效果 | 返回值与边界 |
 | --- | --- |

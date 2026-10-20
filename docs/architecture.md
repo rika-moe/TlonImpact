@@ -97,7 +97,8 @@ serving 侧在 facade 上装配客户端会话、通知服务、通讯录和 HTT
 | 模型与执行配置 | 成员 `agent.yaml` | 原型实例化可投影初始配置；运行时授权不随成员自改 spec 提升 |
 | 主观身份与联系簿 | 成员配置文件 | 与客观地址、行为约束分开；各文件写权限见 identity |
 | 邮件、归属、已读、请求幂等 | 共享 `mail.sqlite3`，邮局负责写入 | Mailbox 是成员视图；SSE/EventBus 是通知，不是账本 |
-| Session 事件与生命周期 | 每成员 `sessions.sqlite3` | journal 重放不重新执行副作用；旧 JSONL 仅作离线档案 |
+| Session 事件与生命周期 | 每成员 `sessions.sqlite3` | journal 保存模型历史与推进协议；操作提交核对 ProgramStore，旧 JSONL 仅作离线档案 |
+| 根调用与操作回执 | 每成员 `program.sqlite3` 的 roots/invocations | DSL 与模型 Tool 共用；核对路径、参数、定义与构建指纹，state 与同次回执原子提交 |
 | 长期记忆 | 成员 `claims.jsonl` | 追加优先但允许删除/重写；向量索引可重建，主动写入的 claim 不能笼统视作 journal 的可重建副本 |
 | 原型与能力 | 受信库、staging 库 | 提案经准入后使用；评审和演武报告是证据，不自动批准 |
 | 社会政策 | `policy.tlon` 与内嵌默认政策 | 宿主物化事实后求值；可写身份与失败处理见 society-policy |
@@ -116,9 +117,9 @@ serving 侧在 facade 上装配客户端会话、通知服务、通讯录和 HTT
 
 ## 已落地的共享操作边界
 
-邮件、文件、Shell、时间的 Operation 保存唯一输入/输出 schema，由 DSLAdapter 和 OperationTool 投影为两种入口。成员作用域服务负责领域行为；工具协议层不保存第二份邮件规则或 Shell 任务表。文件与执行等级在领域执行时检查；在本次切换的装置与时间域，L0 可读时间、L1 加文件、L2 加 Shell，邮件及其他非装置操作沿各自既有约束装配。程序的非幂等写入沿用 ProgramStore intent/result 恢复，模型会话沿用 journal，结果不明保留 unknown。
+邮件、文件、Shell、时间的 Operation 保存唯一输入/输出 schema，由 DSLAdapter 和 OperationTool 投影为两种入口。成员作用域服务负责领域行为；工具协议层不保存第二份邮件规则或 Shell 任务表。文件与执行等级在领域执行时检查；在本次切换的装置与时间域，L0 可读时间、L1 加文件、L2 加 Shell，邮件及其他非装置操作沿各自既有约束装配。P4a 将两入口的叶子操作 intent 与回执统一到 ProgramStore；session journal 负责会话历史，结果不明保留 unknown。
 
 完整目标与尚未实现的动态工具视图、复合操作及统一预算见[实施计划](design/operations-plan.md)；当前调用契约见[Operation reference](reference/operations-reference.md)。
 
 
-P3b 已将记忆/会话回读、任务、人格/联系人、只读观测及 state-get/state-put 接入相同 Operation 目录。成员身份由宿主绑定，操作输入不能改写拥有者；公开观察与私有资源保持各自边界。state-put 的两入口复用同一 ProgramStore 原子状态及效果记录，TaskManager 已移至 `tlon.tasks`。P3c 继续统一生命周期、模型和提案操作并删除旧 Tool 机制；统一预算/通用恢复仍属于 P4。
+P3b 已将记忆/会话回读、任务、人格/联系人、只读观测及 state-get/state-put 接入相同 Operation 目录。成员身份由宿主绑定，操作输入不能改写拥有者；公开观察与私有资源保持各自边界。state-put 的两入口复用同一 ProgramStore 原子状态及 invocation 回执，TaskManager 已移至 `tlon.tasks`。P3c 已通过 #188 合并，统一生命周期、模型和提案操作并删除旧 Tool 机制。P4a 固定调用身份、契约与构建指纹，恢复拒绝漂移与旧格式；当前边界见 [调用恢复](design/invocation-recovery.md)。共享根预算、取消/截止时间、成员写排序、旧宿主查询收敛与 MemberServices 改名留给 P4b。

@@ -1,5 +1,7 @@
 # ADR 0007：Session 事件溯源——append-only 日志是 session 的唯一真相
 
+> P4a 当前说明：session journal 保留会话历史；DSL 与模型 Tool 的叶子操作提交统一由 ProgramStore roots/invocations 判定，state 与同次回执原子提交。恢复核对构建和契约指纹，未知非幂等写不自动重做。本文保留历史决策，现行边界见 [调用恢复](../design/invocation-recovery.md)。
+
 > 阅读定位：本文保留当时的选择与理由；当前设计见 [runtime](../design/runtime.md)。当前适用范围：事件溯源保留；session 身份/触发语由 ADR 0028 修订，JSONL 物理存储由 ADR 0032 替代。完整关系见 [决策索引](README.md)。
 
 状态：已接受（2026-08-22，方向讨论拍板；同日实施）

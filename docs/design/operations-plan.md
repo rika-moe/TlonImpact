@@ -1,6 +1,6 @@
 # 统一操作：分阶段实施计划
 
-状态：2026-10-19 完整方案已认可；用户已授权创建分支、提交设计 PR 并开工 EPIC A。P1 最小契约已通过 #184 合并 main；P2 邮件双入口切换已通过 #185 合并 main；P3a 已通过 #186 合并 main；P3b 已通过 #187 合入 main；P3c 正在实现与验证，合并仍由人类确认。
+状态：2026-10-19 完整方案已认可；用户已授权创建分支、提交设计 PR 并开工 EPIC A。P1 最小契约已通过 #184 合并 main；P2 邮件双入口切换已通过 #185 合并 main；P3a 已通过 #186 合并 main；P3b 已通过 #187 合入 main；P3c 已通过 #188 合并 main；P4a 正在实现与验证，合并仍由人类确认。
 
 设计权威：[operations](operations.md)；决策：[ADR 0044](../decisions/0044-unified-operations.md)。代码基线为 `d35c3a546a5e3dacef331b5d39d3e1cc7efd4e9a`。GitHub 跟踪链接见本文末尾；Issue/PR 负责验收证据，不复制一份持续漂移的设计。
 
@@ -196,10 +196,10 @@ EPIC B 完成标准：目标设计完成；工具只是入口，复合能力可�
 ## 6. GitHub 跟踪
 
 - [总 EPIC #179](https://github.com/rika-moe/TlonImpact/issues/179)：完整设计文字与两阶段跟踪。
-- [EPIC A #180](https://github.com/rika-moe/TlonImpact/issues/180)：P1、P2、P3a/P3b/P3c、P4，六个串行 PR。
+- [EPIC A #180](https://github.com/rika-moe/TlonImpact/issues/180)：P1、P2、P3a/P3b/P3c、P4a/P4b，七个串行 PR。
 - [EPIC B #181](https://github.com/rika-moe/TlonImpact/issues/181)：依赖 A，P5-P8，四个串行 PR。
 
-P1 已通过 [#184](https://github.com/rika-moe/TlonImpact/pull/184) 合并 main。P2 已通过 [#185](https://github.com/rika-moe/TlonImpact/pull/185) 合并 main。P3a 已通过 #186 合并 main；P3b 已通过 #187 合入 main；P3c 已通过本地验收，待 PR 审查合并；P4-P8 未实施。关联的 [#173](https://github.com/rika-moe/TlonImpact/issues/173) 继续保留为长期工作方式/习惯学习方向，本计划不将其一并关闭。
+P1 已通过 [#184](https://github.com/rika-moe/TlonImpact/pull/184) 合并 main。P2 已通过 [#185](https://github.com/rika-moe/TlonImpact/pull/185) 合并 main。P3a 已通过 #186 合并 main；P3b 已通过 #187 合入 main；P3c 已通过 #188 合并 main；P4a 正在实现与验证，P4b-P8 未实施。关联的 [#173](https://github.com/rika-moe/TlonImpact/issues/173) 继续保留为长期工作方式/习惯学习方向，本计划不将其一并关闭。
 
 ## P3a 实施细化（2026-10-20）
 
@@ -243,3 +243,23 @@ P3c 边界细化：DSL 控制请求仅允许规则唯一的直接动作，参数
 ### P3c 本地验收（2026-10-20）
 
 主会话亲自审 diff，独立交叉审查无新增阻塞。完整 `bash scripts/check_all.sh` 14/14 全绿：单元 2533 passed / 15 skipped，集成 34 passed，前端检查/构建、类型、依赖、打包及文档新鲜度通过。最后同步 Capability 提示词的可封装词表，额外 48 项起草/控制回归通过；提示词锚定真实准入注册表。真实隔离 dream + SDK 邮件链核对生命周期目录、原型写入/谱系、作者、未审批状态、回信及持久化 sleep，finish 通过，数据与进程清理、8080 无残留。模型双入口通过真实 LLMClient ledger 路径加 fake provider 验证原成员归属，未调用真实模型服务；SDK 显式携带服务端标头。初轮类型标注与测试接线问题已修复，以最终质量门为准。默认仍由人类合并，P4 尚未开工。
+
+## P4 实施切片（2026-10-20，#188 合并后）
+
+代码审计确认 P4 同时跨操作提交、程序重放、会话恢复，以及三处模型调用/多种预算计量。按第 1 节允许的实施前切片原则，拆为两个严格串行 PR，不把未落地的一半称为 P4 完成：
+
+- **P4a：调用记录与恢复权威**（本次）：OperationExecutor 统一两入口的叶子 lookup/begin/commit；ProgramStore 保存稳定 root/path/call_id、规范化输入、契约与宿主构建指纹、结果或结构化错误；state-put 与同一 invocation 行原子提交。session journal 仍记录交互，dispatch 保存调用引用，恢复查询 ProgramStore，修复操作已提交但 tool/result 未写入时误报 interrupted。程序与会话在恢复之前核对构建身份。已提交 read 重放原采样；未提交 read 可重采样；幂等写只使用原键重试，其他 intent 无回执保持 unknown。输出契约错误保留原回执及错误，不重做效果。旧调用格式明确拒绝，不做 migration 或清库。
+- **P4b：共享预算、取消与并发边界**（P4a 合并后）：根调用统一预算/取消/截止时间，覆盖 stage、压缩与嵌套 model-call，预留原子化、恢复不重置；成员写按声明顺序串行并允许同一持锁上下文重入；删除 _HOST_QUERIES 的 pure 重写，MemberCapabilities 改名 MemberServices。P4a 保留当前预算、并发和服务名称，不提前声称这些保证。
+
+P4a 的记录位于原 ProgramStore SQLite，不增加另一套交互日志。纯计算不写叶子记录；run-loop 的程序生命周期结果仍由原 effects 记录负责，不和操作回执重复。宿主指纹保守覆盖 tlon/tlosure 运行代码、锁定依赖指纹、已安装依赖版本；操作契约另存内容指纹。根创建时冻结、恢复先核对，失配明确拒绝；不加载旧宿主实现。相同 root/path 不能换参数、名称或契约，编号不能依赖完成先后。
+
+P4a 验收：DSL/Tool 对同一协议都以 ProgramStore 的真实回执恢复；dispatch/result/collect 各故障窗口不重复已提交写入；两个根反序完成互不污染；state 与回执同事务；已提交历史不重新授权；普通失败与 unknown、输出违约原回执均可重放；宿主/契约失配在任何新执行前拒绝。完整质量门与真实 dream/SDK 冒烟通过后交付独立面向 main 的 PR。P4 总清单仅在 P4a/P4b 均合并验收后勾选。
+
+预算审计另确认：session 现按实际 total usage 计量，程序按 requested output allowance 计量；现有 tokenizer 估算不能证明 prompt token 的硬上界。P4b 必须明确预留与实际结算的关系，不宣称 provider 实际 total 永远不会越过未精确测量的预留。
+
+
+### P4a 本地验收（2026-10-20）
+
+主会话审 diff 并亲自重跑完整 `bash scripts/check_all.sh`：15/15 全绿，单元 2594 passed / 15 skipped，集成 34 passed。新增依赖指纹新鲜度检查接入同一质量门及打包流程；前端测试/build、类型、依赖、reference 与 wheel 检查通过。交叉审查发现未知 Tool 的孤立 dispatch 缺少冻结元数据，已修复并新增 7 项回归。报纸工作流重放暴露输出 map 排序改变后续 prompt 的问题，已改为只规范化输入身份、保留输出顺序，并通过 8 项真实工作流集成测试。初轮导入排序失败已修正，以最终全量全绿结果为准。
+
+真实隔离 dream + SDK 邮件链覆盖生命周期目录、原型提案、作者与未审批状态、回信、finish 与持久化 sleep；直接核对 SQLite 的 12 条唯一 invocation 回执、根/契约指纹和状态值，确认没有重复的 Operation effects 记录。服务、临时数据清理且 8080 无残留。故障/恢复覆盖由 fake provider 与可重复提交窗口注入验证，未调用真实模型服务；SDK 显式携带服务端要求的标头。当前只交付 P4a，P4b 及 P4 总项保持未完成，PR 面向 main，仍由人类合并。

@@ -12,6 +12,7 @@ from tlon.agents.vocabulary import make_member_builtins
 from tlon.base.config import LLMConfig
 from tlon.base.llm_client import LLMClient
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.invocation import Invocation
 from tlon.operations.model import make_model_operations
 from tlon.operations.schema import ReplayConflictError
 from tlon.organization.mail.mail import Mail
@@ -37,27 +38,32 @@ def test_store_freezes_inputs_and_rejects_effect_drift(tmp_path: Path, disk: boo
     store.close()
 
 
-def test_state_and_effect_commit_together_and_replay_does_not_overwrite(
-    tmp_path: Path, monkeypatch
+def test_state_and_invocation_commit_together_and_replay_does_not_overwrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "program.sqlite3"
-    store = ProgramStore(path)
-    store.ensure("r", "source", "input")
-    store.atomic_state_put_record("r", 0, "state-put", '["key" 1]', "key", 1)
-    original_record = store._record
+    store = ProgramStore(path, build_id="build")
+    first = Invocation(
+        "c1", "r", ("0",), "state-put", '{"key":"key","value":1}', "definition", "build"
+    )
+    second = Invocation(
+        "c2", "r", ("1",), "state-put", '{"key":"key","value":3}', "definition", "build"
+    )
+    store.atomic_state_put(first, "key", 1)
+    original_record = store._commit
 
-    def fail_record(*args):
+    def fail_record(*args: object) -> None:
         raise OSError("journal disk error")
 
-    monkeypatch.setattr(store, "_record", fail_record)
+    monkeypatch.setattr(store, "_commit", fail_record)
     with pytest.raises(OSError, match="journal"):
-        store.atomic_state_put_record("r", 1, "state-put", '["key" 2]', "key", 2)
-    restarted = ProgramStore(path)
+        store.atomic_state_put(second, "key", 3)
+    restarted = ProgramStore(path, build_id="build")
     assert restarted.state_get("key") == 1
-    assert restarted.get_effect("r", 1, "state-put", '["key" 2]') == (False, None)
-    monkeypatch.setattr(store, "_record", original_record)
-    store.atomic_state_put_record("r", 1, "state-put", '["key" 3]', "key", 3)
-    assert restarted.atomic_state_put_record("r", 0, "state-put", '["key" 1]', "key", 1) == 1
+    assert restarted.lookup_invocation(second) is None
+    monkeypatch.setattr(store, "_commit", original_record)
+    store.atomic_state_put(second, "key", 3)
+    assert restarted.atomic_state_put(first, "key", 1) == 1
     assert restarted.state_get("key") == 3
 
 
@@ -72,7 +78,7 @@ async def test_llm_effect_keeps_system_prompt_and_disables_tools() -> None:
     system = AsyncMock(return_value="identity + rules + protocol")
     executor = OperationExecutor(
         OperationRegistry(make_model_operations(client, system)),
-        CallContext("a", "run", "call", effect_index=0),
+        CallContext("a", "run", "call"),
     )
     result = await executor.call("model-call", {"prompt": "source data", "max_tokens": 12})
     assert result["usage"]["completion_tokens"] == 4
@@ -116,7 +122,19 @@ def test_failed_run_is_terminal_without_erasing_committed_facts(tmp_path: Path, 
     database = tmp_path / "program.sqlite3" if disk else None
     store = ProgramStore(database)
     store.ensure("bad", "original", "input")
-    store.atomic_state_put_record("bad", 0, "state-put", '["key" 1]', "key", 1)
+    store.atomic_state_put(
+        Invocation(
+            "state",
+            "bad",
+            ("0",),
+            "state-put",
+            '{"key":"key","value":1}',
+            "definition",
+            store.build_id,
+        ),
+        "key",
+        1,
+    )
     receipt = '{:status "accepted" :mail_id "real-committed-mail"}'
     store.record_effect("bad", 1, "mail-send", '[{:request_id "stable"}]', receipt)
     store.fail("bad", "division by zero")
@@ -180,6 +198,11 @@ def test_durable_effect_identity_and_results_have_typed_conflicts(
     store.record_effect("r", 0, "read", "[]", "1")
     with pytest.raises(ReplayConflictError):
         store.record_effect("r", 0, "read", "[]", "2")
-    assert store.claim_intent("r", 1, "write", "[]")
-    with pytest.raises(ReplayConflictError):
-        store.claim_intent("r", 1, "write", "[1]")
+    call = Invocation("write", "r", ("1",), "write", "{}", "definition", store.build_id)
+    assert store.begin_invocation(call)
+    from dataclasses import replace
+
+    from tlon.operations.schema import RecoveryMismatchError
+
+    with pytest.raises(RecoveryMismatchError):
+        store.begin_invocation(replace(call, arguments_json='{"x":1}'))

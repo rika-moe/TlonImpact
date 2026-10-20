@@ -13,6 +13,7 @@ from tlon.agents.vocabulary import make_member_builtins
 from tlon.base.config import AgentConfig, DockerRuntimeConfig, LLMConfig
 from tlon.base.events.event_bus import EventBus
 from tlon.base.paths import TlonPaths
+from tlon.operations.core import CallContext
 from tlon.operations.filesystem import make_filesystem_operations
 from tlon.operations.shell import make_shell_operations
 from tlon.operations.time import time_operation_definitions
@@ -66,9 +67,17 @@ async def test_member_program_and_model_share_file_contract(tmp_path: Path) -> N
         await member._run_rule_body(member.spec.rules[0], None, run_id="device-run")
         assert member._program_store.state_get("seen") == "共享内容"
         executor = member._capabilities.tool_executor
-        result = await executor.execute("file-read", {"file_path": "shared.txt"})
+        result = await executor.execute(
+            "file-read",
+            {"file_path": "shared.txt"},
+            CallContext("device-member", "manual", "read", origin="tool"),
+        )
         assert result.success and result.data["content"] == "共享内容"
-        assert (await executor.execute("time-now", {})).success
+        assert (
+            await executor.execute(
+                "time-now", {}, CallContext("device-member", "manual", "time", origin="tool")
+            )
+        ).success
         assert not (
             await executor.execute(
                 "file-write", {"file_path": "other", "content": "bad", "member_id": "victim"}
@@ -108,7 +117,9 @@ async def test_shutdown_drains_shell_before_close_and_wake_has_new_handles(tmp_p
     awakened = member_at(tmp_path, new_device, "", new_shell)
     try:
         result = await awakened._capabilities.tool_executor.execute(
-            "shell-check", {"task_id": started.data["task_id"]}
+            "shell-check",
+            {"task_id": started.data["task_id"]},
+            CallContext("device-member", "after-wake", "check", origin="tool"),
         )
         assert not result.success
         new_device.run.assert_not_called()

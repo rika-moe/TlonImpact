@@ -32,7 +32,9 @@ def rule(source: str) -> MemberRule:
 
 def executor(store: ProgramStore, member: str = "a") -> OperationExecutor:
     return OperationExecutor(
-        OperationRegistry(make_state_operations(store)), CallContext(member, "session", "call-1")
+        OperationRegistry(make_state_operations(store)),
+        CallContext(member, "session", "call-1"),
+        store,
     )
 
 
@@ -49,7 +51,10 @@ async def test_tool_and_dsl_share_member_state_and_exact_key_spelling(tmp_path: 
     await ProgramDriver(
         store, "program", adapter.builtins(), AsyncMock(), operations=adapter, member_id="a"
     ).run(program, {})
-    assert await scope.call("state-get", {"key": "copied"}) == value
+    assert (
+        await scope.call("state-get", {"key": "copied"}, CallContext("a", "session", "read-copy"))
+        == value
+    )
     assert store.state_get("copied")[Keyword("snake_key")][-1] == {Keyword("kebab-key"): "ok"}
     other = executor(ProgramStore(tmp_path / "other.sqlite"), "b")
     assert await other.call("state-get", {"key": "state"}) is None
@@ -76,21 +81,21 @@ async def test_program_transaction_failure_rolls_back_and_can_retry(
 ) -> None:
     store = ProgramStore(tmp_path / "state.sqlite")
     scope = executor(store)
-    context = CallContext(
-        "a", "run", "program:run:0:state-put", effect_index=0, arguments_edn='[{:key "x" :value 1}]'
-    )
-    original = store._record
+    context = CallContext("a", "run", "program:run:0:state-put", call_path=("0",))
+    original = store._commit
 
     def fail(*args: object) -> None:
-        raise OSError("record failure")
+        if args[1].success:
+            raise OSError("record failure")
+        original(*args)
 
-    monkeypatch.setattr(store, "_record", fail)
+    monkeypatch.setattr(store, "_commit", fail)
     with pytest.raises(UnknownOutcomeError, match="record failure"):
         await scope.call("state-put", {"key": "x", "value": 1}, context)
     restarted = ProgramStore(store.database)
     assert restarted.state_get("x") is None
-    assert restarted.get_effect("run", 0, "state-put", context.arguments_edn) == (False, None)
-    monkeypatch.setattr(store, "_record", original)
+    assert not restarted._effects
+    monkeypatch.setattr(store, "_commit", original)
     assert await scope.call("state-put", {"key": "x", "value": 1}, context) == 1
     assert restarted.state_get("x") == 1
 
@@ -104,25 +109,22 @@ async def test_post_commit_response_loss_does_not_rewrite_on_restart(
         "a",
         "run",
         "program:run:0:state-put",
-        effect_index=0,
-        arguments_edn='[{:key "x" :value {:snake_key true}}]',
+        call_path=("0",),
     )
-    original = store.atomic_state_put_record
+    original = store.atomic_state_put
 
     def lost(*args: object) -> object:
         original(*args)
         raise OSError("response lost")
 
-    monkeypatch.setattr(store, "atomic_state_put_record", lost)
-    with pytest.raises(UnknownOutcomeError, match="response lost") as failure:
-        await scope.call("state-put", {"key": "x", "value": {"snake_key": True}}, context)
-    assert failure.value.data == {
-        "call_id": context.call_id,
-        "outcome": "unknown",
-        "retry_safe": True,
+    monkeypatch.setattr(store, "atomic_state_put", lost)
+    assert await scope.call("state-put", {"key": "x", "value": {"snake_key": True}}, context) == {
+        "snake_key": True
     }
     restarted = ProgramStore(store.database)
-    restarted.atomic_state_put_record("later", 0, "state-put", "[]", "x", 9)
+    await executor(restarted).call(
+        "state-put", {"key": "x", "value": 9}, CallContext("a", "session", "later")
+    )
     assert await executor(restarted).call(
         "state-put", {"key": "x", "value": {"snake_key": True}}, context
     ) == {"snake_key": True}
@@ -142,7 +144,7 @@ async def test_input_cannot_inject_context_or_non_json(arguments: dict[str, obje
     store = ProgramStore(None)
     with pytest.raises(InputError):
         await executor(store).call("state-put", arguments)
-    assert not store._effects and not store._intents and not store._state
+    assert not store._effects and not store._invocations and not store._state
 
 
 def test_boolean_schema_is_explicit_and_input_root_stays_closed() -> None:
@@ -170,7 +172,7 @@ async def test_invalid_program_input_does_not_claim_intent() -> None:
         await ProgramDriver(
             store, "program", adapter.builtins(), AsyncMock(), operations=adapter, member_id="a"
         ).run(program, {})
-    assert not store._effects and not store._intents and not store._state
+    assert not store._effects and not store._invocations and not store._state
 
 
 async def test_false_schema_rejects_even_json_values() -> None:
@@ -213,37 +215,47 @@ async def test_dynamic_json_keys_survive_sqlite_state_and_program_replay(tmp_pat
     original = {"a@tlon.internal": {"": 1, "中文": "ok", "two words": True}}
     await executor(store).call("state-put", {"key": "delivered", "value": original})
     restarted = ProgramStore(store.database)
-    assert await executor(restarted).call("state-get", {"key": "delivered"}) == original
+    assert (
+        await executor(restarted).call(
+            "state-get", {"key": "delivered"}, CallContext("a", "session", "read-original")
+        )
+        == original
+    )
     adapter = DSLAdapter(executor(restarted))
     program = rule('(state-put {:key "copy" :value (state-get {:key "delivered"})})')
     await ProgramDriver(
         restarted, "program", adapter.builtins(), AsyncMock(), operations=adapter, member_id="a"
     ).run(program, {})
-    assert await executor(restarted).call("state-get", {"key": "copy"}) == original
+    assert (
+        await executor(restarted).call(
+            "state-get", {"key": "copy"}, CallContext("a", "session", "read-copy")
+        )
+        == original
+    )
 
 
-async def test_tool_executor_preserves_unknown_receipt_and_safe_same_call_retry(
+async def test_tool_executor_recovers_committed_receipt_and_safe_same_call_retry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = ProgramStore(tmp_path / "tool.sqlite")
     scope = executor(store)
     tools = ToolExecutor()
     tools.register_tool(OperationTool(scope, "state-put"))
-    original = store.atomic_state_put_record
+    original = store.atomic_state_put
 
     def lost(*args: object) -> object:
         original(*args)
         raise OSError("response lost after commit")
 
-    monkeypatch.setattr(store, "atomic_state_put_record", lost)
+    monkeypatch.setattr(store, "atomic_state_put", lost)
     context = CallContext("a", "session", "session:s:call-1")
     arguments = {"key": "x", "value": 1}
     result = await tools.execute("state-put", arguments, context)
-    assert not result.success
-    assert result.data == {"call_id": context.call_id, "outcome": "unknown", "retry_safe": True}
-    assert "UnknownOutcomeError" in result.error
+    assert result.success and result.data == 1
     restarted = ProgramStore(store.database)
-    restarted.atomic_state_put_record("new", 0, "state-put", "[]", "x", 2)
+    await executor(restarted).call(
+        "state-put", {"key": "x", "value": 2}, CallContext("a", "session", "new")
+    )
     replay_tools = ToolExecutor()
     replay_tools.register_tool(OperationTool(executor(restarted), "state-put"))
     replay = await replay_tools.execute("state-put", arguments, context)
@@ -251,21 +263,19 @@ async def test_tool_executor_preserves_unknown_receipt_and_safe_same_call_retry(
     assert restarted.state_get("x") == 2
     conflict = await replay_tools.execute("state-put", {"key": "x", "value": 3}, context)
     assert not conflict.success and not conflict.data
-    assert "OperationError" in conflict.error and "unknown" not in conflict.error
+    assert "RecoveryMismatchError" in conflict.error and "unknown" not in conflict.error
 
 
-async def test_value_error_after_commit_is_unknown_not_replay_conflict(
+async def test_value_error_after_commit_recovers_authoritative_receipt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = ProgramStore(tmp_path / "value-error.sqlite")
-    original = store.atomic_state_put_record
+    original = store.atomic_state_put
 
     def lost(*args: object) -> object:
         original(*args)
         raise ValueError("Program replay effect name/arguments changed")
 
-    monkeypatch.setattr(store, "atomic_state_put_record", lost)
-    with pytest.raises(UnknownOutcomeError) as failure:
-        await executor(store).call("state-put", {"key": "x", "value": 1})
-    assert failure.value.data == {"call_id": "call-1", "outcome": "unknown", "retry_safe": True}
+    monkeypatch.setattr(store, "atomic_state_put", lost)
+    assert await executor(store).call("state-put", {"key": "x", "value": 1}) == 1
     assert ProgramStore(store.database).state_get("x") == 1

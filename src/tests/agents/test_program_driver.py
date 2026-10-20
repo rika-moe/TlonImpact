@@ -16,7 +16,7 @@ from tlon.operations.core import CallContext, Operation, OperationExecutor, Oper
 from tlon.operations.model import model_operation_definitions
 from tlon.operations.state import make_state_operations
 from tlosure.builtins import EvalError
-from tlosure.edn import Keyword, dumps, loads
+from tlosure.edn import loads
 
 
 def rule(source: str) -> MemberRule:
@@ -27,7 +27,9 @@ def rule(source: str) -> MemberRule:
 
 @pytest.fixture(params=[False, True], ids=["memory", "sqlite"])
 def store(request: Any, tmp_path: Path) -> ProgramStore:
-    return ProgramStore(tmp_path / "program.sqlite3" if request.param else None)
+    return ProgramStore(
+        tmp_path / "program.sqlite3" if request.param else None, build_id="test-build"
+    )
 
 
 def driver(
@@ -52,7 +54,9 @@ def driver(
             for op in model_operation_definitions()
         )
     adapter = DSLAdapter(
-        OperationExecutor(OperationRegistry(definitions), CallContext("a", "member", "member"))
+        OperationExecutor(
+            OperationRegistry(definitions), CallContext("a", "member", "member"), store
+        )
     )
     return ProgramDriver(
         store,
@@ -65,22 +69,29 @@ def driver(
     )
 
 
+async def state_put(store: ProgramStore, call_id: str, key: str, value: Any) -> None:
+    executor = OperationExecutor(
+        OperationRegistry(make_state_operations(store)), CallContext("a", call_id, call_id), store
+    )
+    await executor.call("state-put", {"key": key, "value": value})
+
+
 async def test_replay_returns_saved_results_without_repeating_effects(store: ProgramStore) -> None:
-    store.atomic_state_put_record("setup", 0, "state-put", "[]", "text", "saved")
+    await state_put(store, "setup", "text", "saved")
     program = rule(
         '(let [text (state-get {:key "text"})] (state-put {:key "delivered" :value text}))'
     )
     forbidden = AsyncMock(side_effect=AssertionError("state operations bypass legacy dispatcher"))
     await driver(store, forbidden).run(program, {})
     assert store.state_get("delivered") == "saved"
-    store.atomic_state_put_record("change", 0, "state-put", "[]", "delivered", "new")
+    await state_put(store, "change", "delivered", "new")
     await driver(store, forbidden).run(program, {})
     assert store.state_get("delivered") == "new"
     forbidden.assert_not_awaited()
 
 
 async def test_state_read_freezes_branch_when_current_state_changes(store: ProgramStore) -> None:
-    store.atomic_state_put_record("setup", 0, "state-put", "[]", "enabled", True)
+    await state_put(store, "setup", "enabled", True)
     attempts = 0
     output: list[str] = []
 
@@ -96,8 +107,14 @@ async def test_state_read_freezes_branch_when_current_state_changes(store: Progr
         '(if (state-get {:key "enabled"}) (model-call {:prompt "original" :max_tokens 1}) (model-call {:prompt "changed" :max_tokens 1}))'
     )
     # Simulate a crash after the read was committed but before model dispatch.
-    store.record_effect("run", 0, "state-get", dumps([{Keyword("key"): "enabled"}]), "true")
-    store.atomic_state_put_record("change", 0, "state-put", "[]", "enabled", False)
+    adapter = driver(store, AsyncMock()).operations
+    assert adapter is not None
+    await adapter._executor.call(
+        "state-get",
+        {"key": "enabled"},
+        CallContext("a", "run", "program:run:0:state-get", call_path=("0",), origin="program"),
+    )
+    await state_put(store, "change", "enabled", False)
     attempts = 1
     await driver(store, AsyncMock(), model=execute).run(program, {})
     assert output == ["original"]
@@ -127,9 +144,9 @@ async def test_unrecorded_model_dispatch_is_not_repeated(store: ProgramStore) ->
     program = rule('(model-call {:prompt "paper" :max_tokens 1})')
     from tlon.operations.schema import UnknownOutcomeError
 
-    with pytest.raises(RuntimeError, match="submission status unknown"):
+    with pytest.raises(UnknownOutcomeError, match="submission status unknown"):
         await driver(store, AsyncMock(), model=fail).run(program, {})
-    with pytest.raises(UnknownOutcomeError, match="automatic retry refused"):
+    with pytest.raises(UnknownOutcomeError, match="submission status unknown"):
         await driver(store, AsyncMock(), model=fail).run(program, {})
     assert len(attempts) == 1
 

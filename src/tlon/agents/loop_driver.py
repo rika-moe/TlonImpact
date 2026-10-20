@@ -29,8 +29,10 @@ the engine's.
 """
 
 import asyncio
+import hashlib
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from functools import partial
 from typing import Any
 
@@ -177,6 +179,7 @@ class LoopDriver:
         # the responsibility-set id snapshot (ADR 0028 — crash recovery
         # reads it back for the chain-wake comparison).
         if not session.context:
+            build_id = await self._journal.verify_root(session.id)
             built = await self._services.build_context(
                 session.trigger_content, session.responsibility
             )
@@ -184,6 +187,7 @@ class LoopDriver:
                 session.id,
                 "session/start",
                 agent_id=self._identity.id,
+                build_id=build_id,
                 trigger_content=session.trigger_content,
                 recipe=session.recipe_source,
                 source_mail_id=session.source_mail_id,
@@ -361,6 +365,7 @@ class LoopDriver:
             session.set_last_llm_response(outcome.response)
             response = outcome.response
         if outcome.tool_dispatches:
+            build_id = await self._journal.verify_root(session.id)
             # Declared by act; the concurrency is the engine's: one
             # background task and one TOOL_EXECUTE_START event per tool.
             await self._journal.append(
@@ -368,13 +373,17 @@ class LoopDriver:
                 "tool/dispatch",
                 tool_calls=[tc.to_dict() for tc in outcome.tool_dispatches],
                 operation_recovery={
-                    tc.id: self._operation_recovery(session.id, tc)
+                    tc.id: self._operation_recovery(session.id, tc, session.iteration, build_id)
                     for tc in outcome.tool_dispatches
                 },
             )
             tasks = {}
             for tc in outcome.tool_dispatches:
-                tasks[tc.id] = asyncio.create_task(self.execute_one_tool(session.id, tc))
+                tasks[tc.id] = asyncio.create_task(
+                    self.execute_one_tool(
+                        session.id, tc, self._operation_context(session.id, tc, session.iteration)
+                    )
+                )
                 await self._executor.publish(
                     EventType.TOOL_EXECUTE_START,
                     payload={
@@ -614,7 +623,14 @@ class LoopDriver:
         outcome = await act_stage_collect(self._services, session, completed)
         await self._apply_outcome(session, None, outcome)
 
-    async def execute_one_tool(self, session_id: str, tc: ToolCall) -> tuple[ToolCall, ToolResult]:
+    async def execute_one_tool(
+        self,
+        session_id: str,
+        tc: ToolCall,
+        context: CallContext | None = None,
+        *,
+        journal_result: bool = True,
+    ) -> tuple[ToolCall, ToolResult]:
         """Execute one tool with timeout, returning (tc, result) tuple.
 
         Catches all exceptions and returns ToolResult(success=False).
@@ -622,36 +638,88 @@ class LoopDriver:
         result is journaled (``tool/result``) as soon as it exists — the
         log must have it even if the process dies before the collect.
         """
+        context = context or self._operation_context(session_id, tc, 0)
         timeout, authority = self._tool_timeout_budget(tc)
         result: ToolResult
         try:
             result = await asyncio.wait_for(
-                self._tool_executor.execute(
-                    tc.function_name, tc.arguments, self._operation_context(session_id, tc)
-                ),
+                self._tool_executor.execute(tc.function_name, tc.arguments, context),
                 timeout=timeout,
             )
         except TimeoutError:
             tool = self._tool_executor.get_tool(tc.function_name)
-            result = tool.timeout_result(tc.arguments, self._operation_context(session_id, tc))
+            result = tool.timeout_result(tc.arguments, context)
             result.error = f"Timeout after {timeout}s ({authority}); {result.error}"
         except Exception as e:
             result = ToolResult(success=False, data={}, error=str(e))
         # Spill before journaling: log and context hold the same locator.
-        result = await self._spill.maybe_spill(session_id, tc, result)
-        await self._journal.append(
-            session_id, "tool/result", tool_call=tc.to_dict(), result=result.to_dict()
-        )
+        spill_call = replace(tc, id=hashlib.sha256(context.call_id.encode()).hexdigest())
+        result = await self._spill.maybe_spill(session_id, spill_call, result)
+        if journal_result:
+            await self._journal.append(
+                session_id, "tool/result", tool_call=tc.to_dict(), result=result.to_dict()
+            )
         return tc, result
 
-    def _operation_context(self, session_id: str, tc: ToolCall) -> CallContext:
-        return CallContext(self._identity.id, session_id, f"session:{session_id}:{tc.id}")
+    def _operation_context(self, session_id: str, tc: ToolCall, iteration: int) -> CallContext:
+        return CallContext(
+            self._identity.id,
+            session_id,
+            f"session:{session_id}:round:{iteration}:{tc.id}",
+            call_path=(f"round:{iteration}", f"tool:{tc.id}"),
+            origin="tool",
+        )
 
-    def _operation_recovery(self, session_id: str, tc: ToolCall) -> dict[str, Any]:
-        if not self._tool_executor.has_tool(tc.function_name):
-            return {}
-        tool = self._tool_executor.get_tool(tc.function_name)
-        return tool.recovery_metadata(tc.arguments, self._operation_context(session_id, tc))
+    def _operation_recovery(
+        self, session_id: str, tc: ToolCall, iteration: int, build_id: str | None
+    ) -> dict[str, Any]:
+        context = self._operation_context(session_id, tc, iteration)
+        tool = (
+            self._tool_executor.get_tool(tc.function_name)
+            if self._tool_executor.has_tool(tc.function_name)
+            else None
+        )
+        return {
+            "build_id": build_id,
+            "root_id": session_id,
+            "call_id": context.call_id,
+            "call_path": list(context.call_path),
+            "definition_id": tool.definition_id if tool is not None else None,
+        }
+
+    async def resolve_dispatch(
+        self, session_id: str, tc: ToolCall, metadata: dict[str, Any]
+    ) -> ToolResult:
+        """Resolve frozen dispatch through the shared operation authority."""
+        required = {"root_id", "call_id", "call_path", "build_id", "definition_id"}
+        if (
+            not required.issubset(metadata)
+            or metadata["root_id"] != session_id
+            or not metadata["call_id"]
+            or not isinstance(metadata["call_path"], list)
+            or not metadata["call_path"]
+        ):
+            raise ValueError("Dispatch lacks frozen invocation identity")
+        build_id = await self._journal.verify_root(session_id)
+        if metadata.get("build_id") != build_id:
+            raise ValueError("Dispatch runtime build changed")
+        tool = (
+            self._tool_executor.get_tool(tc.function_name)
+            if self._tool_executor.has_tool(tc.function_name)
+            else None
+        )
+        definition_id = tool.definition_id if tool is not None else None
+        if metadata["definition_id"] != definition_id:
+            raise ValueError("Dispatch operation definition changed")
+        context = CallContext(
+            self._identity.id,
+            session_id,
+            metadata["call_id"],
+            call_path=tuple(metadata["call_path"]),
+            origin="tool",
+        )
+        _, result = await self.execute_one_tool(session_id, tc, context, journal_result=False)
+        return result
 
     def _tool_timeout_budget(self, tc: ToolCall) -> tuple[float, str]:
         """Effective wait_for budget for one tool call, plus its authority.

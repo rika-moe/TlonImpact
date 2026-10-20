@@ -1,6 +1,6 @@
-# Operation 调用契约（P1–P3c）
+# Operation 调用契约（P1–P4a）
 
-当前状态：P1、P2、P3a、P3b 已分别通过 #184/#185/#186/#187 合入 main。P3c 将生命周期、演化与模型调用接入相同边界，并删除旧 Tool 机制；当前待完整验收与 PR。Capability artifact 尚未转换为复合 Operation。目标设计见 [operations](../design/operations.md)，实施顺序见 [operations-plan](../design/operations-plan.md)。
+当前状态：P1 至 P3c 已通过 #184–#188 合入 main。P4a 将 DSL 与模型 Tool 的调用记录、指纹及恢复收敛至同一边界；共享预算、取消/截止时间、成员写排序和 MemberServices 改名属于 P4b。Capability artifact 尚未转换为复合 Operation。当前恢复契约见 [invocation-recovery](../design/invocation-recovery.md)，目标设计见 [operations](../design/operations.md)，实施顺序见 [operations-plan](../design/operations-plan.md)。
 
 ## 定义和执行
 
@@ -8,9 +8,15 @@
 
 空 effects 表示纯计算：handler 是同步 `(CallContext, dict[str, Any]) -> Any`。非空 effects 是 read/write 集合：handler 必须是 async，并由异步执行边界等待结果。纯 handler 返回 awaitable 会被拒绝，不能把异步 IO 谎报为纯计算。注册表固定定义集合，同名拒绝；宿主给不同成员构造 scoped handler 和 `CallContext(member_id, run_id, call_id)`，上下文不在业务参数或 DSL env 内。
 
-`OperationExecutor.call_pure` 仅执行纯操作；`call` 支持两类操作。执行顺序为输入严格 JSON 复制与 schema 校验、handler、输出严格 JSON 复制与 schema 校验。修改 handler 参数、返回值或 Tool schema 投影都不能污染原调用数据或权威 schema。
+`OperationExecutor.call_pure` 仅执行纯操作；`call` 支持两类操作。纯操作直接执行；效果操作依次执行输入严格 JSON 复制与 schema 校验、稳定身份与历史核对、持久化 intent、handler、输出校验及回执提交。已有回执在进入当前 handler 前还原；参数错误不写 intent。修改 handler 参数、返回值或 Tool schema 投影都不能污染原调用数据或权威 schema。
 
-当前 **不提供**通用授权名单、动态工具视图、复合依赖、统一预算或全局调用日志；P2 邮件通过现有 ProgramStore/session journal 记录和 PostOffice 幂等回执实现恢复，不另建存储。上下文隔离不是完整授权系统。输出不合约报 `OutputError`，不得据此假定效果未发生或自动重试。
+当前不提供通用授权名单、动态工具视图、复合依赖或共享根预算。真实 runtime 为两入口注入同一成员 ProgramStore；session journal 保留会话协议历史，PostOffice 保留邮件领域幂等回执，不另建第三权威日志。上下文隔离不是完整授权系统。输出不合约报 `OutputError`，不得据此假定效果未发生或自动重试。
+
+## 调用记录与指纹 P4a
+
+宿主上下文包含 member_id、run_id、call_id、call_path、origin、冻结输入及 Invocation；业务参数不能覆盖它们。输入以键排序的 canonical JSON 固定身份，输出回执保留对象键顺序，因为 DSL 的 keys/str 能观察该顺序。恢复同时核对路径、参数、操作契约指纹和宿主构建指纹；构建身份包含宿主代码、锁文件摘要、已安装依赖身份与已加载 Capability 闭包。旧数据库或无构建身份的会话拒绝恢复，不迁移或清库。
+
+每个调用的成功、明确拒绝、输出契约错误以及未知结果均有明确记录。输出不合约时保留原 JSON 回执；非 JSON 对象只保存类型与 repr 诊断，不能声称恢复任意 Python 对象。记录失败不返回成功；领域已原子提交回执时，对账返回该真实结果。同一进程内相同调用合流，独立根调用不共享完成序号。完整边界见 [调用恢复](../design/invocation-recovery.md)。
 
 ## Schema 子集
 
@@ -26,7 +32,7 @@ Tool：`OperationTool(executor, name)` 从同一契约投影协议定义，可�
 
 JSON 边界只接受 None、精确 bool/int/有限 float/str/list/dict；最大嵌套 100，循环数据拒绝。DSL 额外允许 Keyword map key，按原拼写转换为 string；返回对象键中能由现有 EDN parser 完整往返的键转为 Keyword；邮箱地址、空串、空格、Unicode 等不能表示为关键字的键保留字符串，字符串值不变。Keyword 值、Symbol、Closure、Form、tuple、NaN/Infinity 均拒绝。解析 EDN map 与 assoc/conj 构造 map 时，Keyword/string/Symbol 等相等但类型不同的键在写入 dict 前拒绝，避免静默覆盖；同型重复键沿既有语义保留末值。已经被外部 Python dict 覆盖的信息无法恢复，不宣称能够检测。
 
-输入错误为 InputError，输出错误为 OutputError，均继承 OperationError/EvalError，DSL 保留结构化异常类型；Tool 转为失败 ToolResult。领域的明确拒收使用 RejectedError，结果未知使用 UnknownOutcomeError；二者继承 OperationError 并携带 data，unknown 保留 request_id。Tool 入口保留这些结构化信息。该结构化错误同样用于文件和 Shell；不宣称已有通用重试机制。
+输入错误为 InputError，输出错误为 OutputError，均继承 OperationError/EvalError，DSL 保留共享边界的结构化异常类型；Tool 转为失败 ToolResult。领域自定义 OperationError 子类在持久边界统一为 OperationError 并保留 data，首次调用与恢复的协议形状相同。领域的明确拒收使用 RejectedError，结果未知使用 UnknownOutcomeError；二者继承 OperationError 并携带 data，unknown 保留 request_id。Tool 入口保留这些结构化信息。该结构化错误同样用于文件和 Shell；不宣称已有通用重试机制。
 
 Tool 协议根参数必须是 JSON object 的字符串键。OperationTool 在 ToolExecutor 中直接接收参数对象，根级非字符串键和嵌套非 JSON 值均由共享边界返回 InputError。旧 Tool 基类与关键字参数派发入口已删除。
 
@@ -34,9 +40,9 @@ Tool 协议根参数必须是 JSON object 的字符串键。OperationTool 在 To
 
 五个操作 `mail-send`、`mail-forward`、`mail-check-inbox`、`mail-search`、`mail-mark-read` 共用 [权威定义](../../src/tlon/operations/mail.py)，输入与输出均为 snake_case；DSL 也使用 `:mail_id`、`:request_id` 等原拼写键。schema 与参数表见 [工具参考](tools-reference.md#mail)。所有服务绑定成员身份，不接收可伪造的 owner/from 参数。
 
-程序使用冻结 run 和调用序号，工具使用 session 和 tool call ID 生成稳定 call_id。默认 request_id 来自该 ID，显式重试可以提交原 request_id。输入或输出错误不代表效果一定未发生；超时、中断和无法确认提交必须保留 unknown 及原 request_id。复用邮局回执不会重复入箱；会话恢复不自动重发孤立 dispatch。
+程序使用冻结 run 和调用位置，工具使用 session、轮次与 tool call ID 生成稳定 call_id。默认 request_id 来自该 ID，显式重试可以提交原 request_id。输入或输出错误不代表效果一定未发生；超时、中断和无法确认提交必须保留 unknown 及原 request_id。复用邮局回执不会重复入箱；会话恢复会先查统一调用记录：未写 intent 的 dispatch 可以新执行，已提交回执直接还原；只有不安全 intent 时报告 unknown，安全写同键对账。
 
-已删除旧五邮件 Tool 及旧 DSL 邮件词，不提供别名或迁移。旧 Behavior、Capability 和未完成运行若引用旧名，将不兼容；仓库示例同步切换，用户数据不自动修改。DAG、动态工具视图、统一预算和一般根调用日志仍属于 P4-P7。
+已删除旧五邮件 Tool 及旧 DSL 邮件词，不提供别名或迁移。旧 Behavior、Capability 和未完成运行若引用旧名，将不兼容；仓库示例同步切换，用户数据不自动修改。DAG、动态工具视图及共享预算仍属于后续阶段；一般根调用记录已在 P4a 统一。
 
 ## 文件、Shell 与时间 P3a
 
@@ -48,9 +54,9 @@ Tool 协议根参数必须是 JSON object 的字符串键。OperationTool 在 To
 
 `default_timeout` 是宿主操作声明的默认执行秒数；Shell handler 和引擎等待预算引用同一默认值，显式 timeout 参数仍优先，schema 不因此引入 default 关键字。
 
-`retry_safe` 是宿主对中断后重新调用是否安全的最小声明。程序沿用同一 ProgramStore 数据库：非幂等 write 先写 intent，再调用 handler，再记录结果；已有结果重放，只有 intent 而无结果时返回 unknown，禁止自动重新执行。取消同样不能当作无副作用。邮件仍使用 PostOffice 的稳定 request_id 幂等重试。这没有引入第三份日志，也未完成 P4 的通用调用身份、预算或并发写入排序。
+`retry_safe` 是宿主对中断后重新调用是否安全的最小声明。程序沿用同一 ProgramStore 数据库：非幂等 write 先写 intent，再调用 handler，再记录结果；已有结果重放，只有 intent 而无结果时返回 unknown，禁止自动重新执行。取消同样不能当作无副作用。邮件仍使用 PostOffice 的稳定 request_id 幂等重试。P4a 已将这些 intent 和回执统一到 ProgramStore 的 invocations，通用根预算与成员写排序仍未实施。
 
-会话保留 session journal 的 dispatch/result/collect：非幂等写入的孤立 dispatch 标记 unknown 且不可安全重试；工具适配器不伪造回执。Shell 后台任务只由成员 ShellService 持有，查询不复制任务表；成员关闭先取消并等待后台任务清理，再关闭装置。后台句柄不跨进程恢复，不自动重启命令。
+会话保留 session journal 的 dispatch/result/collect，操作提交事实只查 ProgramStore。孤立 dispatch 不等于已执行；尚无 intent 可以开始执行，非幂等写只有 intent 而无回执时才报告 unknown；工具适配器不伪造回执。Shell 后台任务只由成员 ShellService 持有，查询不复制任务表；成员关闭先取消并等待后台任务清理，再关闭装置。后台句柄不跨进程恢复，不自动重启命令。
 
 
 ## 记忆、任务、人格/联系人、观测与状态 P3b
@@ -59,7 +65,7 @@ Tool 协议根参数必须是 JSON object 的字符串键。OperationTool 在 To
 
 state-get/state-put 使用一个对象参数，例如 `(state-get {:key "edition"})`、`(state-put {:key "edition" :value {:period "001"}})`，直接返回严格 JSON 值，缺失返回 null。输入根始终是闭合对象，value 和返回值用原生 boolean schema 表达动态 JSON；DSL 键不做 snake/kebab 隐式转换。
 
-state-put 将状态与该次调用结果放在 ProgramStore 的同一事务；程序使用宿主 run/ordinal，工具使用宿主 call_id 的独立效果记录。同调用相同参数重试返回原值，不覆盖后来的状态；同调用不同参数拒绝。普通领域写入仍按非幂等 intent 保护，结果不确定保留 unknown 和 call_id，不能把失败当作未产生副作用。
+state-put 将状态与该次调用结果放在 ProgramStore 的同一事务；两入口都使用宿主创建的 Invocation，不再分别记录旧 effects 或状态专用调用元数据。同调用相同参数重试返回原值，不覆盖后来的状态；同调用不同参数拒绝。普通领域写入仍按非幂等 intent 保护，结果不确定保留 unknown 和 call_id，不能把失败当作未产生副作用。
 
 任务落盘通过临时文件、fsync 和原子 replace；写失败不再伪报成功。人格文件写成功而账本追加失败时，保留成功回执并显式告警。保持原有 TaskManager 单实例同步调用模型；未扩展为跨进程任务写入协调器，也未修改其原有损坏文件读取策略。
 
@@ -69,4 +75,4 @@ state-put 将状态与该次调用结果放在 ProgramStore 的同一事务；�
 
 `control` 是 Operation 的控制声明元数据，和 read/write 效果分开。完成、睡眠、退出由同一契约返回声明，LoopDriver 或程序根执行器应用调度；DSL 嵌套组合拒绝控制操作，模型的一轮也只允许独立控制调用，不能夹带普通工具。动态 ToolView、复合 Capability 和统一预算仍留在后续阶段。
 
-程序 `model-call` 保留 ProgramDriver 的规则额度：实际输出上限为请求值、程序剩余额度与成员客户端 `llm.max_tokens` 的最小值，重放仍预留已记录调用额度。模型 Tool 调用不处在程序规则预算内，但仍受成员客户端上限与实际计费约束。模型调用记非幂等 intent，分发后结果未知不自动重发；一般根调用预算仍属于 P4。
+程序 `model-call` 保留 ProgramDriver 的规则额度：实际输出上限为请求值、程序剩余额度与成员客户端 `llm.max_tokens` 的最小值，重放仍预留已记录调用额度。模型 Tool 调用不处在程序规则预算内，但仍受成员客户端上限与实际计费约束。模型调用记非幂等 intent，分发后结果未知不自动重发；一般根调用预算仍属于 P4b。

@@ -4,21 +4,19 @@ import asyncio
 from typing import Any, Protocol
 
 from tlon.operations.core import CallContext, Operation
+from tlon.operations.invocation import Invocation
 from tlon.operations.schema import (
     OperationError,
-    ReplayConflictError,
+    RecoveryMismatchError,
     UnknownOutcomeError,
     edn_value,
     json_value,
 )
-from tlosure.edn import dumps
 
 
 class StateStore(Protocol):
     def state_get(self, key: str) -> Any: ...
-    def atomic_state_put_record(
-        self, run_id: str, index: int, name: str, args_edn: str, key: str, value: Any
-    ) -> Any: ...
+    def atomic_state_put(self, invocation: Invocation, key: str, value: Any) -> Any: ...
 
 
 def make_state_operations(store: StateStore) -> tuple[Operation, ...]:
@@ -27,28 +25,17 @@ def make_state_operations(store: StateStore) -> tuple[Operation, ...]:
 
     async def put(context: CallContext, arguments: dict[str, Any]) -> Any:
         value = edn_value(arguments["value"])
-        if context.effect_index is not None and context.arguments_edn is None:
-            raise OperationError("program state write requires host arguments metadata")
-        run_id = context.run_id if context.effect_index is not None else context.call_id
-        index = context.effect_index if context.effect_index is not None else 0
-        args_edn = (
-            context.arguments_edn
-            if context.effect_index is not None
-            else dumps([edn_value(arguments)])
-        )
-        assert args_edn is not None
+        if context.invocation is None:
+            raise OperationError("state write requires a durable host invocation")
         try:
             result = await asyncio.to_thread(
-                store.atomic_state_put_record,
-                run_id,
-                index,
-                "state-put",
-                args_edn,
+                store.atomic_state_put,
+                context.invocation,
                 arguments["key"],
                 value,
             )
-        except ReplayConflictError as error:
-            raise OperationError(str(error)) from error
+        except RecoveryMismatchError:
+            raise
         except Exception as error:
             raise UnknownOutcomeError(
                 str(error),
@@ -92,9 +79,7 @@ class _UnboundState:
     def state_get(self, key: str) -> Any:
         raise RuntimeError("state operation requires member services")
 
-    def atomic_state_put_record(
-        self, run_id: str, index: int, name: str, args_edn: str, key: str, value: Any
-    ) -> Any:
+    def atomic_state_put(self, invocation: Invocation, key: str, value: Any) -> Any:
         raise RuntimeError("state operation requires member services")
 
 

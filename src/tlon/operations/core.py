@@ -1,13 +1,28 @@
 """Immutable host operation definitions, member-scoped registry and invocation."""
 
+import asyncio
+import hashlib
 import inspect
 import json
 import re
+import weakref
 from collections.abc import Awaitable, Callable, Iterable
-from dataclasses import dataclass
-from typing import Any, Literal, cast
+from dataclasses import dataclass, replace
+from typing import Any, ClassVar, Literal, cast
 
-from tlon.operations.schema import DefinitionError, OperationError, admit_schema, validate
+from tlon.operations.invocation import Invocation, InvocationOutcome, InvocationStore
+from tlon.operations.schema import (
+    DefinitionError,
+    InputError,
+    OperationError,
+    OutputError,
+    RecoveryMismatchError,
+    RejectedError,
+    UnknownOutcomeError,
+    admit_schema,
+    json_value,
+    validate,
+)
 from tlosure.builtins import ARITHMETIC_BUILTINS, CORE_BUILTINS
 from tlosure.eval import SPECIAL_FORMS
 
@@ -21,8 +36,10 @@ class CallContext:
     member_id: str
     run_id: str
     call_id: str
-    effect_index: int | None = None
-    arguments_edn: str | None = None
+    call_path: tuple[str, ...] = ()
+    origin: Literal["program", "tool", "direct"] = "direct"
+    arguments_json: str | None = None
+    invocation: Invocation | None = None
 
 
 Handler = Callable[[CallContext, dict[str, Any]], Any]
@@ -121,9 +138,28 @@ class OperationExecutor:
     Domain handlers and their host services own effect submission and persistence.
     """
 
-    def __init__(self, registry: OperationRegistry, context: CallContext) -> None:
+    _store_locks: ClassVar[
+        weakref.WeakKeyDictionary[Any, weakref.WeakValueDictionary[Any, asyncio.Lock]]
+    ] = weakref.WeakKeyDictionary()
+
+    def __init__(
+        self,
+        registry: OperationRegistry,
+        context: CallContext,
+        store: InvocationStore | None = None,
+    ) -> None:
         self.registry = registry
         self.context = context
+        self.store = store
+        self._locks: weakref.WeakValueDictionary[Any, asyncio.Lock]
+        if store is None:
+            self._locks = weakref.WeakValueDictionary()
+        else:
+            locks = self._store_locks.get(store)
+            if locks is None:
+                locks = weakref.WeakValueDictionary()
+                self._store_locks[store] = locks
+            self._locks = locks
 
     def call_pure(self, name: str, arguments: Any, context: CallContext | None = None) -> Any:
         operation = self.registry.get(name)
@@ -137,14 +173,204 @@ class OperationExecutor:
             raise OperationError(f"{name}: pure handler returned an awaitable")
         return validate(operation.output_schema, result, output=True)
 
+    @staticmethod
+    def definition_id(operation: Operation) -> str:
+        definition = {
+            "name": operation.name,
+            "input": operation.input_schema,
+            "output": operation.output_schema,
+            "effects": sorted(operation.effects),
+            "retry_safe": operation.retry_safe,
+            "control": operation.control,
+            "default_timeout": operation.default_timeout,
+        }
+        return hashlib.sha256(
+            json.dumps(definition, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+
+    def _invocation(self, operation: Operation, inputs: Any, bound: CallContext) -> Invocation:
+        assert self.store is not None
+        return Invocation(
+            call_id=bound.call_id,
+            root_id=bound.run_id,
+            path=bound.call_path or (bound.call_id,),
+            name=operation.name,
+            arguments_json=bound.arguments_json
+            or json.dumps(inputs, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
+            definition_id=self.definition_id(operation),
+            build_id=self.store.build_id,
+        )
+
+    async def replay(self, name: str, arguments: Any, context: CallContext) -> tuple[bool, Any]:
+        """Inspect committed history before a driver applies a fresh-call budget cap."""
+        operation = self.registry.get(name)
+        inputs = validate(operation.input_schema, arguments)
+        bound = self._context(context)
+        if self.store is None:
+            return False, None
+        invocation = self._invocation(operation, inputs, bound)
+        await asyncio.to_thread(self.store.ensure_root, bound.run_id)
+        outcome = await asyncio.to_thread(self.store.lookup_invocation, invocation)
+        if outcome is None or (
+            ("write" not in operation.effects or operation.retry_safe)
+            and outcome.error_type == "UnknownOutcomeError"
+        ):
+            return False, None
+        return True, self._restore(outcome)
+
+    @staticmethod
+    def _restore(outcome: InvocationOutcome) -> Any:
+        if outcome.success:
+            return outcome.value
+        errors: dict[str, type[OperationError]] = {
+            cls.__name__: cls
+            for cls in (
+                OperationError,
+                InputError,
+                OutputError,
+                RejectedError,
+                UnknownOutcomeError,
+                RecoveryMismatchError,
+            )
+        }
+        kind = errors.get(outcome.error_type, OperationError)
+        if kind in (RejectedError, UnknownOutcomeError):
+            raise kind(outcome.error_message, outcome.error_data or {})
+        error = kind(outcome.error_message)
+        if outcome.error_data is not None:
+            error.data = outcome.error_data  # type: ignore[attr-defined]
+        raise error
+
     async def call(self, name: str, arguments: Any, context: CallContext | None = None) -> Any:
         operation = self.registry.get(name)
         if not operation.effects:
             return self.call_pure(name, arguments, context)
         inputs = validate(operation.input_schema, arguments)
-        handler = cast(AsyncHandler, operation.handler)
-        result = await handler(self._context(context), inputs)
-        return validate(operation.output_schema, result, output=True)
+        bound = self._context(context)
+        if self.store is None:
+            return validate(
+                operation.output_schema,
+                await cast(AsyncHandler, operation.handler)(bound, inputs),
+                output=True,
+            )
+        await asyncio.to_thread(self.store.ensure_root, bound.run_id)
+        invocation = self._invocation(operation, inputs, bound)
+        key = (invocation.root_id, invocation.path)
+        lock = self._locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[key] = lock
+        async with lock:
+            previous = await asyncio.to_thread(self.store.lookup_invocation, invocation)
+            if previous is not None and not (
+                ("write" not in operation.effects or operation.retry_safe)
+                and previous.error_type == "UnknownOutcomeError"
+            ):
+                return self._restore(previous)
+            fresh = await asyncio.to_thread(self.store.begin_invocation, invocation)
+            if not fresh and "write" in operation.effects and not operation.retry_safe:
+                raise UnknownOutcomeError(
+                    "Previous operation dispatch has no recorded result; automatic retry refused",
+                    {"call_id": bound.call_id, "outcome": "unknown", "retry_safe": False},
+                )
+            try:
+                result = await cast(AsyncHandler, operation.handler)(
+                    replace(bound, invocation=invocation), inputs
+                )
+            except asyncio.CancelledError:
+                # Durable intent remains: cancellation cannot revoke an external effect.
+                raise
+            except OperationError as error:
+                committed = await self._committed(invocation)
+                if committed is not None and committed.error_type != "UnknownOutcomeError":
+                    return self._restore(committed)
+                outcome = InvocationOutcome(
+                    False,
+                    error_type=type(error).__name__
+                    if type(error)
+                    in (
+                        OperationError,
+                        InputError,
+                        OutputError,
+                        RejectedError,
+                        UnknownOutcomeError,
+                        RecoveryMismatchError,
+                    )
+                    else "OperationError",
+                    error_message=str(error),
+                    error_data=getattr(error, "data", None),
+                )
+                await self._commit(invocation, outcome)
+                return self._restore(outcome)
+            except Exception as error:
+                committed = await self._committed(invocation)
+                if committed is not None and committed.error_type != "UnknownOutcomeError":
+                    return self._restore(committed)
+                unknown = UnknownOutcomeError(
+                    str(error),
+                    {
+                        "call_id": bound.call_id,
+                        "outcome": "unknown",
+                        "retry_safe": "write" not in operation.effects or operation.retry_safe,
+                    },
+                )
+                await self._commit(
+                    invocation,
+                    InvocationOutcome(
+                        False,
+                        error_type="UnknownOutcomeError",
+                        error_message=str(unknown),
+                        error_data=unknown.data,
+                    ),
+                )
+                raise unknown from error
+            try:
+                value = validate(operation.output_schema, result, output=True)
+            except OperationError as error:
+                try:
+                    raw = json_value(result)
+                except InputError:
+                    raw = {"type": type(result).__name__, "repr": repr(result)}
+                await self._commit(
+                    invocation,
+                    InvocationOutcome(
+                        False,
+                        error_type="OutputError",
+                        error_message=str(error),
+                        raw_result=raw,
+                    ),
+                )
+                raise
+            await self._commit(invocation, InvocationOutcome(True, value=value))
+            return value
+
+    async def _committed(self, invocation: Invocation) -> InvocationOutcome | None:
+        assert self.store is not None
+        try:
+            return await asyncio.to_thread(self.store.lookup_invocation, invocation)
+        except RecoveryMismatchError:
+            raise
+        except Exception:
+            # An unavailable receipt does not establish failure or undo an effect.
+            return None
+
+    async def _commit(self, invocation: Invocation, outcome: InvocationOutcome) -> None:
+        assert self.store is not None
+        try:
+            await asyncio.to_thread(self.store.commit_invocation, invocation, outcome)
+        except Exception as error:
+            committed = await self._committed(invocation)
+            if committed is not None and committed == outcome:
+                return
+            raise UnknownOutcomeError(
+                "Operation result could not be durably recorded",
+                {
+                    "call_id": invocation.call_id,
+                    "outcome": "unknown",
+                    "retry_safe": self.registry.get(invocation.name).retry_safe
+                    or "write" not in self.registry.get(invocation.name).effects,
+                },
+            ) from error
 
     def _context(self, context: CallContext | None) -> CallContext:
         bound = context or self.context

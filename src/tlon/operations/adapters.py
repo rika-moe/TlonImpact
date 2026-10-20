@@ -43,6 +43,10 @@ class DSLAdapter:
         validate(operation.input_schema, self._arguments(call.args))
         return "write" in operation.effects and not operation.retry_safe
 
+    async def replay(self, call: BuiltinCall, context: CallContext) -> tuple[bool, Any]:
+        found, value = await self._executor.replay(call.name, self._arguments(call.args), context)
+        return found, edn_value(value) if found else None
+
     async def handle(self, call: BuiltinCall, context: CallContext | None = None) -> Any:
         """Handle only this adapter's suspended effectful builtins."""
         if self._builtins.get(call.name) is not call.builtin:
@@ -57,6 +61,10 @@ class OperationTool:
     def __init__(self, executor: OperationExecutor, name: str) -> None:
         self._executor = executor
         self._operation = executor.registry.get(name)
+
+    @property
+    def definition_id(self) -> str:
+        return self._executor.definition_id(self._operation)
 
     @property
     def default_timeout(self) -> float | None:

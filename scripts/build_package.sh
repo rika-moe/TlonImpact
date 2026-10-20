@@ -8,6 +8,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+uv run python scripts/gen_runtime_identity.py --check
+
 WEBUI_PKG="src/tlon_server/webui_dist"
 
 if [ ! -d apps/webui/node_modules ]; then

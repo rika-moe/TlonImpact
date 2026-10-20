@@ -13,6 +13,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+uv run python scripts/gen_runtime_identity.py --check
+
 WEBUI_SRC="apps/webui/dist"
 WEBUI_PKG="src/tlon_server/webui_dist"
 
@@ -57,6 +59,8 @@ check() { # check <字符串> <描述>：wheel 清单里应能找到
 for pkg in tlon tlosure tlon_server tlon_client tlon_launcher; do
     check "$pkg/__init__.py" "wheel 含 $pkg 包"
 done
+check "tlon/base/_locked_dependencies.py" "wheel 含锁定依赖指纹"
+check "tlon/base/runtime_identity.py" "wheel 含恢复构建身份实现"
 check "behavior.tlon" "wheel 含原型 DSL 数据文件"
 # Verify the complete catalog rather than merely one matching Markdown file.
 if uv run python - "$wheel" <<'PYCODE'

@@ -22,7 +22,9 @@ from tlosure.edn import loads
 
 @pytest.fixture(params=[False, True], ids=["memory", "sqlite"])
 def store(request: pytest.FixtureRequest, tmp_path: Path) -> ProgramStore:
-    return ProgramStore(tmp_path / "control.sqlite3" if request.param else None)
+    return ProgramStore(
+        tmp_path / "control.sqlite3" if request.param else None, build_id="test-build"
+    )
 
 
 def _rule(actions: str, *, when: str | None = None) -> MemberRule:
@@ -60,6 +62,7 @@ def _driver(
         OperationExecutor(
             OperationRegistry((*make_lifecycle_operations(service), operation)),
             CallContext("worker", "run", "call"),
+            store,
         )
     )
     return ProgramDriver(

@@ -116,7 +116,7 @@
 
 规则按 spec 顺序匹配。生产程序通过可暂停求值内核在效果调用处等待宿主执行，记录并返回实际结果，再继续函数、条件或传统循环。`run-loop` 按本次配方执行会话并返回 `nil`，同一成员串行推进程序。
 
-效果结果可显式绑定至 `let` 并用于后续分支，没有另一个完成动作求值环境，不隐式绑定 `result`。原始程序、触发输入和已完成效果保存在成员私有 `program.sqlite3`，恢复复用原结果（ADR 0043）。
+效果结果可显式绑定至 `let` 并用于后续分支，没有另一个完成动作求值环境，不隐式绑定 `result`。原始程序、触发输入和已完成效果保存在成员私有 `program.sqlite3`，恢复复用原结果（ADR 0043）。P4a 中共享 Operation 的 intent/回执统一记录在 roots/invocations，effects 仅保留 run-loop 与旧宿主查询；路径、参数、定义及构建身份漂移明确拒绝。会话工具也使用同一调用权威，细节见 [调用恢复](../design/invocation-recovery.md)。
 
 ## 3. 纯度约束与求值托管（宿主视角）
 
@@ -256,7 +256,7 @@
 | 调用 | 返回值 |
 | --- | --- |
 | `(state-get {:key "key"})` | 成员私有状态；缺失返回 `nil`，读取结果被记录供重放 |
-| `(state-put {:key "key" :value value})` | 写入值；状态更新与效果记录同事务提交 |
+| `(state-put {:key "key" :value value})` | 写入值；状态更新与统一 invocation 回执同事务提交 |
 | `(model-call {:prompt "任务数据" :max_tokens 256})` | `{:content "..." :usage {...}}`，usage 保留 provider 的 snake_case 键，如 `:completion_tokens` |
 
 邮件是统一 Operation，不再构造旧邮件 `ActionRequest`。DSL 使用一个命名参数 map，键与 JSON Tool 参数均为 snake_case：
