@@ -22,11 +22,11 @@ from tlon.memory.models import MemoryConfig
 from tlon.tools.agents.propose_behavior import ProposeBehaviorTool
 from tlon.tools.agents.write_prototype import WritePrototypeTool
 
-_EXISTING_SPEC = '; 既有原型：邮件转发器\n{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(forward {:to ["x@tlon.internal"]})]}]}\n'
-_RESKIN_SPEC = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(forward {:to ["y@tlon.internal"]})]}]}\n'
+_EXISTING_SPEC = '; 既有原型：邮件转发器\n{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
+_RESKIN_SPEC = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["y@tlon.internal"]})]}]}\n'
 _DISTINCT_SPEC = '{:version 1\n :rules [{:name "boot-task"\n          :on :boot\n          :actions [(start {:task "daily-digest"})]}]}\n'
 _PARENT_SPEC = '{:version 1 :rules [{:name "respond" :on :mail-delivered :when (or (addressed-to-me? msg) (cc-ed? msg)) :actions [(run-loop (quote {:context {:sections [(persona) (protocol) (knowledge) (skills) (mail-history 20)]} :stages [(think) (act)] :until (or (iteration-limit-reached?) (error-limit-reached?)) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled true :interval-minutes 15}}))]} {:name "boot" :on :boot :actions []}]}'
-_TEMPLATE_SPEC = '{:version 1\n :parameters {:to {:type :string-list :required true}}\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(forward {:to ${to}})]}]}\n'
+_TEMPLATE_SPEC = '{:version 1\n :parameters {:to {:type :string-list :required true}}\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ${to}})]}]}\n'
 
 
 class TestFindNearKin:
@@ -79,7 +79,7 @@ class TestFindNearKin:
         """重排版（去注释、改缩进）不逃脱闸：规范化后仍是同一文本。"""
         p = TlonPaths(home=tmp_path)
         created_1 = write_trusted_prototype(_EXISTING_SPEC, tlon_paths=p, display_name="定址转发")
-        reformatted = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(forward {:to ["x@tlon.internal"]})]}]}\n'
+        reformatted = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
         hit = find_near_kin(reformatted, tlon_paths=p)
         assert hit == (created_1.name, 1.0)
 

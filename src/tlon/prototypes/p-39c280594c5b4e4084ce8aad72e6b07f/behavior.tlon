@@ -1,1 +1,1 @@
-{:version 1 :execution {:level :L0} :parameters {:to {:type :string-list :required true}} :rules [{:name "relay" :on :mail-delivered :actions [(forward {:to ${to}}) (mark-read)]} {:name "boot" :on :boot :actions []}]}
+{:version 1 :execution {:level :L0} :parameters {:to {:type :string-list :required true}} :rules [{:name "relay" :on :mail-delivered :actions [(mail-forward {:mail_id (mail-field msg :id) :to ${to}}) (mail-mark-read {:mail_ids [(mail-field msg :id)]})]} {:name "boot" :on :boot :actions []}]}

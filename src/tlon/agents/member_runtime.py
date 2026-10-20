@@ -37,11 +37,16 @@ from tlon.base.events.event_bus import EventBus
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
-from tlon.base.tracing.trace_context import continue_trace, get_current_trace
+from tlon.base.tracing.trace_context import continue_trace
 from tlon.memory.manager import MemoryManager
+from tlon.operations.adapters import DSLAdapter, OperationTool
+from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.mail import make_mail_operations
+from tlon.operations.schema import UnknownOutcomeError
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
-from tlon.organization.mail.post_office import PostOffice, PostRejected
+from tlon.organization.mail.member_mail import MemberMailService
+from tlon.organization.mail.post_office import PostOffice
 from tlon.organization.mail.store import MailStore
 from tlon.organization.messaging.member import Member
 from tlon.tools.spill import ToolSpill
@@ -54,9 +59,6 @@ if TYPE_CHECKING:
     from tlon.sandbox.device import ExecutionDevice
 
 logger = get_logger(__name__)
-
-#: Trace carrier triple for forwarding an event's span tree to a decision.
-Carrier = tuple[str | None, str | None, str | None]
 
 
 class MemberState(Enum):
@@ -141,25 +143,33 @@ class MemberRuntime(Member):
         self._mailbox = mailbox
         self._post_office = post_office
         self._capabilities = capabilities
+        self._operations: DSLAdapter | None = None
+        if mailbox is not None and post_office is not None:
+            mail_service = MemberMailService(
+                member_id, mailbox, post_office, capabilities.mentor_cc if capabilities else None
+            )
+            operation_executor = OperationExecutor(
+                OperationRegistry(make_mail_operations(mail_service)),
+                CallContext(member_id, "member", "member"),
+            )
+            self._operations = DSLAdapter(operation_executor)
+            self._builtins = {**builtins, **self._operations.builtins()}
+            if capabilities is not None:
+                for operation in operation_executor.registry.definitions():
+                    capabilities.tool_executor.register_tool(
+                        OperationTool(operation_executor, operation.name)
+                    )
         self._paths = capabilities.tlon_paths if capabilities else tlon_paths
         self._program_store = ProgramStore(
             self._paths.agent_program_database_file(member_id) if self._paths else None
         )
         self._program_effects = ProgramEffects(
-            from_address=self.address,
             llm_client=capabilities.llm_client if capabilities else None,
             system_prompt=self._program_system_prompt,
-            post_office=post_office,
-            mentor_cc=capabilities.mentor_cc if capabilities else None,
         )
         self._registry = (
             registry if registry is not None else (capabilities.registry if capabilities else None)
         )
-        # Trust ladder (docs/design/unified-member-model.md): the
-        # probation mentor's address, cc'd on composed outbound mail
-        # (_send_mail; the session path's
-        # EffectExecutor gets it in _assemble_session). Forwarding is
-        # not cc'd — passing along an existing mail is noise to the mentor.
         self._mentor_cc = capabilities.mentor_cc if capabilities is not None else None
         # Rule idle bookkeeping (registry drain): initialize time
         # and the last executed rule action, both monotonic.
@@ -567,7 +577,7 @@ class MemberRuntime(Member):
         async def execute(request: ActionRequest, name: str, index: int, args_edn: str) -> Any:
             self._last_action_at = time.monotonic()
             request_id = f"program:{run_id}:{index}:{name}"
-            if request.kind in {"state_get", "state_put", "llm_call", "send_mail"}:
+            if request.kind in {"state_get", "state_put", "llm_call"}:
                 return await self._program_effects.execute(
                     request, request_id, run_id, index, self._program_store, args_edn
                 )
@@ -595,6 +605,9 @@ class MemberRuntime(Member):
             run_id,
             self._builtins,
             execute,
+            operations=self._operations,
+            member_id=self._member_id,
+            on_operation=self._record_activity,
             token_budget=self._capabilities.config.llm.max_tokens
             if self._capabilities and self._capabilities.config.llm
             else 4096,
@@ -602,7 +615,14 @@ class MemberRuntime(Member):
         try:
             env = self._env(payload)
             env["self"] = loads(record.input_edn)["self"]
-            await driver.run(rule, env)
+            with contextlib.ExitStack() as stack:
+                if trigger_event is not None and trigger_event.trace_id:
+                    stack.enter_context(
+                        continue_trace(trigger_event.trace_id, trigger_event.span_id)
+                    )
+                await driver.run(rule, env)
+        except UnknownOutcomeError:
+            raise
         except (EvalError, ValueError) as error:
             await asyncio.to_thread(self._program_store.fail, run_id, str(error))
             self._state = MemberState.ERROR
@@ -617,6 +637,9 @@ class MemberRuntime(Member):
             return True
         await asyncio.to_thread(self._program_store.complete, run_id)
         return True
+
+    def _record_activity(self) -> None:
+        self._last_action_at = time.monotonic()
 
     # ── Unified action executor ──
 
@@ -645,12 +668,8 @@ class MemberRuntime(Member):
             and request.data["agent_id"] != self._member_id
         ):
             raise ValueError("members may only manage their own scheduling state")
-        if kind == "mark_read":
-            await self._mark_read(session_mail)
-        elif kind == "spawn":
+        if kind == "spawn":
             await self._execute_spawn(request)
-        elif kind == "emit":
-            await self._execute_emit(request, session_mail, trigger_event)
         elif kind == "start":
             await self._publish_request(
                 EventType.AGENT_START_REQUEST,
@@ -665,8 +684,6 @@ class MemberRuntime(Member):
                 trigger_event,
                 action="stop",
             )
-        elif kind == "forward":
-            await self._execute_forward(request, payload, session_mail, trigger_event)
         else:
             logger.warning(
                 "member_action_unknown",
@@ -701,74 +718,6 @@ class MemberRuntime(Member):
             )
         )
 
-    async def _execute_emit(
-        self,
-        request: ActionRequest,
-        session_mail: Mail | None,
-        trigger_event: Event | None,
-    ) -> None:
-        """Send a mail, replying to the actual trigger when recipients are omitted."""
-        to = request.data["to"] or ([session_mail.from_address] if session_mail else [])
-        carrier = self._carrier_for(trigger_event)
-        await self._send_mail(
-            to=to,
-            content=request.data["content"],
-            in_reply_to=session_mail.id if session_mail else None,
-            thread_id=session_mail.thread_id if session_mail else None,
-            carrier=carrier,
-        )
-
-    async def _execute_forward(
-        self,
-        request: ActionRequest,
-        payload: Any,
-        session_mail: Mail | None,
-        trigger_event: Event | None,
-    ) -> None:
-        """Forward the triggering mail: build a new Mail and publish MAIL_NEW.
-
-        The new mail is from the member's own address, carries the original
-        content, and links back via ``forward_of``. A trigger without a mail
-        (a boot rule, a non-mail event) skips with a warning; a malformed
-        recipient in the spec fails the same way.
-        """
-        source = (
-            session_mail
-            if session_mail is not None
-            else (payload.get("mail") if isinstance(payload, dict) else None)
-        )
-        if not isinstance(source, Mail):
-            logger.warning(
-                "member_forward_without_mail",
-                member_id=self._member_id,
-            )
-            return
-        try:
-            forwarded = Mail.create(
-                from_address=self.address,
-                to=request.data["to"],
-                cc=request.data["cc"],
-                subject=request.data["subject"],
-                content=source.content,
-                forward_of=source.id,
-            )
-        except ValueError as e:
-            logger.warning(
-                "member_forward_invalid",
-                member_id=self._member_id,
-                error=str(e),
-            )
-            return
-        logger.info(
-            "member_action_requested",
-            member_id=self._member_id,
-            action="forward",
-            mail_id=forwarded.id,
-            forward_of=source.id,
-            to=forwarded.to,
-        )
-        await self._publish_mail(forwarded, self._carrier_for(trigger_event))
-
     async def _execute_spawn(self, request: ActionRequest) -> None:
         """Spawn a new member through the registry's full trust gate and
         spawn budget (stage 6b); the session-id binding for quota
@@ -786,99 +735,7 @@ class MemberRuntime(Member):
             session_id=str(session_id) if session_id else None,
         )
 
-    # ── Mail sending / read-marking ──
-
-    def _carrier_for(self, trigger_event: Event | None) -> Carrier:
-        """The trace carrier for a decision: the triggering event's span
-        tree when there is one, else the current (session) span, else none."""
-        if trigger_event is not None:
-            return (
-                trigger_event.trace_id,
-                trigger_event.span_id,
-                trigger_event.parent_span_id,
-            )
-        current = get_current_trace()
-        if current is not None:
-            return (current.trace_id, current.span_id, current.parent_span_id)
-        return (None, None, None)
-
-    async def _send_mail(
-        self,
-        *,
-        to: list[str],
-        content: str,
-        cc: list[str] | None = None,
-        subject: str | None = None,
-        in_reply_to: str | None = None,
-        thread_id: str | None = None,
-        carrier: Carrier = (None, None, None),
-    ) -> None:
-        """Build a mail and submit through the DSL best-effort effect boundary.
-
-        A probationary member's mentor (trust ladder,
-        docs/design/unified-member-model.md) is cc'd unless already a
-        recipient (to or cc) — no duplicate copies.
-
-        Never raises: a mail failure is logged, not propagated (a failing
-        action must not break the bus dispatch or the session lifecycle).
-        """
-        try:
-            recipients_cc = [*(cc or [])]
-            if (
-                self._mentor_cc is not None
-                and self._mentor_cc not in to
-                and self._mentor_cc not in recipients_cc
-            ):
-                recipients_cc.append(self._mentor_cc)
-            mail = Mail.create(
-                from_address=self.address,
-                to=to,
-                cc=recipients_cc,
-                subject=subject,
-                content=content,
-                in_reply_to=in_reply_to,
-                thread_id=thread_id,
-            )
-        except ValueError as e:
-            logger.warning(
-                "member_mail_invalid",
-                member_id=self._member_id,
-                error=str(e),
-            )
-            return
-        await self._publish_mail(mail, carrier)
-
-    async def _publish_mail(self, mail: Mail, carrier: Carrier) -> None:
-        """Isolate DSL mail failures without changing tool submission semantics.
-
-        Rejection and uncertainty are observable in structured logs; no
-        postmaster notice is manufactured and cancellation still propagates.
-        """
-        try:
-            if self._post_office is None:
-                raise RuntimeError("This member has no post office")
-            trace_id, span_id, _ = carrier
-            if trace_id:
-                with continue_trace(trace_id, span_id):
-                    await self._post_office.post(mail)
-            else:
-                await self._post_office.post(mail)
-        except PostRejected as error:
-            self._logger.warning(
-                "dsl_mail_rejected",
-                mail_id=mail.id,
-                reason=error.reason,
-                invalid_recipients=error.invalid_recipients,
-                error=str(error),
-            )
-        except Exception as error:
-            self._logger.error(
-                "dsl_mail_submission_unknown",
-                mail_id=mail.id,
-                request_id=mail.id,
-                error=str(error),
-                exc_info=True,
-            )
+    # ── Internal inbox scheduling cursor ──
 
     async def _mark_read(self, mail: Mail | None) -> None:
         """Mark a processed mail read; failures are logged only."""

@@ -26,7 +26,7 @@ _BEHAVIOR_HINT = (
     "(token-limit-reached?)) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 "
     ":reflect {:enabled false :interval-minutes 15}}))。"
     "会话是普通效果请求，可由任意规则调用；规则顶层没有 :loop。"
-    "forward 使用实际触发邮件；mark-read 显式标读触发邮件。"
+    "mail-forward 用 :mail_id 显式指定自己邮箱的原信；mail-mark-read 用 :mail_ids 显式标读。"
     "可选 :parameters 声明模板变量（:type :string 或 :string-list），引用时用 ${变量名}。"
 )
 

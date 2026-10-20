@@ -50,7 +50,9 @@ def operation(handler: Any = total) -> Operation:
 
 
 def executor(op: Operation | None = None, member: str = "alice") -> OperationExecutor:
-    return OperationExecutor(OperationRegistry([op or operation()]), CallContext(member, "run-1"))
+    return OperationExecutor(
+        OperationRegistry([op or operation()]), CallContext(member, "run-1", "call-1")
+    )
 
 
 def evaluate(adapter: DSLAdapter, inputs: Any) -> Any:

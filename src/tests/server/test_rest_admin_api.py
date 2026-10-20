@@ -326,12 +326,7 @@ class TestAdminPrototypeManagement:
     human-authored create, edit, delete."""
 
     _BEHAVIOR = '{:version 1 :rules [{:name "r" :on :boot :actions []}]}\n'
-    _TEMPLATED = (
-        "{:version 1\n"
-        " :parameters {:to {:type :string-list :required true}}\n"
-        ' :rules [{:name "relay" :on :mail-delivered'
-        " :actions [(forward {:to ${to}})]}]}\n"
-    )
+    _TEMPLATED = '{:version 1\n :parameters {:to {:type :string-list :required true}}\n :rules [{:name "relay" :on :mail-delivered :actions [(mail-forward {:mail_id (mail-field msg :id) :to ${to}})]}]}\n'
     _INVALID = (
         '{:version 1 :rules [{:name "w" :on :mail-delivered'
         ' :actions [(jump {:to ["x@tlon.internal"]})]}]}\n'

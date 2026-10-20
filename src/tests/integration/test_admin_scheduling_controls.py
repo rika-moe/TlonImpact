@@ -33,7 +33,7 @@ async def test_admin_sleep_wake_drain_wait_and_terminal_death(tmp_path: Path) ->
         if unread:
             entered.set()
             await release.wait()
-            name, args = "markRead", {"mail_ids": [mail.id for mail in unread]}
+            name, args = "mail-mark-read", {"mail_ids": [mail.id for mail in unread]}
         else:
             name, args = "finishTurn", {}
         return LLMResponse(

@@ -32,12 +32,10 @@ async def test_replay_returns_saved_results_without_repeating_effects(store: Pro
     async def execute(request: ActionRequest, name: str, index: int, args: str) -> Any:
         if request.kind == "state_get":
             return "saved"
-        output.append(request.data["content"])
+        output.append(request.data["value"])
         return {Keyword("status"): "accepted"}
 
-    program = rule(
-        '(let [text (state-get "text")] (send-mail {:to ["x@tlon.internal"] :content text :request-id "stable"}))'
-    )
+    program = rule('(let [text (state-get "text")] (state-put "delivered" text))')
     driver = ProgramDriver(store, "run", make_member_builtins(), execute)
     await driver.run(program, {})
     assert output == ["saved"]
@@ -58,10 +56,12 @@ async def test_state_read_freezes_branch_when_current_state_changes(store: Progr
         attempts += 1
         if attempts == 1:
             raise asyncio.CancelledError()
-        output.append(request.data["content"])
+        output.append(request.data["value"])
         return None
 
-    program = rule('(if (state-get "enabled") (emit "original") (emit "changed"))')
+    program = rule(
+        '(if (state-get "enabled") (state-put "delivered" "original") (state-put "delivered" "changed"))'
+    )
     with pytest.raises(asyncio.CancelledError):
         await ProgramDriver(store, "run", make_member_builtins(), execute).run(program, {})
     state["enabled"] = False
@@ -92,7 +92,7 @@ async def test_unrecorded_failure_retries_same_effect_index(store: ProgramStore)
         attempts.append(index)
         raise OSError("submission status unknown")
 
-    program = rule('(send-mail {:to ["x@tlon.internal"] :content "paper" :request-id "edition:a"})')
+    program = rule('(state-put "edition:a" "paper")')
     for _ in range(2):
         with pytest.raises(OSError, match="submission status unknown"):
             await ProgramDriver(store, "run", make_member_builtins(), fail).run(program, {})
@@ -100,8 +100,8 @@ async def test_unrecorded_failure_retries_same_effect_index(store: ProgramStore)
     assert store.get_effect(
         "run",
         0,
-        "send-mail",
-        dumps([loads('{:to ["x@tlon.internal"] :content "paper" :request-id "edition:a"}')]),
+        "state-put",
+        dumps(["edition:a", "paper"]),
     ) == (False, None)
 
 
@@ -118,11 +118,11 @@ async def test_unknown_host_runtime_error_retains_original_type(store: ProgramSt
     execute = AsyncMock(side_effect=RuntimeError("response lost after commit"))
     with pytest.raises(RuntimeError, match="response lost"):
         await ProgramDriver(store, "unknown", make_member_builtins(), execute).run(
-            rule('(send-mail {:to ["a@tlon.internal"] :content "paper" :request-id "stable"})'), {}
+            rule('(state-put "stable" "paper")'), {}
         )
     assert store.get_effect(
         "unknown",
         0,
-        "send-mail",
-        dumps(loads('[{:to ["a@tlon.internal"] :content "paper" :request-id "stable"}]')),
+        "state-put",
+        dumps(["stable", "paper"]),
     ) == (False, None)

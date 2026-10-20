@@ -23,12 +23,7 @@ from tlon.base.paths import TlonPaths
 from tlon.tools.agents.ports import SpawnRejectedError
 from tlon.tools.prototypes.ports import PrototypeError
 
-ECHO_EDN = """\
-{:version 1
- :rules [{:name "relay"
-          :on :mail-delivered
-          :actions [(forward {:to ["sink@tlon.internal"]})]}]}
-"""
+ECHO_EDN = '{:version 1\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["sink@tlon.internal"]})]}]}\n'
 
 _SPAWNER_MODEL = "test/spawner-model"
 

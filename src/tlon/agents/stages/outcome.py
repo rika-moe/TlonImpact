@@ -23,28 +23,6 @@ from tlon.tools.base import ToolResult
 
 
 @dataclass
-class MailEffect:
-    """One mail submitted by the tool executor before its result is collected.
-
-    A forward (``forwardMail`` tool, ADR 0029) declares ``forward_of``
-    (the source mail id) plus an optional ``forward_comment``; its
-    ``content`` stays empty — the engine composes the self-contained
-    forward body (comment + attribution header + original content) from
-    the source mail it resolves out of the agent's own mailbox.
-    """
-
-    to: list[str]
-    content: str
-    cc: list[str] | None = None
-    subject: str | None = None
-    in_reply_to: str | None = None
-    thread_id: str | None = None
-    endorsing: str | None = None
-    forward_of: str | None = None
-    forward_comment: str | None = None
-
-
-@dataclass
 class StageOutcome:
     """Everything a stage wants changed, as data.
 

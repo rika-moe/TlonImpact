@@ -175,7 +175,7 @@ class TestCritiqueReviewInput:
             tool_calls=[
                 ToolCall(
                     id="c1",
-                    function_name="sendEmail",
+                    function_name="mail-send",
                     arguments={"content": "草稿回复"},
                 )
             ],
@@ -189,7 +189,7 @@ class TestCritiqueReviewInput:
         assert messages[0] == {"role": "user", "content": "来信正文"}
         assert messages[-2]["role"] == "assistant"
         assert "草稿回复" in messages[-2]["content"]
-        assert "sendEmail" in messages[-2]["content"]
+        assert "mail-send" in messages[-2]["content"]
         assert "邮件尚未发送" in messages[-2]["content"]
         assert session.context == [{"role": "user", "content": "来信正文"}]
 
@@ -215,7 +215,7 @@ class TestReviseConsumesVerdict:
         response = LLMResponse(
             content=None,
             tool_calls=[
-                ToolCall(id="c1", function_name="sendEmail", arguments={"content": "正文"})
+                ToolCall(id="c1", function_name="mail-send", arguments={"content": "正文"})
             ],
         )
 
@@ -233,7 +233,7 @@ class TestReviseConsumesVerdict:
         calls = [
             ToolCall(
                 id=f"draft-{index}",
-                function_name="sendEmail",
+                function_name="mail-send",
                 arguments={
                     "to": [f"agent-{index}@tlon"],
                     "cc": ["observer@tlon"],
@@ -282,7 +282,7 @@ class TestReviseConsumesVerdict:
     async def test_post_act_review_preserves_actual_receipt(self, result: ToolResult) -> None:
         svc = _make_services("FAIL\n请核查")
         session = _make_session()
-        call = ToolCall(id="executed", function_name="sendEmail", arguments={"content": "正文"})
+        call = ToolCall(id="executed", function_name="mail-send", arguments={"content": "正文"})
         session.add_tool_result(call, result)
         response = LLMResponse(content=None, tool_calls=[call])
 
@@ -304,7 +304,7 @@ class TestReviseConsumesVerdict:
     async def test_dispatched_uncollected_call_is_not_an_unsent_draft(self, done: bool) -> None:
         svc = _make_services("FAIL")
         session = _make_session()
-        call = ToolCall(id="pending", function_name="sendEmail", arguments={"content": "正文"})
+        call = ToolCall(id="pending", function_name="mail-send", arguments={"content": "正文"})
         response = LLMResponse(content=None, tool_calls=[call])
         gate = asyncio.Event()
 

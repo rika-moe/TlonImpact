@@ -1,5 +1,7 @@
 # ADR 0029：按邮箱引用转发邮件
 
+> 邮件接口由统一操作 P2 修订：当前使用 `mail-send` / `mail-forward` / `mail-mark-read`，参数与回执采用 snake_case；本文保留当时的决策与验收记录。现行契约见 [Operation reference](../reference/operations-reference.md)。
+
 状态：已接受（2026-10-16）；投递结果契约由 ADR 0030 修订，执行格式与适用范围由 [ADR 0042](0042-unified-member-rule-execution.md) 修订。当前实现见 [mail](../design/mail.md)。
 
 ## 保留的决策

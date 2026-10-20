@@ -9,7 +9,7 @@ fetching/caching side.
 
 ADR 0028: there is no trigger mail — the context ends with the fixed
 wake template ("你有 N 封未读邮件"); mail bodies enter via mail-history
-(ambient) and the checkInbox tool results (append-only).
+(ambient) and the mail-check-inbox tool results (append-only).
 
 P4: the builder receives its dependencies (config, team members,
 mailbox, memory, task manager, rule, address) explicitly and owns the

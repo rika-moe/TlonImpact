@@ -48,11 +48,11 @@
           (map address
             (let [current (state-get key)]
               (when (= (get (get current :delivered) address) nil)
-                (let [receipt (send-mail
+                (let [receipt (mail-send
                                 {:to [address] :subject (str "报纸：" period)
                                  :content (get edition :content)
-                                 :request-id (str "edition:" period ":" address)})]
-                  (when (= (get receipt :status) "accepted")
+                                 :request_id (str "edition:" period ":" address)})]
+                  (when (get receipt :mail_id)
                     (state-put key
                       (assoc current :delivered
                         (assoc (get current :delivered) address receipt)))))))
@@ -73,5 +73,5 @@
         (let [period (substring subject 8)
               edition (freeze-edition period subscribers)]
           (deliver-edition period edition))))
-    (mark-read)]}
+    (mail-mark-read {:mail_ids [(mail-field msg :id)]})]}
   {:name "boot" :on :boot :actions []}]}

@@ -1,16 +1,16 @@
-# Operation P1 调用契约
+# Operation 调用契约（P1 + 邮件 P2）
 
-当前状态：P1 提供宿主 Operation 定义、成员作用域注册表、共享输入/输出校验，以及 DSL/Tool 薄入口。尚未接入生产成员装配；既有 46 个工具与 Capability 路径继续运行，P2 才开始真实邮件切换。目标设计见 [operations](../design/operations.md)，实施顺序见 [operations-plan](../design/operations-plan.md)。
+当前状态：P1 已通过 #184 合并 main。P2 已将五个邮件操作接入生产成员并通过本地验收，待 PR 合并；其余 41 个工具仍走既有 Tool 路径，Capability artifact 也未转换为复合 Operation。目标设计见 [operations](../design/operations.md)，实施顺序见 [operations-plan](../design/operations-plan.md)。
 
 ## 定义和执行
 
 `tlon.operations.core.Operation` 接收 name、description、input_schema、output_schema、handler、effects。schema 在准入时自检并保存为不可变 JSON 字符串；公开属性每次返回独立副本。名称满足 `[A-Za-z_][A-Za-z0-9_-]*`，最长 64 字符，不得使用 nil/true/false 或覆盖语言特殊形式、通用内置函数。
 
-空 effects 表示纯计算：handler 是同步 `(CallContext, dict[str, Any]) -> Any`。非空 effects 是 read/write 集合：handler 必须是 async，并由异步执行边界等待结果。纯 handler 返回 awaitable 会被拒绝，不能把异步 IO 谎报为纯计算。注册表固定定义集合，同名拒绝；宿主给不同成员构造 scoped handler 和 `CallContext(member_id, run_id)`，上下文不在业务参数或 DSL env 内。
+空 effects 表示纯计算：handler 是同步 `(CallContext, dict[str, Any]) -> Any`。非空 effects 是 read/write 集合：handler 必须是 async，并由异步执行边界等待结果。纯 handler 返回 awaitable 会被拒绝，不能把异步 IO 谎报为纯计算。注册表固定定义集合，同名拒绝；宿主给不同成员构造 scoped handler 和 `CallContext(member_id, run_id, call_id)`，上下文不在业务参数或 DSL env 内。
 
 `OperationExecutor.call_pure` 仅执行纯操作；`call` 支持两类操作。执行顺序为输入严格 JSON 复制与 schema 校验、handler、输出严格 JSON 复制与 schema 校验。修改 handler 参数、返回值或 Tool schema 投影都不能污染原调用数据或权威 schema。
 
-P1 **不提供**授权名单、动态工具视图、复合依赖、预算、持久化或重放；这些按后续阶段接入。上下文隔离不是完整授权系统。输出不合约报 `OutputError`，不得据此假定效果未发生或自动重试。
+当前 **不提供**通用授权名单、动态工具视图、复合依赖、统一预算或全局调用日志；P2 邮件通过现有 ProgramStore/session journal 记录和 PostOffice 幂等回执实现恢复，不另建存储。上下文隔离不是完整授权系统。输出不合约报 `OutputError`，不得据此假定效果未发生或自动重试。
 
 ## Schema 子集
 
@@ -26,6 +26,14 @@ Tool：`OperationTool(executor, name)` 从同一契约投影协议定义，可�
 
 JSON 边界只接受 None、精确 bool/int/有限 float/str/list/dict；最大嵌套 100，循环数据拒绝。DSL 额外允许 Keyword map key，按原拼写转换为 string；返回对象键转 Keyword，字符串值不变。Keyword 值、Symbol、Closure、Form、tuple、NaN/Infinity 均拒绝。解析 EDN map 与 assoc/conj 构造 map 时，Keyword/string/Symbol 等相等但类型不同的键在写入 dict 前拒绝，避免静默覆盖；同型重复键沿既有语义保留末值。已经被外部 Python dict 覆盖的信息无法恢复，不宣称能够检测。
 
-输入错误为 InputError，输出错误为 OutputError，均继承 OperationError/EvalError，DSL 保留结构化异常类型；Tool 转为失败 ToolResult。领域 handler 自身异常按既有宿主异常路径传播，P1 不添加重试或通用错误分类。
+输入错误为 InputError，输出错误为 OutputError，均继承 OperationError/EvalError，DSL 保留结构化异常类型；Tool 转为失败 ToolResult。邮件领域的明确拒收使用 RejectedError，结果未知使用 UnknownOutcomeError；二者继承 OperationError 并携带 data，unknown 保留 request_id。Tool 入口保留这些结构化信息。其他领域尚未切换，不宣称已有通用重试机制。
 
-Tool 协议根参数必须是 JSON object 的字符串键。若直接从 Python 传入根级非字符串键，既有 ToolExecutor 的关键字参数派发会提前拒绝并返回失败 ToolResult，错误类型不等同共享 InputError；嵌套非 JSON 值仍由共享边界拒绝。P1 未为这种非协议输入增加另一套派发接口。
+Tool 协议根参数必须是 JSON object 的字符串键。OperationTool 在 ToolExecutor 中直接接收参数对象，根级非字符串键和嵌套非 JSON 值均由共享边界返回 InputError；尚未切换的旧 Tool 保留原关键字参数派发。
+
+## 邮件 P2
+
+五个操作 `mail-send`、`mail-forward`、`mail-check-inbox`、`mail-search`、`mail-mark-read` 共用 [权威定义](../../src/tlon/operations/mail.py)，输入与输出均为 snake_case；DSL 也使用 `:mail_id`、`:request_id` 等原拼写键。schema 与参数表见 [工具参考](tools-reference.md#mail)。所有服务绑定成员身份，不接收可伪造的 owner/from 参数。
+
+程序使用冻结 run 和调用序号，工具使用 session 和 tool call ID 生成稳定 call_id。默认 request_id 来自该 ID，显式重试可以提交原 request_id。输入或输出错误不代表效果一定未发生；超时、中断和无法确认提交必须保留 unknown 及原 request_id。复用邮局回执不会重复入箱；会话恢复不自动重发孤立 dispatch。
+
+已删除旧五邮件 Tool 及旧 DSL 邮件词，不提供别名或迁移。旧 Behavior、Capability 和未完成运行若引用旧名，将不兼容；仓库示例同步切换，用户数据不自动修改。DAG、动态工具视图、统一预算和一般根调用日志仍属于 P4-P7。

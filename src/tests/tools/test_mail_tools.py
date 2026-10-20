@@ -1,127 +1,35 @@
-"""Tests for the mail tools (tools/mail/send_email.py, search_mails.py,
-check_inbox.py, mark_read.py)."""
+"""Real Operation tool projections preserve mailbox query and cursor semantics."""
 
 import pytest
 
-from tlon.agents.mail_inbox import mark_read_actor, unread_mails_provider
-from tlon.agents.mail_search import mailbox_mails_provider
+from tests.mail_helpers import make_office
+from tlon.base.events.event_bus import EventBus
 from tlon.base.paths import TlonPaths
+from tlon.operations.adapters import OperationTool
+from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.mail import make_mail_operations
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
-from tlon.tools.mail.check_inbox import (
+from tlon.organization.mail.member_mail import (
     CHECK_INBOX_DEFAULT_LIMIT,
     CHECK_INBOX_MAX_LIMIT,
-    CheckInboxTool,
-)
-from tlon.tools.mail.forward_mail import ForwardMailTool
-from tlon.tools.mail.mark_read import MarkReadTool
-from tlon.tools.mail.search_mails import (
     CONTENT_EXCERPT_LENGTH,
     SEARCH_MAILS_MAX_LIMIT,
-    SearchMailsTool,
+    MemberMailService,
 )
-from tlon.tools.mail.send_email import SendEmailTool
 
 
-class TestSendEmailTool:
-    @pytest.mark.asyncio
-    async def test_execute_returns_mail_data(self):
-        tool = SendEmailTool()
-        result = await tool.execute(
-            to=["a-001@tlon.internal"],
-            content="结论如下",
-            cc=["a-002@tlon.internal"],
-            subject="汇报",
-        )
-
-        assert result.success
-        assert result.data["to"] == ["a-001@tlon.internal"]
-        assert result.data["cc"] == ["a-002@tlon.internal"]
-        assert result.data["subject"] == "汇报"
-        assert result.data["content"] == "结论如下"
-        assert "is_complete" not in result.data
-        assert result.data["action"] == "send_email"
-
-    @pytest.mark.asyncio
-    async def test_defaults(self):
-        tool = SendEmailTool()
-        result = await tool.execute(to=["b-002@tlon.internal"], content="进度")
-
-        assert result.success
-        assert result.data["cc"] == []
-        assert result.data["subject"] is None
-        assert result.data["in_reply_to"] is None
-        assert result.data["endorsing"] is None
-        assert "is_complete" not in result.data
-
-    @pytest.mark.asyncio
-    async def test_endorsing_passes_through(self):
-        """The endorsement signal () rides the tool result data to
-        the stage, which declares it on the MailEffect."""
-        tool = SendEmailTool()
-        result = await tool.execute(
-            to=["a-001@tlon.internal"],
-            content="这封信帮到了我",
-            endorsing="m-helpful",
-        )
-
-        assert result.success
-        assert result.data["endorsing"] == "m-helpful"
-
-    def test_tool_schema(self):
-        tool = SendEmailTool()
-        assert tool.name == "sendEmail"
-        required = tool.parameters["required"]
-        assert set(required) == {"to", "content"}
-
-
-class TestForwardMailTool:
-    """forwardMail (ADR 0029): declarative like sendEmail — execute only
-    declares the intent; the engine composes and sends the forward."""
-
-    @pytest.mark.asyncio
-    async def test_execute_returns_forward_data(self):
-        tool = ForwardMailTool()
-        result = await tool.execute(
-            mail_id="m1",
-            to=["a-001@tlon.internal"],
-            cc=["a-002@tlon.internal"],
-            comment="转给你看看",
-        )
-
-        assert result.success
-        assert result.data["mail_id"] == "m1"
-        assert result.data["to"] == ["a-001@tlon.internal"]
-        assert result.data["cc"] == ["a-002@tlon.internal"]
-        assert result.data["comment"] == "转给你看看"
-        assert result.data["action"] == "forward_mail"
-
-    @pytest.mark.asyncio
-    async def test_defaults(self):
-        tool = ForwardMailTool()
-        result = await tool.execute(mail_id="m1", to=["b-002@tlon.internal"])
-
-        assert result.success
-        assert result.data["cc"] == []
-        assert result.data["comment"] is None
-
-    @pytest.mark.asyncio
-    async def test_message_defers_success_until_post_office_submission(self):
-        """Constructing a request does not claim delivery success."""
-        tool = ForwardMailTool()
-        result = await tool.execute(mail_id="m1", to=["b-002@tlon.internal"])
-
-        assert "邮局提交" in result.message
-
-    def test_tool_schema(self):
-        tool = ForwardMailTool()
-        assert tool.name == "forwardMail"
-        required = tool.parameters["required"]
-        # subject / is_complete are not parameters: the subject is
-        # generated (Fwd: 原主题) and a forward never ends the loop.
-        assert set(required) == {"mail_id", "to"}
-        assert "subject" not in tool.parameters["properties"]
-        assert "is_complete" not in tool.parameters["properties"]
+def _tool(paths: TlonPaths, name: str) -> OperationTool:
+    service = MemberMailService(
+        AGENT_ID,
+        Mailbox(paths.mail_database_file(), AGENT_ID),
+        make_office(EventBus(), paths.tlon_home(), [AGENT_ID, "b-002"]),
+    )
+    executor = OperationExecutor(
+        OperationRegistry(make_mail_operations(service)),
+        CallContext(AGENT_ID, "test-run", "test-call"),
+    )
+    return OperationTool(executor, name)
 
 
 AGENT_ID = "a-001"
@@ -161,8 +69,8 @@ def mailbox(tlon_paths: TlonPaths) -> Mailbox:
     return Mailbox(tlon_paths.mail_database_file(), AGENT_ID)
 
 
-def _search_tool(tlon_paths: TlonPaths) -> SearchMailsTool:
-    return SearchMailsTool(provider=mailbox_mails_provider(tlon_paths), agent_id=AGENT_ID)
+def _search_tool(tlon_paths: TlonPaths) -> OperationTool:
+    return _tool(tlon_paths, "mail-search")
 
 
 async def _seed_mailbox(mailbox: Mailbox) -> None:
@@ -239,7 +147,8 @@ class TestSearchMailsTool:
         tool = _search_tool(tlon_paths)
 
         capped = await tool.execute(query="命中词", limit=SEARCH_MAILS_MAX_LIMIT + 5)
-        assert capped.success
+        assert not capped.success
+        capped = await tool.execute(query="命中词", limit=SEARCH_MAILS_MAX_LIMIT)
         assert capped.data["count"] == SEARCH_MAILS_MAX_LIMIT
 
         defaulted = await tool.execute(query="命中词")
@@ -284,7 +193,7 @@ class TestSearchMailsTool:
     async def test_external_flag_marks_untrusted_senders(
         self, tlon_paths: TlonPaths, mailbox: Mailbox
     ):
-        """searchMails results carry the derived trust flag
+        """mail-search results carry the derived trust flag
         (docs/design/mail.md):
         external senders are marked, internal ones are not."""
         await mailbox.append_inbox(
@@ -318,12 +227,12 @@ class TestSearchMailsTool:
         assert excerpt == "长" * CONTENT_EXCERPT_LENGTH + "…"
 
 
-def _check_inbox_tool(tlon_paths: TlonPaths) -> CheckInboxTool:
-    return CheckInboxTool(provider=unread_mails_provider(tlon_paths), agent_id=AGENT_ID)
+def _check_inbox_tool(tlon_paths: TlonPaths) -> OperationTool:
+    return _tool(tlon_paths, "mail-check-inbox")
 
 
-def _mark_read_tool(tlon_paths: TlonPaths) -> MarkReadTool:
-    return MarkReadTool(actor=mark_read_actor(tlon_paths), agent_id=AGENT_ID)
+def _mark_read_tool(tlon_paths: TlonPaths) -> OperationTool:
+    return _tool(tlon_paths, "mail-mark-read")
 
 
 class TestCheckInboxTool:
@@ -372,7 +281,6 @@ class TestCheckInboxTool:
         assert result.success
         assert result.data["mails"] == []
         assert result.data["total_unread"] == 0
-        assert "没有未读" in result.message
 
     @pytest.mark.asyncio
     async def test_read_mails_excluded(self, tlon_paths: TlonPaths, mailbox: Mailbox):
@@ -396,6 +304,8 @@ class TestCheckInboxTool:
         tool = _check_inbox_tool(tlon_paths)
 
         capped = await tool.execute(limit=CHECK_INBOX_MAX_LIMIT + 5)
+        assert not capped.success
+        capped = await tool.execute(limit=CHECK_INBOX_MAX_LIMIT)
         assert capped.data["count"] == CHECK_INBOX_MAX_LIMIT
         assert capped.data["total_unread"] == CHECK_INBOX_MAX_LIMIT + 10
         # 截断保留最旧的（处理顺序），不是最新的
@@ -495,9 +405,3 @@ class TestMarkReadTool:
         assert result.data["not_found"] == ["b1"]
         assert result.data["marked"] == ["m1"]
         assert [m.id for m in await bobs.unread()] == ["b1"]
-
-
-def test_send_email_rejects_removed_completion_parameter() -> None:
-    assert SendEmailTool().validate_arguments(
-        {"to": ["a@tlon.internal"], "content": "hi", "is_complete": True}
-    )

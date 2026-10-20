@@ -14,6 +14,22 @@ class OperationError(EvalError):
     """A failure at the shared operation boundary."""
 
 
+class RejectedError(OperationError):
+    """Known rejection of a business operation."""
+
+    def __init__(self, message: str, data: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.data = data
+
+
+class UnknownOutcomeError(OperationError):
+    """The operation may have committed; retry with its stable request id."""
+
+    def __init__(self, message: str, data: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.data = data
+
+
 class InputError(OperationError):
     """Arguments do not satisfy the operation contract."""
 

@@ -1,7 +1,7 @@
 """act stage: execute this round's tool calls — all of them.
 
 One Python semantic unit spanning both halves of the step/collect
-model: :func:`act_stage_step` declares (no-tool reminder, sendEmail
+model: :func:`act_stage_step` declares (no-tool reminder, mail-send
 conflict check, the tool dispatch list) and :func:`act_stage_collect`
 harvests. Both are pure transformations ``Session x Services ->
 StageOutcome`` (C2): the stage declares *what* to dispatch and what the
@@ -40,7 +40,7 @@ def attempts_mail_delivery(response: LLMResponse | None) -> bool:
         response
         and response.tool_calls
         and not any(tc.function_name in ENDING_TOOLS for tc in response.tool_calls)
-        and any(tc.function_name in {"sendEmail", "forwardMail"} for tc in response.tool_calls)
+        and any(tc.function_name in {"mail-send", "mail-forward"} for tc in response.tool_calls)
     )
 
 
@@ -52,7 +52,7 @@ async def act_stage_step(
 ) -> StageOutcome:
     """act stage, step half: declare this round's tool execution.
 
-    Covers the no-tool reminder, the sendEmail conflict check, and the
+    Covers the no-tool reminder, the mail-send conflict check, and the
     dispatch declaration; the harvest half is act_stage_collect. The
     declared ``tool_dispatches`` are executed by the engine: one
     TOOL_EXECUTE_START event and one background task per tool call,
@@ -98,7 +98,7 @@ async def act_stage_collect(
     ``completed`` is harvested by the engine
     (``session.collect_completed``); the stage only reads session state
     and declares everything it wants changed: the tool results to
-    record, the sendEmail reply mails, the context appends, the
+    record, the mail-send reply mails, the context appends, the
     iteration advance / ACTIVE transition (continue thinking), or the
     final reply + on-complete actions + completion signal (done).
     Completion is event-driven by explicit scheduling tools, not a loop
@@ -186,7 +186,7 @@ def _no_tool_reminder_appends(response: LLMResponse) -> list[dict[str, Any]]:
         {
             "role": "user",
             "content": (
-                "你必须调用工具，不能直接输出文本。需要发信时调用 sendEmail 或 forwardMail；"
+                "你必须调用工具，不能直接输出文本。需要发信时调用 mail-send 或 mail-forward；"
                 "发信不会结束工作。完成后另起一轮单独调用 finishTurn，"
                 "或使用 sleepUntil 定时睡眠、exitAgent 永久退出。"
             ),

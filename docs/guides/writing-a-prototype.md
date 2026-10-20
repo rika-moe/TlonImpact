@@ -38,7 +38,7 @@
 
 `run-loop` 请求一次按配方运行的会话。`quote` 保留 `(think)` 等表达式为数据，避免在外围规则求值时提前执行它们。配方中的上下文、阶段、终止条件、三项资源上限和反思配置都需显式声明，字段见 [DSL reference](../reference/dsl-reference.md)。
 
-评审失败时，`act` 不派发草稿，`revise` 将完整草稿及“尚未发送”状态交给下一轮。是否标读邮件由程序或模型显式决定：会话完成、`finishTurn` 或等待不会代替 `markRead`。
+评审失败时，`act` 不派发草稿，`revise` 将完整草稿及“尚未发送”状态交给下一轮。是否标读邮件由程序或模型显式决定：会话完成、`finishTurn` 或等待不会代替 `mail-mark-read`。
 
 同一个程序还可以使用 `if`、`let`、`while`、`map`、`defn`，不需要为不同分支创建不同类别的规则。配方可以位于条件分支或函数中；同一成员允许多条规则请求不同配方，也允许非邮件事件请求会话。
 
@@ -54,13 +54,13 @@
  [{:name "relay"
    :on :mail-delivered
    :when (or (addressed-to-me? msg) (cc-ed? msg))
-   :actions [(forward {:to ${to}}) (mark-read)]}
+   :actions [(mail-forward {:mail_id (mail-field msg :id) :to ${to}}) (mail-mark-read {:mail_ids [(mail-field msg :id)]})]}
   {:name "boot" :on :boot :actions []}]}
 ```
 
-`${to}` 是写侧模板参数，实例化前渲染为 EDN 地址向量。`forward` 转发当前触发邮件，`mark-read` 显式标读；它们与 `run-loop` 一样是普通动作。会话之后也能转发同一封原邮件，不存在专属规则类型。
+`${to}` 是写侧模板参数，实例化前渲染为 EDN 地址向量。`mail-forward` 显式指定来源邮件 ID，`mail-mark-read` 显式指定标读 ID；它们与 `run-loop` 一样是普通动作。会话之后也能转发同一封原邮件，不存在专属规则类型。
 
-想循环通知多个地址时可用 `(map address (emit "通知" [address]) recipients)`；传统循环本身无需请求模型。效果收集器会保留嵌套产生的全部动作。
+想循环通知多个地址时可用 `(map address (mail-send {:to [address] :content "通知"}) recipients)`；传统循环本身无需请求模型。效果收集器会保留嵌套产生的全部动作。
 
 ## 4. 人格、创建与提案
 

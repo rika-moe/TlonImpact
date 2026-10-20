@@ -31,14 +31,7 @@ VALID_CAPABILITY = """\
  :pure true}
 """
 
-VALID_IMPURE_CAPABILITY = """\
-{:version 1
- :name "notify-adam"
- :description "给 Adam 发一封通知邮件"
- :args [{:name "content" :type :string :doc "通知正文"}]
- :impl (fn [content] (emit content))
- :pure false}
-"""
+VALID_IMPURE_CAPABILITY = '{:version 1\n :name "notify-adam"\n :description "给 Adam 发一封通知邮件"\n :args [{:name "content" :type :string :doc "通知正文"}]\n :impl (fn [content] (mail-send {:to ["sink@tlon.internal"] :content content}))\n :pure false}\n'
 
 VALID_CAPABILITY_WITH_EXAMPLES = """\
 {:version 1
@@ -150,9 +143,12 @@ class TestStructuralRejection:
 
 class TestPurityAdmission:
     def test_pure_impl_with_action_word_rejected(self):
-        spec = CapabilitySpec.from_edn(_capability(impl='(fn [x] (emit "hi" [x]))', pure="true"))
+        spec = CapabilitySpec.from_edn(
+            _capability(impl='(fn [x] (mail-send {:to [x] :content "hi"}))', pure="true")
+        )
         with pytest.raises(
-            CapabilityError, match="failed pure validation: unknown function or special form: emit"
+            CapabilityError,
+            match="failed pure validation: unknown function or special form: mail-send",
         ):
             validate_capability(spec)
 
@@ -191,7 +187,7 @@ class TestNamespaceRejection:
                 validate_capability(spec)
 
     def test_builtin_collision_rejected(self):
-        for word in ("get", "str", "count", "inc", "spawn", "emit", "forward"):
+        for word in ("get", "str", "count", "inc", "spawn", "mail-send", "mail-forward"):
             spec = CapabilitySpec.from_edn(_capability(name=f'"{word}"'))
             with pytest.raises(CapabilityError, match="collides with a builtin word"):
                 validate_capability(spec)
@@ -293,7 +289,7 @@ class TestExamplesSchema:
             CapabilitySpec.from_edn(
                 _capability(
                     pure="false",
-                    impl="(fn [x] (emit x))",
+                    impl='(fn [x] (mail-send {:to ["sink@tlon.internal"] :content x}))',
                     examples='[{:args ["a"] :expect "a"}]',
                 )
             )

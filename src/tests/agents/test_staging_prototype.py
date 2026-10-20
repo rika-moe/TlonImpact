@@ -36,14 +36,14 @@ class TestWriteStagingValidation:
         p = TlonPaths(home=tmp_path)
         with pytest.raises(PrototypeError, match=":execution/:level"):
             write_staging_prototype(
-                '{:version 1\n :execution {:level :L9}\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(forward {:to ["x@tlon.internal"]})]}]}\n',
+                '{:version 1\n :execution {:level :L9}\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n',
                 tlon_paths=p,
                 display_name="定址转发",
             )
         assert not p.prototypes_staging_dir().exists()
 
 
-VALID_SPEC = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(forward {:to ["x@tlon.internal"]})]}]}\n'
+VALID_SPEC = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
 
 
 class TestListStagingPrototypesTool:

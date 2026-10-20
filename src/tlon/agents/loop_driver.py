@@ -47,7 +47,7 @@ from tlon.agents.stages.act import (
     attempts_mail_delivery,
 )
 from tlon.agents.stages.critique import critique_stage
-from tlon.agents.stages.outcome import MailEffect, StageOutcome
+from tlon.agents.stages.outcome import StageOutcome
 from tlon.agents.stages.plan import plan_stage
 from tlon.agents.stages.revise import revise_stage
 from tlon.agents.stages.services import StageServices
@@ -63,7 +63,10 @@ from tlon.agents.vocabulary import (
 from tlon.base.events.event import EventType
 from tlon.base.llm_client import ContextWindowExceededError, LLMResponse, ToolCall
 from tlon.base.logger import get_logger
+from tlon.operations.adapters import OperationTool
+from tlon.operations.core import CallContext
 from tlon.organization.mail.mail import Mail
+from tlon.organization.mail.member_mail import MailDraft
 from tlon.tools.base import ToolResult
 from tlon.tools.spill import ToolSpill
 from tlosure.builtins import EvalError
@@ -365,6 +368,10 @@ class LoopDriver:
                 session.id,
                 "tool/dispatch",
                 tool_calls=[tc.to_dict() for tc in outcome.tool_dispatches],
+                operation_recovery={
+                    tc.id: self._operation_recovery(session.id, tc)
+                    for tc in outcome.tool_dispatches
+                },
             )
             tasks = {}
             for tc in outcome.tool_dispatches:
@@ -460,7 +467,7 @@ class LoopDriver:
                 continue
             try:
                 await self._executor.send_mail(
-                    MailEffect(
+                    MailDraft(
                         to=[sender],
                         content=content,
                         subject="运行时通知：处理达到资源上限"
@@ -516,7 +523,7 @@ class LoopDriver:
 
         Human senders only (ADR 0027, anchor revised by ADR 0028 决策 7):
         agent senders end with a log line, no mail. The fatal paths live
-        in the scheduler; the reply goes through the same MailEffect ->
+        in the scheduler; the reply goes through the same MailDraft ->
         EffectExecutor pipeline every other engine mail uses (send_mail
         never raises).
         """
@@ -620,17 +627,15 @@ class LoopDriver:
         result: ToolResult
         try:
             result = await asyncio.wait_for(
-                self._execute_tool_and_mail(session_id, tc),
+                self._tool_executor.execute(
+                    tc.function_name, tc.arguments, self._operation_context(session_id, tc)
+                ),
                 timeout=timeout,
             )
         except TimeoutError:
-            if tc.function_name in ("sendEmail", "forwardMail"):
-                request_id = tc.arguments.get("request_id") or f"{session_id}:{tc.id}"
-                result = ToolResult(
-                    success=False,
-                    data={"request_id": request_id, "outcome": "unknown"},
-                    error=f"投信结果未知；请用原 request_id {request_id} 重试",
-                )
+            tool = self._tool_executor.get_tool(tc.function_name)
+            if isinstance(tool, OperationTool):
+                result = tool.timeout_result(tc.arguments, self._operation_context(session_id, tc))
             else:
                 result = ToolResult(
                     success=False, data={}, error=f"Timeout after {timeout}s ({authority})"
@@ -644,37 +649,16 @@ class LoopDriver:
         )
         return tc, result
 
-    async def _execute_tool_and_mail(self, session_id: str, tc: ToolCall) -> ToolResult:
-        """Finish mail submission before journaling or exposing tool success."""
-        result = await self._tool_executor.execute(tc.function_name, tc.arguments)
-        if not result.success or tc.function_name not in ("sendEmail", "forwardMail"):
-            return result
-        data = result.data
-        effect = MailEffect(
-            to=data.get("to") or [],
-            cc=data.get("cc"),
-            content=data.get("content", ""),
-            subject=data.get("subject"),
-            in_reply_to=data.get("in_reply_to"),
-            endorsing=data.get("endorsing"),
-            forward_of=data.get("mail_id") if tc.function_name == "forwardMail" else None,
-            forward_comment=data.get("comment"),
-        )
-        request_id = tc.arguments.get("request_id") or f"{session_id}:{tc.id}"
-        try:
-            receipt = await self._executor.send_mail(effect, request_id=request_id)
-        except ValueError as error:
-            return ToolResult(success=False, data={"request_id": request_id}, error=str(error))
-        except Exception as error:
-            return ToolResult(
-                success=False,
-                data={"request_id": request_id, "outcome": "unknown"},
-                error=f"投信结果未知；请使用原 request_id 查询或重试：{error}",
-            )
-        payload = receipt.to_dict()
-        return ToolResult(
-            success=True, data={**data, **payload}, message=str(payload.get("message", ""))
-        )
+    def _operation_context(self, session_id: str, tc: ToolCall) -> CallContext:
+        return CallContext(self._identity.id, session_id, f"session:{session_id}:{tc.id}")
+
+    def _operation_recovery(self, session_id: str, tc: ToolCall) -> dict[str, Any]:
+        if not self._tool_executor.has_tool(tc.function_name):
+            return {}
+        tool = self._tool_executor.get_tool(tc.function_name)
+        if isinstance(tool, OperationTool):
+            return tool.recovery_metadata(tc.arguments, self._operation_context(session_id, tc))
+        return {}
 
     def _tool_timeout_budget(self, tc: ToolCall) -> tuple[float, str]:
         """Effective wait_for budget for one tool call, plus its authority.

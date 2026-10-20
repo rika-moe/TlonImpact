@@ -19,8 +19,8 @@ from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
 from tlon.tools.agents.propose_behavior import ProposeBehaviorTool
 
-_CURRENT_SPEC = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(forward {:to ["x@tlon.internal"]})]}]}\n'
-_DRAFT_SPEC = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(forward {:to ["y@tlon.internal"]})]}]}\n'
+_CURRENT_SPEC = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
+_DRAFT_SPEC = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["y@tlon.internal"]})]}]}\n'
 _INVALID_SPEC = '{:version 1\n :rules [{:name "wild"\n          :on :mail-delivered\n          :actions [(jump {:to ["x@tlon.internal"]})]}]}\n'
 
 

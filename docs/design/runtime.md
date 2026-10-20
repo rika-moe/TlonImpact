@@ -1,6 +1,6 @@
 # 成员运行时设计
 
-> 后续方案（尚未实施）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
+> 后续方案（邮件 P2 已接线，待验收；其余分阶段实施）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
 
 成员共用四态调度：活跃、等待、定时睡眠、死亡。活跃由实际执行、模型或工具调用及后台维护派生；等待实例可以卸载，卸载不等于睡眠；死亡拒收新邮件并保留历史。管理员可请求排空后等待、定时睡眠、提前唤醒或永久退出，完整契约见 [agent-scheduling-states](agent-scheduling-states.md)。
 
@@ -16,7 +16,7 @@
   → 冻结本次规则源码与触发输入，按 spec 顺序求值
   → 遇到效果调用：读取已记录结果，或执行并记录实际结果
       → state-get / state-put：成员私有结构化状态
-      → llm-call / send-mail：返回模型内容或邮局回执
+      → llm-call / mail-send：返回模型内容或邮局回执
       → run-loop：按本次配方执行会话
   → 将结果送回表达式，继续 let / if / 函数 / 循环
 ```
@@ -92,13 +92,15 @@ stage 通过 `StageServices` 调用获准的读取/模型能力，返回 `StageO
 
 ## 效果执行与邮件
 
-[EffectExecutor](../../src/tlon/agents/executor.py) 为邮件工具验证来源、构造信件并调用 `PostOffice`。先取得真实邮局结果，再交给模型并写 journal；收集结果不再次发送。DSL `send-mail`、`emit`、`forward` 与工具投递共用邮局，不能通过直接发布事件绕过持久化。
+邮件操作 `mail-send`、`mail-forward`、`mail-check-inbox`、`mail-search`、`mail-mark-read` 定义在 [operations/mail.py](../../src/tlon/operations/mail.py)，由成员作用域的 [MemberMailService](../../src/tlon/organization/mail/member_mail.py) 执行。DSLAdapter 与 OperationTool 共用 schema、服务及结果；回复线程、转发正文、endorsement、mentor cc 只在邮件领域实现一次。LoopDriver 不再根据工具名二次提交。
 
-`send-mail` 返回 `:status "accepted"` 和真实 `:mail-id` / `:request-id` / `:local-recipients` / `:gateways`。明确拒收返回 `:status "rejected"`，没有成功邮件 ID；无法确认提交的异常中断程序，不记录成成功。稳定请求 ID 复用邮局的事务幂等回执，覆盖已入箱但程序结果未记录的崩溃窗口；相同请求 ID 改内容会报冲突。接受只表示本地入箱，网关回执仍按现有尽力投递语义解释。`emit` 和 `forward` 保留日志式失败处理，不提供供业务推进判断的回执。
+发送操作返回真实 `mail_id` / `request_id` / `local_recipients` / `gateways` 回执。明确拒收抛 `RejectedError`，未确定是否提交抛 `UnknownOutcomeError`，两者都继承 `OperationError` 并带结构化 `data`；Tool 入口将其投影为失败结果。DSL 不把失败当成成功值记录。接受只表示本地入箱，不保证外部网关最终送达。
 
-`forward` 始终使用当前规则的原始触发邮件；会话执行后该引用仍保留。`forwardMail` 工具则显式选择自己邮箱中的 `mail_id`。两种方式都可以在同一成员程序中使用。
+程序调用沿用 ProgramStore，稳定 ID 来自冻结 run 与效果序号；会话调用沿用 session journal，稳定 ID 来自 session 与 tool call。邮局按发件身份和 request_id 幂等提交，覆盖已入箱但程序或会话结果未记录的崩溃窗口。超时与中断结果保留 request_id 和 unknown；重试必须复用该 ID，相同 ID 改内容会冲突。已有结果只重放结果，不重发。DSL 的 UnknownOutcomeError 不将运行标为失败或记录成功，保留 pending，恢复时用相同调用 ID 重试；明确拒收仍作为程序失败处理。
 
-读状态与运行状态独立。命中规则、完成会话、进入等待均不隐式标读；程序可用 `(mark-read)` 标记当前来源邮件，模型可用 `markRead` 选择邮箱中的邮件。自寄保护和拒绝消费的处理不用于区分规则类型，具体邮局契约见 [mail](mail.md)。
+DSL 和模型都显式指定邮件引用。例如 `(mail-forward {:mail_id (mail-field msg :id) :to ["bob@tlon.internal"]})`；不存在自动从当前触发邮件补收件人或转发来源的隐式入口。回复用显式 `in_reply_to`，线程由本成员邮箱中的被引用邮件推导。
+
+读状态与运行状态独立。命中规则、完成会话、进入等待均不隐式标读；程序可用 `(mail-mark-read {:mail_ids [(mail-field msg :id)]})` 标记当前来源邮件，模型可用 `mail-mark-read` 选择邮箱中的邮件。自寄保护和拒绝消费的处理不用于区分规则类型，具体邮局契约见 [mail](mail.md)。
 
 ## 唤醒与补偿
 
@@ -114,7 +116,7 @@ boot/lazy 与邮件订阅资格来自 spec，不是当前调度状态。注册�
 
 预算耗尽通知由运行时确定性生成：明确任务未完成，仅依据本次真实工具回执统计确认提交、拒绝和未知，按 `request_id` / `mail_id` 去重。草稿不计入，通知本身不计入，不额外调用模型；邮局提交也不代表收件人已读或外部送达。
 
-终止通知只发给责任集内已知人类发件人，每人一封，以其责任集中最后一封邮件为回复锚点；非邮件事件或责任集中没有人类发件人时不发通知。正常 `sendEmail` 仍可自由选择合法收件人。
+终止通知只发给责任集内已知人类发件人，每人一封，以其责任集中最后一封邮件为回复锚点；非邮件事件或责任集中没有人类发件人时不发通知。正常 `mail-send` 仍可自由选择合法收件人。
 
 ## 反思与完成
 

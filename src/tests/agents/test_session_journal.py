@@ -545,7 +545,7 @@ class TestDriverJournaling:
             tool_calls=[_tc("c1", "finishTurn", {})],
         )
 
-        async def tool_execute(name: str, args: dict) -> ToolResult:
+        async def tool_execute(name: str, args: dict, context: Any = None) -> ToolResult:
             return ToolResult(
                 success=True, data={"scheduling_request": {"action": "finish", "reason": ""}}
             )
@@ -593,7 +593,7 @@ class TestDriverJournaling:
             tool_calls=[_tc("c2", "finishTurn", {})],
         )
 
-        async def tool_execute(name: str, args: dict) -> ToolResult:
+        async def tool_execute(name: str, args: dict, context: Any = None) -> ToolResult:
             if name == "finishTurn":
                 return ToolResult(
                     success=True,
@@ -639,7 +639,7 @@ class TestCrashRecovery:
         executed: list[str] = []
         never = asyncio.Event()
 
-        async def tool_execute(name: str, args: dict) -> ToolResult:
+        async def tool_execute(name: str, args: dict, context: Any = None) -> ToolResult:
             executed.append(name)
             if name == "slowTool":
                 await never.wait()  # in-flight when the "process" dies
@@ -963,7 +963,7 @@ class TestTokenBudget:
             usage={"prompt_tokens": 600, "completion_tokens": 100, "total_tokens": 700},
         )
 
-        async def tool_execute(name: str, args: dict) -> ToolResult:
+        async def tool_execute(name: str, args: dict, context: Any = None) -> ToolResult:
             return ToolResult(
                 success=True, data={"scheduling_request": {"action": "finish", "reason": ""}}
             )
@@ -1027,7 +1027,7 @@ class TestConsecutiveErrorLimit:
             tool_calls=[_tc("c-final", "finishTurn", {})],
         )
 
-        async def tool_execute(name: str, args: dict) -> ToolResult:
+        async def tool_execute(name: str, args: dict, context: Any = None) -> ToolResult:
             return ToolResult(
                 success=True, data={"scheduling_request": {"action": "finish", "reason": ""}}
             )

@@ -249,7 +249,7 @@
 | `mail-field` | 是 |  |
 <!-- END GENERATED: dsl-builtins-script -->
 
-### 4.5 动作 builtin（`pure=False`，产出 `ActionRequest`，引擎执行）
+### 4.5 程序效果与统一邮件操作
 
 通用工作流效果：
 
@@ -258,43 +258,45 @@
 | `(state-get "key")` | 成员私有状态；缺失返回 `nil`，读取结果被记录供重放 |
 | `(state-put "key" value)` | 写入值；状态更新与效果记录同事务提交 |
 | `(llm-call {:prompt "任务数据" :max-tokens 256})` | `{:content "..." :usage {...}}`，usage 使用 `:completion-tokens` 等关键字 |
-| `(send-mail {:to ["成员地址"] :subject "主题" :content "正文" :request-id "稳定键"})` | 接受时 `{:status "accepted" :mail-id "..." :request-id "..." :local-recipients [...] :gateways [...] :message "..."}`；拒收时 `{:status "rejected" :reason "..." :invalid-recipients [...]}`；未知异常传播 |
 
-`send-mail` 的 `:subject` 可省略。接受仅证明本地信箱提交，网关字段不证明外部送达。请求 ID 相同但内容不同会冲突；邮局已有回执可覆盖已入箱而程序未记结果的崩溃窗口。`emit`、`forward` 的日志式失败处理不能充当业务成功回执。
+邮件是统一 Operation，不再构造旧邮件 `ActionRequest`。DSL 使用一个命名参数 map，键与 JSON Tool 参数均为 snake_case：
+
+| 调用 | 语义 |
+| --- | --- |
+| `(mail-send {:to ["成员地址"] :subject "主题" :content "正文" :request_id "稳定键"})` | 返回真实 `{:mail_id "..." :request_id "..." :local_recipients [...] :gateways [...] :message "..."}` |
+| `(mail-forward {:mail_id (mail-field msg :id) :to ["成员地址"]})` | 从自己的邮箱显式取来源；自动生成 Fwd 主题及归因正文，另起线程 |
+| `(mail-check-inbox {})` | 查询自己的未读邮件 |
+| `(mail-search {:mail_id "邮件ID"})` | 查询自己邮箱的邮件全文；也支持 query 关键词检索 |
+| `(mail-mark-read {:mail_ids [(mail-field msg :id)]})` | 显式标读自己的邮件 |
+
+`:subject`、`:request_id` 可省略；宿主默认生成稳定调用 ID。回复显式传 `:in_reply_to`，收件人显式传 `:to`，不会隐式从触发邮件推断。完整参数以 [邮件操作 schema](../../src/tlon/operations/mail.py) 为权威。拒收和未知结果分别抛带结构化 data 的 `RejectedError` / `UnknownOutcomeError`，不返回伪成功；Tool 入口将同一错误投影为失败结果。请求 ID 相同但内容不同会冲突。邮局已有回执覆盖已入箱而程序尚未记结果的崩溃窗口；unknown 必须复用原 request_id 重试。接受只证明本地信箱提交，网关字段不证明外部送达。
 
 `llm-call` 不附工具，保留人格、RULES 和协议。输出上限不超过请求值、规则剩余额度和成员 `llm.max_tokens`；每次调用按请求上限预留共享额度，重放也预留。已记录结果直接复用，未记录的上游成功可能导致再次调用。
 
 `mail-field` 读取真实 `Mail` 的 `:id`、`:from`、`:to`、`:cc`、`:subject`、`:content`、`:timestamp`、`:thread-id`、`:in-reply-to`、`:forward-of`、`:endorsing`；非邮件值返回 `nil`，未知字段报错。随包 [报社示例](../../src/tlon/resources/examples/newspaper/README.md) 演示先冻结期刊再逐人幂等投递，不自动创建默认成员。
 
-动作由 `make_member_builtins` 注入，能力白名单为 `MEMBER_ACTION_NAMES`。所有规则共用这些词；它们可以出现在函数、条件和传统循环中。效果执行受实时权限和四态门控约束。
+以下非邮件动作由 `make_member_builtins` 注入，邮件 Operation 由成员装配追加。所有规则共用这些词；它们可以出现在函数、条件和传统循环中。效果执行受实时权限和四态门控约束。
 
 | 名称 | 签名 | 语义 |
 |---|---|---|
 | `spawn` | `(spawn prototype [options])` | 经注册表从原型派生一个新成员（统一成员模型，ADR 0006：与手建成员同构、永不删除）；`prototype` 必填字符串，`options` 只允许 `{:name "..."}`；无名时自动生成 `"{prototype}-{随机4位}"` |
-| `emit` | `(emit content [to])` | 发邮件；`content` 必填字符串，`to` 为地址字符串向量；**省略 `to` 时回复触发邮件的发件人**（无触发邮件则收件人为空、发信失败仅记日志） |
 | `start` | `(start {:agent id :reason s})` | 发布启动请求；`:agent` / `:reason` 均为必填非空字符串 |
 | `stop` | `(stop {:agent id :reason s})` | 发布停止请求；参数同上 |
 | `start-all` | `(start-all {:reason s})` | 对"声明了 `:on :boot` 的成员"集合逐个发启动请求；**不允许 `:agent`**；候选集展开依赖宿主查询注入——无宿主的注册表运行时会抛 `EvalError` |
-| `forward` | `(forward {:to [...] :cc [...] :subject s})` | 转发当前规则的原始邮件；会话后仍保留来源。`:to` 必填非空地址向量，`:cc`、`:subject` 可选；新信以 `forward_of` 记录来源，无来源时跳过并记录 warning |
 | `run-loop` | `(run-loop (quote {...}))` | 请求按独立配方运行一次会话，结束后继续剩余效果；可用于任意事件、条件及传统循环 |
-| `mark-read` | `(mark-read)` | 显式标读当前触发邮件；无来源时不操作 |
 
 <!-- BEGIN GENERATED: dsl-action-kinds -->
-效果 builtin 实际产出的 `ActionRequest` 形状（11 种 kind，生成自 `vocabulary.py` 的调用点；`start-all` 不产出自己的 kind——它按宿主查询 `start_all_candidates` 的候选集展开为多个 `kind="start"` 请求；生产程序在效果调用处执行并返回实际结果）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+效果 builtin 实际产出的 `ActionRequest` 形状（7 种 kind，生成自 `vocabulary.py` 的调用点；`start-all` 不产出自己的 kind——它按宿主查询 `start_all_candidates` 的候选集展开为多个 `kind="start"` 请求；生产程序在效果调用处执行并返回实际结果）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | kind | data 字段 |
 |---|---|
 | `run_loop` | `recipe` |
-| `mark_read` |  |
 | `spawn` | `prototype`、`name` |
-| `emit` | `content`、`to` |
 | `start` | `agent_id`、`reason` |
 | `stop` | `agent_id`、`reason` |
-| `forward` | `to`、`cc`、`subject` |
 | `state_get` | `key` |
 | `state_put` | `key`、`value` |
 | `llm_call` | `prompt`、`max_tokens` |
-| `send_mail` | `to`、`content`、`subject`、`request_id` |
 <!-- END GENERATED: dsl-action-kinds -->
 
 ### 4.6 宿主查询端口（闭包注入）
@@ -411,7 +413,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 
 所有规则使用 `{msg, event, self}`，动作共享求值环境，所以前一个表达式定义的函数可在后续使用。循环或函数中的效果使用同一调用边界，结果记录后继续表达式；同步 collector 只用于分析请求数据。
 
-邮件的读状态不表示规则类型或调度状态。处理结束、进入等待均不隐式标读。程序用 `(mark-read)` 标记当前来源邮件，模型工具 `markRead` 可选择具体邮件。重复通知、启动和周期扫描按邮件及规则身份去重，已排队、执行中及已完成分派不会重复启动。
+邮件的读状态不表示规则类型或调度状态。处理结束、进入等待均不隐式标读。程序用 `(mail-mark-read {:mail_ids [(mail-field msg :id)]})` 标记当前来源邮件，模型工具 `mail-mark-read` 可选择具体邮件。重复通知、启动和周期扫描按邮件及规则身份去重，已排队、执行中及已完成分派不会重复启动。
 
 ## 7. `:parameters` 模板（写侧专属）
 
@@ -468,7 +470,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
  [{:name "relay"
    :on :mail-delivered
    :when (or (addressed-to-me? msg) (cc-ed? msg))
-   :actions [(forward {:to ${to}}) (mark-read)]}
+   :actions [(mail-forward {:mail_id (mail-field msg :id) :to ${to}}) (mail-mark-read {:mail_ids [(mail-field msg :id)]})]}
   {:name "boot" :on :boot :actions []}]}
 ```
 
