@@ -38,6 +38,12 @@ architecture 区分规范与当前实现；design 负责当前领域模型和机
 | 人类接入 | [WebUI](design/webui.md) | 页面状态、邮箱同步、线程展示与管理交互 |
 | 人类接入 | [Telegram](design/telegram.md) | SDK 接入、回复关联与失败处理 |
 
+## 工作程序的已接受目标（尚未实施）
+
+- [ADR 0046](decisions/0046-programmable-workflows.md)：选择普通函数工作程序，明确替代与非目标。
+- [可编程工作流程](design/programmable-workflows.md)：module、Behavior、模型、工具、状态、调度和恢复边界。
+- [分阶段实施计划](design/programmable-workflows-plan.md)：两个串行 EPIC，各阶段范围、验收、删除项与 issue 跟踪。
+
 ## 共享操作的当前机制与后续范围
 
 - [统一宿主操作](design/operations.md)：宿主契约与 DSL/LLM 入口；Capability 已删除。

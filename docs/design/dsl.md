@@ -1,5 +1,8 @@
 # DSL 设计：行为即数据
 
+> 已接受目标（尚未实施）：[ADR 0046](../decisions/0046-programmable-workflows.md) 与 [可编程工作流程](programmable-workflows.md) 将以模块函数替代 stage 引擎，施工见[分阶段计划](programmable-workflows-plan.md)。本文仍描述现行机制。
+
+
 > 当前状态：[ADR 0045](../decisions/0045-remove-capabilities.md) 已删除 Capability 与复合 Operation；保留宿主 Operation 和现有 Behavior。
 
 > 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种。模型总览见 [docs/design/unified-member-model.md](./unified-member-model.md)。
