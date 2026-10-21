@@ -1,3 +1,3 @@
 """Generated from uv.lock by scripts/gen_runtime_identity.py; do not edit."""
 
-LOCK_DIGEST = "f86ea94f670c0e1f3b395eacba39a8c8fd35fd1902ece2699b171cf71147c9d9"
+LOCK_DIGEST = "2930a0b66aac26087556dc7d9620a9d10a0816df06c51b4ebc22bbedba5183ae"
