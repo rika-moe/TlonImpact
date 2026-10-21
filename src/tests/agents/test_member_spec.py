@@ -19,10 +19,10 @@ SESSION_EDN = """\
 {:version 1
  :rules [{:name "respond"
           :on :mail-delivered
-          :when (or (addressed-to-me? msg) (cc-ed? msg))
+          :when (or (contains? (or (mail-field msg :to) []) (get self :address)) (contains? (or (mail-field msg :cc) []) (get self :address)))
           :actions [(run-loop (quote {:context {:sections [(persona) (protocol)]}
                  :stages [(think) (act)]
-                 :until (or (iteration-limit-reached?) (error-limit-reached?))
+                 :until (or (>= (get state :iteration) (get limits :max_iterations)) (>= (get state :error_count) (get limits :max_consecutive_errors)))
                  :max-iterations 10
                  :max-consecutive-errors 3
                  :max-tokens 1000000
@@ -31,7 +31,7 @@ SESSION_EDN = """\
 
 SCRIPT_EDN = '{:version 1\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["a@tlon.internal"]})]}]}\n'
 
-FUELED_EDN = '{:version 1\n :rules [{:name "loopy"\n          :on :mail-delivered\n          :when (addressed-to-me? msg)\n          :fuel 50\n          :actions [(mail-send {:to ["sink@tlon.internal"] :content "x"})]}]}\n'
+FUELED_EDN = '{:version 1\n :rules [{:name "loopy"\n          :on :mail-delivered\n          :when (contains? (or (mail-field msg :to) []) (get self :address))\n          :fuel 50\n          :actions [(mail-send {:to ["sink@tlon.internal"] :content "x"})]}]}\n'
 
 
 def _parse(text: str) -> MemberSpec:
@@ -70,7 +70,7 @@ class TestCritiqueInstructions:
     def test_instructions_validate_and_roundtrip(self) -> None:
         text = SESSION_EDN.replace(
             "(think) (act)",
-            '(think) (critique {:if (completing?) :instructions "检查来源与计算"}) (act)',
+            '(think) (critique {:if (get round :completing) :instructions "检查来源与计算"}) (act)',
         )
         spec = _parse(text)
         validate_member_spec(spec)
@@ -388,7 +388,7 @@ class TestPhaseDActions:
     def test_while_action_loads(self):
         """The canonical form — a while of emits — is a loadable action."""
         spec = _parse(
-            '{:version 1\n :rules [{:name "fanout"\n          :on :mail-delivered\n          :when (addressed-to-me? msg)\n          :actions [(while [i 0] (< i 3) (mail-send {:to ["sink@tlon.internal"] :content "x"}) (recur (inc i)))]}]}\n'
+            '{:version 1\n :rules [{:name "fanout"\n          :on :mail-delivered\n          :when (contains? (or (mail-field msg :to) []) (get self :address))\n          :actions [(while [i 0] (< i 3) (mail-send {:to ["sink@tlon.internal"] :content "x"}) (recur (inc i)))]}]}\n'
         )
         validate_member_spec(spec)
         assert len(spec.rules[0].actions) == 1

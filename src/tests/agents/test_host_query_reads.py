@@ -11,15 +11,16 @@ from tlon.agents.member_spec import MemberSpec, MemberSpecValidationError, valid
 from tlon.agents.program_driver import ProgramDriver
 from tlon.agents.program_store import ProgramStore
 from tlon.agents.vocabulary import (
-    LOOP_BUILTINS,
     POLICY_BUILTINS,
-    STAGE_COND_BUILTINS,
+    condition_builtins,
     make_member_builtins,
 )
 from tlon.operations.invocation import registry_identity
 from tlosure.builtins import Builtin, EvalError
 from tlosure.edn import loads
 from tlosure.validate import validate_form
+
+_CONDITION_BUILTINS = condition_builtins(make_member_builtins())
 
 
 class Host:
@@ -60,12 +61,13 @@ def spec(when: str, actions: str = "[]") -> MemberSpec:
 @pytest.mark.parametrize(
     "expression", ['(sleeping? "a")', '(running? "a")', '(lazy? "a")', "(member-roster)"]
 )
-def test_host_reads_are_admitted_in_rule_conditions_only(expression: str) -> None:
+def test_host_reads_are_rejected_in_all_pure_conditions(expression: str) -> None:
     builtins = make_member_builtins(Host())
-    validate_member_spec(spec(expression), builtins=builtins)
+    with pytest.raises(MemberSpecValidationError):
+        validate_member_spec(spec(expression), builtins=builtins)
     word = builtins[str(loads(expression)[0])]
-    assert not word.pure and word.read_only
-    for registry in [LOOP_BUILTINS, STAGE_COND_BUILTINS, POLICY_BUILTINS]:
+    assert not word.pure
+    for registry in [_CONDITION_BUILTINS, POLICY_BUILTINS]:
         with pytest.raises(EvalError):
             validate_form(loads(expression), registry, scope=set())
     with pytest.raises(MemberSpecValidationError):
@@ -85,15 +87,12 @@ async def test_host_reads_sample_each_call_and_replay_without_querying(
         mutations.append(False)
 
     builtins = {**make_member_builtins(host), "change-state": Builtin(stop, pure=False)}
-    program = spec(
-        '(running? "a")', '[(member-roster) (change-state) (running? "a") (member-roster)]'
-    )
+    program = spec("(= 1 1)", '[(member-roster) (change-state) (running? "a") (member-roster)]')
     validate_member_spec(program, builtins=builtins)
     original = ProgramDriver(store, "root", builtins, AsyncMock())
     assert original.builtins["running?"] is builtins["running?"]
-    await original.run(program.rules[0], {})
+    await original.run(program.rules[0], {"msg": None, "event": {}, "self": {}})
     assert host.samples == [
-        ("running", True),
         ("roster", "True"),
         ("running", False),
         ("roster", "False"),
@@ -101,13 +100,15 @@ async def test_host_reads_sample_each_call_and_replay_without_querying(
     assert mutations == [False]
     host.samples.clear()
     restarted = ProgramStore(store.database, build_id="test") if disk else store
-    await ProgramDriver(restarted, "root", builtins, AsyncMock()).run(program.rules[0], {})
+    await ProgramDriver(restarted, "root", builtins, AsyncMock()).run(
+        program.rules[0], {"msg": None, "event": {}, "self": {}}
+    )
     assert host.samples == []
     assert mutations == [False]
 
 
-def test_read_only_metadata_is_frozen_in_registry_identity() -> None:
-    builtin = Builtin(lambda _env: True, pure=False, read_only=True)
+def test_purity_metadata_is_frozen_in_registry_identity() -> None:
+    builtin = Builtin(lambda _env: True, pure=False)
     assert registry_identity({"query": builtin}) != registry_identity(
-        {"query": replace(builtin, read_only=False)}
+        {"query": replace(builtin, pure=True)}
     )

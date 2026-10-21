@@ -84,10 +84,16 @@ def load_capability_catalog(
 
 
 def reserved_capability_names() -> set[str]:
-    """Host vocabulary and implicit Behavior bindings share one namespace."""
-    from tlon.agents.vocabulary import ACTION_SCOPE, RULE_SCOPE, make_member_builtins
+    """Host vocabulary and explicit Behavior bindings share one namespace."""
+    from tlon.agents.vocabulary import (
+        ACTION_SCOPE,
+        LOOP_SCOPE,
+        RULE_SCOPE,
+        STAGE_SCOPE,
+        make_member_builtins,
+    )
 
-    return set(make_member_builtins()) | set(RULE_SCOPE) | set(ACTION_SCOPE)
+    return set(make_member_builtins()) | set(RULE_SCOPE | ACTION_SCOPE | LOOP_SCOPE | STAGE_SCOPE)
 
 
 def capability_validation_builtins(

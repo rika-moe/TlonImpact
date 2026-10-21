@@ -323,8 +323,10 @@ class OperationExecutor:
         if self.store is not None and self._frozen_root != bound.run_id:
             return self.for_root(bound.run_id).call_pure(name, arguments, bound)
         operation = self.registry.get(name)
-        if operation.effects:
-            raise OperationError(f"{name}: effectful operation requires async invocation")
+        if operation.effects or operation.control:
+            raise OperationError(
+                f"{name}: effectful or control operation requires async invocation"
+            )
         inputs = validate(operation.input_schema, arguments)
         result = (
             operation.composition.evaluate_pure(self, bound, inputs)

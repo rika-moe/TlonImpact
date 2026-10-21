@@ -172,7 +172,7 @@ async def test_unknown_host_runtime_error_retains_original_type(store: ProgramSt
     with pytest.raises(RuntimeError, match="response lost"):
         await ProgramDriver(store, "unknown", make_member_builtins(), execute).run(
             rule(
-                "(run-loop (quote {:context {:sections []} :stages [(think) (act)] :until (iteration-limit-reached?) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 10 :reflect {:enabled false :interval-minutes 15}}))"
+                "(run-loop (quote {:context {:sections []} :stages [(think) (act)] :until (>= (get state :iteration) (get limits :max_iterations)) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 10 :reflect {:enabled false :interval-minutes 15}}))"
             ),
             {},
         )

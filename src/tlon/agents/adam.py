@@ -108,7 +108,8 @@ ADAM_SPEC_EDN = r"""
             "- 成员之间以邮件往来，收件人写对方的名字或地址（名字@tlon.internal）。\n"
             "- 有事找守护者，写信到 adam@tlon.internal。\n")})]}
   {:name "guardian-inbox" :on :mail-delivered
-   :when (and (addressed-to-me? msg) (not (from? msg "postmaster@tlon.internal")))
+   :when (and (contains? (or (mail-field msg :to) []) (get self :address))
+              (not (from? msg "postmaster@tlon.internal")))
    :actions
    [(mail-send
       {:to [(mail-field msg :from)]

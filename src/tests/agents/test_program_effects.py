@@ -107,10 +107,12 @@ async def test_provider_receives_real_output_cap(monkeypatch, requested, expecte
     assert completion.await_args.kwargs["max_tokens"] == expected
 
 
-def test_program_words_validate_and_mail_field_uses_real_mail() -> None:
+def test_program_words_validate_and_mail_field_uses_materialized_mail() -> None:
     builtins = make_member_builtins()
     mail = Mail.create(from_address="a@tlon.internal", to=["b@tlon.internal"], content="real")
-    assert eval_form(loads("(mail-field msg :id)"), {"msg": mail}, builtins) == mail.id
+    assert eval_form(loads("(mail-field msg :id)"), {"msg": mail.to_dict()}, builtins) == mail.id
+    with pytest.raises(EvalError, match="materialized mail record"):
+        eval_form(loads("(mail-field msg :id)"), {"msg": mail}, builtins)
     assert eval_form(loads("(mail-field msg :content)"), {"msg": None}, builtins) is None
     with pytest.raises(EvalError, match="unknown field"):
         eval_form(loads("(mail-field msg :made-up)"), {"msg": mail}, builtins)

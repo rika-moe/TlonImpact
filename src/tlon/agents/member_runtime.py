@@ -1054,6 +1054,7 @@ class MemberRuntime(Member):
         scope = current_execution()
         root_id = root_id or (scope.root_id if scope is not None else None)
         tool_executor = caps.tool_executor
+        root_executor = self._operation_executor
         if root_id is not None:
             root_executor = self._operation_executor.for_root(root_id)
             tool_executor = ToolExecutor()
@@ -1145,6 +1146,10 @@ class MemberRuntime(Member):
                 or DEFAULT_CONTEXT_WINDOW,
             ),
             is_human_sender=is_human_sender,
+            condition_registry={
+                **self._host_builtins,
+                **DSLAdapter(root_executor).builtins(),
+            },
             prepare_scheduling_request=(
                 registry.prepare_scheduling_request if registry is not None else None
             ),

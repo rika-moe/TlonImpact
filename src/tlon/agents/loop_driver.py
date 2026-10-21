@@ -57,9 +57,11 @@ from tlon.agents.stages.think import think_stage
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.agents.trigger import AgentIdentity
 from tlon.agents.vocabulary import (
-    LOOP_BUILTINS,
-    STAGE_COND_BUILTINS,
+    LOOP_SCOPE,
+    STAGE_SCOPE,
+    evaluate_condition,
     loop_until_env,
+    make_member_builtins,
     stage_cond_env,
 )
 from tlon.base.events.event import EventType
@@ -82,8 +84,8 @@ from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.member_mail import MailDraft
 from tlon.tools.base import ToolResult
 from tlon.tools.spill import ToolSpill
-from tlosure.builtins import EvalError
-from tlosure.eval import DEFAULT_FUEL, eval_form
+from tlosure.builtins import Builtin, EvalError
+from tlosure.eval import DEFAULT_FUEL
 
 logger = get_logger(__name__)
 
@@ -122,7 +124,11 @@ class LoopDriver:
         is_human_sender: Callable[[str], bool],
         prepare_scheduling_request: Callable[[str, dict[str, Any], str], Awaitable[None]]
         | None = None,
+        condition_registry: dict[str, Builtin] | None = None,
     ):
+        self._condition_registry = (
+            make_member_builtins() if condition_registry is None else dict(condition_registry)
+        )
         self._prepare_scheduling_request = prepare_scheduling_request
         self._identity = identity
         self._loop = recipe
@@ -473,7 +479,9 @@ class LoopDriver:
             )
         )
         try:
-            result = eval_form(loop.until, env, LOOP_BUILTINS, fuel=self._loop_fuel)
+            result = evaluate_condition(
+                loop.until, env, self._condition_registry, LOOP_SCOPE, fuel=self._loop_fuel
+            )
         except EvalError as e:
             log.warning("loop_until_eval_failed", session_id=session.id, error=str(e))
             return (
@@ -628,7 +636,9 @@ class LoopDriver:
             )
         )
         try:
-            result = eval_form(condition, env, STAGE_COND_BUILTINS, fuel=self._loop_fuel)
+            result = evaluate_condition(
+                condition, env, self._condition_registry, STAGE_SCOPE, fuel=self._loop_fuel
+            )
         except EvalError as e:
             log.warning(
                 "loop_stage_condition_failed",

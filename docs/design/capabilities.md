@@ -1,6 +1,6 @@
 # 可审批的复合 Operation
 
-状态：EPIC A #184–#192 已合并；本页描述 EPIC B P5 的实现。P5 待独立 PR 验收合并，P6 纯条件准入与 P7 动态工具视图尚未实施。目标与阶段见 [统一操作](operations.md) 和 [实施计划](operations-plan.md)。
+状态：EPIC A #184–#192 与 EPIC B P5 #193 已合并；本页描述统一复合操作与 P6 纯条件准入。P6 正在验收，P7 动态工具视图尚未实施。目标与阶段见 [统一操作](operations.md) 和 [实施计划](operations-plan.md)。
 
 ## 一个定义，两个入口
 
@@ -55,3 +55,12 @@ examples 是附加审查材料，使用共享编译器、schema 与 fuel 求值�
 ProgramStore 原子保存程序源码、输入与所需复合闭包快照。会话在首次模型请求前冻结当时静态暴露的复合集合。root_definitions 保存源码/schema 及传递依赖身份，恢复从原快照编译，不从当前磁盘重新拼旧程序。宿主构建与宿主契约变化仍拒绝恢复；添加无关能力不会改变宿主 build_id。
 
 删除或修改能力文件后，已有根仍用旧快照；新工作只能使用当前已批准定义。若当前 Behavior 因缺依赖无法准入，但成员存在冻结待恢复工作，可明确进入“仅恢复”激活：只恢复旧根，不接受当前 boot/邮件/idle 等新规则，诊断说明 Behavior 不可用，修正后需要显式重载。没有待恢复事实时仍严格拒载。坏根隔离继续遵守 [调用恢复](invocation-recovery.md)，不删除历史、预留或用户文件。
+
+
+## 纯条件中的复合操作
+
+when、until、stage-if 使用同一个纯函数准入。目录中 effects 为空的复合 Operation 可以原样出现在三处；没有单独的条件能力格式，不放行外部只读查询；旧 Builtin.read_only 字段已删除。编译得到的传递依赖效果决定准入，局部 fn 或复合调用不能隐藏模型、时钟、邮箱、状态读写。
+
+例如 has-actionable-facts 的 input schema 要求 `{:facts [...]}`，实现只检查 facts 是否包含待处理项。when 可以从 event 构造输入，until 从显式 state 数据构造输入，stage-if 从 scratch 构造输入；操作实现只看收到的 facts，不知道自己来自哪一层。三个条件的可见绑定不同，不能把 stage 的 scratch 隐式带进 when。
+
+外部信息先在 actions 中调用 Operation 取得并记录，再按程序或会话所支持的数据入口提供给条件；纯条件本身不做 I/O。缺少必需作用域或输入 schema 字段明确报错，不能悄悄退回旧的隐式环境谓词。

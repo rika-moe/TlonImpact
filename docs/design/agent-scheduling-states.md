@@ -100,8 +100,8 @@ runtime 恢复活跃成员时沿用 session journal 恢复机制，不从已完�
 | `tools/mail/send_email.py`、`tools/mail/silence.py` | 邮件和会话完成耦合 | 删除 is_complete 与 silence，保持投信结果语义 |
 | `lifecycle/service.py`、`agents/assembly.py` | 可按信任层装配 member-stop，目标是任意成员 | 自我结束/睡眠/退出工具与管理终止权限分离 |
 | `organization/mail/store.py`、`post_office.py` 及生命周期持久化接口 | 退休拒收与入箱事务排序 | 保留原子拒收；睡眠正常入箱；死亡状态单一权威 |
-| `agents/vocabulary.py`、`member_spec.py`、`agents/adam.py` | completing? 依赖 mail-send/silence；DSL start/stop、idle/noisy 政策 | 明确工作结束与邮件派发谓词；更新 DSL 管理动作、Adam 回收政策，避免 stop 同时表示卸载和死亡 |
-| `prototypes/`、公共提示词、工具参考 | 交卷前自评基于 completing?，说明用发信结束 | 全部同步独立结束工具；证据核验应在实际邮件派发前审查，不能挪到 finish-turn 时才检查已发邮件 |
+| `agents/vocabulary.py`、`member_spec.py`、`agents/adam.py` | 旧 completing? 依赖 mail-send/silence（P6 改为显式 round 数据）；DSL start/stop、idle/noisy 政策 | 明确工作结束与邮件派发谓词；更新 DSL 管理动作、Adam 回收政策，避免 stop 同时表示卸载和死亡 |
+| `prototypes/`、公共提示词、工具参考 | 旧交卷前自评基于 completing?，说明用发信结束（P6 使用 round.sending_mail/completing） | 全部同步独立结束工具；证据核验应在实际邮件派发前审查，不能挪到 finish-turn 时才检查已发邮件 |
 | `tlon_server` 生命周期 API/SSE、`tlon_client`、WebUI | retired/thinking/sleeping 等状态展示及启停操作 | 一致输出四态与 wake_at；启动/错误显示为诊断；死亡无启动按钮，睡眠显示到期时间 |
 
 本次不做旧接口兼容层、不保留 is_complete 或 silence 别名。实施时必须同时更新包内 DSL、协议文本、测试及使用方。当前 ~/.tlon 的原型与成员 spec 是否同步另行明确授权，不因写设计稿修改现有数据。

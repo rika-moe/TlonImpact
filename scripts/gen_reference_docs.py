@@ -13,7 +13,7 @@ handwritten; only the drift-prone inventories are generated:
   in docs/reference/tlosure-reference.md — the language-level whitelists
   (special forms from tlosure/eval.py, the general ``CORE_BUILTINS`` and
   ``ARITHMETIC_BUILTINS`` vocabularies from tlosure/builtins.py).
-- ``dsl-on-events`` / ``dsl-builtins-{trigger,loop,stage-cond,script,policy}`` /
+- ``dsl-on-events`` / ``dsl-builtins-{pure,policy}`` /
   ``dsl-loop-names`` in docs/reference/dsl-reference.md — the host-side
   inventories (``:on`` event keywords, tlon's domain builtin registries
   from agents/vocabulary.py, stage/section names from
@@ -953,7 +953,7 @@ class HostQueryPort:
 
 def host_query_ports() -> list[HostQueryPort]:
     """Closure-injected host queries: the ``builtins["<word>"] = Builtin(
-    lambda ..., pure=False, read_only=True)`` assignments inside ``make_member_builtins``,
+    lambda ..., pure=False)`` assignments inside ``make_member_builtins``,
     joined with the method docstrings of the ``ScriptHostQueries``
     protocol."""
     tree = _parse(VOCABULARY_FILE)
@@ -1002,16 +1002,13 @@ def host_query_ports() -> list[HostQueryPort]:
                 "Builtin(lambda ...) — teach the generator"
             )
         pure_kwargs = [kw for kw in call.keywords if kw.arg == "pure"]
-        readonly_kwargs = [kw for kw in call.keywords if kw.arg == "read_only"]
         if (
             len(pure_kwargs) != 1
             or _literal(pure_kwargs[0].value) is not False
-            or len(readonly_kwargs) != 1
-            or _literal(readonly_kwargs[0].value) is not True
         ):
             raise GenerationError(
                 f"{VOCABULARY_FILE}:{node.lineno} builtins[{word!r}] must declare "
-                "pure=False, read_only=True"
+                "pure=False"
             )
         body = call.args[0].body
         if not (
@@ -1049,7 +1046,7 @@ def render_bridge_query_ports() -> str:
     rows = [f"| `{p.word}` | `host.{p.method}` | {_cell(p.doc)} |" for p in ports]
     header = (
         f"`make_member_builtins` 在调用方注入 `host` 时追加 {len(ports)} 个宿主查询"
-        f"（`pure=False, read_only=True`，只读注册表或投递目录、无宿主即不注册这些词；说明取自 "
+        f"（`pure=False`，只可在 actions 调用，读取注册表或投递目录；无宿主即不注册这些词；说明取自 "
         f"`ScriptHostQueries` 协议方法的 docstring）：{GENERATED_NOTE}\n\n"
         "| DSL 词 | 宿主方法 | 说明 |\n"
         "|---|---|---|"
@@ -1071,14 +1068,7 @@ def _render_sections() -> dict[tuple[Path, str], str]:
             "ARITHMETIC_BUILTINS", BUILTINS_FILE
         ),
         (DSL_REF, "dsl-on-events"): render_dsl_on_events(),
-        (DSL_REF, "dsl-builtins-trigger"): render_builtin_table(
-            "TRIGGER_BUILTINS", VOCABULARY_FILE
-        ),
-        (DSL_REF, "dsl-builtins-loop"): render_builtin_table("LOOP_BUILTINS", VOCABULARY_FILE),
-        (DSL_REF, "dsl-builtins-stage-cond"): render_builtin_table(
-            "STAGE_COND_BUILTINS", VOCABULARY_FILE
-        ),
-        (DSL_REF, "dsl-builtins-script"): render_builtin_table("SCRIPT_BUILTINS", VOCABULARY_FILE),
+        (DSL_REF, "dsl-builtins-pure"): render_builtin_table("SCRIPT_BUILTINS", VOCABULARY_FILE),
         (DSL_REF, "dsl-builtins-policy"): render_builtin_table("POLICY_BUILTINS", VOCABULARY_FILE),
         (DSL_REF, "dsl-loop-names"): render_dsl_loop_names(),
         (DSL_REF, "dsl-fuel-defaults"): render_dsl_fuel_defaults(),

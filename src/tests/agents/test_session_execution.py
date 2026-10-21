@@ -350,7 +350,7 @@ async def test_full_unknown_reservation_is_not_misreported_as_successful_budget_
     assert store.budget_usage("full-unknown")["remaining"] == 0
     from tlosure.edn import loads
 
-    driver._loop = replace(driver._loop, until=loads("(token-limit-reached?)"))
+    driver._loop = replace(driver._loop, until=loads("(>= (get state :token_usage) (get limits :max_tokens))"))
     replay = await journal.resume("full-unknown")
     assert replay is not None
     restored = await _make_scheduler(journal)._restore_session(replay)

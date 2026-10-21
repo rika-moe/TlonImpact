@@ -1,62 +1,9 @@
-"""The Bridge API — tlon's host vocabulary over the tlosure language core.
+"""Member vocabulary and explicit data scopes for behavior conditions.
 
-Design: ``docs/design/bridge-api.md`` (ADR 0020). The bridge between the
-Python mechanism layer and tlosure policy data is four port kinds; this
-module is their single source of truth:
-
-- **Context registries** — which vocabulary each evaluation context may
-  name: :data:`TRIGGER_BUILTINS` (rule ``:when`` gates),
-  :data:`LOOP_BUILTINS` (session ``:until``), :data:`STAGE_COND_BUILTINS`
-  (stage ``:if``) and :data:`SCRIPT_BUILTINS` (pure accessors merged into
-  the member registry). All pure, so evaluation against any of them is
-  side-effect free by construction; each registry's comment states its
-  environment contract (the symbols the engine binds for that context).
-- **Query ports** (host → DSL, read-only) — :class:`ScriptHostQueries`, a
-  protocol of host read-only queries closure-injected by
-  :func:`make_member_builtins` (``sleeping?`` / ``running?`` / ``lazy?`` /
-  ``member-roster`` / the ``start-all`` candidate set). They read registry
-  state or the delivery directory, so they are never registered module-level; the implementation
-  (``RegistryQueries`` in ``tlon.agents/agent_registry.py``) is injected at
-  assembly time. Queries are non-pure suspended reads with ``read_only``
-  condition admission; the driver never changes their registration metadata.
-- **Effect ports** (DSL → host, effects-as-data) — the action family
-  (names in :data:`MEMBER_ACTION_NAMES`, ``pure=False``): each validates
-  its arguments and produces :class:`ActionRequest` data without performing
-  I/O. The program driver executes each request at the call boundary and
-  returns its committed result to the expression (ADR 0043).
-  :func:`make_member_builtins`
-  builds the unified member registry — the merged pure vocabularies plus
-  the action builtins plus any host-injected queries.
-- **Static gate** — :func:`validate_member_actions`, the load-time check
-  for a rule's action forms (ADR 0021): the syntax-level purity
-  partition is abandoned (a function body can carry actions, so "where
-  actions may occur" is no longer statically enumerable); what remains
-  is full-registry validation — unregistered vocabulary and undefined
-  symbols are still rejected at load — plus sequential ``defn``
-  threading across the form sequence (define-before-use), mirroring the
-  runtime's shared env dict. Function and loop calls use the same effect
-  boundaries as top-level calls.
-
-Environment contracts: typed, with a single construction point — see
-the ``*Env`` TypedDicts and builders in the "Environment contracts"
-section below. Rule evaluation binds ``{msg, event, self}``
-(:data:`RULE_SCOPE`; ``MemberRuntime._env``), actions use the same
-scope (:data:`ACTION_SCOPE`), ``:until`` binds
-``{self, state, limits}`` and stage ``:if`` binds
-``{state, scratch, round}`` (both ``loop_driver``); the latter two
-expose no *symbols* — their builtins read the env directly, so load-time
-validation passes an empty scope.
-
-Bridge versioning discipline (ADR 0020): vocabulary only grows, semantics
-only tighten — spec files are on-disk data, so a breaking change to a
-bridge word corrupts every stored behavior file. New words declare which
-context registries they belong to; no word is visible everywhere.
-
-The language core (``tlosure``) provides the contract types
-(:class:`EvalError` family, :class:`Builtin`, :class:`ActionRequest`),
-the evaluator kernel, static validation (:func:`tlosure.validate.validate_form`)
-and the general vocabulary (``=`` / ``not`` / ``contains?`` / ``get`` /
-``str`` / arithmetic).
+All ``:when``, ``:until`` and stage ``:if`` expressions share the pure
+projection of the member operation directory. Context differences are data
+bindings, never separate function lists. Host queries and writes stay in the
+ordinary program vocabulary; conditions receive materialized JSON records.
 """
 
 import re
@@ -67,6 +14,7 @@ from typing import Any, Protocol, TypedDict
 
 from tlon.operations.control import validate_control_forms
 from tlon.operations.definitions import host_operation_definitions
+from tlon.operations.schema import InputError, json_value
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlosure.builtins import (
     ARITHMETIC_BUILTINS,
@@ -74,11 +22,9 @@ from tlosure.builtins import (
     ActionRequest,
     Builtin,
     EvalError,
-    builtin_contains,
-    builtin_eq,
-    builtin_not,
 )
 from tlosure.edn import Form, Keyword
+from tlosure.eval import DEFAULT_FUEL, current_evaluation, eval_form
 from tlosure.validate import _is_defn, _validate_defn, validate_form
 
 # ── Environment contracts (the data each context may see) ──
@@ -86,10 +32,7 @@ from tlosure.validate import _is_defn, _validate_defn, validate_form
 # Every evaluation context binds a fixed set of symbols with a fixed
 # shape; these TypedDicts are those shapes and the builders below are the
 # single construction point (the engine call sites delegate here).
-# Load-time validation mirrors them: RULE_SCOPE / ACTION_SCOPE are the
-# symbol scopes of member_spec.validate_member_spec; the loop and
-# stage-cond contexts expose no symbols at all — their builtins read the
-# env directly — so validation passes an empty scope for them.
+# Load-time validation and runtime evaluation use these same explicit scopes.
 
 
 class SelfEnv(TypedDict):
@@ -107,13 +50,12 @@ class SelfEnv(TypedDict):
 class RuleEnv(TypedDict):
     """Rule evaluation context (``:when`` gates and ``:actions``).
 
-    ``msg`` is the payload's mail, or None for non-mail events (every mail
-    predicate is None-safe); ``event`` is the raw event payload — a dict
-    whose shape is not fully controlled, so builtins default safely on
-    malformed input.
+    ``msg`` is the payload's materialized mail record, or None for non-mail
+    events. ``event`` contains the same materialized payload; no live mail
+    or service objects enter the condition evaluator.
     """
 
-    msg: Mail | None
+    msg: dict[str, Any] | None
     event: Any
     self: SelfEnv
 
@@ -164,6 +106,9 @@ RULE_SCOPE: frozenset[str] = frozenset({"msg", "event", "self"})
 #: Actions use the same bindings as the event gate.
 ACTION_SCOPE: frozenset[str] = RULE_SCOPE
 
+LOOP_SCOPE: frozenset[str] = frozenset({"self", "state", "limits"})
+STAGE_SCOPE: frozenset[str] = frozenset({"state", "scratch", "round"})
+
 
 def self_env(member_id: str, name: str) -> SelfEnv:
     """The ``self`` binding for any context."""
@@ -173,7 +118,11 @@ def self_env(member_id: str, name: str) -> SelfEnv:
 def rule_env(payload: Any, *, member_id: str, name: str) -> RuleEnv:
     """The rule evaluation env (``MemberRuntime._env`` delegates here)."""
     mail = payload.get("mail") if isinstance(payload, dict) else None
-    return {"msg": mail, "event": payload, "self": self_env(member_id, name)}
+    return {
+        "msg": _materialize(mail),
+        "event": _materialize(payload),
+        "self": self_env(member_id, name),
+    }
 
 
 def loop_until_env(
@@ -224,56 +173,54 @@ def stage_cond_env(
     }
 
 
-# ── Context registries (pure vocabulary, one per evaluation context) ──
-#
-# Every registry below is pure functions only: evaluation against any of
-# them is side-effect free by construction. A word absent from a context's
-# registry is rejected at load-time validation — "the author misspoke" is
-# a static error, never a runtime surprise.
+def _materialize(value: Any) -> Any:
+    """Copy event data, projecting mail into its public serialized record."""
+    if isinstance(value, Mail):
+        return _materialize(value.to_dict())
+    if isinstance(value, dict):
+        return {key: _materialize(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_materialize(item) for item in value]
+    return value
 
 
-# ── Trigger context: rule ``:when`` gates ──
-# Environment contract: :class:`RuleEnv`, built by :func:`rule_env`;
-# ``msg`` is None for non-mail events and every mail predicate is
-# None-safe.
+def condition_builtins(registry: dict[str, Builtin]) -> dict[str, Builtin]:
+    """One pure projection for every condition; read-only I/O is not pure."""
+    return {name: builtin for name, builtin in registry.items() if builtin.pure}
 
 
-def _self_map(env: dict[str, Any]) -> dict[str, Any]:
-    self_map = env.get("self")
-    return self_map if isinstance(self_map, dict) else {}
+def validate_condition(form: Any, registry: dict[str, Builtin], scope: frozenset[str]) -> None:
+    """Validate all branches, including local function bodies, with pure words."""
+    validate_form(form, condition_builtins(registry), scope=set(scope))
 
 
-def _my_address(env: dict[str, Any]) -> str | None:
-    """The evaluating agent's mail address, injected by the host in ``self``."""
-    address = _self_map(env).get("address")
-    return address if type(address) is str and address else None
+def condition_env(env: dict[str, Any], scope: frozenset[str]) -> dict[str, Any]:
+    """Require the complete context and admit only explicit JSON data bindings."""
+    missing = scope - env.keys()
+    if missing:
+        raise EvalError(f"condition context missing bindings: {', '.join(sorted(missing))}")
+    try:
+        return {name: json_value(env[name], edn_keys=True) for name in scope}
+    except InputError as exc:
+        raise EvalError(f"condition context must contain materialized data: {exc}") from exc
 
 
-def _builtin_addressed_to_me(env: dict[str, Any], msg: Mail | None) -> bool:
-    """My address is in the mail's To list.
-
-    None-safe: the member env binds ``msg`` to None for non-mail events,
-    and a non-mail payload is never addressed to me.
-    """
-    my_address = _my_address(env)
-    return my_address is not None and isinstance(msg, Mail) and my_address in msg.to
-
-
-def _builtin_cc_ed(env: dict[str, Any], msg: Mail | None) -> bool:
-    """My address is in the mail's CC list (None-safe, see addressed-to-me?)."""
-    my_address = _my_address(env)
-    return my_address is not None and isinstance(msg, Mail) and my_address in msg.cc
+def evaluate_condition(
+    form: Any,
+    env: dict[str, Any],
+    registry: dict[str, Builtin],
+    scope: frozenset[str],
+    *,
+    fuel: int = DEFAULT_FUEL,
+) -> Any:
+    """Use the shared language evaluator after the common purity/data gates."""
+    validate_condition(form, registry, scope)
+    return eval_form(form, condition_env(env, scope), condition_builtins(registry), fuel=fuel)
 
 
-def _builtin_from(env: dict[str, Any], msg: Mail | None, address: Any) -> bool:
-    """The mail's sender equals ``address`` (None-safe, see addressed-to-me?).
-
-    Mail field access for trigger gates — ``get`` reads dicts only, so
-    sender matching gets its own pure predicate (Adam's guardian-inbox
-    rule excludes postmaster senders to never answer a bounce). A
-    non-string ``address`` never matches.
-    """
-    return isinstance(msg, Mail) and isinstance(address, str) and msg.from_address == address
+def _builtin_from(env: dict[str, Any], msg: Any, address: Any) -> bool:
+    """Compare an explicit mail record's sender with an explicit address."""
+    return isinstance(msg, dict) and isinstance(address, str) and msg.get("from_address") == address
 
 
 def _builtin_content_matches(env: dict[str, Any], target: Any, pattern: Any) -> bool:
@@ -284,8 +231,10 @@ def _builtin_content_matches(env: dict[str, Any], target: Any, pattern: Any) -> 
     """
     if target is None:
         return False
-    if isinstance(target, Mail):
-        content = target.content
+    if isinstance(target, dict):
+        content = target.get("content")
+        if not isinstance(content, str):
+            raise EvalError("content-matches? mail record content must be a string")
     elif type(target) is str:
         content = target
     else:
@@ -298,142 +247,9 @@ def _builtin_content_matches(env: dict[str, Any], target: Any, pattern: Any) -> 
         raise EvalError(f"content-matches? invalid regex {pattern!r}: {e}") from e
 
 
-TRIGGER_BUILTINS: dict[str, Builtin] = {
-    "addressed-to-me?": Builtin(_builtin_addressed_to_me, pure=True),
-    "cc-ed?": Builtin(_builtin_cc_ed, pure=True),
-    "from?": Builtin(_builtin_from, pure=True),
-    "content-matches?": Builtin(_builtin_content_matches, pure=True),
-    "contains?": Builtin(builtin_contains, pure=True),
-    "=": Builtin(builtin_eq, pure=True),
-    "not": Builtin(builtin_not, pure=True),
-}
+# ── Explicit pure member functions ──
 
 
-# ── Loop context: session ``:until`` termination ──
-# Environment contract: :class:`LoopEnv`, built by :func:`loop_until_env`.
-
-
-def _loop_state_int(env: dict[str, Any], section: str, key: str) -> int | None:
-    """Read an int from ``env[section][key]``; None when absent or not an int."""
-    section_map = env.get(section)
-    if not isinstance(section_map, dict):
-        return None
-    value = section_map.get(key)
-    if isinstance(value, bool) or not isinstance(value, int):
-        return None
-    return value
-
-
-def _builtin_iteration_limit_reached(env: dict[str, Any]) -> bool:
-    """``state.iteration`` has reached ``limits.max_iterations``."""
-    iteration = _loop_state_int(env, "state", "iteration")
-    max_iterations = _loop_state_int(env, "limits", "max_iterations")
-    if iteration is None or max_iterations is None:
-        return False
-    return iteration >= max_iterations
-
-
-def _builtin_error_limit_reached(env: dict[str, Any]) -> bool:
-    """``state.error_count`` (consecutive think failures; a successful think resets it to 0) has reached ``limits.max_consecutive_errors``."""
-    error_count = _loop_state_int(env, "state", "error_count")
-    max_errors = _loop_state_int(env, "limits", "max_consecutive_errors")
-    if error_count is None or max_errors is None:
-        return False
-    return error_count >= max_errors
-
-
-def _builtin_token_limit_reached(env: dict[str, Any]) -> bool:
-    """``state.token_usage`` (session-cumulative stage LLM tokens, ADR 0023) has reached ``limits.max_tokens``."""
-    token_usage = _loop_state_int(env, "state", "token_usage")
-    max_tokens = _loop_state_int(env, "limits", "max_tokens")
-    if token_usage is None or max_tokens is None:
-        return False
-    return token_usage >= max_tokens
-
-
-#: Loop termination predicates. Pure only; evaluation is side-effect free
-#: by construction. Missing keys safely yield False, never raise.
-LOOP_BUILTINS: dict[str, Builtin] = {
-    "iteration-limit-reached?": Builtin(_builtin_iteration_limit_reached, pure=True),
-    "error-limit-reached?": Builtin(_builtin_error_limit_reached, pure=True),
-    "token-limit-reached?": Builtin(_builtin_token_limit_reached, pure=True),
-    "=": Builtin(builtin_eq, pure=True),
-    "not": Builtin(builtin_not, pure=True),
-}
-
-
-# ── Stage-cond context: stage ``:if`` conditions ──
-# Environment contract: :class:`StageCondEnv`, built by
-# :func:`stage_cond_env`.
-
-
-def _scratch_map(env: dict[str, Any]) -> dict[str, Any]:
-    """The ``scratch`` section of the env; empty map when absent or mistyped."""
-    scratch = env.get("scratch")
-    return scratch if isinstance(scratch, dict) else {}
-
-
-def _builtin_critique_failed(env: dict[str, Any]) -> bool:
-    """A critique verdict exists in scratch and did not pass."""
-    critique = _scratch_map(env).get("critique")
-    return isinstance(critique, dict) and critique.get("passed") is False
-
-
-def _builtin_critique_passed(env: dict[str, Any]) -> bool:
-    """A critique verdict exists in scratch and passed."""
-    critique = _scratch_map(env).get("critique")
-    return isinstance(critique, dict) and critique.get("passed") is True
-
-
-def _builtin_plan_exists(env: dict[str, Any]) -> bool:
-    """Scratch holds a non-empty plan string."""
-    plan = _scratch_map(env).get("plan")
-    return isinstance(plan, str) and plan != ""
-
-
-def _builtin_first_iteration(env: dict[str, Any]) -> bool:
-    """``state.iteration`` is 0 (the loop's first round)."""
-    return _loop_state_int(env, "state", "iteration") == 0
-
-
-def _builtin_completing(env: dict[str, Any]) -> bool:
-    """The round's pending response would end the session if dispatched.
-
-    True for a sole ``finish-turn``, ``sleep-until`` or ``exit-agent`` call.
-    Sending mail is independent of completing work.
-    """
-    round_map = env.get("round")
-    return isinstance(round_map, dict) and round_map.get("completing") is True
-
-
-def _builtin_sending_mail(env: dict[str, Any]) -> bool:
-    """The round would dispatch an outgoing mail tool, independently of completion."""
-    round_map = env.get("round")
-    return isinstance(round_map, dict) and round_map.get("sending_mail") is True
-
-
-#: Stage ``:if`` condition predicates. Pure only; evaluation is
-#: side-effect free by construction. Missing keys safely yield False,
-#: never raise.
-STAGE_COND_BUILTINS: dict[str, Builtin] = {
-    "critique-failed?": Builtin(_builtin_critique_failed, pure=True),
-    "critique-passed?": Builtin(_builtin_critique_passed, pure=True),
-    "plan-exists?": Builtin(_builtin_plan_exists, pure=True),
-    "first-iteration?": Builtin(_builtin_first_iteration, pure=True),
-    "completing?": Builtin(_builtin_completing, pure=True),
-    "sending-mail?": Builtin(_builtin_sending_mail, pure=True),
-    "=": Builtin(builtin_eq, pure=True),
-    "not": Builtin(builtin_not, pure=True),
-}
-
-
-# ── Script pure accessors ──
-# Environment contract: :class:`RuleEnv`. Merged into the
-# unified member registry by :func:`make_member_builtins`.
-
-
-#: Rule accessors keep their current implicit environment until P6. Composite
-#: implementations instead receive only explicit input and core pure words.
 def _mail_field(env: dict[str, Any], mail: Any, field: Any) -> Any:
     fields = {
         "id": "id",
@@ -450,12 +266,19 @@ def _mail_field(env: dict[str, Any], mail: Any, field: Any) -> Any:
     }
     if not isinstance(field, Keyword) or str(field) not in fields:
         raise EvalError(f"mail-field: unknown field {field!r}")
-    return getattr(mail, fields[str(field)]) if isinstance(mail, Mail) else None
+    if mail is None:
+        return None
+    if not isinstance(mail, dict):
+        raise EvalError("mail-field expects a materialized mail record or nil")
+    return mail.get(fields[str(field)])
 
 
 SCRIPT_BUILTINS: dict[str, Builtin] = {
     **CORE_BUILTINS,
+    **ARITHMETIC_BUILTINS,
     "mail-field": Builtin(_mail_field, pure=True),
+    "from?": Builtin(_builtin_from, pure=True),
+    "content-matches?": Builtin(_builtin_content_matches, pure=True),
 }
 
 
@@ -615,7 +438,9 @@ def make_member_builtins(
         from tlon.agents.member_spec import SessionRecipe, validate_session_recipe
 
         try:
-            validate_session_recipe(SessionRecipe.from_edn(recipe))
+            active = current_evaluation()
+            registry = active[0].builtins if active is not None else builtins
+            validate_session_recipe(SessionRecipe.from_edn(recipe), builtins=registry)
         except ValueError as exc:
             raise EvalError(str(exc)) from exc
         return _record(ActionRequest(kind="run_loop", data={"recipe": recipe}))
@@ -625,22 +450,14 @@ def make_member_builtins(
             operation.name: Builtin(fn=_unavailable_operation, pure=False)
             for operation in host_operation_definitions()
         },
-        **TRIGGER_BUILTINS,
         **SCRIPT_BUILTINS,
-        **ARITHMETIC_BUILTINS,
         "run-loop": Builtin(_run_loop, pure=False),
     }
     if host is not None:
-        builtins["sleeping?"] = Builtin(
-            lambda env, aid: host.is_sleeping(aid), pure=False, read_only=True
-        )
-        builtins["running?"] = Builtin(
-            lambda env, aid: host.is_running(aid), pure=False, read_only=True
-        )
-        builtins["lazy?"] = Builtin(lambda env, aid: host.is_lazy(aid), pure=False, read_only=True)
-        builtins["member-roster"] = Builtin(
-            lambda env: host.member_roster(), pure=False, read_only=True
-        )
+        builtins["sleeping?"] = Builtin(lambda env, aid: host.is_sleeping(aid), pure=False)
+        builtins["running?"] = Builtin(lambda env, aid: host.is_running(aid), pure=False)
+        builtins["lazy?"] = Builtin(lambda env, aid: host.is_lazy(aid), pure=False)
+        builtins["member-roster"] = Builtin(lambda env: host.member_roster(), pure=False)
     return builtins
 
 

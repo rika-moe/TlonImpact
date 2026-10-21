@@ -52,7 +52,7 @@ async def _unknown_dispatch(sid: str, tc: ToolCall, metadata: dict[str, Any]) ->
     return ToolResult(success=False, data={"outcome": "unknown"}, error=INTERRUPTED_ERROR)
 
 
-SESSION_PROGRAM_EDN = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona) (protocol)]} :stages [(think) (act)] :until (or (iteration-limit-reached?) (error-limit-reached?)) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 5}}))]}]}'
+SESSION_PROGRAM_EDN = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona) (protocol)]} :stages [(think) (act)] :until (or (>= (get state :iteration) (get limits :max_iterations)) (>= (get state :error_count) (get limits :max_consecutive_errors))) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 5}}))]}]}'
 
 #: Same session recipe with all three session :replies overrides declared.
 REPLIES_EDN = SESSION_PROGRAM_EDN.replace(
@@ -1157,8 +1157,8 @@ class TestTerminationReplyOverrides:
         `_terminate_loop`'s iteration-limit branch — custom wording."""
         mail = _mail()
         edn = REPLIES_EDN.replace(
-            ":until (or (iteration-limit-reached?) (error-limit-reached?))",
-            ":until (not (iteration-limit-reached?))",
+            ":until (or (>= (get state :iteration) (get limits :max_iterations)) (>= (get state :error_count) (get limits :max_consecutive_errors)))",
+            ":until (not (>= (get state :iteration) (get limits :max_iterations)))",
         )
         driver, journal, executor, _ = _make_driver(tmp_path, [], edn=edn)
         session = _session(f"agent1-{mail.id}", mail)

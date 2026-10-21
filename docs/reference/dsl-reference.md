@@ -45,7 +45,7 @@
 ```clojure
 {:name "respond"
  :on :mail-delivered
- :when (addressed-to-me? msg)
+ :when (contains? (or (mail-field msg :to) []) (get self :address))
  :actions [ ... ]         ; 可选，默认 []
  :fuel 500}               ; 可选
 ```
@@ -123,9 +123,9 @@
 求值器机制本身——特殊形式白名单、fuel 计量与终止保证、效果交接与 `ActionRequest` 数据机制——是语言规范，见 [tlosure-reference.md](./tlosure-reference.md) 第 2 节，不在这里重复。本节只记 tlon 宿主侧的闸与记账方式（"DSL 描述，引擎执行"）：
 
 - 宿主操作由 DSLAdapter 投影为 builtin，在调用边界交给 OperationExecutor 执行并返回实际结果；仅 `run-loop` 保留 ActionRequest，tlosure 不直接执行系统 I/O。
-- 环境值对表达式不透明：没有属性/方法访问语法，`Mail` 只能经 builtin 检查。
+- 环境是明确的数据记录：邮件由宿主物化为 record；没有任意属性/方法访问语法，mail-field 提供字段适配。
 - map 是数据：键保持字面量，值会被求值——动作选项 map 里可嵌表达式，如 `{:agent (get event :agent_id)}`。
-- **动作位置校验**：`validate_member_actions` 使用全量成员词汇，支持条件、函数和传统循环；`defn` 按顺序向后续表达式引入名字。生产程序对每次实际经过的调用进行效果交接；同步分析仍可使用 collector。规则门控使用 pure 或 read_only 准入词汇，外部读取仍挂起、采样及重放；其他条件语境的独立词表不扩大。
+- **动作位置校验**：`validate_member_actions` 使用全量成员词汇，支持条件、函数和传统循环；`defn` 按顺序向后续表达式引入名字。生产程序对每次实际经过的调用进行效果交接；同步分析仍可使用 collector。when、until 和 stage-if 统一使用纯函数准入；外部查询只在 actions 挂起、采样及重放。
 - fuel 记账：规则声明 `:fuel` 时，门控与所有动作共享一个计数器；未声明时分别用默认门控与动作预算。配方的 `:fuel` 单独约束会话终止条件和 stage 条件；硬上限见下表。
 
 <!-- BEGIN GENERATED: dsl-fuel-defaults -->
@@ -146,7 +146,7 @@
 
 | 环境契约 | 构建器 | 字段 | 类型 |
 |---|---|---|---|
-| `RuleEnv` | `rule_env()` | `msg` | `Mail \| None` |
+| `RuleEnv` | `rule_env()` | `msg` | `dict[str, Any] \| None` |
 | `RuleEnv` | `rule_env()` | `event` | `Any` |
 | `RuleEnv` | `rule_env()` | `self` | `SelfEnv` |
 | `LoopEnv` | `loop_until_env()` | `self` | `SelfEnv` |
@@ -166,69 +166,14 @@
 
 ## 4. Builtin 完整清单
 
-语言级通用词汇（`CORE_BUILTINS` / `ARITHMETIC_BUILTINS`，[src/tlosure/builtins.py](../../src/tlosure/builtins.py)，ADR 0018 修订）的清单见 [tlosure-reference.md](./tlosure-reference.md) 第 3 节；本节只列 tlon 领域词汇。领域词汇的模块级注册表在 [src/tlon/agents/vocabulary.py](../../src/tlon/agents/vocabulary.py)；`make_member_builtins` 把 `TRIGGER_BUILTINS` + `SCRIPT_BUILTINS` + `ARITHMETIC_BUILTINS` 合并后再加上 4.5 的动作 builtin（`pure=False`），构成成员统一注册表——合并后的确定性词汇及明确 read_only 的宿主查询可用于规则 `:when`；其他纯语境保持各自词表。另有四个读注册表状态的宿主查询由调用方闭包注入（`ScriptHostQueries`，实现为注册表模块里的 `RegistryQueries`，Adam 与注册表装配的全体成员共用同一份注入），清单见第 4.6 节。它们不在任何模块级注册表——无宿主注入的注册表里没有这些名字，引用即加载校验失败。
+语言级通用词汇见 [tlosure-reference.md](./tlosure-reference.md) 第 3 节。领域函数在 [vocabulary.py](../../src/tlon/agents/vocabulary.py) 的 `SCRIPT_BUILTINS` 定义；成员 actions 另接入 Operation 目录与宿主查询。when、until、stage-if 均使用同一个纯函数投影：通用函数、显式参数领域函数和 effects 为空且 control=false 的已批准 Operation。只读外部查询仍是非纯操作，不能进入这些条件，也不能由局部 fn 或复合依赖绕过限制。
 
-**版本纪律**（ADR 0020，[docs/design/bridge-api.md](../design/bridge-api.md)；2026-09-28 修订）：本节清单是 spec 作者面对的稳定界面。演进默认 additive；删除走 deprecation 生命周期——发现坏设计先标记废弃（加载期 warning + 文档标注 + 迁移窗口），窗口后删除并机械迁移磁盘 spec（语料小且可触达，`loads`/`dumps` 对称使迁移可测试）。语义只紧不松：修复式收紧（原来放行的坏输入改为加载拒绝）允许。新增词汇必须声明所属语境注册表，不存在"所有语境可见"的词；加载期校验（`validate_member_spec`）是引用错误的唯一守门人，运行期不存在"未定义词汇"这一类错误。
+旧隐式邮件身份、上限和 stage 谓词已删除，无兼容别名或用户文件迁移。以下写法是当前契约；加载时拒绝未知词和不在该位置作用域内的符号，执行缺失必需上下文时报错。
 
-### 4.1 `TRIGGER_BUILTINS`（触发器谓词）
+### 4.1 统一纯函数
 
-`:when` 门控可用，环境 `{msg, event, self}`。
-
-<!-- BEGIN GENERATED: dsl-builtins-trigger -->
-`TRIGGER_BUILTINS`（7 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
-
-| 名称 | pure | 说明 |
-|---|---|---|
-| `addressed-to-me?` | 是 | My address is in the mail's To list. |
-| `cc-ed?` | 是 | My address is in the mail's CC list (None-safe, see addressed-to-me?). |
-| `from?` | 是 | The mail's sender equals ``address`` (None-safe, see addressed-to-me?). |
-| `content-matches?` | 是 | Regex-search a mail's content or a plain string (e.g. ``result``). |
-| `contains?` | 是 |  |
-| `=` | 是 |  |
-| `not` | 是 |  |
-<!-- END GENERATED: dsl-builtins-trigger -->
-
-### 4.2 `LOOP_BUILTINS`（loop `:until` 谓词）
-
-环境 `{self, state, limits}`：`state` = `{:iteration n :error_count n :token_usage n}`（`error_count` 是**连续** think 失败数——think 成功一次即清零，不是会话累计值；`token_usage` 是 session 级累计 stage LLM token 消耗，ADR 0023），`limits` = `{:max_iterations n :max_consecutive_errors n :max_tokens n}`。键缺失安全返回 `false`，不抛错。
-
-<!-- BEGIN GENERATED: dsl-builtins-loop -->
-`LOOP_BUILTINS`（5 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
-
-| 名称 | pure | 说明 |
-|---|---|---|
-| `iteration-limit-reached?` | 是 | ``state.iteration`` has reached ``limits.max_iterations``. |
-| `error-limit-reached?` | 是 | ``state.error_count`` (consecutive think failures; a successful think resets it to 0) has reached ``limits.max_consecutive_errors``. |
-| `token-limit-reached?` | 是 | ``state.token_usage`` (session-cumulative stage LLM tokens, ADR 0023) has reached ``limits.max_tokens``. |
-| `=` | 是 |  |
-| `not` | 是 |  |
-<!-- END GENERATED: dsl-builtins-loop -->
-
-### 4.3 `STAGE_COND_BUILTINS`（stage `:if` 谓词）
-
-环境 `{state, scratch, round}`；scratch 是会话暂存区，round 同时提供 completing 与 sending_mail：前者表示单独的 finish-turn/sleep-until/exit-agent，后者表示将派发邮件工具。`completing?` 与 `sending-mail?` 是独立谓词；交付评审应使用后者。
-
-<!-- BEGIN GENERATED: dsl-builtins-stage-cond -->
-`STAGE_COND_BUILTINS`（8 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
-
-| 名称 | pure | 说明 |
-|---|---|---|
-| `critique-failed?` | 是 | A critique verdict exists in scratch and did not pass. |
-| `critique-passed?` | 是 | A critique verdict exists in scratch and passed. |
-| `plan-exists?` | 是 | Scratch holds a non-empty plan string. |
-| `first-iteration?` | 是 | ``state.iteration`` is 0 (the loop's first round). |
-| `completing?` | 是 | The round's pending response would end the session if dispatched. |
-| `sending-mail?` | 是 | The round would dispatch an outgoing mail tool, independently of completion. |
-| `=` | 是 |  |
-| `not` | 是 |  |
-<!-- END GENERATED: dsl-builtins-stage-cond -->
-
-### 4.4 `SCRIPT_BUILTINS`（规则纯访问器）
-
-环境 `{event, self}`：`event` 是触发事件的负载 map。
-
-<!-- BEGIN GENERATED: dsl-builtins-script -->
-`SCRIPT_BUILTINS`（15 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+<!-- BEGIN GENERATED: dsl-builtins-pure -->
+`SCRIPT_BUILTINS`（27 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 名称 | pure | 说明 |
 |---|---|---|
@@ -246,8 +191,56 @@
 | `join` | 是 | Join a vector of strings with a separator into one string. |
 | `substring` | 是 | ``s[start:end]`` — Python slice semantics, total by construction. |
 | `count` | 是 | Item count of a vector / map / string; ``nil`` counts as 0. |
+| `+` | 是 |  |
+| `-` | 是 |  |
+| `*` | 是 |  |
+| `/` | 是 | Left-fold float division: ``(/ a b c)`` = ``a / b / c``. |
+| `inc` | 是 |  |
+| `dec` | 是 |  |
+| `<` | 是 |  |
+| `>` | 是 |  |
+| `<=` | 是 |  |
+| `>=` | 是 |  |
 | `mail-field` | 是 |  |
-<!-- END GENERATED: dsl-builtins-script -->
+| `from?` | 是 | Compare an explicit mail record's sender with an explicit address. |
+| `content-matches?` | 是 | Regex-search a mail's content or a plain string (e.g. ``result``). |
+<!-- END GENERATED: dsl-builtins-pure -->
+
+已批准纯复合 Operation 不逐项列在这张静态表中：它们来自统一目录，按相同 schema 接受一个对象输入，不继承调用方 env。
+
+### 4.2 when 数据
+
+作用域 `{msg, event, self}`。非邮件事件的 msg 为 nil；mail-field 读取显式邮件参数，from? 与 content-matches? 也不读取隐式身份。收件人条件：
+
+```clojure
+(or (contains? (or (mail-field msg :to) []) (get self :address))
+    (contains? (or (mail-field msg :cc) []) (get self :address)))
+```
+
+外部查询如 member-roster、sleeping?、running?、lazy? 只能在 actions 中调用，结果按程序调用记录后由 let/if 等普通表达式处理。
+
+### 4.3 until 数据
+
+作用域 `{self, state, limits}`。state 包含 iteration、error_count、token_usage；limits 包含 max_iterations、max_consecutive_errors、max_tokens。error_count 是连续 think 失败数，成功后归零；token_usage 是 session 累计 stage LLM 消耗。
+
+```clojure
+(or (>= (get state :iteration) (get limits :max_iterations))
+    (>= (get state :error_count) (get limits :max_consecutive_errors))
+    (>= (get state :token_usage) (get limits :max_tokens)))
+```
+
+### 4.4 stage-if 数据
+
+作用域 `{state, scratch, round}`。round 的 completing 表示单独的 finish-turn/sleep-until/exit-agent；sending_mail 表示待派发邮件工具，两者独立。交付评审使用 sending_mail。scratch 中评审结果可以缺省：没有 verdict 时通过与失败比较均为 false。
+
+```clojure
+(= (get state :iteration) 0)
+(get round :sending_mail)
+(= (get (get scratch :critique) :passed) true)
+(= (get (get scratch :critique) :passed) false)
+```
+
+核心 get 对业务 map 的缺键仍按语言规则返回 nil 或显式默认值；这与运行时遗漏整个必需作用域绑定是不同错误。三处可以调用同一个纯复合操作，但调用点必须使用各自数据构造符合其 input schema 的对象。
 
 ### 4.5 程序效果与统一邮件操作
 
@@ -290,7 +283,7 @@
 ### 4.6 宿主查询端口（闭包注入）
 
 <!-- BEGIN GENERATED: bridge-query-ports -->
-`make_member_builtins` 在调用方注入 `host` 时追加 4 个宿主查询（`pure=False, read_only=True`，只读注册表或投递目录、无宿主即不注册这些词；说明取自 `ScriptHostQueries` 协议方法的 docstring）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`make_member_builtins` 在调用方注入 `host` 时追加 4 个宿主查询（`pure=False`，只可在 actions 调用，读取注册表或投递目录；无宿主即不注册这些词；说明取自 `ScriptHostQueries` 协议方法的 docstring）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | DSL 词 | 宿主方法 | 说明 |
 |---|---|---|
@@ -326,10 +319,10 @@
  (quote
   {:context {:sections [(persona) (protocol) (knowledge) (mail-history 20)]}
    :stages [(think)
-            (critique {:if (sending-mail?)})
-            (act {:if (or (not (sending-mail?)) (not (critique-failed?)))})
-            (revise {:if (critique-failed?)})]
-   :until (or (iteration-limit-reached?) (error-limit-reached?) (token-limit-reached?))
+            (critique {:if (get round :sending_mail)})
+            (act {:if (or (not (get round :sending_mail)) (not (= (get (get scratch :critique) :passed) false)))})
+            (revise {:if (= (get (get scratch :critique) :passed) false)})]
+   :until (or (>= (get state :iteration) (get limits :max_iterations)) (>= (get state :error_count) (get limits :max_consecutive_errors)) (>= (get state :token_usage) (get limits :max_tokens)))
    :max-iterations 10
    :max-consecutive-errors 3
    :max-tokens 1000000
@@ -379,7 +372,7 @@ stage form：`(name)` 或 `(name {opts})`。所有 stage 支持 `:if <表达式>
 | `think` | 一次 LLM 调用，产出本轮响应（进响应链）。成功：清零连续错误计数。失败：记一次错误 + 推进迭代，不发邮件，由 `:until` 后续终止循环 |
 | `act` | 声明并发工具执行并收集结果；邮件工具只投递，不完成会话。finish-turn/sleep-until/exit-agent 必须单独一轮，成功后记录调度意图并完成当前会话；混用其他工具整轮拒绝。 |
 | `plan` | 额外一次 LLM 调用生成 ≤ `:max-steps` 步计划；写入 `scratch.plan` 并以 `[执行计划]` 用户消息入上下文。失败软降级（跳过，不记错误） |
-| `critique` | 额外一次 LLM 评审：评审输入 = 会话 context + 本轮待审输出（完整调用参数、调用编号及运行时执行状态，以普通文本渲染为 assistant 消息；草稿不是执行回执）+ 评审指令；首行去空白后必须恰好是 `PASS`/`FAIL`，结论写入 `scratch.critique = {:passed bool :feedback str}`；首行无法解析时跳过本次评审（记 warning、清除旧 verdict——`critique-passed?` 与 `critique-failed?` 均不成立，revise 不触发），不记录为 PASS。异常同样清除旧 verdict；完成动作是否要求明确 PASS 由后续 stage 的 `:if` 决定。失败软降级 |
+| `critique` | 额外一次 LLM 评审：评审输入 = 会话 context + 本轮待审输出（完整调用参数、调用编号及运行时执行状态，以普通文本渲染为 assistant 消息；草稿不是执行回执）+ 评审指令；首行去空白后必须恰好是 `PASS`/`FAIL`，结论写入 `scratch.critique = {:passed bool :feedback str}`；首行无法解析时跳过本次评审（记 warning、清除旧 verdict——显式 passed=true 与 passed=false 比较均不成立，revise 不触发），不记录为 PASS。异常同样清除旧 verdict；完成动作是否要求明确 PASS 由后续 stage 的 `:if` 决定。失败软降级 |
 | `revise` | 不调 LLM；仅在 FAIL 时把评审意见、完整待审输出及真实执行状态以普通用户消息喂回上下文，供下一轮 `think` 修正；空意见也保留草稿和未执行说明，不伪造工具调用/回执。消费过的 verdict 随之清除（`scratch.critique` 置 nil），避免陈旧 FAIL 在 critique 被条件跳过的后续轮次重复触发 |
 
 stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/tlon/agents/stages/outcome.py](../../src/tlon/agents/stages/outcome.py)），由 `LoopDriver._apply_outcome` 统一落地——应用顺序为：上下文追加 → scratch → 计数器/状态 → 工具结果 → 响应链 → 工具派发 → 邮件 → on-complete 动作 → 完成标记。
@@ -430,7 +423,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
  :rules
  [{:name "respond"
    :on :mail-delivered
-   :when (or (addressed-to-me? msg) (cc-ed? msg))
+   :when (or (contains? (or (mail-field msg :to) []) (get self :address)) (contains? (or (mail-field msg :cc) []) (get self :address)))
    :actions
    [(run-loop
      (quote
@@ -438,11 +431,11 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
                             (knowledge) (current-task) (mail-history 20 10)
                             (thread-recap)]}
        :stages [(think)
-                (critique {:if (sending-mail?)})
-                (act {:if (or (not (sending-mail?)) (not (critique-failed?)))})
-                (revise {:if (critique-failed?)})]
-       :until (or (iteration-limit-reached?) (error-limit-reached?)
-                  (token-limit-reached?))
+                (critique {:if (get round :sending_mail)})
+                (act {:if (or (not (get round :sending_mail)) (not (= (get (get scratch :critique) :passed) false)))})
+                (revise {:if (= (get (get scratch :critique) :passed) false)})]
+       :until (or (>= (get state :iteration) (get limits :max_iterations)) (>= (get state :error_count) (get limits :max_consecutive_errors))
+                  (>= (get state :token_usage) (get limits :max_tokens)))
        :max-iterations 3
        :max-consecutive-errors 3
        :max-tokens 32000
@@ -459,7 +452,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
  :rules
  [{:name "relay"
    :on :mail-delivered
-   :when (or (addressed-to-me? msg) (cc-ed? msg))
+   :when (or (contains? (or (mail-field msg :to) []) (get self :address)) (contains? (or (mail-field msg :cc) []) (get self :address)))
    :actions [(mail-forward {:mail_id (mail-field msg :id) :to ${to}}) (mail-mark-read {:mail_ids [(mail-field msg :id)]})]}
   {:name "boot" :on :boot :actions []}]}
 ```

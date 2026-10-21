@@ -222,6 +222,11 @@ class Evaluator:
         self._loop_stack: list[list[str]] = []
 
     @property
+    def builtins(self) -> dict[str, Builtin]:
+        """Snapshot the vocabulary used by this evaluation."""
+        return dict(self._builtins)
+
+    @property
     def budget(self) -> int:
         """The fuel budget this evaluator was launched with."""
         return self._budget

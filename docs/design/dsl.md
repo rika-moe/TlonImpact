@@ -1,6 +1,6 @@
 # DSL 设计：行为即数据
 
-> 后续方案（邮件 P2 与文件/Shell/时间 P3a 已分别通过 #185/#186 合并；P3b 已接入，后续仍分阶段实施）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
+> 当前施工（EPIC A 与 P5 已合并；P6 已在本分支完成验收、待合并，P7/P8 尚未实施）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
 
 > 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种。模型总览见 [docs/design/unified-member-model.md](./unified-member-model.md)。
 
@@ -32,9 +32,11 @@ spec 的作者是 LLM，这意味着 DSL 面对的是不可信输入。把"不�
 
 规则显式声明 `:fuel` 时，门控与全部动作共享预算；未声明时门控与各动作使用默认预算。会话配方的 `:fuel` 单独约束每次 `:until` 与 stage `:if` 求值；会话总成本另由轮次和累计 token 硬上限约束。
 
-### 词汇表按语境切分
+### 纯函数准入统一，数据作用域明确
 
-受限不是只有"少"，还有"各归各位"。builtin 注册表按使用语境切成互不混淆的几份：`:when` 门控用成员统一注册表的纯子集（`make_member_builtins` 里 `pure=True` 的部分）；`:until` 只能见 `LOOP_BUILTINS`（迭代/错误上限谓词）；stage `:if` 只能见 `STAGE_COND_BUILTINS`（对会话 scratchpad 的只读谓词）。这些纯语境的注册表只含纯词，所以三个语境的求值都是无副作用的**构造性**结论——不是靠约定"作者别乱写"，而是乱写的词汇根本不在注册表里。`:when` 里引用 `iteration-limit-reached?`、`:until` 里引用 `addressed-to-me?`，都在加载校验时因"未注册"被拒。
+when、until、stage-if 共用纯函数准入：核心与算术函数、显式参数领域函数，以及统一目录中 effects 为空且 control=false 的 Operation。纯条件不调用外部查询，即使只读也必须先在 actions 中采样并记录；局部 fn 与复合依赖不会扩大可调用集合。旧的 TRIGGER/LOOP/STAGE_COND 三套白名单及读取隐式 env 的谓词已经删除。
+
+函数相同不等于作用域相同：when 提供 msg/event/self，until 提供 self/state/limits，stage-if 提供 state/scratch/round。调用方用 get 与普通比较构造条件，或把数据组装成纯复合操作的单对象输入；复合实现不继承这些绑定。加载期拒绝引用其他位置的符号，执行时遗漏必需上下文必须报错。业务数据缺少可选键仍遵循 get 返回 nil/默认值的语言语义。
 
 规则的门控与动作都使用 `{msg, event, self}`。非邮件事件的 `msg` 为 `nil`，邮件谓词对此安全返回；动作不再有另一套完成环境或隐式 `result`。`model-call`、状态和邮件效果的实际返回值可以作为普通表达式值继续求值（[ADR 0043](../decisions/0043-newspaper-member-workflow.md)）。
 
