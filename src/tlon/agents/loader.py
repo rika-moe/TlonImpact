@@ -7,7 +7,8 @@ source structurally while a durable root supplies its own rule and dependencies.
 import hashlib
 from dataclasses import replace
 
-from tlon.agents.member_spec import MemberSpec, validate_member_spec
+from tlon.agents.member_spec import MemberSpec
+from tlon.agents.program_package import read_module_sources, validate_program_sources
 from tlon.base.paths import TlonPaths
 from tlosure.builtins import Builtin
 from tlosure.edn import loads
@@ -19,8 +20,10 @@ def has_frozen_work(agent_id: str, tlon_paths: TlonPaths) -> bool:
     from tlon.agents.session_store import SessionStore
 
     database = tlon_paths.agent_program_database_file(agent_id)
-    if database.exists() and ProgramStore(database).pending():
-        return True
+    if database.exists():
+        store = ProgramStore(database)
+        if store.pending() or store.pending_scheduling():
+            return True
     return bool(SessionStore(tlon_paths.agent_sessions_database_file(agent_id)).unfinished_ids())
 
 
@@ -33,7 +36,8 @@ def read_member_spec(agent_id: str, *, tlon_paths: TlonPaths) -> MemberSpec:
     text = tlon_paths.agent_behavior_file(agent_id).read_text(encoding="utf-8")
     member = MemberSpec.from_edn(loads(text))
     source_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
-    return replace(member, source_hash=source_hash)
+    modules = read_module_sources(tlon_paths.agent_behavior_file(agent_id).parent / "modules")
+    return replace(member, source_hash=source_hash, module_sources=modules)
 
 
 def load_member_spec(
@@ -62,6 +66,6 @@ def load_member_spec(
         EDNParseError: file is not valid EDN
         MemberSpecValidationError: the spec fails the single validator
     """
-    return validate_member_spec(
-        read_member_spec(agent_id, tlon_paths=tlon_paths), builtins=builtins
-    )
+    member = read_member_spec(agent_id, tlon_paths=tlon_paths)
+    admitted = validate_program_sources(member.to_edn(), member.module_sources, builtins)
+    return replace(admitted, source_hash=member.source_hash)

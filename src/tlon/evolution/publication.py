@@ -2,11 +2,12 @@
 
 import fcntl
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 
-def publish_directory(target: Path, files: dict[str, str]) -> None:
+def publish_directory(target: Path, files: Mapping[str, str | bytes]) -> None:
     """Keep incomplete packages outside the catalog and remove them on failure."""
     target.parent.mkdir(parents=True, exist_ok=True)
     # A sibling of the catalog is on the same filesystem but never enumerated
@@ -15,8 +16,12 @@ def publish_directory(target: Path, files: dict[str, str]) -> None:
         package = Path(temporary) / "package"
         package.mkdir()
         for name, content in files.items():
-            with (package / name).open("w", encoding="utf-8") as stream:
-                stream.write(content)
+            relative = Path(name)
+            if relative.is_absolute() or ".." in relative.parts:
+                raise ValueError(f"unsafe package path: {name!r}")
+            (package / relative).parent.mkdir(parents=True, exist_ok=True)
+            with (package / name).open("wb") as stream:
+                stream.write(content.encode("utf-8") if isinstance(content, str) else content)
                 stream.flush()
                 os.fsync(stream.fileno())
         directory_fd = os.open(target.parent, os.O_RDONLY)

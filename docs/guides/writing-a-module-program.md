@@ -1,0 +1,68 @@
+# 编写模块工作程序（P1）
+
+P1 已提供人工完整模块包、事件入口和持久执行。完整模型/工具循环仍待 P2/P3，Agent 自动起草模块待 P4a；现有内置原型仍使用 v1 stage 引擎。设计见 [可编程工作流程](../design/programmable-workflows.md)。
+
+## 文件与入口
+
+每个包有 `behavior.tlon` 和 `modules/`。例如：
+
+```clojure
+{:version 2
+ :handlers {:mail-delivered work.reply/handle}
+ :fuel 1000
+ :execution {:level :L0}}
+```
+
+`modules/work/reply.tlon`：
+
+```clojure
+(ns work.reply
+  (:require [work.text :as text])
+  (:export handle))
+
+(defn handle [event]
+  (let [answer (text/reply (get (get event :mail) :content))]
+    (mail-send {:to [(get event :sender)] :content answer})
+    {:result answer}))
+```
+
+`modules/work/text.tlon`：
+
+```clojure
+(ns work.text (:export reply))
+(def prefix "收到：")
+(defn reply [content] (str prefix content))
+```
+
+路径必须与 namespace 对应；只允许显式 require 的导出函数，其他定义私有。模块顶层只接受 defn 和字面常量 def，加载不执行函数体或宿主效果。入口必须固定一个参数。闭包、高阶函数和递归使用普通求值器，所有函数共享该次入口的 fuel/depth 与根预算。缺依赖、依赖环、私有访问、重复绑定、越界路径或 symlink 明确拒绝。
+
+事件包含原事件字段、`payload` 和冻结的 `self`；邮件事件另外提供物化的 `mail` 与 `sender`。`:boot` 入口的 type 为 `"boot"`，不隐式注入 msg/self 到模块函数的词法环境。
+
+入口必须返回 `{:result value}`，可选 `:next`。result 是可持久化的严格 JSON 值（map 可用 Keyword 键）；不可返回函数、Symbol、NaN 等。结束子函数不会调度 Agent。
+
+```clojure
+{:result "done" :next {:kind "sleep-until" :at "2026-10-22T09:00:00+08:00"}}
+{:result "done" :next {:kind "exit"}}
+```
+
+next.kind 也接受对应 Keyword；新提交的 sleep-until 时间必须在未来并带时区，沿用现有宿主调度约束。只有最外层入口结果会被解释，非法 next 或缺 result 将运行标为失败，不回退到旧引擎。无 next 时仅结束本次事件处理。
+
+## 人工发布与审查
+
+使用既有本地浏览器来源边界调用管理 API：
+
+- `POST /admin/prototypes/staging`：提交 `{display_name, behavior, modules}`，modules 是 `{"work/reply.tlon": "源码", ...}`，路径相对 modules 根；整包先校验再原子发布。
+- `GET /admin/prototypes/staging/{name}`：查看行为和 modules 源码，WebUI 原型详情也只读展示模块。
+- `POST /admin/prototypes/staging/{name}/approve`：验证当前完整包并批准，摘要绑定精确行为与全部模块内容。
+- `POST /admin/prototypes`：人工直接创建受信完整包，同样先校验并绑定内容摘要。
+- `POST /admin/config/agents`：按既有 prototype/name/model 格式创建成员，复制完整模块包；装置权限仍来自实例配置。
+
+v2 包源码发布后不可 PATCH，staging 也一样。修改请创建新包并用 parent 记录来源；元数据编辑不构成源码重新批准。直接修改已批准目录的源码会导致实例化拒绝。模块模板参数化不属于 P1；v2 不接受 v1 的 parameters/rules/recipe 字段。
+
+## 执行与恢复
+
+首次受理在同一事务保存入口、完整源码包、事件输入、fuel 与 token 约束。后续磁盘修改或删除不改变旧运行。程序从冻结源码重放，已有宿主回执返回旧结果，未知非幂等效果不自动重做。
+
+ProgramStore 的 entry_programs 保存结果与调度意图，运行完成与意图原子提交；调度器以 run_id 持久接纳去重。跨存储采用幂等交付，不声称跨数据库事务。旧睡眠已醒来或被管理员替代后，重放不会重建它。新程序不启动 stage scheduler；新旧执行路径按明确格式选择，不失败回退。
+
+P1 不产生新会话的 SessionJournal 交互投影，不改变现有反思/蒸馏消费者；这些在 P4b 接入。恢复受现有宿主构建身份约束，不支持换版本宿主重放。

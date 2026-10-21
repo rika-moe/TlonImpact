@@ -20,7 +20,7 @@ from tlon.base.events.event import EventType
 from tlon.base.logger import get_logger
 from tlosure.builtins import Builtin, EvalError
 from tlosure.edn import EDNParseError, Form, Keyword, Symbol, dumps, loads
-from tlosure.eval import MAX_FUEL
+from tlosure.eval import DEFAULT_FUEL, MAX_FUEL
 
 logger = get_logger(__name__)
 
@@ -228,11 +228,22 @@ class MemberSpec:
     rules: tuple[MemberRule, ...]
     source_hash: str | None = None
     execution_level: str | None = None
+    handlers: tuple[tuple[str, str], ...] = ()
+    fuel: int = DEFAULT_FUEL
+    module_sources: dict[str, str] = field(default_factory=dict, compare=False, repr=False)
 
     # ── Factories ──
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict (snake_case keys)."""
+        if self.version == 2:
+            return {
+                "version": 2,
+                "handlers": {name: Symbol(entry) for name, entry in self.handlers},
+                "fuel": self.fuel,
+                "execution": {"level": self.execution_level} if self.execution_level else None,
+                "source_hash": self.source_hash,
+            }
         return {
             "version": self.version,
             "source_hash": self.source_hash,
@@ -261,6 +272,43 @@ class MemberSpec:
             )
         _warn_unknown_keys(data, "top")
         version = _read(data, "version", path=":version", kind=int)
+        if version == 2:
+            allowed = {"version", "handlers", "fuel", "execution", "source_hash"}
+            if unknown := set(data) - allowed:
+                raise MemberSpecValidationError(f"version 2 unknown fields: {sorted(unknown)}")
+            handlers = data.get("handlers")
+            if type(handlers) is not dict or not handlers:
+                raise MemberSpecValidationError(":handlers must be a non-empty map")
+            parsed: list[tuple[str, str]] = []
+            handler_rules: list[MemberRule] = []
+            for event, entry in handlers.items():
+                if not isinstance(event, str) or not isinstance(entry, Symbol):
+                    raise MemberSpecValidationError(
+                        ":handlers requires event keys and qualified symbols"
+                    )
+                name = str(event).replace("_", "-")
+                on = _on_from(name, name)
+                if "/" not in str(entry):
+                    raise MemberSpecValidationError("handler must be a qualified module function")
+                if any(existing == name for existing, _ in parsed):
+                    raise MemberSpecValidationError("duplicate handler event")
+                parsed.append((name, str(entry)))
+                handler_rules.append(
+                    MemberRule(name=f"handler:{name}", on=on, when=None, actions=())
+                )
+            fuel = data.get("fuel", DEFAULT_FUEL)
+            if type(fuel) is not int or not 0 < fuel <= MAX_FUEL:
+                raise MemberSpecValidationError(f":fuel must be in 1..{MAX_FUEL}")
+            return cls(
+                version=2,
+                rules=tuple(handler_rules),
+                handlers=tuple(parsed),
+                fuel=fuel,
+                source_hash=_read_optional_str(data, "source_hash", ":source-hash"),
+                execution_level=_execution_from(data.get("execution")),
+            )
+        if "handlers" in data:
+            raise MemberSpecValidationError(":handlers requires version 2")
         if version != MEMBER_SPEC_VERSION:
             raise MemberSpecValidationError(
                 f"unsupported :version {version!r}; only version {MEMBER_SPEC_VERSION} is supported"
@@ -299,7 +347,19 @@ class MemberSpec:
         ``:source-hash`` is emitted only when set — the write side must
         not serialize provenance into a behavior file (phase C).
         """
-        data: dict[Keyword, Any] = {
+        data: dict[Keyword, Any]
+        if self.version == 2:
+            data = {
+                Keyword("version"): 2,
+                Keyword("handlers"): {
+                    Keyword(name): Symbol(entry) for name, entry in self.handlers
+                },
+                Keyword("fuel"): self.fuel,
+            }
+            if self.execution_level is not None:
+                data[Keyword("execution")] = {Keyword("level"): Keyword(self.execution_level)}
+            return data
+        data = {
             Keyword("version"): self.version,
             Keyword("rules"): [rule.to_edn_data() for rule in self.rules],
         }
@@ -648,7 +708,7 @@ def _warn_unknown_keys(raw: dict[str, Any], section: str) -> None:
 
 
 _KNOWN_KEYS: dict[str, frozenset[str]] = {
-    "top": frozenset({"version", "source_hash", "execution", "rules"}),
+    "top": frozenset({"version", "source_hash", "execution", "rules", "handlers", "fuel"}),
     "rule": frozenset({"name", "on", "when", "actions", "fuel"}),
     "recipe": frozenset(
         {

@@ -6,10 +6,10 @@ import shutil
 from typing import Any
 
 from tlon.agents.behavior_template import BehaviorTemplateError, analyze
-from tlon.agents.member_spec import (
-    MemberSpec,
-    MemberSpecValidationError,
-    validate_member_spec,
+from tlon.agents.program_package import (
+    program_digest,
+    read_module_sources,
+    validate_program_sources,
 )
 from tlon.agents.prototypes.catalog import _list_from
 from tlon.agents.prototypes.info import (
@@ -29,7 +29,7 @@ from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.evolution.ports import PrototypeError
 from tlon.evolution.publication import publish_directory
-from tlosure.edn import EDNParseError, Keyword, dumps, loads
+from tlosure.edn import Keyword, dumps, loads
 
 logger = get_logger(__name__)
 
@@ -37,7 +37,9 @@ logger = get_logger(__name__)
 # ==================== Staging area (stage 4a trust gate) ====================
 
 
-def _validate_behavior(behavior_edn: str, *, tlon_paths: TlonPaths) -> str:
+def _validate_behavior(
+    behavior_edn: str, *, tlon_paths: TlonPaths, modules: dict[str, str] | None = None
+) -> str:
     """Run the write-side validation chain; return the normalized spec text.
 
     The gate runs the same chain a runtime load would — template analysis,
@@ -56,15 +58,9 @@ def _validate_behavior(behavior_edn: str, *, tlon_paths: TlonPaths) -> str:
     spec_text = behavior_edn if behavior_edn.endswith("\n") else behavior_edn + "\n"
     try:
         template = analyze(spec_text)
-        validate_member_spec(
-            MemberSpec.from_edn(loads(template.standin_text)),
-        )
-    except BehaviorTemplateError as e:
-        raise PrototypeError(f"behavior template error: {e}") from e
-    except EDNParseError as e:
-        raise PrototypeError(f"behavior EDN parse failed: {e}") from e
-    except MemberSpecValidationError as e:
-        raise PrototypeError(f"behavior spec validation failed: {e}") from e
+        validate_program_sources(template.standin_text, modules or {})
+    except (BehaviorTemplateError, ValueError) as e:
+        raise PrototypeError(f"behavior program validation failed: {e}") from e
     return spec_text
 
 
@@ -77,6 +73,7 @@ def write_staging_prototype(
     parent: str | None = None,
     proposal_note: str | None = None,
     lessons: str | None = None,
+    modules: dict[str, str] | None = None,
     tlon_paths: TlonPaths,
 ) -> PrototypeInfo:
     """Write an LLM-authored prototype to the staging area (untrusted).
@@ -126,7 +123,7 @@ def write_staging_prototype(
     _validate_display_name(display_name)
     # Validate first: a broken spec must never reach disk.
     generation = _resolve_parent_generation(parent, p) if parent is not None else 1
-    spec_text = _validate_behavior(behavior_edn, tlon_paths=p)
+    spec_text = _validate_behavior(behavior_edn, tlon_paths=p, modules=modules)
 
     name = new_prototype_id()
     if (p.prototypes_dir() / name).exists() or (p.prototypes_staging_dir() / name).exists():
@@ -145,9 +142,11 @@ def write_staging_prototype(
         metadata[Keyword("parent")] = Keyword(parent)
     if proposal_note:
         metadata[Keyword("proposal-note")] = proposal_note
+    metadata[Keyword("program-digest")] = program_digest(spec_text, modules or {})
     files = {BEHAVIOR_FILE: spec_text, METADATA_FILE: dumps(metadata) + "\n"}
     if lessons:
         files[LESSONS_FILE] = lessons
+    files.update({f"modules/{name}": source for name, source in (modules or {}).items()})
     publish_directory(staging_dir, files)
 
     logger.info(
@@ -184,21 +183,37 @@ def approve_prototype(name: str, tlon_paths: TlonPaths) -> PrototypeInfo:
     if target_dir.exists():
         raise PrototypeError(f"prototype '{name}' already exists in the trusted library")
 
-    _validate_behavior((staging_dir / BEHAVIOR_FILE).read_text(encoding="utf-8"), tlon_paths=p)
-    target_dir.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(staging_dir), str(target_dir))
-
-    metadata_file = target_dir / METADATA_FILE
+    raw_text = (staging_dir / BEHAVIOR_FILE).read_text(encoding="utf-8")
+    try:
+        modules = read_module_sources(staging_dir / "modules")
+    except ValueError as e:
+        raise PrototypeError(str(e)) from e
+    _validate_behavior(raw_text, tlon_paths=p, modules=modules)
+    metadata_file = staging_dir / METADATA_FILE
     data: dict[Any, Any] = {}
+    if metadata_file.is_symlink():
+        raise PrototypeError("prototype metadata must not be a symlink")
     if metadata_file.exists():
         parsed = loads(metadata_file.read_text(encoding="utf-8"))
         if isinstance(parsed, dict):
             data = dict(parsed)
     data[Keyword("trusted")] = True
+    data[Keyword("program-digest")] = program_digest(raw_text, modules)
     data.setdefault(Keyword("name"), Keyword(name))
     data.setdefault(Keyword("display-name"), name)
     data.setdefault(Keyword("description"), "")
-    metadata_file.write_text(dumps(data) + "\n", encoding="utf-8")
+    files: dict[str, str | bytes] = {BEHAVIOR_FILE: raw_text, METADATA_FILE: dumps(data) + "\n"}
+    files.update({f"modules/{path}": source for path, source in modules.items()})
+    # Keep review and arena evidence together with the approved package.
+    for source in sorted(staging_dir.rglob("*")):
+        if source.is_symlink():
+            raise PrototypeError(f"symlink is not allowed: {source}")
+        if source.is_file():
+            relative = source.relative_to(staging_dir).as_posix()
+            if relative not in files:
+                files[relative] = source.read_bytes()
+    publish_directory(target_dir, files)
+    shutil.rmtree(staging_dir)
 
     logger.info("prototype_approved", name=name, author=str(data.get("author") or ""))
     return _read_metadata(target_dir)

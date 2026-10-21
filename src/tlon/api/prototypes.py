@@ -12,8 +12,9 @@ from typing import Any
 
 from tlon.agents.behavior_template import BehaviorTemplateError, analyze
 from tlon.agents.member_spec import MemberSpec, MemberSpecValidationError
+from tlon.agents.program_package import read_module_sources
 from tlon.agents.prototypes.catalog import get_prototype_detail, list_prototypes
-from tlon.agents.prototypes.info import PrototypeInfo
+from tlon.agents.prototypes.info import PrototypeInfo, _validate_name
 from tlon.agents.prototypes.lineage import get_prototype_lineage
 from tlon.agents.prototypes.management import (
     delete_prototype,
@@ -24,6 +25,7 @@ from tlon.agents.prototypes.staging import (
     approve_prototype,
     list_staging_prototypes,
     reject_prototype,
+    write_staging_prototype,
 )
 from tlon.base.paths import TlonPaths
 from tlon.evolution.ports import PrototypeError
@@ -85,6 +87,16 @@ class PrototypesFacade:
         """
         return get_prototype_detail(name, staging=staging, tlon_paths=self._paths)
 
+    def get_modules(self, name: str, *, staging: bool = False) -> dict[str, str]:
+        """Read the complete module sources for human review."""
+        _validate_name(name)
+        self.get_detail(name, staging=staging)
+        root = self._paths.prototypes_staging_dir() if staging else self._paths.prototypes_dir()
+        try:
+            return read_module_sources(root / name / "modules")
+        except ValueError as e:
+            raise PrototypeError(str(e)) from e
+
     def get_lineage(self, name: str) -> list[dict[str, Any]]:
         """The derived parent chain with per-generation diffs ()."""
         return get_prototype_lineage(name, tlon_paths=self._paths)
@@ -98,6 +110,7 @@ class PrototypesFacade:
         parent: str | None = None,
         proposal_note: str | None = None,
         lessons: str | None = None,
+        modules: dict[str, str] | None = None,
     ) -> PrototypeInfo:
         """Write a human-authored prototype into the trusted library
         (handwritten implies trusted; validation precedes any disk write).
@@ -112,6 +125,30 @@ class PrototypesFacade:
             parent=parent,
             proposal_note=proposal_note,
             lessons=lessons,
+            modules=modules,
+            tlon_paths=self._paths,
+        )
+
+    def create_staging(
+        self,
+        behavior: str,
+        *,
+        display_name: str,
+        description: str = "",
+        modules: dict[str, str] | None = None,
+        lessons: str | None = None,
+        parent: str | None = None,
+        proposal_note: str | None = None,
+    ) -> PrototypeInfo:
+        """Stage a human-authored complete program for explicit approval."""
+        return write_staging_prototype(
+            behavior,
+            display_name=display_name,
+            description=description,
+            modules=modules,
+            lessons=lessons,
+            parent=parent,
+            proposal_note=proposal_note,
             tlon_paths=self._paths,
         )
 
@@ -125,6 +162,7 @@ class PrototypesFacade:
         parent: str | None = None,
         proposal_note: str | None = None,
         lessons: str | None = None,
+        modules: dict[str, str] | None = None,
         staging: bool = False,
     ) -> PrototypeInfo:
         """Update metadata and/or behavior of a prototype (a behavior
@@ -141,6 +179,7 @@ class PrototypesFacade:
             parent=parent,
             proposal_note=proposal_note,
             lessons=lessons,
+            modules=modules,
             staging=staging,
             tlon_paths=self._paths,
         )

@@ -19,8 +19,8 @@ from tlon.operations.control import control_names, validate_control_forms
 from tlon.operations.core import CallContext
 from tlon.operations.dsl import DSLAdapter
 from tlon.operations.schema import json_value
-from tlosure.builtins import ActionRequest, Builtin, BuiltinCall, EvalError
-from tlosure.edn import Form, dumps, loads
+from tlosure.builtins import ActionRequest, Builtin, BuiltinCall, Closure, EvalError
+from tlosure.edn import Form, Symbol, dumps, loads
 from tlosure.eval import DEFAULT_FUEL, DEFAULT_MAX_DEPTH, DEFAULT_WHEN_FUEL, Evaluator
 
 ExecuteEffect = Callable[[ActionRequest, str, int, str], Awaitable[Any]]
@@ -64,6 +64,21 @@ class ProgramDriver:
         with bind_execution(self.execution_scope):
             try:
                 await self._run(rule, env)
+            except (BudgetExceededError, ExecutionDeadlineError) as error:
+                raise EvalError(str(error)) from error
+            except asyncio.CancelledError:
+                self.execution_scope.cancel()
+                raise
+
+    async def run_entry(self, entry: Closure, event: dict[str, Any], *, fuel: int) -> Any:
+        """Run one module entry with the same effect cursor and root budget."""
+        with bind_execution(self.execution_scope):
+            await asyncio.to_thread(self.store.ensure_root, self.run_id)
+            await self.execution_scope.initialize()
+            evaluator = Evaluator(self.builtins, fuel, DEFAULT_MAX_DEPTH)
+            form = Form([Symbol("__entry"), Form([Symbol("quote"), event])])
+            try:
+                return await evaluator.eval_async(form, {"__entry": entry}, 0, self._call)
             except (BudgetExceededError, ExecutionDeadlineError) as error:
                 raise EvalError(str(error)) from error
             except asyncio.CancelledError:

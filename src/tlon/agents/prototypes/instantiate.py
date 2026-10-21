@@ -8,7 +8,14 @@ from tlon.agents.behavior_template import (
     render_template,
 )
 from tlon.agents.member_spec import MemberSpec, MemberSpecValidationError
-from tlon.agents.prototypes.info import BEHAVIOR_FILE, LESSONS_FILE, _is_prototype_dir
+from tlon.agents.program_package import program_digest, read_module_sources
+from tlon.agents.prototypes.info import (
+    BEHAVIOR_FILE,
+    LESSONS_FILE,
+    METADATA_FILE,
+    _is_prototype_dir,
+    _validate_name,
+)
 from tlon.agents.prototypes.staging import _validate_behavior
 from tlon.base.config import AgentConfig, DockerRuntimeConfig, LLMConfig, yaml_exists, yaml_save
 from tlon.base.logger import get_logger
@@ -71,6 +78,7 @@ def instantiate(
             "model is required (provider/model 形式，如 deepseek/deepseek-chat)——"
             "成员级 LLM 配置没有进程级兜底（ADR 0016）"
         )
+    _validate_name(prototype_name)
     proto_dir = p.prototypes_dir() / prototype_name
     if not _is_prototype_dir(proto_dir):
         raise PrototypeError(f"prototype '{prototype_name}' not found under {p.prototypes_dir()}")
@@ -80,7 +88,21 @@ def instantiate(
     behavior_file = proto_dir / BEHAVIOR_FILE
     raw_text = behavior_file.read_text(encoding="utf-8")
 
+    try:
+        modules = read_module_sources(proto_dir / "modules")
+    except ValueError as e:
+        raise PrototypeError(str(e)) from e
     info = analyze(raw_text)
+    raw_spec = MemberSpec.from_edn(loads(info.standin_text))
+    if raw_spec.version == 2:
+        metadata_file = proto_dir / METADATA_FILE
+        if metadata_file.is_symlink() or not metadata_file.is_file():
+            raise PrototypeError("module program requires trusted package metadata")
+        metadata = loads(metadata_file.read_text(encoding="utf-8"))
+        if not metadata.get("trusted", False) or metadata.get("program-digest") != program_digest(
+            raw_text, modules
+        ):
+            raise PrototypeError("prototype program differs from its approved package")
     if info.has_parameters:
         if params is None:
             raise PrototypeError(
@@ -101,7 +123,7 @@ def instantiate(
         behavior_text = raw_text
 
     # Validate rendered content before creating member files.
-    behavior_text = _validate_behavior(behavior_text, tlon_paths=p)
+    behavior_text = _validate_behavior(behavior_text, tlon_paths=p, modules=modules)
 
     # Behavior only — copy, not reference (frozen at creation time; a
     # spec is total, so there is nothing to merge). Unified member model
@@ -110,8 +132,21 @@ def instantiate(
     # afterwards (self-editable via persona-update, ADR 0024), not part
     # of the behavior genome.
     config_dir = p.agent_config_dir(agent_id)
+    if config_dir.is_symlink():
+        raise PrototypeError("member config directory must not be a symlink")
+    for relative in modules:
+        target = config_dir / "modules" / relative
+        for component in (target, *target.parents):
+            if component.is_symlink():
+                raise PrototypeError("member module destination must not contain symlinks")
+            if component == config_dir:
+                break
     config_dir.mkdir(parents=True, exist_ok=True)
     (config_dir / BEHAVIOR_FILE).write_text(behavior_text, encoding="utf-8")
+    for relative, source in modules.items():
+        target = config_dir / "modules" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source, encoding="utf-8")
 
     # Lessons inheritance (see docs/design/prototypes.md): a prototype's
     # LESSONS.md — lessons distilled from a retired member — is copied

@@ -1,6 +1,6 @@
 # 可编程工作流程：分阶段实施计划
 
-状态：2026-10-21，设计已接受，P0 为本次文档与 issue 建立；P1–P5 未实施。基线 `9fe00817bd75944e49a05cfd8e0149fa240dc757`（#198）。设计权威：[目标设计](programmable-workflows.md)；选择理由：[ADR 0046](../decisions/0046-programmable-workflows.md)。当前代码不因此具备新能力。
+状态：2026-10-21，设计已接受，P0 为本次文档与 issue 建立；P1 已实现待本 PR 审核合并，P2–P5 未实施。设计基线 `9fe00817bd75944e49a05cfd8e0149fa240dc757`（#198）；P1 施工基线 `0650c9d`（#207）。设计权威：[目标设计](programmable-workflows.md)；选择理由：[ADR 0046](../decisions/0046-programmable-workflows.md)。当前代码不因此具备新能力。
 
 ## 施工与共同完成标准
 
@@ -143,3 +143,13 @@ issue 用于进度、PR 与证据，目标契约仍以本设计为准。阶段�
 - [ ] [P4b — 单一恢复权威与交互消费者](https://github.com/rika-moe/TlonImpact/issues/205)
 - [ ] [P5 — 切换内置程序并删除旧引擎](https://github.com/rika-moe/TlonImpact/issues/206)
 <!-- END WORKFLOW-ISSUES -->
+
+## P1 实施细化
+
+本 PR 实现独立 v2 handlers、tlosure 源码模块、人工完整包发布/审批/实例化及模块运行冻结和调度恢复。v1 仍服务旧原型，不进行格式迁移或执行 fallback。P1 不提供机器自动起草、完整对话循环或新交互投影。
+
+v2 源码包采用不可变发布：staging/trusted 源码 PATCH 均拒绝，改源码创建带 parent 的新包；metadata 可编辑。这样复用目录原子发布，避免原位替换的崩溃缺席窗口，也不会把元数据修改变为重新批准。创建人工 staging 是新增管理入口；模块审阅在 API 和 WebUI 只读展示，现有人工 v1 编辑保持。
+
+ProgramStore 新增 entry_programs 表，不改旧 runs 列、不迁移/清库；输入和源码同事务，完成和调度意图同事务。调度库另存 run_id 接纳回执，与调度意图同事务提交，再由程序库确认已交付；跨库恢复靠幂等交付，不依赖分布式事务。
+
+首次全量验证在调度接口收敛过程中命中了新测试的旧 mock；改为实际新接口并增加确定性恢复等待后重新执行全量。最终命令与数量见本 PR；合并后再勾选 P1，不提前关闭 #201。
