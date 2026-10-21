@@ -37,7 +37,6 @@ class ProgramStore:
         self._budgets: dict[str, dict[str, Any]] = {}
         self._allocations: dict[str, dict[str, Any]] = {}
         self._roots: dict[str, str] = {}
-        self._definitions: dict[str, str] = {}
         self._invocations: dict[str, tuple[Invocation, str | None]] = {}
         self.database = database
         self._lock = threading.RLock()
@@ -68,7 +67,6 @@ class ProgramStore:
                 "name TEXT NOT NULL, args_edn TEXT NOT NULL, result_edn TEXT NOT NULL, "
                 "PRIMARY KEY(run_id,ordinal));"
                 "CREATE TABLE IF NOT EXISTS roots (root_id TEXT PRIMARY KEY, build_id TEXT NOT NULL);"
-                "CREATE TABLE IF NOT EXISTS root_definitions (root_id TEXT PRIMARY KEY, definitions_json TEXT NOT NULL);"
                 "CREATE TABLE IF NOT EXISTS invocations (call_id TEXT PRIMARY KEY, identity_json TEXT NOT NULL, outcome_json TEXT, root_id TEXT NOT NULL, path_json TEXT NOT NULL, UNIQUE(root_id,path_json));"
                 "PRAGMA user_version=2;"
                 "CREATE TABLE IF NOT EXISTS budgets (root_id TEXT PRIMARY KEY, token_limit INTEGER NOT NULL, measure TEXT NOT NULL, deadline REAL);"
@@ -88,26 +86,17 @@ class ProgramStore:
         run_id: str,
         rule_edn: str,
         input_edn: str,
-        *,
-        definitions: dict[str, dict[str, Any]] | None = None,
     ) -> ProgramRun:
         """Create once; an existing invocation always retains its original source/input."""
-        snapshots = {run_id: definitions} if definitions is not None else None
-        return self.ensure_many([(run_id, rule_edn, input_edn)], definitions=snapshots)[0]
+        return self.ensure_many([(run_id, rule_edn, input_edn)])[0]
 
     def ensure_many(
         self,
         items: list[tuple[str, str, str]],
-        *,
-        definitions: dict[str, dict[str, dict[str, Any]]] | None = None,
     ) -> list[ProgramRun]:
         """Register an event's rules atomically in execution order, retaining existing records."""
         if not items:
             return []
-        encoded_definitions = {
-            root_id: json.dumps(snapshot, sort_keys=True, allow_nan=False)
-            for root_id, snapshot in (definitions or {}).items()
-        }
         with self._lock:
             if self.database is None:
                 for run_id, _, _ in items:
@@ -122,8 +111,6 @@ class ProgramStore:
                     if frozen is not None and frozen.error is not None:
                         continue
                     self._root(run_id)
-                    if run_id in encoded_definitions:
-                        self._definitions.setdefault(run_id, encoded_definitions[run_id])
                     if run_id not in self._runs:
                         self._runs[run_id] = ProgramRun(run_id, rule_edn, input_edn, False)
                 return [self._runs[run_id] for run_id, _, _ in items]
@@ -146,11 +133,6 @@ class ProgramStore:
                         )
                         continue
                     self._root(run_id, connection)
-                    if run_id in encoded_definitions:
-                        connection.execute(
-                            "INSERT OR IGNORE INTO root_definitions VALUES (?,?)",
-                            (run_id, encoded_definitions[run_id]),
-                        )
                     connection.execute(
                         "INSERT OR IGNORE INTO runs(run_id,rule_edn,input_edn) VALUES (?,?,?)",
                         (run_id, rule_edn, input_edn),
@@ -164,47 +146,6 @@ class ProgramStore:
                         ProgramRun(str(row[0]), str(row[1]), str(row[2]), bool(row[3]), row[4])
                     )
                 return records
-
-    def freeze_definitions(
-        self, root_id: str, definitions: dict[str, dict[str, Any]]
-    ) -> dict[str, dict[str, Any]]:
-        """Freeze a root's dependency closure once, including an empty closure.
-
-        Existing source is authoritative: a restarted process must never
-        replace it with files from the currently approved library.
-        """
-        encoded = json.dumps(definitions, sort_keys=True, allow_nan=False)
-        with self._lock:
-            if self.database is None:
-                self._root(root_id)
-                frozen = self._definitions.setdefault(root_id, encoded)
-            else:
-                with self._connection() as connection:
-                    self._root(root_id, connection)
-                    connection.execute(
-                        "INSERT OR IGNORE INTO root_definitions VALUES (?,?)", (root_id, encoded)
-                    )
-                    row = connection.execute(
-                        "SELECT definitions_json FROM root_definitions WHERE root_id=?", (root_id,)
-                    ).fetchone()
-                    assert row is not None
-                    frozen = str(row[0])
-        return dict(json.loads(frozen))
-
-    def load_definitions(self, root_id: str) -> dict[str, dict[str, Any]] | None:
-        """Read frozen dependencies only after verifying the host build."""
-        with self._lock:
-            if self.database is None:
-                self._root(root_id)
-                encoded = self._definitions.get(root_id)
-            else:
-                with self._connection() as connection:
-                    self._root(root_id, connection)
-                    row = connection.execute(
-                        "SELECT definitions_json FROM root_definitions WHERE root_id=?", (root_id,)
-                    ).fetchone()
-                    encoded = str(row[0]) if row is not None else None
-        return dict(json.loads(encoded)) if encoded is not None else None
 
     def pending(self) -> list[ProgramRun]:
         with self._lock:

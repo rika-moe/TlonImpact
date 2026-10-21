@@ -1,6 +1,6 @@
 # ADR 0020：Bridge API——机制底座与策略层之间桥的形式化
 
-> 阅读定位：本文保留当时的选择与理由；当前设计见 [bridge-api](../design/bridge-api.md)、[capabilities](../design/capabilities.md)。当前适用范围：桥的形式化；函数约束由 ADR 0021 修订，能力数据化的当前落地见 design。完整关系见 [决策索引](README.md)。
+> 阅读定位：本文保留当时的选择与理由；当前设计见 [bridge-api](../design/bridge-api.md)、[Capability 删除决定](0045-remove-capabilities.md)。当前适用范围：桥的形式化；函数约束由 ADR 0021 修订，能力数据化的当前落地见 design。完整关系见 [决策索引](README.md)。
 
 状态：已接受（2026-09-28，方向讨论拍板）
 

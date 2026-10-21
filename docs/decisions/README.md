@@ -71,7 +71,6 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 | [ADR 0038：以稳定行动习惯区分行为原型](0038-distinct-behavior-prototypes.md) | [prototypes](../design/prototypes.md) | 近期计划后执行、短回合交流、证据核验与条件路由 |
 | [ADR 0010：Skill 能力——开放标准 SKILL.md，三层目录，DSL `(skills)` section，模型自读正文](0010-skills.md) | [skills](../design/skills.md) | Skill 发现与渐进加载选择；当前正文访问限制见 design |
 | [ADR 0011：DSL 语义演进锚定 SCI 兼容子集（为 JVM 迁移铺路）](0011-sci-compatible-subset.md) | [dsl](../design/dsl.md) | SCI 语义锚定方向；函数能力按 ADR 0021 扩展，不表示已迁移 JVM |
-| [ADR 0020：Bridge API——机制底座与策略层之间桥的形式化](0020-bridge-api.md) | [bridge-api](../design/bridge-api.md)、[capabilities](../design/capabilities.md) | 桥的形式化；函数约束由 ADR 0021 修订，能力数据化的当前落地见 design |
 | [ADR 0021：tlosure 完整函数能力——defn / 闭包 / 变长参数 / 递归 / 一等函数](0021-tlosure-full-functions.md) | [dsl](../design/dsl.md)、[bridge-api](../design/bridge-api.md) | 完整函数能力；替代旧的无定义能力及动作位置可枚举保证 |
 
 ## 接入与模型
@@ -83,3 +82,5 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 | [ADR 0013：admin 端点共享 token 鉴权（TLON_ADMIN_TOKEN）](0013-admin-token-auth.md) | [server-protocol](../design/server-protocol.md) | 已废止，由 ADR 0033 的本地来源边界替代 |
 | [ADR 0016：LLM 配置成员级化——删除进程级 LLM_* 设置](0016-member-level-llm-config.md) | [infrastructure](../design/infrastructure.md)、[webui](../design/webui.md) | 成员级模型配置与不自动创建标准团队 |
 | [ADR 0031：WebUI 邮箱同步、线程展示与人类已读管理](0031-webui-mail-consistency.md) | [webui](../design/webui.md)、[server-protocol](../design/server-protocol.md)、[mail](../design/mail.md) | 客户端同步及已读管理；旧验收流水作为历史证据保留 |
+
+[ADR 0045：删除 Capability](0045-remove-capabilities.md)：删除复合操作、提案审批及管理界面，保留宿主 Operation 与现有 Behavior。

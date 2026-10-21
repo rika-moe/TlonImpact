@@ -1,5 +1,7 @@
 # 统一操作：分阶段实施计划
 
+> Capability 及复合 Operation 已由 [ADR 0045](../decisions/0045-remove-capabilities.md) 删除。本文保留历史实施记录，不再描述现行能力；宿主 Operation、Tool 与 Behavior 继续保留。
+
 状态：2026-10-21，EPIC A #184–#192 与 EPIC B P5 #193、P6 #194 已合并 main。用户决定 tools 尽量保持固定，P7 暂停；独立推进 P8a 文档收口与旧机制审计，其余 P8 范围待重评。合并仍由人类确认。
 
 设计权威：[operations](operations.md)；决策：[ADR 0044](../decisions/0044-unified-operations.md)。代码基线为 `d35c3a546a5e3dacef331b5d39d3e1cc7efd4e9a`。GitHub 跟踪链接见本文末尾；Issue/PR 负责验收证据，不复制一份持续漂移的设计。

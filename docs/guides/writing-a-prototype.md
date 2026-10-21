@@ -99,7 +99,7 @@ print("OK", len(spec.rules))
 
 ## 6. 操作与模型工具的关系
 
-可复用操作由 Operation 定义；复合操作使用 [CompositeSpec artifact](../design/capabilities.md)，经过依赖编译和批准后加入同一目录。Behavior 通过 DSLAdapter 调用这些定义，模型通过 OperationTool 调用相同定义；Prototype 分发 Behavior，Agent 绑定自己的服务与运行状态，不额外复制一套能力实现。
+宿主操作由 Operation 定义，Behavior 通过 DSLAdapter 调用，模型通过 OperationTool 调用相同定义。Capability 与复合操作已删除；Prototype 分发 Behavior，Agent 绑定自己的服务与运行状态。
 
 `when`、`until`、stage 的 `:if` 都可以调用目录中的纯复合操作。显式传入各作用域的数据，外部查询先在动作中完成；不能在纯条件中调用 `model-call`、`time-now`、邮箱查询或状态操作。
 

@@ -24,7 +24,6 @@ from pathlib import Path
 from aiohttp import web
 
 from tlon.api.arena import ArenaFacade
-from tlon.api.capabilities import CapabilitiesFacade
 from tlon.api.config import ConfigFacade
 from tlon.api.events import EventsFacade
 from tlon.api.mail import MailFacade
@@ -38,7 +37,6 @@ from tlon_server.core.local_identity import LocalIdentity, validate_username
 
 from .admin_agents import AdminAgentHandlers
 from .admin_arena import AdminArenaHandlers
-from .admin_capabilities import AdminCapabilityHandlers
 from .admin_llm import AdminLlmHandlers
 from .admin_prototypes import AdminPrototypeHandlers
 from .browser_boundary import LOOPBACK_HOSTS, protect_response, trusted_request
@@ -66,7 +64,6 @@ class RESTAPIHandler(
     AdminLlmHandlers,
     AdminPrototypeHandlers,
     AdminArenaHandlers,
-    AdminCapabilityHandlers,
     ObservabilityHandlers,
     GitHubWebhookMixin,
 ):
@@ -114,7 +111,6 @@ class RESTAPIHandler(
         configs: ConfigFacade | None = None,
         events: EventsFacade | None = None,
         arena: ArenaFacade | None = None,
-        capabilities: CapabilitiesFacade | None = None,
         debug: bool = False,
         github_webhook_secret: str | None = None,
     ):
@@ -129,7 +125,6 @@ class RESTAPIHandler(
             configs: Config facade (/admin/config/agents listing, agent.yaml)
             events: Events facade (SSE presence attach/detach, GitHub ingress)
             arena: Arena facade (/admin/arena-runs, staging 演武触发/报告)
-            capabilities: Capabilities facade (/admin/capabilities/*)
             debug: Whether to enable debug/test endpoints (never enable in production)
             identity: Persistent instance WebUI identity
             github_webhook_secret: HMAC secret of the GitHub webhook; the
@@ -144,7 +139,6 @@ class RESTAPIHandler(
         self.configs = configs
         self.events = events
         self.arena = arena
-        self.capabilities = capabilities
         self.debug = debug
         self.identity = identity
         self.github_ingress = events is not None and events.github_enabled
@@ -229,22 +223,6 @@ class RESTAPIHandler(
             "/admin/prototypes/staging/{name}/arena-runs/{run_id}/report",
             self.handle_get_arena_report,
         )
-
-        # Admin capability routes (docs/design/capabilities.md): trusted
-        # library listing/detail + the staging channel (create/list/detail/
-        # approve/reject). Registered unconditionally like the prototype
-        # routes; handlers 503 when the facade is not wired. The literal
-        # ``staging`` routes precede the ``{name}`` ones (aiohttp matches
-        # in registration order).
-        app.router.add_get("/admin/capabilities/staging", self.handle_list_staging_capabilities)
-        app.router.add_post("/admin/capabilities/staging", self.handle_create_staging_capability)
-        app.router.add_get("/admin/capabilities/staging/{name}", self.handle_get_staging_capability)
-        app.router.add_post("/admin/capabilities/{name}/approve", self.handle_approve_capability)
-        app.router.add_post(
-            "/admin/capabilities/staging/{name}/reject", self.handle_reject_capability
-        )
-        app.router.add_get("/admin/capabilities", self.handle_list_capabilities)
-        app.router.add_get("/admin/capabilities/{name}", self.handle_get_capability)
 
         # Trace routes (only if the observability facade is wired)
         if self.observability:
@@ -512,7 +490,6 @@ class RESTServer:
         configs: ConfigFacade | None = None,
         events: EventsFacade | None = None,
         arena: ArenaFacade | None = None,
-        capabilities: CapabilitiesFacade | None = None,
         host: str = "127.0.0.1",
         port: int = 8080,
         debug: bool = False,
@@ -529,7 +506,6 @@ class RESTServer:
             configs: Config facade (/admin/config/agents listing, agent.yaml)
             events: Events facade (SSE presence attach/detach, GitHub ingress)
             arena: Arena facade (/admin/arena-runs, staging 演武触发/报告)
-            capabilities: Capabilities facade (/admin/capabilities/*)
             host: Host to bind to
             port: Port to listen on
             debug: Whether to enable debug/test endpoints (never enable in production)
@@ -552,7 +528,6 @@ class RESTServer:
             configs=configs,
             events=events,
             arena=arena,
-            capabilities=capabilities,
             debug=debug,
             identity=identity,
             github_webhook_secret=github_webhook_secret,

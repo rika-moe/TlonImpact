@@ -5,7 +5,6 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from tlon.agents.capabilities.staging import list_staging_capabilities, write_staging_capability
 from tlon.agents.prototypes.staging import list_staging_prototypes, write_staging_prototype
 from tlon.base.paths import TlonPaths
 from tlon.evolution.list_staging import StagingCatalog
@@ -20,7 +19,6 @@ from tlosure.builtins import BuiltinCall
 from tlosure.edn import Keyword
 
 _SPEC = '{:version 1 :rules [{:name "boot" :on :boot :actions []}]}'
-_CAPABILITY = '{:version 2 :name "echo-word" :description "identity" :input-schema {:type "object" :properties {:x {:type "string"}} :required ["x"] :additionalProperties false} :output-schema {:type "string"} :impl (fn [input] (get input :x))}'
 
 
 def _bound(paths: TlonPaths, *, full: bool = True) -> OperationExecutor:
@@ -68,7 +66,6 @@ async def test_two_entrances_host_author_and_human_trust(tmp_path: Path) -> None
     [
         ("prototype-write", "writer", {"behavior": _SPEC, "display_name": "x"}),
         ("behavior-propose", "behavior_proposer", {"intent": "x", "display_name": "x"}),
-        ("capability-propose", "capability_proposer", {"intent": "x", "name": "new-word"}),
     ],
 )
 async def test_apprentice_denied_in_tool_and_dsl_before_service_call(
@@ -94,22 +91,16 @@ async def test_apprentice_denied_in_tool_and_dsl_before_service_call(
     service.execute.assert_not_called()
 
 
-@pytest.mark.parametrize("kind", ["prototype", "capability"])
-def test_staging_fsync_failure_leaves_no_partial_package(tmp_path: Path, kind: str) -> None:
+def test_staging_fsync_failure_leaves_no_partial_package(tmp_path: Path) -> None:
     paths = TlonPaths(home=tmp_path)
     with (
         patch("tlon.evolution.publication.os.fsync", side_effect=OSError("disk failure")),
         pytest.raises(OSError, match="disk failure"),
     ):
-        if kind == "prototype":
-            write_staging_prototype(_SPEC, display_name="x", tlon_paths=paths)
-        else:
-            write_staging_capability(_CAPABILITY, tlon_paths=paths)
+        write_staging_prototype(_SPEC, display_name="x", tlon_paths=paths)
     assert list_staging_prototypes(paths) == []
-    assert list_staging_capabilities(paths) == []
     assert list(tmp_path.glob(".proposal-*")) == []
     assert not any(p.name == "behavior.tlon" for p in tmp_path.rglob("behavior.tlon"))
-    assert not any(p.name == "capability.tlon" for p in tmp_path.rglob("capability.tlon"))
 
 
 def test_publication_rejects_existing_even_empty_target(tmp_path: Path) -> None:

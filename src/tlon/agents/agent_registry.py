@@ -59,7 +59,6 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from tlon.agents.assembly import assemble_member_services
-from tlon.agents.capabilities.bridge import load_capability_catalog
 from tlon.agents.cron import CronScheduler
 from tlon.agents.health import PublicHealthMonitor
 from tlon.agents.lifecycle import StartRequest, StopRequest
@@ -305,28 +304,14 @@ class AgentRegistry(Component):
 
         # Host builtins validated against — shared by the profile loader and
         # ``_start_agent`` so a member's spec passes the same gate whether
-        # loaded for derivation or for assembly. The trusted capability
-        # words are merged on top per load (``_member_builtins``).
+        # loaded for derivation or for assembly.
         self._host_builtins = make_member_builtins(RegistryQueries(self))
 
         logger.info("agent_registry_constructed")
 
     def _member_builtins(self) -> dict[str, Builtin]:
-        """Build a syntax registry from host contracts and approved composites.
-
-        This registry does not grant execution. MemberRuntime replaces global
-        host placeholders with actual service definitions and validates required
-        dependencies again before admitting any new behavior.
-        """
-        from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
-        from tlon.operations.dsl import DSLAdapter
-
-        catalog = load_capability_catalog(self._paths, reserved=self._host_builtins)
-        executor = OperationExecutor(
-            OperationRegistry(catalog.operations),
-            CallContext("validation", "validation", "validation"),
-        )
-        return {**self._host_builtins, **DSLAdapter(executor).builtins()}
+        """Return host contracts used to validate member behavior."""
+        return dict(self._host_builtins)
 
     def register(self, agent_id: str) -> None:
         """Register an agent to be started.

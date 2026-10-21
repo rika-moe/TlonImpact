@@ -12,7 +12,7 @@ Operation 定义输入、输出、效果和宿主实现；DSL 与模型 Tool 只
 
 每个调用持久化 call_id、root_id、结构路径、操作名、规范化输入 JSON、契约 definition_id 和宿主 build_id。程序路径由求值顺序产生；会话路径包含 round 序号和模型 ToolCall.id，因此不同轮重复的模型 ID 不会共用调用记录。同一轮重复 ToolCall.id 在分发前整轮拒绝，不启动任何工具或 intent；恢复遇到这种已歧义的旧 dispatch 也拒绝，不能按最后一个同 ID 结果覆盖。完成先后不能改变身份。文件溢出回执的文件名取完整 call_id 的哈希，模型协议仍保留原 ToolCall.id。
 
-root 首次创建时冻结宿主身份。宿主身份覆盖 tlon/tlosure Python 运行代码、打包的 uv.lock 摘要、Python 版本、已安装 distribution 的版本，以及宿主 builtin 定义；复合 artifact 不进入全局宿主身份，按根冻结。契约另有内容指纹。恢复先核对冻结身份，再进入程序或构建会话上下文；已存调用同样核对名称、路径、输入和契约。任何不一致都报告 RecoveryMismatchError，不能将旧位置解释成新工作。不同根独立校验，一个旧根失配不阻止其他成员或新根运行。
+root 首次创建时冻结宿主身份。宿主身份覆盖 tlon/tlosure Python 运行代码、打包的 uv.lock 摘要、Python 版本、已安装 distribution 的版本，以及宿主 builtin 定义。契约另有内容指纹。恢复先核对冻结身份，再进入程序或构建会话上下文；已存调用同样核对名称、路径、输入和契约。任何不一致都报告 RecoveryMismatchError，不能将旧位置解释成新工作。不同根独立校验，一个旧根失配不阻止其他成员或新根运行。
 
 这是保守拒绝策略：不恢复旧宿主代码，不提供跨版本兼容。无关已安装包版本变化也可能使旧根失配。构建脚本与质量门检查打包摘要是否与 uv.lock 一致，wheel 携带摘要模块，运行时无需源码仓库中的锁文件。
 
@@ -46,7 +46,7 @@ LoopDriver 的 tool/dispatch 保存 root/path/call_id/build_id/definition_id。S
 
 新 ProgramStore 使用明确的 SQLite user_version。包含旧表而没有新版本标记的数据库直接拒绝打开，不转换、不清库，不改写原历史。旧 session 缺少冻结身份时同样拒绝恢复；只读浏览已有 session 事件不受影响。使用者需要自行决定旧运行的处理方式，不能为通过恢复测试删除真实 ~/.tlon。
 
-P4b 使用同一数据库的 budgets/model_allocations 记录额度与预留，模型完整响应仍保存在 invocations；删除驱动局部计数、_HOST_QUERIES pure 重写与旧 MemberCapabilities 装配容器名。当前 ProgramStore 格式版本为 2，旧版本明确拒绝，不转换、不清库。P4a/P4b 及收尾已合并；P5 已交付复合依赖快照。P7 动态视图与统一授权尚未实施，现已暂停。
+P4b 使用同一数据库的 budgets/model_allocations 记录额度与预留，模型完整响应仍保存在 invocations；删除驱动局部计数、_HOST_QUERIES pure 重写与旧 MemberCapabilities 装配容器名。当前 ProgramStore 格式版本为 2，旧版本明确拒绝，不转换、不清库。P4a/P4b 及收尾已合并；Capability 的复合依赖快照已删除。P7 动态视图与统一授权尚未实施，现已暂停。
 
 
 P4b 将 sleeping?、running?、lazy?、member-roster 收敛为非确定性只读查询，ProgramDriver 不再按名称改写 pure；每次外部读取采样并记录，重放返回原值。P6 进一步禁止其进入任何纯条件：读取放在 actions，已记录的返回值再参与计算。when、until 和 stage-if 共用纯函数准入与显式数据，Builtin.read_only 字段随旧条件准入一起删除。装配容器与入口现为 MemberServices / assemble_member_services，构造参数 services，无旧名称别名。
@@ -57,12 +57,6 @@ P4b 将 sleeping?、running?、lazy?、member-roster 收敛为非确定性只读
 
 操作员可先通过会话事件查看 session/recovery-blocked 的 session_id、原因和关联程序；程序错误及冻结输入保留在成员 program.sqlite3 的 runs 表，invocations 与 model_allocations 保留调用和预留事实。隔离后新邮件与其他根可继续工作，无需删库。没有提供“强制重放未知效果”按钮；需要重做业务时应在确认外部效果后显式发起新的任务，不修改旧根身份、不清空真实 ~/.tlon。数据库整体格式不兼容仍在打开时拒绝，这是与单根身份失配不同的错误。
 
-## P5 复合定义快照
+## Capability 删除后的边界
 
-root_definitions 是 ProgramStore 中的运行输入，不是另一份交互日志或兼容版本库。程序源码/输入和所需定义在同一受理事务写入，会话在发模型前冻结静态暴露复合集合，保持稳定的会话工具目录；空快照也是已经冻结的事实。恢复使用原源码/schema/依赖身份，宿主实现和契约仍验证；不把当前批准目录合并进旧根。
-
-复合没有非幂等父 dispatch intent，叶子回执决定重放。完成后的派生成功/输出错误缓存可直接重放，缓存未提交时仍由叶子历史恢复，不自动重复未知叶子。嵌套路径稳定、fuel/depth 与 token 根共享。新表由既有初始化创建，不转换或清空任何用户历史。旧 version=1 artifact 明确拒绝。
-
-当前 Behavior 缺少已删除能力时，存在冻结工作可以进入明确的仅恢复激活；新规则不被准入，诊断可见，修正后显式重载。详见 [复合操作](capabilities.md)。
-
-工具定义尽量固定，以保留请求前缀缓存机会。冻结复合源码与依赖是恢复身份保证，不是永久执行授权，也不表示当前已有逐请求 ToolView、统一 allowlist 或受控授权阶段。未来授权检查与工具展示分别设计；已记录结果仍按本文回执规则重放。
+[ADR 0045](../decisions/0045-remove-capabilities.md) 删除复合定义、目录及 root_definitions 快照。程序源码与输入仍冻结，宿主操作仍通过构建身份、调用参数和持久回执校验恢复。工具目录来自成员实际装配的宿主服务。

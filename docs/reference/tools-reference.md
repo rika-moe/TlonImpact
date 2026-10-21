@@ -40,14 +40,14 @@ session 的 total 根由 recipe.max_tokens 建立，stage、压缩、model-call 
 
 ### 工具装配
 
-每个成员经 [assembly.py](../../src/tlon/agents/assembly.py) 绑定私有领域服务并产出操作定义；[MemberRuntime](../../src/tlon/agents/member_runtime.py) 构造共享 OperationRegistry，再为所有注册操作建立 OperationTool。L0 无装置操作，L1 提供文件操作，L2 增加 Shell；时间与成员领域操作不依赖装置。见习成员不装配 `member-spawn`、`prototype-write`、`behavior-propose`、`capability-propose`；其他操作仍按成员身份绑定。
+每个成员经 [assembly.py](../../src/tlon/agents/assembly.py) 绑定私有领域服务并产出操作定义；[MemberRuntime](../../src/tlon/agents/member_runtime.py) 构造共享 OperationRegistry，再为所有注册操作建立 OperationTool。L0 无装置操作，L1 提供文件操作，L2 增加 Shell；时间与成员领域操作不依赖装置。见习成员不装配 `member-spawn`、`prototype-write`、`behavior-propose`；其他操作仍按成员身份绑定。
 
 模型调用、原型创作/评审、成员生命周期也使用同一注册表。`finish-turn`、`sleep-until`、`exit-agent` 的调度声明由控制元数据标识；会话引擎负责完成/睡眠/退出的应用，处理器本身不直接操作 session。
 
 ### 注册清单
 
 <!-- BEGIN GENERATED: tool-registry -->
-满配成员注册 52 个工具（由共享 Operation 按域列出；L0 不注册 7 个装置操作，L1 注册 5 个文件操作，L2 再增加 2 个 Shell 操作；时间不依赖装置）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+满配成员注册 51 个工具（由共享 Operation 按域列出；L0 不注册 7 个装置操作，L1 注册 5 个文件操作，L2 再增加 2 个 Shell 操作；时间不依赖装置）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | # | 工具名 | 实现 | 域 |
 |---|---|---|---|
@@ -97,15 +97,14 @@ session 的 total 根由 recipe.max_tokens 建立，stage、压缩、model-call 
 | 44 | `exit-agent` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
 | 45 | `prototype-write` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
 | 46 | `behavior-propose` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 47 | `capability-propose` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 48 | `prototype-list` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 49 | `prototype-staging-list` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 50 | `prototype-lineage` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 51 | `prototype-review` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 52 | `model-call` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
+| 47 | `prototype-list` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 48 | `prototype-staging-list` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 49 | `prototype-lineage` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 50 | `prototype-review` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 51 | `model-call` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
 <!-- END GENERATED: tool-registry -->
 
-上表是正式成员的满配。见习成员不注册 member-spawn、prototype-write、behavior-propose、capability-propose 四个生殖/演化工具；所有成员均可使用绑定自身的四个调度工具。L0 不注册 shell/filesystem 七个装置工具，L1 不注册 shell 两个工具。
+上表是正式成员的满配。见习成员不注册 member-spawn、prototype-write、behavior-propose 三个生殖/演化工具；所有成员均可使用绑定自身的四个调度工具。L0 不注册 shell/filesystem 七个装置工具，L1 不注册 shell 两个工具。
 
 依赖倒置：`tlon.tools` 不许反向依赖 `tlon.agents`/`tlon.prototypes`，agents 域与 prototypes 域工具的端口（`AgentLifecycle` Protocol、`SpawnRejectedError`、`StopRejectedError`）声明在 [lifecycle/ports.py](../../src/tlon/lifecycle/ports.py)，原型端口（`PrototypeError`、`PrototypeSummary`）声明在 [evolution/ports.py](../../src/tlon/evolution/ports.py)；装配时由 `AgentRegistry` 注入成员作用域领域服务，OperationTool 只投影相应操作。
 
@@ -1114,25 +1113,6 @@ Operation 单一契约；输入与输出字段保留 snake_case。（本区块�
 | `name` | string | 是 | — |
 | `parent` | string / null | 是 | — |
 | `generation` | integer | 是 | — |
-| `trusted` | boolean | 是 | — |
-| `status` | string | 是 | enum=['pending_approval'] |
-
-### capability-propose
-
-基于自己的个体经验提出一个新能力词（capability，突变晋升通道的经验入口）。只需给出能力意图与词名：工具内部读你的记忆（claims 与蒸馏教训），由一次独立的起草调用产出完整的 capability artifact（tlosure (fn [...] ...) 实现），经 staging 闸写入（proposal_note 记意图）。同名即拒——想改进既有词请换个新名字。提案不可信：需人类批准（ops/WebUI）批准后，全社会成员下次 wake 才能在自己的 spec 里组合它。
-
-输入：
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `intent` | string | 是 | 能力意图：想造一个什么词、解决什么问题（自然语言，记为 proposal_note） |
-| `name` | string | 是 | 词名（字母起头，后接字母/数字/'-'/'_'；同名即拒，改进既有词请换新名） |
-
-输出：
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `name` | string | 是 | — |
 | `trusted` | boolean | 是 | — |
 | `status` | string | 是 | enum=['pending_approval'] |
 

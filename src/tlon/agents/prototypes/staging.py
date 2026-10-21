@@ -6,7 +6,6 @@ import shutil
 from typing import Any
 
 from tlon.agents.behavior_template import BehaviorTemplateError, analyze
-from tlon.agents.capabilities.bridge import capability_validation_builtins
 from tlon.agents.member_spec import (
     MemberSpec,
     MemberSpecValidationError,
@@ -42,8 +41,8 @@ def _validate_behavior(behavior_edn: str, *, tlon_paths: TlonPaths) -> str:
     """Run the write-side validation chain; return the normalized spec text.
 
     The gate runs the same chain a runtime load would — template analysis,
-    EDN parse, then the single validator with host words and currently
-    approved composite operations. No template or operation is executed.
+    EDN parse, then the single validator with host words.
+    No template or operation is executed.
 
     Args:
         behavior_edn: raw EDN text of the unified behavior spec
@@ -59,7 +58,6 @@ def _validate_behavior(behavior_edn: str, *, tlon_paths: TlonPaths) -> str:
         template = analyze(spec_text)
         validate_member_spec(
             MemberSpec.from_edn(loads(template.standin_text)),
-            builtins=capability_validation_builtins(tlon_paths),
         )
     except BehaviorTemplateError as e:
         raise PrototypeError(f"behavior template error: {e}") from e

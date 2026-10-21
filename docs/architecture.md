@@ -14,7 +14,6 @@ Tlon 让一组成员通过邮件协作，人类也以成员身份收发邮件。
 | 邮件与邮箱 | 成员间通信及每个收件人的持久收件事实 | [邮件](design/mail.md) |
 | Session | 一次按配方推进的模型会话；journal 保存事件与生命周期元数据 | [运行时](design/runtime.md) |
 | Claim | 成员长期记忆的断言，可由蒸馏、主动记录或反思产生 | [记忆](design/memory.md) |
-| 能力 artifact | 组合已有词汇的 tlosure 函数，准入后可被行为调用 | [能力](design/capabilities.md) |
 
 ## 系统约束
 
@@ -63,7 +62,7 @@ WebUI / Operator / Python SDK / Telegram
 | `tlon.tools` | 模型工具协议、结果与溢出文件适配；业务定义和执行位于 `tlon.operations`，不得反向依赖 agents/server/client/launcher/prototypes |
 | `tlon.agents` | 成员装配、调度、会话循环和策略接入；不依赖 server/client/launcher/prototypes |
 | `tlon.prototypes` | 随包携带的原型数据，启动时播种；不是原型管理服务 |
-| `tlon.api` | 当前有 members/mail/prototypes/observability/configs/events/arena/capabilities 八个 facade 与 runtime 装配；不依赖 server/client/launcher |
+| `tlon.api` | 当前有 members/mail/prototypes/observability/configs/events/arena 七个 facade 与 runtime 装配；不依赖 server/client/launcher |
 | `tlon_server` | HTTP、客户端会话、通知、WebUI 托管；直接 runtime import 限于 api/base |
 | `tlon_client` | SDK 与 Telegram；不依赖 tlon、server、launcher |
 | `tlon_launcher` | dream/ops/telegram 命令；通过 server/client 和 base 装配，不直摸 runtime 或 api |
@@ -124,13 +123,12 @@ EPIC A、P5 #193 和 P6 #194 已合并。当前调用契约见 [Operation refere
 
 P3b 已将记忆/会话回读、任务、人格/联系人、只读观测及 state-get/state-put 接入相同 Operation 目录。成员身份由宿主绑定，操作输入不能改写拥有者；公开观察与私有资源保持各自边界。state-put 的两入口复用同一 ProgramStore 原子状态及 invocation 回执，TaskManager 已移至 `tlon.tasks`。P3c 已通过 #188 合并，统一生命周期、模型和提案操作并删除旧 Tool 机制。P4a 固定调用身份、契约与构建指纹，恢复拒绝漂移与旧格式；当前边界见 [调用恢复](design/invocation-recovery.md)。P4b 将两入口及其内部模型调用接入同一持久预算账本：程序 output 保留输出预留，session total 覆盖 stage、压缩及嵌套模型并按可靠实际 usage 结算，未知保留预留。取消约束当前进程任务树，deadline 与额度冻结跨重启保留；成员写 gate 按声明顺序执行写入，独立读取可并发。装配容器改名 MemberServices，旧宿主查询直接声明非 pure，详见 [执行作用域](design/execution-scope.md)。数据库格式 user_version=2，旧格式拒绝，无迁移。
 
-P5 复合能力使用 operations/composite.py 的共享契约与编译目录，DSL 投影在 operations/dsl.py，Tool 协议投影在 adapters.py；底层执行与沙箱不依赖 Tool 协议。ProgramStore 原子冻结源码、输入及 root_definitions，模型会话使用根级 ToolExecutor。批准保存传递依赖身份，运行宿主 build 与复合内容分离；当前行为失效时只允许明确的冻结工作恢复，不准入新规则。复合不重置 fuel/depth 或 token 额度。具体边界见 [复合操作](design/capabilities.md)。
 
 
 ## 定义、流程与执行实例
 
-Operation 是可复用操作的单一契约；Capability artifact 使用 CompositeSpec 描述复合操作，经依赖编译、人工批准后加入相同目录。DSLAdapter 与 OperationTool 分别提供语言调用和模型协议入口，不各自维护业务实现。Behavior 编排规则与会话，Prototype 包装 Behavior 的分发、参数化和成员创建，Agent 是绑定私有服务、人格、模型与状态的运行实例。
+Operation 是宿主操作的单一契约，DSLAdapter 与 OperationTool 共用执行器。Capability 与复合 Operation 已删除；Behavior、Prototype 和 Agent 的现有职责保持不变。
 
-P6 将 `when`、`until`、stage 的 `:if` 统一为成员目录的纯函数投影；调用点显式提供物化数据，复合实现不隐式访问成员环境。读取时钟、模型、邮箱或状态的操作均不能进入纯条件。
+when、until、stage 的 `:if` 共用纯函数准入，调用点显式提供物化数据。读取时钟、模型、邮箱或状态的操作不能进入纯条件。
 
 模型 tools 尽量保持固定，以减少请求前缀变化。不同成员仍可因实际服务、执行装置、信任状态和批准依赖得到不同的稳定目录；同一会话根冻结操作定义，阶段或轮次不会主动裁剪 tools。P7 的统一授权名单、请求级动态视图与运行中撤权机制暂停，当前没有这些保证。固定 tools 不表示权限永久不变；未来授权需求应独立设计，也不能以工具可见性代替宿主检查。本次文档收口没有增加缓存实现或测量缓存命中率。

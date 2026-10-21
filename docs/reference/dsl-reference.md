@@ -166,7 +166,7 @@
 
 ## 4. Builtin 完整清单
 
-语言级通用词汇见 [tlosure-reference.md](./tlosure-reference.md) 第 3 节。领域函数在 [vocabulary.py](../../src/tlon/agents/vocabulary.py) 的 `SCRIPT_BUILTINS` 定义；成员 actions 另接入 Operation 目录与宿主查询。when、until、stage-if 均使用同一个纯函数投影：通用函数、显式参数领域函数和 effects 为空且 control=false 的已批准 Operation。只读外部查询仍是非纯操作，不能进入这些条件，也不能由局部 fn 或复合依赖绕过限制。
+语言级通用词汇见 [tlosure-reference.md](./tlosure-reference.md) 第 3 节。领域函数在 [vocabulary.py](../../src/tlon/agents/vocabulary.py) 的 `SCRIPT_BUILTINS` 定义；成员 actions 另接入 Operation 目录与宿主查询。when、until、stage-if 均使用同一个纯函数投影：通用函数、显式参数领域函数和 effects 为空且 control=false 的宿主 Operation。只读外部查询仍是非纯操作，不能进入这些条件，也不能由局部 fn 绕过限制。
 
 旧隐式邮件身份、上限和 stage 谓词已删除，无兼容别名或用户文件迁移。以下写法是当前契约；加载时拒绝未知词和不在该位置作用域内的符号，执行缺失必需上下文时报错。
 
@@ -206,7 +206,6 @@
 | `content-matches?` | 是 | Regex-search a mail's content or a plain string (e.g. ``result``). |
 <!-- END GENERATED: dsl-builtins-pure -->
 
-已批准纯复合 Operation 不逐项列在这张静态表中：它们来自统一目录，按相同 schema 接受一个对象输入，不继承调用方 env。
 
 ### 4.2 when 数据
 
@@ -240,7 +239,7 @@
 (= (get (get scratch :critique) :passed) false)
 ```
 
-核心 get 对业务 map 的缺键仍按语言规则返回 nil 或显式默认值；这与运行时遗漏整个必需作用域绑定是不同错误。三处可以调用同一个纯复合操作，但调用点必须使用各自数据构造符合其 input schema 的对象。
+核心 get 对业务 map 的缺键仍按语言规则返回 nil 或显式默认值；这与运行时遗漏整个必需作用域绑定是不同错误。三处均通过显式数据调用纯函数。
 
 ### 4.5 程序效果与统一邮件操作
 
@@ -293,15 +292,6 @@
 | `member-roster` | `host.member_roster` | The addressing yellow page: one pre-formatted line per member. |
 <!-- END GENERATED: bridge-query-ports -->
 
-### 4.7 数据定义的能力词（受信能力库）
-
-第 4.1–4.6 节全是 Python 侧注册的宿主词汇；成员注册表还并入**数据定义的词**——受信能力库 `~/.tlon/capabilities/` 里每个受信 artifact（`capability.tlon`，一个 artifact 一个词，设计与评审通道见 [../design/capabilities.md](../design/capabilities.md)）经词汇桥（`agents/capabilities/bridge.py`）校验后注册为一个 closure-backed builtin（机制见 [tlosure-reference.md](./tlosure-reference.md) §2.1.2）：
-
-- **纯度分区与宿主词同构**：artifact 声明 `:pure true` 且 impl 只对纯注册表过静态校验的词进一切求值语境（`:when` 门控、`:actions` 等）；非纯词（组合动作词、产出 `ActionRequest`）仅 `:actions`。校验器按词的 `.pure` 标记切语境可见集，不区分词是代码还是数据。
-- **生效时机**：能力词在**每次成员 spec 加载时重算**（loader 唯一读盘路径，受信库是小数据）——新批准（staging → 受信库）的词在成员**下次 wake** 自然生效，不需要重启 server；反之一个被删除/损坏的 artifact 只会让引用它的 spec 在自己的加载校验处报 unknown word。
-- **求值语义**：调用能力词 = 闭包应用——body 只见声明的位置参数（零注入），body 的每一步**计入调用规则的 fuel 预算**（与宿主 builtin 的免计量内部不同）。
-- **命名空间**：词名与既有 builtin、特殊形式、宿主查询词、其他受信词同名即拒载（遮蔽即拒）。
-- 能力词**不出现在本节 GENERATED 的 builtin 清单里**——它们是数据不是代码常量，清单生成器扫的是 Python 注册表；在册能力词以 `list_trusted_capabilities`（`agents/capabilities/catalog.py`）/ 受信库目录为准。
 
 ## 5. `run-loop` 与会话配方
 

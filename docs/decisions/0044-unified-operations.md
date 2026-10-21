@@ -1,5 +1,7 @@
 # ADR 0044：统一能力定义，分离 DSL 与 LLM 调用入口
 
+> 后续修订：[ADR 0045](0045-remove-capabilities.md) 删除 Capability 与复合 Operation。本文中的相关决定保留为历史。
+
 日期：2026-10-19。
 
 状态：已接受。设计 #182、EPIC A 与审计收尾 #184–#192、EPIC B P5 #193 已合并 main，宿主与复合操作共享契约和执行边界；P6 #194 已合并。2026-10-21 用户决定 tools 尽量保持固定、P7 暂停；P8a 独立完成文档与旧机制审计，其余 P8 待重评。外部审查恢复隔离修复见 [实施计划](../design/operations-plan.md)。

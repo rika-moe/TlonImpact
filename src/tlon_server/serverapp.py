@@ -197,7 +197,6 @@ class ServerApp:
             configs=runtime.configs,
             events=runtime.events,
             arena=runtime.arena,
-            capabilities=runtime.capabilities,
             host=self.host,
             port=self.rest_port,
             identity=identity,

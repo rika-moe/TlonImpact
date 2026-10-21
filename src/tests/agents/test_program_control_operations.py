@@ -7,18 +7,14 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from tlon.agents.capabilities.spec import CapabilityArtifact
 from tlon.agents.member_spec import MemberRule, MemberSpec
 from tlon.agents.program_driver import ProgramDriver
 from tlon.agents.program_store import ProgramStore
 from tlon.agents.vocabulary import make_member_builtins
 from tlon.lifecycle.service import LifecycleService
-from tlon.operations.composite import compile_composites
 from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
-from tlon.operations.definitions import host_operation_definitions
 from tlon.operations.dsl import DSLAdapter
 from tlon.operations.lifecycle import make_lifecycle_operations
-from tlon.operations.schema import DefinitionError
 from tlosure.builtins import EvalError
 from tlosure.edn import loads
 
@@ -157,28 +153,6 @@ async def test_replay_reapplies_declaration_without_repeating_handler(store: Pro
     assert callback.await_count == 2
     assert callback.await_args_list[0] == callback.await_args_list[1]
     assert effects == []
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        "(finish-turn {})",
-        '(sleep-until {:wake_at "2099-01-01T00:00:00Z"})',
-        "(exit-agent {})",
-        "(run-loop {})",
-        "(if true (finish-turn {}) nil)",
-    ],
-)
-def test_impure_capability_cannot_wrap_control_or_session_requests(body: str) -> None:
-    artifact = CapabilityArtifact.from_edn(
-        '{:version 2 :name "wrapped-control" :description "test" '
-        ':input-schema {:type "object" :properties {} :required [] :additionalProperties false} :output-schema true '
-        + ":impl (fn [input] "
-        + body
-        + ")}"
-    )
-    with pytest.raises(DefinitionError):
-        compile_composites((artifact.spec,), host_operation_definitions())
 
 
 async def test_empty_form_reports_expression_error_without_control_dispatch(

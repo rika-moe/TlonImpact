@@ -1,6 +1,6 @@
 # Bridge API：宿主机制与 tlosure 策略的接口
 
-> 当前状态（EPIC A、P5 #193 与 P6 #194 已合并；P7 暂停，P8a 独立收口文档与审计）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
+> 当前状态：[ADR 0045](../decisions/0045-remove-capabilities.md) 已删除 Capability 与复合 Operation；保留宿主 Operation 和现有 Behavior。
 
 Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值语境能使用哪些词汇。它由 Python 协议、builtin 注册表、环境契约和 `ActionRequest` 组成；不是通用 FFI。语言及行为模型见 [DSL 设计](dsl.md)，字段与词汇见 [DSL reference](../reference/dsl-reference.md)。
 
@@ -53,7 +53,7 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 
 ### 注册表
 
-成员动作使用 make_member_builtins 接入完整目录；when、until 和 stage-if 从同一目录选择纯函数（SCRIPT_BUILTINS 和 effects 为空且 control=false 的 Operation），加载与执行使用相同准入。三处保留各自数据作用域，作用域绑定缺失明确报错；纯复合操作只接收自己的单对象输入。外部只读查询仍是效果，先在 actions 物化记录再参与条件，详见 [capabilities](capabilities.md)。
+成员动作使用 make_member_builtins 接入完整目录；when、until 和 stage-if 从同一目录选择纯函数（SCRIPT_BUILTINS 和 effects 为空且 control=false 的 Operation），加载与执行使用相同准入。三处保留各自数据作用域，作用域绑定缺失明确报错。外部只读查询仍是效果，先在 actions 物化记录再参与条件，详见 [删除决定](../decisions/0045-remove-capabilities.md)。
 
 ## 当前政策数据的归属
 
@@ -65,13 +65,12 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 | 检索权重、冲突阈值、蒸馏与反思参数 | 成员 `memory/config.json`、spec `:reflect` | memory / runtime |
 | 终止回信措辞 | 会话配方 `:replies`，未声明时使用引擎默认措辞 | runtime 的终止路径 |
 | fitness 与 trust | `policy.tlon` hook | society-policy |
-| 复合能力 | 受信能力 artifact | 加载准入与效果执行 |
 
 `AGENT_NOISY` 有 Adam 消费政策；`MAIL_ORPHAN_SCAN` 不因为存在就必须产生反应，避免周期事实转成周期噪声。迁移政策的理由应是让这部分规则可编辑、可评审，而非单纯减少 Python 行数。
 
 ## 演进与检查
 
-`:version` 标识 spec 格式，不建立运行时词汇版本矩阵。变更词汇与语境时，同步修改校验、执行环境和 reference；不能保留文档中已经删除的词汇。既有演进取舍见 [ADR 0020](../decisions/0020-bridge-api.md)；能力的元数据退役机制见 [capabilities](capabilities.md)。ADR 中设想的通用加载期 deprecation warning 不应被当作已经具备的机制。
+`:version` 标识 spec 格式，不建立运行时词汇版本矩阵。变更词汇与语境时，同步修改校验、执行环境和 reference；不能保留文档中已经删除的词汇。既有演进取舍见 [ADR 0020](../decisions/0020-bridge-api.md)。ADR 中设想的通用加载期 deprecation warning 不应被当作已经具备的机制。
 
 [scripts/gen_reference_docs.py](../../scripts/gen_reference_docs.py) 对其负责的 reference 区块做生成与 freshness 检查，包括工具、REST、事件、配置等清单；并非本文全部语境契约均已自动生成，手写部分仍需核对代码。
 
@@ -79,6 +78,6 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 
 ## 历史与未实施方向
 
-桥的形式化见 [ADR 0020](../decisions/0020-bridge-api.md)，完整函数能力见 [ADR 0021](../decisions/0021-tlosure-full-functions.md)，社会政策语境见 [ADR 0022](../decisions/0022-society-policy-context.md)。完整函数和复合能力均已实现，不再列为远期阶段。
+桥的形式化见 [ADR 0020](../decisions/0020-bridge-api.md)，完整函数能力见 [ADR 0021](../decisions/0021-tlosure-full-functions.md)，社会政策语境见 [ADR 0022](../decisions/0022-society-policy-context.md)。完整函数已实现；Capability 与复合 Operation 已删除。
 
-当前不提供通用 FFI、宏、`eval`、可变全局状态或 DSL 并发。更换语言宿主尚未实施，不能从 SCI 兼容方向推导出当前存在该能力。复合 Operation 已可投影为 LLM Tool。当前会话目录保持稳定；P7 已暂停，不新增统一 allowlist、逐请求 ToolView 或受控授权阶段。tools 尽量固定以保留请求前缀缓存机会；宿主现有领域检查继续生效，未来执行授权与工具展示分开讨论。
+当前不提供通用 FFI、宏、`eval`、可变全局状态或 DSL 并发。更换语言宿主尚未实施，不能从 SCI 兼容方向推导出当前存在该能力。宿主 Operation 可以投影为 LLM Tool。当前会话目录保持稳定；P7 已暂停，不新增统一 allowlist、逐请求 ToolView 或受控授权阶段。tools 尽量固定以保留请求前缀缓存机会；宿主现有领域检查继续生效，未来执行授权与工具展示分开讨论。

@@ -1,6 +1,6 @@
 # Operation 调用契约（P1–P6）
 
-当前状态：EPIC A #184–#192、P5 #193 与 P6 #194 已合并。两入口共用调用记录、预算、写序及恢复边界，复合操作与三处纯条件已落地。P7 暂停，tools 尽量保持固定；本次 P8a 只收口独立文档与旧机制审计。当前恢复契约见 [invocation-recovery](../design/invocation-recovery.md)，设计决策见 [operations](../design/operations.md)，实施状态见 [operations-plan](../design/operations-plan.md)。
+当前状态：EPIC A #184–#192、P5 #193 与 P6 #194 已合并。两入口共用调用记录、预算、写序及恢复边界，Capability 与复合操作已删除，三处纯条件保留。P7 暂停，tools 尽量保持固定；本次 P8a 只收口独立文档与旧机制审计。当前恢复契约见 [invocation-recovery](../design/invocation-recovery.md)，设计决策见 [operations](../design/operations.md)，实施状态见 [operations-plan](../design/operations-plan.md)。
 
 ## 定义和执行
 
@@ -8,13 +8,13 @@
 
 空 effects 表示纯计算：handler 是同步 `(CallContext, dict[str, Any]) -> Any`。非空 effects 是 read/write 集合：handler 必须是 async，并由异步执行边界等待结果。纯 handler 返回 awaitable 会被拒绝，不能把异步 IO 谎报为纯计算。注册表固定定义集合，同名拒绝；宿主给不同成员构造 scoped handler 和 `CallContext(member_id, run_id, call_id)`，上下文不在业务参数或 DSL env 内。
 
-`OperationExecutor.call_pure` 仅执行纯操作；`call` 支持两类操作。纯操作直接执行；宿主效果操作依次执行输入严格 JSON 复制与 schema 校验、稳定身份与历史核对、持久化 intent、handler、输出校验及回执提交。复合操作继承这些边界，叶子仍按此提交，复合自身只有完成后的派生结果缓存，没有阻断叶子重放的非幂等父 intent。已有回执在进入当前 handler 前还原；参数错误不写 intent。修改 handler 参数、返回值或 Tool schema 投影都不能污染原调用数据或权威 schema。
+`OperationExecutor.call_pure` 仅执行纯操作；`call` 支持两类操作。纯操作直接执行；宿主效果操作依次执行输入严格 JSON 复制与 schema 校验、稳定身份与历史核对、持久化 intent、handler、输出校验及回执提交。已有回执在进入当前 handler 前还原；参数错误不写 intent。修改 handler 参数、返回值或 Tool schema 投影都不能污染原调用数据或权威 schema。
 
-当前提供静态复合依赖；尚不提供通用授权名单或动态工具视图；共享执行作用域已覆盖现有模型调用入口。真实 runtime 为两入口注入同一成员 ProgramStore；session journal 保留会话协议历史，PostOffice 保留邮件领域幂等回执，不另建第三权威日志。四个 DSL 宿主查询由程序驱动单独记录重放，受限宿主终止通知亦不经过普通 Operation invocation；两项例外见 [审计](../design/operations-audit.md)。上下文隔离不是完整授权系统。输出不合约报 `OutputError`，不得据此假定效果未发生或自动重试。
+尚不提供通用授权名单或动态工具视图；共享执行作用域已覆盖现有模型调用入口。真实 runtime 为两入口注入同一成员 ProgramStore；session journal 保留会话协议历史，PostOffice 保留邮件领域幂等回执，不另建第三权威日志。四个 DSL 宿主查询由程序驱动单独记录重放，受限宿主终止通知亦不经过普通 Operation invocation；两项例外见 [审计](../design/operations-audit.md)。上下文隔离不是完整授权系统。输出不合约报 `OutputError`，不得据此假定效果未发生或自动重试。
 
 ## 调用记录与指纹 P4a
 
-宿主上下文包含 member_id、run_id、call_id、call_path、origin、冻结输入及 Invocation；业务参数不能覆盖它们。输入以键排序的 canonical JSON 固定身份，输出回执保留对象键顺序，因为 DSL 的 keys/str 能观察该顺序。恢复同时核对路径、参数、操作契约指纹和宿主构建指纹；构建身份包含宿主代码、锁文件摘要、已安装依赖身份与宿主 builtin 定义；复合源码与传递依赖按根冻结。当前数据库格式为 user_version=2；旧数据库或无构建身份的会话拒绝恢复，不迁移或清库。
+宿主上下文包含 member_id、run_id、call_id、call_path、origin、冻结输入及 Invocation；业务参数不能覆盖它们。输入以键排序的 canonical JSON 固定身份，输出回执保留对象键顺序，因为 DSL 的 keys/str 能观察该顺序。恢复同时核对路径、参数、操作契约指纹和宿主构建指纹；构建身份包含宿主代码、锁文件摘要、已安装依赖身份与宿主 builtin 定义。当前数据库格式为 user_version=2；旧数据库或无构建身份的会话拒绝恢复，不迁移或清库。
 
 每个调用的成功、明确拒绝、输出契约错误以及未知结果均有明确记录。输出不合约时保留原 JSON 回执；非 JSON 对象只保存类型与 repr 诊断，不能声称恢复任意 Python 对象。记录失败不返回成功；领域已原子提交回执时，对账返回该真实结果。同一进程内相同调用合流，独立根调用不共享完成序号。完整边界见 [调用恢复](../design/invocation-recovery.md)。
 
@@ -42,7 +42,7 @@ Tool 协议根参数必须是 JSON object 的字符串键。OperationTool 在 To
 
 程序使用冻结 run 和调用位置，工具使用 session、轮次与 tool call ID 生成稳定 call_id。默认 request_id 来自该 ID，显式重试可以提交原 request_id。输入或输出错误不代表效果一定未发生；超时、中断和无法确认提交必须保留 unknown 及原 request_id。复用邮局回执不会重复入箱；会话恢复会先查统一调用记录：未写 intent 的 dispatch 可以新执行，已提交回执直接还原；只有不安全 intent 时报告 unknown，安全写同键对账。
 
-已删除旧五邮件 Tool 及旧 DSL 邮件词，不提供别名或迁移。旧 Behavior、Capability 和未完成运行若引用旧名，将不兼容；仓库示例同步切换，用户数据不自动修改。P5 已实现静态依赖 DAG；P7 动态工具视图暂停，根调用记录与共享额度已由 P4a/P4b 收敛。
+已删除旧五邮件 Tool 及旧 DSL 邮件词，不提供别名或迁移。旧 Behavior 和未完成运行若引用旧名，将不兼容；仓库示例同步切换，用户数据不自动修改。P7 动态工具视图暂停，根调用记录与共享额度已由 P4a/P4b 收敛。
 
 ## 文件、Shell 与时间 P3a
 
@@ -73,7 +73,7 @@ state-put 将状态与该次调用结果放在 ProgramStore 的同一事务；�
 
 [lifecycle](../../src/tlon/operations/lifecycle.py)、[evolution](../../src/tlon/operations/evolution.py)、[model](../../src/tlon/operations/model.py) 共用成员注册表。旧 camelCase 名称删除；模型调用为 `(model-call {:prompt "任务" :max_tokens 256})`，输出使用 snake_case，session recipe 的 `:max-tokens` 配置保持原有含义。
 
-`control` 是 Operation 的控制声明元数据，和 read/write 效果分开。完成、睡眠、退出由同一契约返回声明，LoopDriver 或程序根执行器应用调度；DSL 嵌套组合拒绝控制操作，模型的一轮也只允许独立控制调用，不能夹带普通工具。P5 复合操作同样按 control 元数据拒绝直接或间接包装这些控制操作；P7 动态 ToolView 暂停。
+`control` 是 Operation 的控制声明元数据，和 read/write 效果分开。完成、睡眠、退出由同一契约返回声明，LoopDriver 或程序根执行器应用调度；DSL 嵌套组合拒绝控制操作，模型的一轮也只允许独立控制调用，不能夹带普通工具。P7 动态 ToolView 暂停。
 
 程序直接模型调用使用持久 output 根，额度来自成员 llm.max_tokens；获准的输出预留成功后不退款，实际输出上限还受请求值和剩余额度限制。run-loop 显式创建 recipe.max_tokens 的 total 根，session 内 stage、上下文压缩和 Tool/提案/评审内部模型调用共享它。total 成功按可靠的实际 usage 结算；缺少 usage 或提交未知时保留预留，实际超额如实记账并阻止后续请求，token 估算不是硬上界。
 
@@ -84,15 +84,8 @@ state-put 将状态与该次调用结果放在 ProgramStore 的同一事务；�
 
 spawn 的配额归属取冻结 CallContext.run_id：Tool 与恢复使用 session 根，直接 DSL 使用程序根，日志 ContextVar 不参与授权。演化和记忆的领域包装透传确定的预算/截止拒绝，provider 明确拒绝为 rejected，未知提交仍为 unknown。成员同一 write gate 显式注入 OperationExecutor 与 MemoryManager，反思/蒸馏与普通调用共享写边界。超时先返回已提交回执；未派发的新调用明确拒绝，不把旧未知 intent 覆写为失败。
 
-## 复合操作（P5）
-
-复合 artifact 使用 version=2、input-schema/output-schema 与单参数 impl，经统一目录编译为 Operation，同样投影到 DSL/Tool。依赖和 read/write 从静态调用闭包推导，control 元数据禁止复合包装。完整格式、批准指纹与 fake examples 见 [复合操作设计](../design/capabilities.md)。
-
-宿主目录不包含用户批准的复合定义数量；成员实际目录还取决于当前可用服务与已批准的有效依赖闭包。不同成员可以有不同的稳定 tools，同一会话根冻结定义，不随轮次或阶段主动筛选工具。P7 动态视图和统一授权暂停，不能把静态存在误当作成员执行许可。固定 tools 是减少请求前缀变化的设计原则，不等于权限永久不变，也不代表已有缓存效果实测。
-
-
 ## 纯条件（P6）
 
 `when`、`until`、stage 的 `:if` 都通过 `condition_builtins` 从同一成员目录选择 pure 函数，以 `validate_condition` 和 `evaluate_condition` 统一校验与求值。`when` 接收显式 `msg/event/self`，`until` 接收 `self/state/limits`，stage 条件接收 `state/scratch/round`；缺少必需绑定或数据不是严格 JSON 会明确报错。
 
-纯复合 Operation 与核心纯函数共用此入口。外部只读操作仍不是纯操作；局部函数和复合依赖不能隐藏时钟、模型、邮箱或状态读写。原分裂的条件词表和依赖隐式环境的谓词已删除，不提供旧名别名。审计证据与未实施边界见[操作机制审计](../design/operations-audit.md)。
+核心纯函数与纯宿主 Operation 共用此入口。外部只读操作仍不是纯操作；局部函数不能隐藏时钟、模型、邮箱或状态读写。原分裂的条件词表和依赖隐式环境的谓词已删除，不提供旧名别名。审计证据与未实施边界见[操作机制审计](../design/operations-audit.md)。

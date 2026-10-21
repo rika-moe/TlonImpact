@@ -6,7 +6,6 @@ for every member over the raw file bytes.
 """
 
 import hashlib
-from pathlib import Path
 
 import pytest
 
@@ -97,22 +96,3 @@ class TestLoadMemberSpec:
         analyzed = analyze(template)
         member = MemberSpec.from_edn(loads(analyzed.standin_text))
         assert member.rules[0].actions
-
-
-def test_default_loader_resolves_approved_composite(tmp_path: Path) -> None:
-    from tlon.agents.capabilities.staging import approve_capability, write_staging_capability
-    from tlon.agents.loader import load_member_spec
-    from tlon.base.paths import TlonPaths
-
-    paths = TlonPaths(home=tmp_path)
-    source = """{:version 2 :name "shared-value" :description "shared"
-    :input-schema {:type "object" :properties {} :required [] :additionalProperties false}
-    :output-schema {:type "integer"} :impl (fn [input] 7)}"""
-    write_staging_capability(source, tlon_paths=paths)
-    approve_capability("shared-value", paths)
-    behavior = paths.agent_behavior_file("member")
-    behavior.parent.mkdir(parents=True, exist_ok=True)
-    behavior.write_text(
-        '{:version 1 :rules [{:name "value" :on :boot :actions [(shared-value {})]}]}'
-    )
-    assert load_member_spec("member", tlon_paths=paths).rules[0].name == "value"

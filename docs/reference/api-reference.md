@@ -78,7 +78,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 ## 端点总表
 
 <!-- BEGIN GENERATED: rest-endpoints -->
-`create_app` 共注册 59 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`create_app` 共注册 52 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 方法 | 路径 | handler | 注册条件 |
 |---|---|---|---|
@@ -123,13 +123,6 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 | GET | `/admin/arena-runs` | `handle_list_arena_runs` | 无条件 |
 | GET | `/admin/arena-runs/{run_id}` | `handle_get_arena_run` | 无条件 |
 | GET | `/admin/prototypes/staging/{name}/arena-runs/{run_id}/report` | `handle_get_arena_report` | 无条件 |
-| GET | `/admin/capabilities/staging` | `handle_list_staging_capabilities` | 无条件 |
-| POST | `/admin/capabilities/staging` | `handle_create_staging_capability` | 无条件 |
-| GET | `/admin/capabilities/staging/{name}` | `handle_get_staging_capability` | 无条件 |
-| POST | `/admin/capabilities/{name}/approve` | `handle_approve_capability` | 无条件 |
-| POST | `/admin/capabilities/staging/{name}/reject` | `handle_reject_capability` | 无条件 |
-| GET | `/admin/capabilities` | `handle_list_capabilities` | 无条件 |
-| GET | `/admin/capabilities/{name}` | `handle_get_capability` | 无条件 |
 | GET | `/traces` | `handle_list_traces` | observability |
 | GET | `/traces/{trace_id}` | `handle_get_trace` | observability |
 | GET | `/metrics` | `handle_metrics` | 无条件 |
@@ -346,16 +339,6 @@ Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相
 - `GET /admin/arena-runs/{run_id}`——单个 run 实时状态（WebUI 轮询到终态 done/timed_out/failed）。200：`{"status": "success", "run": <ArenaRun.to_dict()>}`；404：`run_not_found`
 - `GET /admin/prototypes/staging/{name}/arena-runs/{run_id}/report`——归档的 report.json + ARENA.md 全文。200：`{"status": "success", "report": <report.json 对象>, "arena_md": "<ARENA.md 全文>"}`；404：`report_not_found`（run 进行中或报告生成失败时同理）
 - staging 详情（`GET /admin/prototypes/staging/{name}`）payload 另带 `arena` 字段：最新 run 目录有 report.json 时 `{"latest_run": <run.json 对象>, "red_flags": [<报告红旗 {kind, detail, evidence}>]}`，否则 `null`——与 execution-level 的 `red_flags` 是分开字段，不混。报告是证据不是判决，不进 approve 逻辑
-
-### 能力端点（docs/design/capabilities.md，WebUI CAPABILITIES 视图）
-
-域函数在 [agents/capabilities/](../../src/tlon/agents/capabilities) 包；能力对象形状 `{name, description, pure, trusted, author, proposal_note, deprecated}`（`pure` 为 `null` = artifact 解析失败软降级，列表永不失败；`deprecated` 是退役标记，只展示不可编辑）。详情端点额外带 `artifact`（capability.tlon 全文）、`reviews`（`REVIEW.md` 评审记录全文，仅存在时出现）与 `examples`（`:examples` 断言逐条结果 `[{args, expect, passed, actual?, error?}]`——EDN 值渲染为 EDN 文本；`actual` 求值成功时出现，`error` 求值失败时出现；无断言或 artifact 解析失败为空列表）。staging 写路径先跑完整加载闸（结构校验 → 命名空间拒载 → 纯度准入 → `:examples` 断言），失败不落盘。facade 未装配时全部 503。
-
-- `GET /admin/capabilities`、`GET /admin/capabilities/staging`——200：`{"status": "success", "capabilities": [<能力对象>]}`
-- `GET /admin/capabilities/{name}`、`GET /admin/capabilities/staging/{name}`——200：`{"status": "success", "capability": <能力对象 + artifact + examples + reviews?>}`；404：`{"error", "reason": "capability_not_found"}`
-- `POST /admin/capabilities/staging`——body `{artifact, proposal_note?}`（artifact 的 `:name` 即能力身份，staging 目录以它命名）。201：`{"status": "success", "capability": <能力对象>}`；400：`{"error", "reason": "invalid_capability"}`（缺字段、与受信库/staging 重名或加载闸拒载——不落盘）
-- `POST /admin/capabilities/staging/{name}/approve`——晋级受信库（整目录 move + `:trusted true`，成员下次 wake 经词汇桥可用）。200：`{"status": "success", "name", "approved": true}`；400：`{"status": "error", "message"}`（staging 无此名/受信库重名）
-- `POST /admin/capabilities/staging/{name}/reject`——删除 staging 提案。200：`{"status": "success", "name", "rejected": true}`；400：同上
 
 ### GET /traces（条件注册）
 
