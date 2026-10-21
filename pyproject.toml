@@ -227,10 +227,8 @@ forbidden_modules = [
     "tlon.prototypes",
 ]
 
-# tools 依赖 base/sandbox（tools.memory.* 对 tlon.memory 仅 TYPE_CHECKING
-# 类型引用，暂不放进去）；不得反向依赖 agents/server/client/launcher/prototypes。
-#  已落地：生命周期/原型工具改为依赖倒置——端口与异常声明在
-# tools/agents/ports.py 与 tools/prototypes/ports.py，装配层注入实现。
+# tools 仅保留模型协议与结果/溢出适配；领域操作由 operations 定义，
+# 领域端口位于 lifecycle/evolution 等领域包，由装配层注入。
 [[tool.importlinter.contracts]]
 name = "tools 不依赖 agents/server/client/launcher/prototypes"
 type = "forbidden"

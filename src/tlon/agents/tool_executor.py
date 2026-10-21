@@ -47,21 +47,6 @@ class ToolExecutor:
         self._tools[tool.name] = tool
         logger.debug("tool_registered", tool_name=tool.name)
 
-    def unregister_tool(self, tool_name: str) -> bool:
-        """Unregister a tool.
-
-        Args:
-            tool_name: Name of the tool to unregister
-
-        Returns:
-            True if tool was found and removed
-        """
-        if tool_name in self._tools:
-            del self._tools[tool_name]
-            logger.debug("tool_unregistered", tool_name=tool_name)
-            return True
-        return False
-
     def get_tool(self, tool_name: str) -> OperationTool:
         """Get a tool by name.
 
@@ -85,24 +70,6 @@ class ToolExecutor:
             List of OpenAI tool definitions
         """
         return [tool.to_openai_definition() for tool in self._tools.values()]
-
-    def describe_tools(self) -> str:
-        """Get human-readable description of all tools.
-
-        Returns:
-            Description string for use in prompts
-        """
-        if not self._tools:
-            return "No tools available."
-
-        lines = []
-        for name, tool in self._tools.items():
-            lines.append(f"\n{name}:")
-            lines.append(f"  Description: {tool.description}")
-            lines.append("  Parameters:")
-            lines.append(f"{tool.get_parameter_description()}")
-
-        return "\n".join(lines)
 
     def list_tools(self) -> list[str]:
         """Get list of registered tool names.

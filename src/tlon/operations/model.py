@@ -54,12 +54,22 @@ def make_model_operations(
         except UnknownModelOutcomeError as error:
             raise UnknownOutcomeError(
                 str(error),
-                {"call_id": context.call_id, "outcome": "unknown", "retry_safe": False},
+                {
+                    "call_id": context.call_id,
+                    "outcome": "unknown",
+                    "retry_safe": False,
+                    "unknown_source": "model",
+                },
             ) from error
         except Exception as error:
             raise UnknownOutcomeError(
                 str(error),
-                {"call_id": context.call_id, "outcome": "unknown", "retry_safe": False},
+                {
+                    "call_id": context.call_id,
+                    "outcome": "unknown",
+                    "retry_safe": False,
+                    "unknown_source": "model",
+                },
             ) from error
 
     return (

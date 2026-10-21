@@ -57,8 +57,8 @@ class AgentSession:
         self._iteration = 0
         self._error_count = 0
         # Session-level cumulative token budget consumption (ADR 0023):
-        # the sum over the session's stage LLM calls (think/critique/plan;
-        # compaction summaries and the termination distill are excluded).
+        # a projection of the shared total budget, including nested model calls;
+        # compaction shares it; post-session distillation uses a maintenance root.
         self._token_usage = 0
         self._last_llm_response: Any = None
         self._all_tool_results: list[dict[str, Any]] = []

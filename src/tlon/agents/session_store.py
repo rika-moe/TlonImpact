@@ -110,10 +110,17 @@ class SessionStore:
                     "WHERE session_id=?",
                     (seq, ts, session_id),
                 )
-            elif event_type == "session/end":
+            elif event_type in ("session/end", "session/recovery-blocked"):
                 connection.execute(
                     "UPDATE sessions SET last_seq=?,ended_at=?,end_reason=? WHERE session_id=?",
-                    (seq, ts, str(payload.get("reason", "unknown")), session_id),
+                    (
+                        seq,
+                        ts,
+                        "recovery_blocked"
+                        if event_type == "session/recovery-blocked"
+                        else str(payload.get("reason", "unknown")),
+                        session_id,
+                    ),
                 )
             else:
                 connection.execute(
@@ -132,7 +139,7 @@ class SessionStore:
 
     @staticmethod
     def _completed_filter(started_after: datetime | None) -> tuple[str, tuple[str, ...]]:
-        where = "ended_at IS NOT NULL"
+        where = "ended_at IS NOT NULL AND end_reason != 'recovery_blocked'"
         arguments: tuple[str, ...] = ()
         if started_after is not None:
             where += " AND (started_at IS NULL OR started_at > ?)"
@@ -167,7 +174,7 @@ class SessionStore:
             return None
         with self._connection(write=False) as connection:
             row = connection.execute(
-                "SELECT session_id FROM sessions WHERE ended_at IS NOT NULL "
+                "SELECT session_id FROM sessions WHERE ended_at IS NOT NULL AND end_reason != 'recovery_blocked' "
                 "ORDER BY ended_at DESC,rowid DESC LIMIT 1"
             ).fetchone()
         return row[0] if row is not None else None

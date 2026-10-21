@@ -282,7 +282,7 @@ class AgentRegistry(Component):
         self._waking: set[str] = set()
         self._wake_locks: dict[str, asyncio.Lock] = {}
 
-        # Pending stops (stopAgent when_idle=true): agent_id → stopped_by,
+        # Pending stops (member-stop when_idle=true): agent_id → stopped_by,
         # with one watcher task per entry. In-memory only — a pending stop
         # is a one-shot intent tied to the current activation; across a
         # restart the target's session state changes anyway and the caller

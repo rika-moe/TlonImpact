@@ -1,6 +1,6 @@
 # 调用记录与恢复权威（P4a）
 
-状态：P4a 已通过 #189 合并；本文描述当前调用恢复契约。总体设计见 [operations](operations.md)，施工边界见 [operations-plan](operations-plan.md)。P4b 在此基础上增加 [共享执行作用域](execution-scope.md)，覆盖预算、取消、截止时间及成员写排序。
+状态：P4a #189、P4b #190 与审计收尾 #191 已合并；本文描述当前恢复契约及外部审查后的根隔离决策。总体设计见 [operations](operations.md)，验收见 [operations-plan](operations-plan.md)，共享执行见 [execution-scope](execution-scope.md)。
 
 ## 所有权
 
@@ -10,7 +10,7 @@ Operation 定义输入、输出、效果和宿主实现；DSL 与模型 Tool 只
 
 ## 稳定身份与冻结
 
-每个调用持久化 call_id、root_id、结构路径、操作名、规范化输入 JSON、契约 definition_id 和宿主 build_id。程序路径由求值顺序产生；会话路径包含 round 序号和模型 ToolCall.id，因此不同轮重复的模型 ID 不会共用调用记录。完成先后不能改变身份。文件溢出回执的文件名取完整 call_id 的哈希，模型协议仍保留原 ToolCall.id。
+每个调用持久化 call_id、root_id、结构路径、操作名、规范化输入 JSON、契约 definition_id 和宿主 build_id。程序路径由求值顺序产生；会话路径包含 round 序号和模型 ToolCall.id，因此不同轮重复的模型 ID 不会共用调用记录。同一轮重复 ToolCall.id 在分发前整轮拒绝，不启动任何工具或 intent；恢复遇到这种已歧义的旧 dispatch 也拒绝，不能按最后一个同 ID 结果覆盖。完成先后不能改变身份。文件溢出回执的文件名取完整 call_id 的哈希，模型协议仍保留原 ToolCall.id。
 
 root 首次创建时冻结宿主身份。宿主身份覆盖 tlon/tlosure Python 运行代码、打包的 uv.lock 摘要、Python 版本、已安装 distribution 的版本，以及成员加载的闭包定义。契约另有内容指纹。恢复先核对冻结身份，再进入程序或构建会话上下文；已存调用同样核对名称、路径、输入和契约。任何不一致都报告 RecoveryMismatchError，不能将旧位置解释成新工作。不同根独立校验，一个旧根失配不阻止其他成员或新根运行。
 
@@ -46,7 +46,13 @@ LoopDriver 的 tool/dispatch 保存 root/path/call_id/build_id/definition_id。S
 
 新 ProgramStore 使用明确的 SQLite user_version。包含旧表而没有新版本标记的数据库直接拒绝打开，不转换、不清库，不改写原历史。旧 session 缺少冻结身份时同样拒绝恢复；只读浏览已有 session 事件不受影响。使用者需要自行决定旧运行的处理方式，不能为通过恢复测试删除真实 ~/.tlon。
 
-P4b 使用同一数据库的 budgets/model_allocations 记录额度与预留，模型完整响应仍保存在 invocations；删除驱动局部计数、_HOST_QUERIES pure 重写与旧 MemberCapabilities 装配容器名。新 ProgramStore 格式版本为 2，旧版本明确拒绝，不转换、不清库。P4 只有在 P4a/P4b 均验收合并后才完成。
+P4b 使用同一数据库的 budgets/model_allocations 记录额度与预留，模型完整响应仍保存在 invocations；删除驱动局部计数、_HOST_QUERIES pure 重写与旧 MemberCapabilities 装配容器名。当前 ProgramStore 格式版本为 2，旧版本明确拒绝，不转换、不清库。P4a/P4b 及收尾已合并；复合依赖与动态视图仍属于 EPIC B。
 
 
 P4b 宿主查询收敛：`sleeping?`、`running?`、`lazy?`、`member-roster` 在注册时直接声明非确定性只读；`Builtin.read_only` 只控制规则 `:when` 准入，`pure` 控制确定性求值与挂起。ProgramDriver 不再按名称改写 pure；每次外部读取采样并记录，重放返回原值。until、stage 条件、社会政策和能力 artifact 的词表不扩大。装配容器与入口现为 MemberServices / assemble_member_services，构造参数 services，无旧名称别名。
+
+## 坏根隔离与操作员排查
+
+恢复失配和无法自动重试的效果未知（含模型请求）只隔离其原根。程序在 runs.error 保存 recovery_blocked 与原因，completed 不伪装为成功；会话写 session/recovery-blocked，并在既有生命周期元数据标记隔离。它不属于正常完成会话，不进入蒸馏；再次恢复会明确抛出 RecoveryBlockedError，不能返回成功，也不能重新请求模型。相关父程序同样隔离，防止会话以后继续写入新状态。可按幂等回执恢复的临时邮件失败仍等待原根恢复。
+
+操作员可先通过会话事件查看 session/recovery-blocked 的 session_id、原因和关联程序；程序错误及冻结输入保留在成员 program.sqlite3 的 runs 表，invocations 与 model_allocations 保留调用和预留事实。隔离后新邮件与其他根可继续工作，无需删库。没有提供“强制重放未知效果”按钮；需要重做业务时应在确认外部效果后显式发起新的任务，不修改旧根身份、不清空真实 ~/.tlon。数据库整体格式不兼容仍在打开时拒绝，这是与单根身份失配不同的错误。

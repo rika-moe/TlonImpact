@@ -79,4 +79,9 @@ async def test_model_lost_response_reports_unknown_call_identity() -> None:
     )
     with pytest.raises(UnknownOutcomeError) as failure:
         await executor.call("model-call", {"prompt": "x", "max_tokens": 1})
-    assert failure.value.data == {"call_id": "stable", "outcome": "unknown", "retry_safe": False}
+    assert failure.value.data == {
+        "call_id": "stable",
+        "outcome": "unknown",
+        "retry_safe": False,
+        "unknown_source": "model",
+    }

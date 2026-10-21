@@ -1,6 +1,6 @@
 # 能力数据化：复合能力成为可审批的数据 artifact
 
-> 后续方案（邮件 P2 与文件/Shell/时间 P3a 已分别通过 #185/#186 合并；P3b 已接入，后续仍分阶段实施）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
+> 当前状态（2026-10-21）：EPIC A 宿主操作切换已通过 #184–#191 合并；本页的旧 Capability artifact 机制仍在使用，将在 EPIC B P5 统一为 Operation artifact。目标见 [统一操作](operations.md)，施工前拆解项见 [实施计划](operations-plan.md)。
 
 复合能力是可审批的 tlosure 函数 artifact，批准后成为成员 spec 可调用的词。本文定义当前准入、注册、执行和提案机制；行为语言见 [dsl](dsl.md)，宿主接口见 [bridge-api](bridge-api.md)。
 

@@ -70,9 +70,11 @@ def test_restart_build_drift_rejects_program_and_session_roots(tmp_path: Path) -
     store.ensure("program", "source", "input")
     store.ensure_root("session")
     changed = ProgramStore(path, build_id="changed")
+    # Enumeration must expose every root so the runtime can isolate each one.
+    assert [run.run_id for run in changed.pending()] == ["program"]
     for action in [
         lambda: changed.ensure("program", "source", "input"),
-        changed.pending,
+        lambda: changed.ensure_root("program"),
         lambda: changed.ensure_root("session"),
     ]:
         with pytest.raises(RecoveryMismatchError):

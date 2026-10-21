@@ -343,9 +343,9 @@ async def assemble_member_services(
             tools=sorted(REPRODUCTION_TOOLS),
         )
     logger.debug(
-        "tools_registered",
+        "operations_assembled",
         agent_name=config.name,
-        tool_count=len(tool_executor.list_tools()),
+        operation_count=len(operations),
     )
 
     # Read tool timeout from agent config

@@ -95,7 +95,6 @@ class TestStagePurity:
         outcome = await act_stage_collect(svc, session, [(tc, result)])
 
         assert outcome.complete is True
-        assert outcome.final_reply is None
         assert outcome.scratch_updates["scheduling_request"]["action"] == "finish"
         assert session.is_completed is False
 
@@ -250,7 +249,6 @@ class TestEngineApplication:
         outcome = await act_stage_collect(svc, session, [(tc, result)])
 
         assert outcome.complete is True
-        assert outcome.final_reply is None  # nothing to pass on
         assert session.is_completed is False
 
     async def test_act_step_finish_turn_conflicts_with_send_email(self) -> None:
@@ -309,3 +307,29 @@ async def test_failed_sleep_does_not_end_work() -> None:
     assert not outcome.complete
     assert not outcome.scratch_updates
     assert outcome.mark_active
+
+
+@pytest.mark.parametrize("second_name", ["state-put", "mail-send"])
+async def test_duplicate_call_ids_reject_whole_round_without_dispatch(
+    tmp_path: Path, second_name: str
+) -> None:
+    calls = [
+        ToolCall(id="same", function_name="state-put", arguments={"key": "a", "value": 1}),
+        ToolCall(id="same", function_name=second_name, arguments={"key": "b", "value": 2}),
+    ]
+    response = LLMResponse(content=None, tool_calls=calls)
+    session = AgentSession(session_id="duplicate-ids", trigger_content="trigger")
+    svc = _make_services()
+    outcome = await act_stage_step(svc, session, response)
+    assert outcome.tool_dispatches == []
+    assert outcome.advance_iteration
+    assert "没有执行任何工具" in outcome.context_appends[0]["content"]
+    executor = MagicMock()
+    driver = _make_driver(executor, tmp_path)
+    driver._execute_declared_tool = AsyncMock()
+    # Even a custom stage cannot bypass the engine's identity precondition.
+    with pytest.raises(ValueError, match="Duplicate ToolCall.id"):
+        await driver._apply_outcome(session, response, StageOutcome(tool_dispatches=calls))
+    driver._execute_declared_tool.assert_not_awaited()
+    assert not session.has_pending_tools
+    assert await driver._journal.read_events(session.id) == []

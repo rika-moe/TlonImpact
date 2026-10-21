@@ -8,7 +8,7 @@ then a Markdown body of instructions (optionally with ``scripts/`` /
 (``~/.tlon/{agent_id}/skills``), global (``~/.tlon/skills``) — and
 renders only the *index* (one line per skill) into the context via the
 ``(skills)`` DSL section. The model loads the body itself with
-``read_file`` (progressive disclosure): no engine-side body injection,
+``file-read`` (progressive disclosure): no engine-side body injection,
 no ``use_skill`` tool.
 
 Name conflicts resolve project > agent > global: the layers are scanned
@@ -52,7 +52,7 @@ class SkillInfo:
     """One discovered skill: frontmatter fields plus the SKILL.md host path.
 
     ``path`` is the host absolute path — the index hands it to the model
-    for ``read_file`` (project-level skills are the same file as the
+    for ``file-read`` (project-level skills are the same file as the
     container's ``/workspace/.agents/skills/...`` via the bind mount).
     """
 
@@ -158,7 +158,7 @@ def render_skills_index(skills: list[SkillInfo]) -> str:
     for skill in skills:
         lines.append(f"- {skill.name} ({skill.scope}): {skill.description} — {skill.path}")
     lines.append("")
-    lines.append("需要某个技能时，用 read_file 读取其 SKILL.md 获取完整指令。")
+    lines.append("需要某个技能时，用 file-read 读取其 SKILL.md 获取完整指令。")
     return "\n".join(lines)
 
 

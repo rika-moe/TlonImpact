@@ -186,7 +186,7 @@ def test_render_index_format(tmp_path: Path) -> None:
 
     assert index.startswith("[可用技能]")
     assert f"- one (global): 全局技能 — {skills[0].path}" in index
-    assert "read_file" in index
+    assert "file-read" in index
 
 
 def test_render_index_empty(tmp_path: Path) -> None:

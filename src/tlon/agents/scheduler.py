@@ -8,10 +8,12 @@ import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
-from typing import Any
+from functools import partial
+from typing import Any, TypeVar
 
 from tlon.agents.loop_driver import LoopDriver
 from tlon.agents.member_spec import SessionRecipe
+from tlon.agents.recovery import blocked_reason, blocks_recovery
 from tlon.agents.session import AgentSession, SessionState
 from tlon.agents.session_journal import SessionJournal, SessionReplay
 from tlon.base.config import AgentConfig
@@ -34,6 +36,7 @@ logger = get_logger(__name__)
 SessionSpan = Callable[[AgentSession], AbstractContextManager[None]]
 CheckReflection = Callable[[], Awaitable[None]]
 NoteInteraction = Callable[[], None]
+_Result = TypeVar("_Result")
 
 
 class SessionScheduler:
@@ -53,6 +56,9 @@ class SessionScheduler:
         state_changed: Callable[[], Awaitable[None]] | None = None,
         apply_scheduling_request: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
         resume_invocation: Callable[[AgentSession], Awaitable[None]] | None = None,
+        needs_continuation: Callable[[dict[str, Any]], Awaitable[bool]] | None = None,
+        verify_invocation: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        block_invocation: Callable[[dict[str, Any], str], Awaitable[None]] | None = None,
         execution_factory: Callable[[str, SessionRecipe], Awaitable[ExecutionScope]] | None = None,
         maintenance_factory: Callable[[str], ExecutionScope] | None = None,
     ) -> None:
@@ -69,6 +75,9 @@ class SessionScheduler:
         self._state_changed = state_changed
         self._apply_scheduling_request = apply_scheduling_request
         self._resume_invocation = resume_invocation
+        self._block_invocation = block_invocation
+        self._verify_invocation = verify_invocation
+        self._needs_continuation = needs_continuation
         self._execution_factory = execution_factory
         self._maintenance_factory = maintenance_factory
         self._execution_scope: ExecutionScope | None = None
@@ -123,16 +132,9 @@ class SessionScheduler:
         self.ready.set()
         recovered: set[str] = set()
         try:
-            while True:
-                pending = await self._restore_unfinished()
-                session = self._session
-                if session is None:
-                    break
-                recipe = SessionRecipe.from_edn(loads(session.recipe_source))
-                await self._drive(session, recipe, pending)
-                recovered.add(session.id)
-                if self._resume_invocation is not None:
-                    await self._resume_invocation(session)
+            for sid in await self._journal.find_unfinished():
+                if await self._recover_session(sid):
+                    recovered.add(sid)
             # A committed session/end may precede its program effect result.
             # Recover each effect independently, including non-mail programs;
             # two run-loop calls in one program are distinct continuations.
@@ -151,6 +153,17 @@ class SessionScheduler:
                     effect = invocation.get("program_effect")
                     if effect is None:
                         continue
+                    try:
+                        if (
+                            self._needs_continuation is not None
+                            and not await self._needs_continuation(invocation)
+                        ):
+                            continue
+                    except Exception as error:
+                        if not blocks_recovery(error):
+                            raise
+                        await self._block_recovery(sid, error)
+                        continue
                     key = (effect["run_id"], effect["index"])
                     mail_id = start.get("source_mail_id")
                     rule_name = invocation.get("rule_name")
@@ -164,17 +177,88 @@ class SessionScheduler:
                     previous = continuations.get(key)
                     if previous is not None and previous[0] >= stamp:
                         continue
-                    replay = await self._journal.resume(sid)
+                    try:
+                        replay = await self._retry_safe_recovery(
+                            sid, partial(self._journal.resume, sid)
+                        )
+                    except Exception as error:
+                        if not blocks_recovery(error):
+                            raise
+                        await self._block_recovery(sid, error)
+                        continue
                     if replay is not None:
                         continuations[key] = (stamp, replay)
                 for _, replay in sorted(continuations.values(), key=lambda item: item[0]):
-                    await self._resume_invocation(await self._restore_session(replay))
+                    try:
+                        await self._resume_invocation(await self._restore_session(replay))
+                    except Exception as error:
+                        if not blocks_recovery(error):
+                            raise
+                        await self._block_recovery(replay.session_id, error)
         finally:
             self.recovery_ready.set()
         while True:
             if self._can_schedule() and self._session is None:
-                await self._check_reflection()
+                try:
+                    await self._check_reflection()
+                except Exception as error:
+                    logger.error("member_reflection_failed", error=str(error), exc_info=True)
             await asyncio.sleep(0.5)
+
+    async def _recover_session(self, session_id: str) -> bool:
+        async def recover() -> None:
+            replay = await self._journal.resume(session_id)
+            if replay is None:
+                raise RuntimeError("unfinished session has no journal start")
+            session = await self._restore_session(replay)
+            recipe = SessionRecipe.from_edn(loads(session.recipe_source))
+            await self._drive(session, recipe, replay.pending_collect or None)
+            if self._resume_invocation is not None:
+                await self._resume_invocation(session)
+
+        try:
+            await self._retry_safe_recovery(session_id, recover)
+            return True
+        except Exception as error:
+            if not blocks_recovery(error):
+                raise
+            await self._block_recovery(session_id, error)
+            return False
+
+    async def _retry_safe_recovery(
+        self, session_id: str, action: Callable[[], Awaitable[_Result]]
+    ) -> _Result:
+        """Both recovery paths hold the same startup barrier for retryable unknown."""
+        delay = 0.5
+        retry_logged = False
+        while True:
+            try:
+                return await action()
+            except UnknownOutcomeError as error:
+                if error.data.get("retry_safe") is not True:
+                    raise
+                if not retry_logged:
+                    logger.warning(
+                        "session_recovery_waiting", session_id=session_id, error=str(error)
+                    )
+                    retry_logged = True
+                # No newer member writes can cross an unresolved old root.
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 30.0)
+
+    async def _block_recovery(self, session_id: str, error: BaseException) -> None:
+        """Quarantine lifecycle only; preserve unknown invocation and model receipts."""
+        events = await self._journal.read_events(session_id)
+        start = next((event for event in events if event["type"] == "session/start"), None)
+        reason = blocked_reason(error)
+        # Parent first: if either write fails, startup must stop rather than
+        # allow a quarantined continuation to resume after newer state writes.
+        if start is not None and self._block_invocation is not None:
+            await self._block_invocation(dict(start.get("invocation") or {}), reason)
+        if await self._journal.end_reason(session_id) != "recovery_blocked":
+            await self._journal.append(session_id, "session/recovery-blocked", error=reason)
+            logger.error("session_recovery_blocked", session_id=session_id, error=reason)
+        self._session = None
 
     async def run_invocation(
         self,
@@ -188,7 +272,12 @@ class SessionScheduler:
         if effect is not None:
             key = json.dumps([effect["run_id"], effect["index"]], separators=(",", ":"))
             session_id = f"{self._id}-program-{hashlib.sha256(key.encode()).hexdigest()[:24]}"
-            replay = await self._journal.resume(session_id)
+            try:
+                replay = await self._journal.resume(session_id)
+            except Exception as error:
+                if blocks_recovery(error):
+                    await self._block_recovery(session_id, error)
+                raise
             if replay is not None:
                 if replay.completed:
                     return
@@ -216,15 +305,22 @@ class SessionScheduler:
         recipe: SessionRecipe,
         pending_collect: list[tuple[ToolCall, ToolResult]] | None = None,
     ) -> None:
-        scope = (
-            await self._execution_factory(session.id, recipe)
-            if self._execution_factory
-            else current_execution()
-        )
-        self._execution_scope = scope
+        scope: ExecutionScope | None = None
         try:
+            scope = (
+                await self._execution_factory(session.id, recipe)
+                if self._execution_factory
+                else current_execution()
+            )
+            self._execution_scope = scope
+            if self._verify_invocation is not None:
+                await self._verify_invocation(session.invocation)
             with bind_execution(scope):
                 await self._drive_scoped(session, recipe, pending_collect)
+        except Exception as error:
+            if blocks_recovery(error):
+                await self._block_recovery(session.id, error)
+            raise
         finally:
             if scope is not None and self._execution_factory is not None:
                 scope.cancel()
@@ -258,7 +354,12 @@ class SessionScheduler:
                 except UnknownModelOutcomeError as error:
                     raise UnknownOutcomeError(
                         str(error),
-                        {"call_id": session.id, "outcome": "unknown", "retry_safe": False},
+                        {
+                            "call_id": session.id,
+                            "outcome": "unknown",
+                            "retry_safe": False,
+                            "unknown_source": "model",
+                        },
                     ) from error
                 except UnknownOutcomeError:
                     raise
@@ -286,17 +387,6 @@ class SessionScheduler:
                 await self._apply_scheduling_request(request)
             if self._state_changed is not None:
                 await self._state_changed()
-
-    async def _restore_unfinished(self) -> list[tuple[ToolCall, ToolResult]] | None:
-        unfinished = await self._journal.find_unfinished()
-        if not unfinished:
-            self._session = None
-            return None
-        replay = await self._journal.resume(unfinished[0])
-        if replay is None:
-            raise RuntimeError("unfinished session has no journal start")
-        self._session = await self._restore_session(replay)
-        return replay.pending_collect or None
 
     async def _restore_session(self, replay: SessionReplay) -> AgentSession:
         """Rebuild the in-memory session from a journal replay.

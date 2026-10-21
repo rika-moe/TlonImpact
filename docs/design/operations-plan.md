@@ -1,6 +1,6 @@
 # 统一操作：分阶段实施计划
 
-状态：2026-10-19 完整方案已认可；用户已授权创建分支、提交设计 PR 并开工 EPIC A。P1 最小契约已通过 #184 合并 main；P2 邮件双入口切换已通过 #185 合并 main；P3a 已通过 #186 合并 main；P3b 已通过 #187 合入 main；P3c 已通过 #188 合并 main；P4a 已通过 #189 合并 main；P4b 正在实现与验证，合并仍由人类确认。
+状态：2026-10-21，EPIC A 的 P1–P4 与审计收尾已通过 #184–#191 合并 main，双入口操作切换完成。外部审查发现的恢复根隔离缺陷正在单独修复；EPIC B 尚未开工，P5/P7 前置拆解见本文。合并仍由人类确认。
 
 设计权威：[operations](operations.md)；决策：[ADR 0044](../decisions/0044-unified-operations.md)。代码基线为 `d35c3a546a5e3dacef331b5d39d3e1cc7efd4e9a`。GitHub 跟踪链接见本文末尾；Issue/PR 负责验收证据，不复制一份持续漂移的设计。
 
@@ -196,10 +196,10 @@ EPIC B 完成标准：目标设计完成；工具只是入口，复合能力可�
 ## 6. GitHub 跟踪
 
 - [总 EPIC #179](https://github.com/rika-moe/TlonImpact/issues/179)：完整设计文字与两阶段跟踪。
-- [EPIC A #180](https://github.com/rika-moe/TlonImpact/issues/180)：P1、P2、P3a/P3b/P3c、P4a/P4b，七个串行 PR。
+- [EPIC A #180](https://github.com/rika-moe/TlonImpact/issues/180)：P1、P2、P3a/P3b/P3c、P4a/P4b 及审计收尾。
 - [EPIC B #181](https://github.com/rika-moe/TlonImpact/issues/181)：依赖 A，P5-P8，四个串行 PR。
 
-P1 已通过 [#184](https://github.com/rika-moe/TlonImpact/pull/184) 合并 main。P2 已通过 [#185](https://github.com/rika-moe/TlonImpact/pull/185) 合并 main。P3a 已通过 #186 合并 main；P3b 已通过 #187 合入 main；P3c 已通过 #188 合并 main；P4a 正在实现与验证，P4b-P8 未实施。关联的 [#173](https://github.com/rika-moe/TlonImpact/issues/173) 继续保留为长期工作方式/习惯学习方向，本计划不将其一并关闭。
+P1 已通过 [#184](https://github.com/rika-moe/TlonImpact/pull/184) 合并 main。P2 已通过 [#185](https://github.com/rika-moe/TlonImpact/pull/185) 合并 main。P3a 已通过 #186 合并 main；P3b 已通过 #187 合入 main；P3c 已通过 #188 合并 main；P4a/P4b 与审计收尾已通过 #189/#190/#191 合并；P5-P8 未实施。关联的 [#173](https://github.com/rika-moe/TlonImpact/issues/173) 继续保留为长期工作方式/习惯学习方向，本计划不将其一并关闭。
 
 ## P3a 实施细化（2026-10-20）
 
@@ -307,3 +307,47 @@ P4a #189 已合入 main。本阶段采用 Python asyncio 的任务取消、上�
 真实隔离 dream + SDK + 本地 OpenAI 兼容 fake provider 冒烟通过：5 次 provider 请求，程序 output 记 8，会话 4 次请求 total 记 60；重复 ToolCall.id、真实回信/标读/状态与父程序延续均正确。未调用外部模型，隔离 home、进程及端口已清理，8080 无残留。本次无数据库格式升级或迁移；EPIC B 未开工，收尾 PR 面向 main，等待人类合并。
 
 首轮 GitHub CI 的单元组在恢复测试末尾等队列排空时超出 2 秒；日志确认恢复已投递，worker 仍需完成持久回执与下一事件。恢复本身按 1 秒轮询，CI 上的线程 I/O 与错误日志让两轮工作挤进 2 秒的假设不成立。仅该恢复阶段改为最多等待 10 秒，仍断言恢复只投递一次、旧任务完成前新状态不写入、新状态最终提交；不修改运行时轮询或删除测试。集成与静态首轮已通过，修正后重跑完整质量门与 CI。
+
+## EPIC A 外部审查修复（2026-10-21）
+
+基线 main `dbda656`，#182–#191 已合并，P1–P4 的操作切换验收完成。外部审查确认恢复隔离承诺尚有活性缺陷，本次修复后再推进 EPIC B。
+
+恢复按根处理：枚举待恢复程序不触发所有根的全局校验；每根单独验证冻结身份。失配或不可自动重试的效果未知（含模型请求）进入持久 recovery_blocked，保留冻结输入、intent、未知结果与预算预留，不伪造成功、不重发未知请求。程序使用既有 runs.error 记录明确隔离原因；会话追加 session/recovery-blocked 事件并写入既有生命周期元数据，隔离关联程序根；不算作正常完成，不进入蒸馏。隔离是停止该旧延续，不是跨版本恢复；它不能在新工作开始后再自动复活。其他根、后续邮件和新会话继续运行，重启不重复热重放隔离根。可用宿主幂等回执对账的暂时邮件故障仍保留既有恢复，不一概跳过所有 pending。
+
+验收必须覆盖程序/会话构建失配、启动模型未知、健康和新根继续工作、再次重启仍隔离、未知 provider 不重发、旧数据和费用事实保留，保留现有邮件恢复与串行状态测试。明确已废止的提示词、配置和无消费者接口随本次清理，里程碑文档同步当前状态。
+
+全局闭包身份、控制操作名单、全量占位词的拆解列入 EPIC B P5/P7 前置验收；本次不删除安全指纹或提前实现半套授权/依赖图。内部终止通知维持宿主管理通知语义，需在 P7 明确其与普通发送授权的边界。
+
+### EPIC B 开工前的现存机制拆解
+
+| 阶段 | 当前限制与必须替换的机制 | 验收标准 |
+|---|---|---|
+| P5 | registry_identity 目前将所有加载的闭包 params/body/env 纳入成员 build_id；不能直接删除这层保护 | 宿主构建身份与实际使用的传递依赖内容分别冻结；批准/修改无关能力不影响旧根，实际依赖变更不能静默替换，宿主变化仍拒绝恢复 |
+| P5 | CONTROL_NAMES、ENDING_TOOLS 与 capability 排除词分别维护 | 从统一定义的 control 元数据推导控制准入；不同名称但 control=true 也受独占和不可复合保护；run-loop 继续是宿主编排边界 |
+| P5/P7 | 全量操作的 unavailable 占位使成员无关加载校验放过未装配依赖 | 分清定义不存在、成员未获执行授权、服务未装配；必需依赖不满足时拒载并说明原因，视图过滤可观测，运行时逐叶再授权 |
+| P7 | 终止/失败回信是宿主通知，当前不经 Operation invocation/gate | 普通邮件服从发送授权；宿主通知仅给责任集合中的人类、固定内容来源与稳定 request_id，不允许模型指定任意收件人；宿主只读业务阶段仍可通知，取消/截止约束保留 |
+
+当前内部通知复用 MemberMailService/PostOffice 幂等提交，不是业务 Operation；它不触发模型消费，因而没有 token 消费可记。不能声称它已拥有 invocation 原子回执或成员 write gate，也不为补文档提前创建第二套通知运行时。
+
+### EPIC A 已合并验收矩阵
+
+| 验收范围 | 合并证据 | 当前结论 |
+|---|---|---|
+| 最小契约、schema、身份与分层 | #184 | 完成 |
+| 邮件真实投递与恢复 | #185 | 完成 |
+| 文件/Shell/时间及装置边界 | #186 | 完成 |
+| 记忆/任务/人格/联系人/观测与状态回执 | #187 | 完成 |
+| 生命周期/演化/模型与控制独占 | #188 | 完成 |
+| invocation、指纹与重放 | #189 | 已交付；外审补齐坏根隔离活性 |
+| 共享额度/取消/截止/写序 | #190 | 完成 |
+| 两入口超时、配额、维护写 gate | #191 | 完成 |
+
+上述矩阵描述已合并代码，不等同于本次外审修复已合并。新增坏根隔离与同轮 ID 拒绝必须单独通过质量门和真实冒烟后交付；P5–P8 的复合能力与动态视图仍未实现。
+
+### 外部审查修复本地验收
+
+主会话复核恢复写序、真实 ToolResult 转换、两类 continuation、调用身份与任务跟踪，并亲自重跑最终完整 `bash scripts/check_all.sh`：15/15 全绿，单元 2751 passed / 15 skipped（比 #191 新增 18 项），集成 34 passed，222 个源文件类型检查通过。独立只读复核重点组 117 项通过，无剩余阻塞发现。
+
+真实隔离 dream + SDK + 本地 OpenAI 兼容 fake provider 注入 previous-deployment 的旧程序根：原根以 recovery_blocked 保留，后续新邮件、直接模型、内嵌模型、状态、回信/标读与父程序延续完成。共 5 次 provider 请求，程序 output 8，会话 total 60；未调用外部模型，临时 home、进程与端口均清理。变更 Markdown 本地链接与 diff 检查通过。
+
+过程记录：首轮全量发现两个旧断言仍要求 pending 全局失败和旧模型未知数据形状，已保留测试并改为逐根恢复拒绝及明确 unknown_source，18 项针对性通过。独立审查补出的 metadata 普通异常、恢复 ToolResult unknown、成功历史误隔离及已结束会话安全重试漏洞均已加真实路径回归。最终数据以本节最后一次质量门为准，未删除失败测试。此修复无数据库格式升级、迁移或真实用户数据清理；等待独立 main PR 合并后再开始 EPIC B。

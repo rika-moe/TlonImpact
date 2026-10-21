@@ -183,6 +183,15 @@ class ToolCall:
         )
 
 
+def validate_tool_call_ids(calls: list[ToolCall]) -> None:
+    """Reject ambiguous identities within one provider response before dispatch."""
+    seen: set[str] = set()
+    for call in calls:
+        if call.id in seen:
+            raise ValueError(f"Duplicate ToolCall.id in one round: {call.id}")
+        seen.add(call.id)
+
+
 @dataclass
 class LLMResponse:
     """Response from LLM."""
