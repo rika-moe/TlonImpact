@@ -619,8 +619,12 @@ class LoopDriver:
                 error_count=session.error_count,
                 token_usage=session.token_usage,
                 scratch=session.loop_scratch,
-                completing=attempts_completion(response),
-                sending_mail=attempts_mail_delivery(response),
+                completing=attempts_completion(
+                    response, controls=self._tool_executor.control_names()
+                ),
+                sending_mail=attempts_mail_delivery(
+                    response, controls=self._tool_executor.control_names()
+                ),
             )
         )
         try:

@@ -36,6 +36,7 @@ from tlon.base.config import AgentConfig
 from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.base.paths import TlonPaths
 from tlon.operations.adapters import OperationTool
+from tlon.operations.control import control_names
 from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
 from tlon.operations.schema import OperationError, RecoveryMismatchError, UnknownOutcomeError
 from tlon.organization.mail.mail import Mail
@@ -426,6 +427,7 @@ def _make_driver(
     rule = spec.rules[0]
 
     services = MagicMock()
+    services.control_names.return_value = control_names()
     services.logger = MagicMock()
     services.publish_event = AsyncMock()
     services.build_context = AsyncMock(

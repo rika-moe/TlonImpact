@@ -21,8 +21,9 @@ from tlon.agents.session import AgentSession
 from tlon.agents.session_journal import SessionJournal
 from tlon.base.execution import UnknownModelOutcomeError, bind_execution
 from tlon.base.paths import TlonPaths
-from tlon.operations.adapters import DSLAdapter, OperationTool
+from tlon.operations.adapters import OperationTool
 from tlon.operations.core import OperationExecutor, OperationRegistry
+from tlon.operations.dsl import DSLAdapter
 from tlon.operations.model import make_model_operations
 from tlon.operations.schema import RecoveryMismatchError, UnknownOutcomeError
 from tlosure.edn import dumps
@@ -74,7 +75,9 @@ async def test_program_model_unknown_is_not_retried_or_allowed_to_continue(tmp_p
     spec = _spec(
         '(model-call {:prompt "work" :max_tokens 10}) (state-put {:key "old" :value true})'
     )
-    member = _member(tmp_path, spec)
+    # This fixture injects its model service after constructing the bare host.
+    member = _member(tmp_path, _spec('(state-get {:key "fixture"})'))
+    member._spec = spec
     provider = AsyncMock(side_effect=UnknownModelOutcomeError("response unknown"))
     definitions = make_model_operations(
         type("Client", (), {"chat": provider})(), AsyncMock(return_value="persona")
@@ -94,6 +97,7 @@ async def test_program_model_unknown_is_not_retried_or_allowed_to_continue(tmp_p
             member._program_store,
         )
     )
+    member._operation_executor = member._operations._executor
     member._builtins.update(member._operations.builtins())
     with pytest.raises(UnknownOutcomeError):
         await member._run_rule_body(spec.rules[0], _event(_mail()))
@@ -102,7 +106,7 @@ async def test_program_model_unknown_is_not_retried_or_allowed_to_continue(tmp_p
     with member._program_store._connection() as connection:
         row = connection.execute("SELECT completed,error FROM runs").fetchone()
     assert row[0] == 0 and row[1].startswith("recovery_blocked:")
-    restored = _member(tmp_path, spec)
+    restored = _member(tmp_path, _spec('(state-get {:key "old"})'))
     await restored._restore_programs()
     assert restored._program_store.state_get("old") is None
     provider.assert_awaited_once()

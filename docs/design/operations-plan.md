@@ -1,6 +1,6 @@
 # 统一操作：分阶段实施计划
 
-状态：2026-10-21，EPIC A 的 P1–P4 与审计收尾已通过 #184–#191 合并 main，双入口操作切换完成。外部审查发现的恢复根隔离缺陷正在单独修复；EPIC B 尚未开工，P5/P7 前置拆解见本文。合并仍由人类确认。
+状态：2026-10-21，EPIC A 的 P1–P4 与审计收尾已通过 #184–#191 合并 main，双入口操作切换完成。外部审查发现的恢复根隔离缺陷正在单独修复；EPIC B P5 正在实现验收，P6–P8 未开工，P5/P7 前置拆解见本文。合并仍由人类确认。
 
 设计权威：[operations](operations.md)；决策：[ADR 0044](../decisions/0044-unified-operations.md)。代码基线为 `d35c3a546a5e3dacef331b5d39d3e1cc7efd4e9a`。GitHub 跟踪链接见本文末尾；Issue/PR 负责验收证据，不复制一份持续漂移的设计。
 
@@ -199,7 +199,7 @@ EPIC B 完成标准：目标设计完成；工具只是入口，复合能力可�
 - [EPIC A #180](https://github.com/rika-moe/TlonImpact/issues/180)：P1、P2、P3a/P3b/P3c、P4a/P4b 及审计收尾。
 - [EPIC B #181](https://github.com/rika-moe/TlonImpact/issues/181)：依赖 A，P5-P8，四个串行 PR。
 
-P1 已通过 [#184](https://github.com/rika-moe/TlonImpact/pull/184) 合并 main。P2 已通过 [#185](https://github.com/rika-moe/TlonImpact/pull/185) 合并 main。P3a 已通过 #186 合并 main；P3b 已通过 #187 合入 main；P3c 已通过 #188 合并 main；P4a/P4b 与审计收尾已通过 #189/#190/#191 合并；P5-P8 未实施。关联的 [#173](https://github.com/rika-moe/TlonImpact/issues/173) 继续保留为长期工作方式/习惯学习方向，本计划不将其一并关闭。
+P1 已通过 [#184](https://github.com/rika-moe/TlonImpact/pull/184) 合并 main。P2 已通过 [#185](https://github.com/rika-moe/TlonImpact/pull/185) 合并 main。P3a 已通过 #186 合并 main；P3b 已通过 #187 合入 main；P3c 已通过 #188 合并 main；P4a/P4b 与审计收尾已通过 #189/#190/#191 合并；P5 正在实现验收，P6-P8 未实施。关联的 [#173](https://github.com/rika-moe/TlonImpact/issues/173) 继续保留为长期工作方式/习惯学习方向，本计划不将其一并关闭。
 
 ## P3a 实施细化（2026-10-20）
 
@@ -351,3 +351,34 @@ P4a #189 已合入 main。本阶段采用 Python asyncio 的任务取消、上�
 真实隔离 dream + SDK + 本地 OpenAI 兼容 fake provider 注入 previous-deployment 的旧程序根：原根以 recovery_blocked 保留，后续新邮件、直接模型、内嵌模型、状态、回信/标读与父程序延续完成。共 5 次 provider 请求，程序 output 8，会话 total 60；未调用外部模型，临时 home、进程与端口均清理。变更 Markdown 本地链接与 diff 检查通过。
 
 过程记录：首轮全量发现两个旧断言仍要求 pending 全局失败和旧模型未知数据形状，已保留测试并改为逐根恢复拒绝及明确 unknown_source，18 项针对性通过。独立审查补出的 metadata 普通异常、恢复 ToolResult unknown、成功历史误隔离及已结束会话安全重试漏洞均已加真实路径回归。最终数据以本节最后一次质量门为准，未删除失败测试。此修复无数据库格式升级、迁移或真实用户数据清理；等待独立 main PR 合并后再开始 EPIC B。
+
+## P5 实施细化（2026-10-21，#192 合并后）
+
+基线 main `b0e0349`。先拆全局闭包身份与控制名单，再接复合操作，是为了避免依赖冻结和控制保护建立在即将删除的机制上；两者在同一 P5 PR 中完成端到端接线，不交付半套机制。
+
+- 共享 `CompositeSpec` 位于 operations，artifact 使用 version=2、input-schema/output-schema 与固定单参数 impl；不读取旧 args/pure 格式。静态具名调用分析复用语言作用域规则，依赖拓扑编译，效果从叶子传递推导；局部函数不能传递注册操作值或动态逃过分析。control 来自 Operation 元数据，run-loop 仍为宿主编排语法。
+- 批准记录保存当前定义及传递依赖内容身份；受信加载校验批准绑定，坏定义只影响依赖它的闭包。修改依赖必须重新批准受影响定义，不能自动升级批准。宿主定义目录复用现有各域 definition factory，业务实现不复制。
+- Composite 进入同一 OperationExecutor 与 DSL/Tool 投影；复合边界不创建非幂等父 intent 阻断叶子重放。稳定 child 序号路径与调用者身份传到叶子，共享写 gate、根预算、取消/截止和语言 fuel/depth；输出仍按同一 schema 验证。
+- 全局宿主 build_id 保留代码/依赖与宿主 builtin 身份，剔除已不再注册为全局闭包的能力定义。ProgramStore 增加 root_definitions 的 create-once 快照：程序执行前冻结所需定义闭包，会话发模型前冻结所暴露复合定义；恢复以原快照重建目录、验证宿主依赖，不从当前磁盘重新拼旧运行。新增表由既有初始化创建，无数据迁移、清库或旧 artifact 解析。根快照与已有 build/回执校验共同工作，缺快照的旧复合运行不得猜测恢复。
+- 实际成员装配时区分未定义和缺失成员服务，必需依赖不可执行则拒载；本阶段不新增 P7 allowlist/动态视图或受控阶段。静态目录只用于存在性分析，不把占位词当成可执行服务。
+- 管理端展示 input/output、依赖、推导效果与批准绑定。纯 examples 真实求值；效果 examples 仅在显式 fake-results 队列的隔离宿主执行，缺 fake 即失败，审批和详情接口绝不执行真实写入。
+
+验收覆盖两层复合经 DSL/Tool 同值同拒绝、缺失/环/碰撞/闭包隐藏效果/动态目标/control 拒绝、叶子成功后崩溃恢复、能力修改删除仍用原快照、批准依赖变化拒载、无关能力变化不破坏旧根、宿主变化拒绝、共享 fuel/token 与真实 dream/SDK 冒烟。完整质量门全绿及 main PR 交付后由人类合并。
+
+恢复与新准入分开：当前 Behavior 因依赖删除/失效而不再可加载时，持有冻结待恢复根的成员允许进入明确的“仅恢复”激活，旧根从原快照继续；当前新规则、boot 和邮件工作不被准入，诊断说明 Behavior 不可用，修正后显式重载。没有冻结待恢复事实时仍严格拒载。不能通过当前目录失效阻止原快照恢复，也不能拿旧快照为新工作补权或补定义。
+
+宿主批准边界：artifact 的依赖绑定记录宿主契约身份与复合源码内容；宿主实现由受信代码部署负责，运行根另外冻结完整 runtime build_id。契约相同的宿主部署不要求逐一重新批准全部 artifact，但旧宿主根必须拒绝跨构建恢复；复合依赖源码变化仍必须重新批准上层。这避免再次把整个全局构建混入每个能力批准记录。
+
+复合的派生结果缓存不代替叶子权威。所有子回执已提交、父缓存尚未落盘就崩溃时，允许在已过期/取消的作用域内仅从历史重建结果；任何缺失叶子仍禁止新分发，真实任务取消仍向上传播。没有为恢复重新开放宿主写入或预算。
+
+静态宿主定义目录只缓存不可变的 contract 投影，避免控制/加载查询重复创建并校验 52 份 schema；受信 artifact 目录与批准指纹不缓存，仍在每次加载时重新核对。原始宿主目录构造实测约 59ms/次，缓存后的投影读取不再重复 schema 准入；实际成员 handler 始终由自己的服务装配，未缓存成员资源或路径。
+
+### P5 本地验收（2026-10-21）
+
+主会话复核最终 diff、静态作用域分析、批准指纹、源码/快照原子受理、根级 ToolExecutor、子回执与控制元数据接线，亲自重跑完整 `bash scripts/check_all.sh`：15/15 全绿；单元 2762 passed / 15 skipped，集成 34 passed；227 个源文件 mypy 通过。29 项复合核心回归覆盖纯/效果、两层组合、缺失/环/碰撞/隐藏效果/动态调用/control、schema 输出违约、共享 fuel/depth/token、叶子崩溃、父缓存窗口与过期/取消历史重建；冻结/成员准入与原型入口另有真实装配回归。旧 v1 位置参数、作者 pure 与独立闭包执行测试随机制删除，由 v2 契约与端到端覆盖替换。
+
+真实隔离 dream + SDK + 本地 OpenAI 兼容 fake provider：先经 REST 提案并批准 summarize-thread 与 send-thread-summary，再让 DSL 直接调用摘要、LLM Tool 调用发送复合，验证一次真实邮箱投递、标读/状态和父程序延续。共 5 次 provider 请求；程序 output 记 8，会话 4 次请求 total 记 60，内部调用未重置额度，跨轮重复 ToolCall.id 保持独立。未调用外部模型，临时 home、进程与端口已清理。Markdown 本地链接、生成 reference 与 diff 检查通过。
+
+过程补齐：早期全仓诊断暴露测试替身未提供控制元数据/邮局服务，已修正装配并保留原断言；真实冒烟发现原型仍按宿主词表拒绝已批准操作，现已接通全部行为准入入口。独立复核指出冻结受理窗口、父缓存前崩溃与保留名碰撞，均加回归。没有通过扩大旧格式读取或放宽服务准入规避失败。最终以本节质量门和冒烟为验收依据。
+
+P5 PR 面向 main，等待人类合并；P5 合并前不勾选，P6/P7/P8 未开工。审批绑定依赖、实际成员服务校验已落实本阶段前置拆解；P7 的统一授权和动态视图仍单列待办。

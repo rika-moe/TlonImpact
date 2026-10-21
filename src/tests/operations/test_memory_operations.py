@@ -10,8 +10,9 @@ from tlon.agents.session_journal import SessionJournal
 from tlon.base.paths import TlonPaths
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
-from tlon.operations.adapters import DSLAdapter, OperationTool
+from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.dsl import DSLAdapter
 from tlon.operations.memory import make_memory_operations, memory_operation_definitions
 from tlon.operations.schema import InputError, OperationError, UnknownOutcomeError
 from tlosure.builtins import BuiltinCall

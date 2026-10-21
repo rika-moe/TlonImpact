@@ -88,12 +88,10 @@ def _render_trusted_capability_words(tlon_paths: TlonPaths) -> str:
     An empty library renders as ``""`` (the tool then omits the section)."""
     lines = []
     for cap in list_trusted_capabilities(tlon_paths):
-        if cap.pure is True:
-            purity = "纯"
-        elif cap.pure is False:
-            purity = "非纯"
+        if cap.error:
+            purity = f"不可用：{cap.error}"
         else:
-            purity = "纯度未知"
+            purity = "纯" if not cap.effects else "+".join(cap.effects)
         lines.append(f"- {cap.name}（{purity}）：{cap.description}")
     return "\n".join(lines)
 

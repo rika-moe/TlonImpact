@@ -128,6 +128,7 @@ class BuiltinCall:
     builtin: Builtin
     args: list[Any]
     env: dict[str, Any]
+    depth: int = 0
 
     def invoke(self) -> Any:
         """Invoke the host function to validate arguments and produce its data."""

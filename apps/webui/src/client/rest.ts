@@ -263,14 +263,18 @@ export class CapabilityError extends Error {
 
 /**
  * Capability list entry (GET /admin/capabilities[/staging],
- * docs/design/capabilities.md). `pure` is null when the artifact failed
- * fail-soft parsing (listing never fails); `deprecated` is the retirement
+ * docs/design/capabilities.md). Compilation errors are explicit; `deprecated` is the retirement
  * marker (vocabulary only grows — display only, no edit operation).
  */
 export type CapabilitySummary = {
   name: string;
   description: string;
-  pure: boolean | null;
+  effects: string[];
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown> | boolean;
+  dependencies: Record<string, string>;
+  definition_id: string | null;
+  error: string | null;
   trusted: boolean;
   author: string | null;
   proposal_note: string | null;
@@ -293,7 +297,7 @@ export type CapabilityDetail = CapabilitySummary & {
 
 /** One `:examples` assertion outcome (see CapabilityDetail.examples). */
 export type CapabilityExample = {
-  args: string;
+  input: string;
   expect: string;
   passed: boolean;
   actual?: string;
@@ -770,7 +774,7 @@ export class RestClient {
   async approveCapability(name: string): Promise<Record<string, unknown>> {
     return this.capabilitySend(
       "POST",
-      `/admin/capabilities/staging/${encodeURIComponent(name)}/approve`,
+      `/admin/capabilities/${encodeURIComponent(name)}/approve`,
     );
   }
 

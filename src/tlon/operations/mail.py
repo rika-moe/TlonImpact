@@ -5,7 +5,6 @@ from typing import Any, Protocol
 from tlon.operations.core import CallContext, Operation
 from tlon.operations.schema import OperationError
 from tlon.organization.mail.member_mail import CHECK_INBOX_MAX_LIMIT, SEARCH_MAILS_MAX_LIMIT
-from tlosure.builtins import Builtin
 
 
 class MailPort(Protocol):
@@ -207,15 +206,3 @@ class _UnboundMailPort:
 def mail_operation_definitions() -> tuple[Operation, ...]:
     """Inspect authoritative definitions without constructing runtime services."""
     return make_mail_operations(_UnboundMailPort())
-
-
-def mail_builtin_definitions() -> dict[str, Builtin]:
-    """Static DSL validation definitions; runtime binds a real DSLAdapter."""
-
-    def unbound(_env: dict[str, Any], *args: Any) -> Any:
-        raise OperationError("mail service is not bound")
-
-    return {
-        operation.name: Builtin(fn=unbound, pure=False)
-        for operation in mail_operation_definitions()
-    }

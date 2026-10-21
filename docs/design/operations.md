@@ -1,6 +1,6 @@
 # 统一操作与可组合行为：目标设计
 
-状态：完整方案已于 2026-10-19 认可；EPIC A 的 P1–P4 与审计收尾已通过 #184–#191 合并 main。宿主操作双入口、回执、预算与写序已落地；外部审查的恢复根隔离修复独立交付。EPIC B P5–P8 尚未开工。实施与验收见 [operations-plan](operations-plan.md)，决策见 [ADR 0044](../decisions/0044-unified-operations.md)。合并由人类确认。
+状态：完整方案已于 2026-10-19 认可；EPIC A 的 P1–P4 与审计收尾已通过 #184–#191 合并 main。宿主操作双入口、回执、预算与写序已落地；外部审查的恢复根隔离修复独立交付。EPIC B P5 正在实现验收；P6–P8 尚未开工。实施与验收见 [operations-plan](operations-plan.md)，决策见 [ADR 0044](../decisions/0044-unified-operations.md)。合并由人类确认。
 
 当前落地范围：宿主 Operation、单份 schema、成员上下文与 DSL/Tool 薄入口，见 [当前操作契约](../reference/operations-reference.md)。当前调用记录与恢复边界见 [invocation-recovery](invocation-recovery.md)。当前共享预算和并发边界见 [execution-scope](execution-scope.md)。复合依赖和动态工具视图仍是后续阶段目标，不能视为当前保证。
 

@@ -6,8 +6,9 @@ from unittest.mock import patch
 import pytest
 
 from tlon.base.paths import TlonPaths
-from tlon.operations.adapters import DSLAdapter, OperationTool
+from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.dsl import DSLAdapter
 from tlon.operations.identity import make_identity_operations
 from tlon.operations.schema import InputError, json_value
 from tlosure.builtins import BuiltinCall

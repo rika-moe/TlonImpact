@@ -36,6 +36,7 @@ from tlon.agents.trigger import AgentIdentity
 from tlon.base.config import AgentConfig, LLMConfig
 from tlon.base.llm_client import ContextWindowExceededError, LLMClient, LLMResponse
 from tlon.base.paths import TlonPaths
+from tlon.operations.control import control_names
 from tlon.tools.spill import ToolSpill
 from tlosure.edn import loads
 
@@ -492,6 +493,7 @@ class TestDriverEmergency:
         rule = spec.rules[0]
 
         services = MagicMock()
+        services.control_names.return_value = control_names()
         services.logger = MagicMock()
         services.publish_event = AsyncMock()
         services.build_context = AsyncMock(

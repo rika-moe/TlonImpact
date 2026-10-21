@@ -9,6 +9,7 @@ from tlon.agents.behavior_template import (
 )
 from tlon.agents.member_spec import MemberSpec, MemberSpecValidationError
 from tlon.agents.prototypes.info import BEHAVIOR_FILE, LESSONS_FILE, _is_prototype_dir
+from tlon.agents.prototypes.staging import _validate_behavior
 from tlon.base.config import AgentConfig, DockerRuntimeConfig, LLMConfig, yaml_exists, yaml_save
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
@@ -98,6 +99,9 @@ def instantiate(
                 f":parameters, but params were provided"
             )
         behavior_text = raw_text
+
+    # Validate rendered content before creating member files.
+    behavior_text = _validate_behavior(behavior_text, tlon_paths=p)
 
     # Behavior only — copy, not reference (frozen at creation time; a
     # spec is total, so there is nothing to merge). Unified member model

@@ -500,8 +500,8 @@ async def test_when_and_bound_effect_values_do_not_repeat_requests(tmp_path: Pat
 
 async def test_host_start_all_preserves_order_and_executes_once(tmp_path: Path) -> None:
     from tlon.lifecycle.service import LifecycleService
-    from tlon.operations.adapters import DSLAdapter
     from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+    from tlon.operations.dsl import DSLAdapter
     from tlon.operations.lifecycle import make_lifecycle_operations
 
     bus = EventBus()
@@ -530,6 +530,7 @@ async def test_host_start_all_preserves_order_and_executes_once(tmp_path: Path) 
             CallContext("adam", "run", "call"),
         )
     )
+    member._operation_executor = member._operations._executor
     member._builtins.update(member._operations.builtins())
     member._post_office.send = AsyncMock(wraps=member._post_office.send)
     assert await member._run_rule_body(member.spec.rules[0], _event(_mail()))
@@ -632,23 +633,22 @@ async def test_resumed_second_session_keeps_remaining_effects(tmp_path: Path) ->
     assert member._program_store.pending() == []
 
 
-async def test_empty_env_capability_closure_keeps_nested_effects_once(tmp_path: Path) -> None:
-    from tlosure.builtins import Builtin, Closure
+async def test_shared_composite_keeps_nested_effects_once(tmp_path: Path) -> None:
+    from tlon.agents.capabilities.staging import approve_capability, write_staging_capability
 
+    paths = TlonPaths(home=tmp_path)
+    source = """{:version 2 :name "publish-pair" :description "publish a pair"
+      :input-schema {:type "object" :properties {:text {:type "string"}}
+                     :required ["text"] :additionalProperties false}
+      :output-schema true
+      :impl (fn [input]
+        (mail-send {:to ["sink@tlon.internal"] :content (get input :text)})
+        (mail-send {:to ["sink@tlon.internal"] :content (str (get input :text) "!")}))}"""
+    write_staging_capability(source, tlon_paths=paths)
+    approve_capability("publish-pair", paths)
     member = _member(
-        tmp_path, _spec("(while [i 0] (< i 2) (publish-pair (str i)) (recur (inc i)))")
+        tmp_path, _spec("(while [i 0] (< i 2) (publish-pair {:text (str i)}) (recur (inc i)))")
     )
-    closure = Closure(
-        params=["text"],
-        rest=None,
-        body=[
-            loads('(mail-send {:to ["sink@tlon.internal"] :content text})'),
-            loads('(mail-send {:to ["sink@tlon.internal"] :content (str text "!")})'),
-        ],
-        env={},
-        name="publish-pair",
-    )
-    member._builtins["publish-pair"] = Builtin.from_closure(closure, pure=False)
     member._post_office.send = AsyncMock(wraps=member._post_office.send)
     assert await member._run_rule_body(member.spec.rules[0], _event(_mail()))
     assert [call.kwargs["content"] for call in member._post_office.send.await_args_list] == [
@@ -657,7 +657,6 @@ async def test_empty_env_capability_closure_keeps_nested_effects_once(tmp_path: 
         "1",
         "1!",
     ]
-    assert closure.env == {}
 
 
 async def test_recovery_executes_frozen_program_after_behavior_update(tmp_path: Path) -> None:

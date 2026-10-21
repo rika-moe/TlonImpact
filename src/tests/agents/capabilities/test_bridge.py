@@ -1,214 +1,73 @@
-"""The vocabulary bridge (bridge.py): trusted capability library → member
-registries — word loading with purity markers, fail-soft exclusion of
-bad artifacts, host-word namespace reservation, deprecated words
-registering normally, and the end-to-end path through the member-spec
-loader (purity partition into the spec's evaluation contexts).
-"""
+"""Dependency approval invalidation stays within its dependency closure."""
 
-import pytest
+from pathlib import Path
 
-from tlon.agents.capabilities.bridge import load_capability_builtins
-from tlon.agents.loader import load_member_spec
-from tlon.agents.member_spec import MemberSpecValidationError
-from tlon.agents.vocabulary import make_member_builtins
+from tests.agents.capabilities.test_spec import PURE
+from tlon.agents.capabilities.bridge import load_capability_catalog
+from tlon.agents.capabilities.staging import approve_capability, write_staging_capability
 from tlon.base.paths import TlonPaths
-
-PURE_CAPABILITY = """\
-{:version 1
- :name "thread-digest"
- :description "把邮件线程蒸馏成三段式摘要文本"
- :args [{:name "mails" :type :list :doc "按时间升序的邮件列表"}]
- :impl (fn [mails] (str "digest:" (count mails)))
- :pure true}
-"""
-
-IMPURE_CAPABILITY = '{:version 1\n :name "notify-adam"\n :description "给 Adam 发一封通知邮件"\n :args [{:name "content" :type :string :doc "通知正文"}]\n :impl (fn [content] (mail-send {:to ["adam@tlon.internal"] :content content}))\n :pure false}\n'
-
-#: Fails the load gate: the impl composes unregistered vocabulary.
-INVALID_CAPABILITY = """\
-{:version 1
- :name "wild"
- :description "组合未注册词汇"
- :args []
- :impl (fn [] (jump "x"))
- :pure false}
-"""
-
-#: Unparseable EDN.
-BROKEN_CAPABILITY = "{:version 1 :name "
-
-#: Collides with a capability-registry builtin word.
-BUILTIN_COLLIDING_CAPABILITY = """\
-{:version 1
- :name "count"
- :description "与内置词同名"
- :args [{:name "xs" :type :list :doc "..."}]
- :impl (fn [xs] xs)
- :pure true}
-"""
-
-#: Legal word name that is also a closure-injected host word (absent from
-#: the host-less make_member_builtins()).
-HOST_WORD_CAPABILITY = """\
-{:version 1
- :name "member-roster"
- :description "与宿主查询词同名"
- :args []
- :impl (fn [] "roster")
- :pure true}
-"""
+from tlon.operations.adapters import OperationTool
+from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.dsl import DSLAdapter
+from tlosure.edn import loads
+from tlosure.eval import DEFAULT_FUEL, DEFAULT_MAX_DEPTH, Evaluator
 
 
-def _write_trusted(p: TlonPaths, name: str, text: str, metadata: str | None = None) -> None:
-    """Handwrite a capability directly into the trusted library."""
-    cap_dir = p.capabilities_dir() / name
-    cap_dir.mkdir(parents=True)
-    (cap_dir / "capability.tlon").write_text(text, encoding="utf-8")
-    if metadata is not None:
-        (cap_dir / "meta.tlon").write_text(metadata, encoding="utf-8")
+def approve(paths: TlonPaths, text: str, name: str) -> None:
+    write_staging_capability(text, tlon_paths=paths)
+    approve_capability(name, paths)
 
 
-def _write_behavior(p: TlonPaths, agent_id: str, text: str) -> None:
-    behavior = p.agent_behavior_file(agent_id)
-    behavior.parent.mkdir(parents=True, exist_ok=True)
-    behavior.write_text(text, encoding="utf-8")
+def test_dependency_change_rejects_upstream_until_reapproved(tmp_path: Path) -> None:
+    paths = TlonPaths(home=tmp_path)
+    approve(paths, PURE, "shout")
+    parent = (
+        PURE.replace('"shout"', '"twice"')
+        .replace('(str (get input :text) "!")', "(shout {:text (shout input)})")
+        .replace(':expect "hey!"', ':expect "hey!!"')
+    )
+    approve(paths, parent, "twice")
+    independent = PURE.replace('"shout"', '"other"')
+    approve(paths, independent, "other")
+    before = load_capability_catalog(paths)
+    assert (
+        before.definitions["twice"].dependency_ids["shout"]
+        == before.definitions["shout"].definition_id
+    )
+    path = paths.capabilities_dir() / "shout/capability.tlon"
+    path.write_text(PURE.replace('"!"', '"?"').replace('"hey!"', '"hey?"'))
+    assert set(load_capability_catalog(paths).definitions) == {"other"}
+    approve_capability("shout", paths)
+    assert set(load_capability_catalog(paths).definitions) == {"shout", "other"}
+    parent_path = paths.capabilities_dir() / "twice/capability.tlon"
+    parent_path.write_text(parent.replace('"hey!!"', '"hey??"'))
+    approve_capability("twice", paths)
+    assert set(load_capability_catalog(paths).definitions) == {"shout", "twice", "other"}
 
 
-def _merged(p: TlonPaths) -> dict:
-    """The registry AgentRegistry._member_builtins() builds."""
-    host = make_member_builtins()
-    return {**host, **load_capability_builtins(p, reserved=host)}
-
-
-class TestRuntimeVocabularyContract:
-    """The bridge's runtime contract: every word the capability admission
-    registry allows in an ``:impl`` must resolve in the member registry —
-    otherwise an approved artifact would pass staging and fail at runtime
-    in every member."""
-
-    def test_capability_vocabulary_is_subset_of_member_registry(self):
-        from tlon.agents.capabilities.spec import CAPABILITY_FULL_BUILTINS
-
-        member = make_member_builtins()
-        assert set(CAPABILITY_FULL_BUILTINS) <= set(member)
-
-
-class TestLoadCapabilityBuiltins:
-    def test_empty_library_loads_nothing(self, tmp_path):
-        assert load_capability_builtins(TlonPaths(home=tmp_path)) == {}
-
-    def test_loads_words_as_closure_backed_with_purity(self, tmp_path):
-        p = TlonPaths(home=tmp_path)
-        _write_trusted(p, "thread-digest", PURE_CAPABILITY)
-        _write_trusted(p, "notify-adam", IMPURE_CAPABILITY)
-
-        words = load_capability_builtins(p)
-
-        assert set(words) == {"thread-digest", "notify-adam"}
-        pure, impure = words["thread-digest"], words["notify-adam"]
-        assert pure.pure is True and impure.pure is False
-        for entry in words.values():
-            assert entry.fn is None
-            assert entry.closure is not None
-            assert entry.closure.env == {}  # zero injection
-        assert pure.closure is not None and pure.closure.name == "thread-digest"
-        assert pure.closure.params == ["mails"]
-
-    def test_deprecated_word_registers_normally(self, tmp_path):
-        p = TlonPaths(home=tmp_path)
-        _write_trusted(p, "thread-digest", PURE_CAPABILITY, metadata="{:deprecated true}")
-        assert set(load_capability_builtins(p)) == {"thread-digest"}
-
-    def test_bad_artifact_excluded_others_unaffected(self, tmp_path):
-        """Fail-soft: one bad trusted artifact never fails the registry —
-        a spec referencing the excluded word fails its own load instead."""
-        p = TlonPaths(home=tmp_path)
-        _write_trusted(p, "thread-digest", PURE_CAPABILITY)
-        _write_trusted(p, "wild", INVALID_CAPABILITY)
-        _write_trusted(p, "broken", BROKEN_CAPABILITY)
-
-        assert set(load_capability_builtins(p)) == {"thread-digest"}
-
-    def test_builtin_name_collision_excluded(self, tmp_path):
-        p = TlonPaths(home=tmp_path)
-        _write_trusted(p, "count", BUILTIN_COLLIDING_CAPABILITY)
-        assert load_capability_builtins(p) == {}
-
-    def test_host_word_collision_excluded_via_reserved(self, tmp_path):
-        p = TlonPaths(home=tmp_path)
-        _write_trusted(p, "member-roster", HOST_WORD_CAPABILITY)
-
-        # Host-less default: member-roster is absent from the host-less
-        # registry, so the caller must reserve it explicitly.
-        assert set(load_capability_builtins(p)) == {"member-roster"}
-        assert load_capability_builtins(p, reserved=["member-roster"]) == {}
-
-
-SPEC_USING_CAPABILITY = """\
-{:version 1
- :rules [{:name "digest"
-          :on :mail-delivered
-          :when (= (thread-digest ["a" "b"]) "digest:2")
-          :actions [(notify-adam "new mail")]}]}
-"""
-
-SPEC_WHEN_USING_IMPURE = """\
-{:version 1
- :rules [{:name "bad-gate"
-          :on :mail-delivered
-          :when (notify-adam "x")
-          :actions []}]}
-"""
-
-
-class TestLoaderEndToEnd:
-    """The merged registry through the member-spec loader: capability words
-    validate in the contexts their purity admits."""
-
-    def test_spec_referencing_capability_words_loads(self, tmp_path):
-        p = TlonPaths(home=tmp_path)
-        _write_trusted(p, "thread-digest", PURE_CAPABILITY)
-        _write_trusted(p, "notify-adam", IMPURE_CAPABILITY)
-        _write_behavior(p, "digester-1", SPEC_USING_CAPABILITY)
-
-        spec = load_member_spec("digester-1", tlon_paths=p, builtins=_merged(p))
-        assert spec.rules[0].name == "digest"
-
-    def test_when_referencing_impure_word_rejected(self, tmp_path):
-        """The purity partition: a non-pure capability word is invisible to
-        the :when gate (unknown word in the pure subset)."""
-        p = TlonPaths(home=tmp_path)
-        _write_trusted(p, "notify-adam", IMPURE_CAPABILITY)
-        _write_behavior(p, "bad-1", SPEC_WHEN_USING_IMPURE)
-
-        with pytest.raises(MemberSpecValidationError, match="unknown function"):
-            load_member_spec("bad-1", tlon_paths=p, builtins=_merged(p))
-
-    def test_spec_referencing_excluded_word_rejected(self, tmp_path):
-        """The blast-radius contract: a rejected capability word leaves its
-        users failing their own load validation, nobody else."""
-        p = TlonPaths(home=tmp_path)
-        _write_trusted(p, "wild", INVALID_CAPABILITY)
-        _write_behavior(
-            p,
-            "wild-1",
-            """\
-{:version 1
- :rules [{:name "uses-wild"
-          :on :mail-delivered
-          :actions [(wild)]}]}
-""",
+async def test_same_composite_is_dsl_and_tool_operation(tmp_path: Path) -> None:
+    paths = TlonPaths(home=tmp_path)
+    approve(paths, PURE, "shout")
+    catalog = load_capability_catalog(paths)
+    executor = OperationExecutor(
+        OperationRegistry(catalog.operations), CallContext("member", "run", "call")
+    )
+    builtin = DSLAdapter(executor).builtins()
+    assert (
+        Evaluator(builtin, DEFAULT_FUEL, DEFAULT_MAX_DEPTH).eval(
+            loads('(shout {:text "hey"})'), {}, 0
         )
-        with pytest.raises(MemberSpecValidationError, match="unknown function"):
-            load_member_spec("wild-1", tlon_paths=p, builtins=_merged(p))
+        == "hey!"
+    )
+    result = await OperationTool(executor, "shout").execute_context({"text": "hey"})
+    assert result.success and result.data == "hey!"
 
-    def test_capability_body_evaluates_under_member_registry(self, tmp_path):
-        """A pure capability word evaluates inside a rule gate: the body
-        composes host vocabulary through the caller's registry."""
-        from tlosure.edn import loads
-        from tlosure.eval import eval_form
 
-        p = TlonPaths(home=tmp_path)
-        _write_trusted(p, "thread-digest", PURE_CAPABILITY)
-        result = eval_form(loads('(thread-digest ["m1" "m2" "m3"])'), {}, _merged(p))
-        assert result == "digest:3"
+def test_bad_artifact_isolated_and_deleted_dependency_propagates(tmp_path: Path) -> None:
+    paths = TlonPaths(home=tmp_path)
+    approve(paths, PURE, "shout")
+    bad = paths.capabilities_dir() / "broken"
+    bad.mkdir()
+    (bad / "capability.tlon").write_text("{:version")
+    catalog = load_capability_catalog(paths)
+    assert set(catalog.definitions) == {"shout"} and "broken" in catalog.errors

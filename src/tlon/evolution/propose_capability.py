@@ -33,19 +33,8 @@ from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.evolution.ports import CapabilityProposalError, CapabilitySummary
 from tlon.evolution.propose_behavior import _extract_edn, _render_digest
-from tlon.operations.evolution import evolution_operation_definitions
-from tlon.operations.filesystem import filesystem_operation_definitions
-from tlon.operations.identity import identity_operation_definitions
-from tlon.operations.lifecycle import lifecycle_operation_definitions
-from tlon.operations.mail import mail_operation_definitions
-from tlon.operations.memory import memory_operation_definitions
-from tlon.operations.model import model_operation_definitions
-from tlon.operations.observability import observability_operation_definitions
+from tlon.operations.definitions import host_operation_definitions
 from tlon.operations.schema import RejectedError
-from tlon.operations.shell import shell_operation_definitions
-from tlon.operations.state import state_operation_definitions
-from tlon.operations.tasks import task_operation_definitions
-from tlon.operations.time import time_operation_definitions
 from tlosure.builtins import ARITHMETIC_BUILTINS, CORE_BUILTINS
 from tlosure.edn import Keyword, loads
 
@@ -55,55 +44,31 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 #: The pure vocabulary, enumerated from the same tlosure registries the
-#: load gate composes (``CAPABILITY_PURE_BUILTINS`` in
-#: ``agents/capabilities/spec.py`` — a test anchors the two equal).
+#: composite compiler admits; a test anchors the two projections.
 _PURE_WORDS = sorted({**CORE_BUILTINS, **ARITHMETIC_BUILTINS})
 
 #: The member action words a non-pure impl may additionally compose
 #: Derived from host definitions, excluding controls and session orchestration.
 #: A test anchors this projection against the capability admission registry.
-_ACTION_WORDS: list[str] = []
-
-for definitions in (
-    evolution_operation_definitions,
-    lifecycle_operation_definitions,
-    model_operation_definitions,
-    mail_operation_definitions,
-    filesystem_operation_definitions,
-    shell_operation_definitions,
-    time_operation_definitions,
-    memory_operation_definitions,
-    task_operation_definitions,
-    identity_operation_definitions,
-    observability_operation_definitions,
-    state_operation_definitions,
-):
-    _ACTION_WORDS.extend(operation.name for operation in definitions() if not operation.control)
+_ACTION_WORDS = sorted(
+    operation.name for operation in host_operation_definitions() if not operation.control
+)
 
 _ARTIFACT_HINT = (
-    "artifact 是一个 v1 schema 的 EDN map，形状：\n"
-    "{:version 1\n"
-    ' :name "词名"\n'
-    ' :description "一句话描述"\n'
-    ' :args [{:name "mails" :type :list :doc "参数说明"}]\n'
-    " :impl (fn [mails] body...)\n"
-    " :pure true\n"
-    ' :examples [{:args ["字面数据"] :expect 期望值}]}\n'
-    "规则：\n"
-    "- :name 是 artifact 定义的词：字母起头，后接字母/数字/-/_；"
-    "一个 artifact 只定义一个词。\n"
-    "- :args 逐项声明 {:name :type :doc}；:type ∈ "
-    ":string/:number/:boolean/:list/:map；:impl 必须是 (fn [参数] body...) "
-    "字面量，定长参数（不支持 & rest），参数数 == :args 数。\n"
-    f"- :pure true 的 :impl 只能组合这 {len(_PURE_WORDS)} 个纯词："
-    f"{' '.join(_PURE_WORDS)}。\n"
-    f"- :pure false 的 :impl 可另组合以下动作词：{' '.join(_ACTION_WORDS)}"
-    "（返回操作真实结果；禁止封装 run-loop、finish-turn、sleep-until、exit-agent）。\n"
-    "- :examples 仅 :pure true 可携带：{:args [字面数据] :expect 值} 的"
-    "输入/输出断言，准入时在沙盒求值器跑——鼓励纯词携带 :examples 自证"
-    "（评审看到的不只是声称做什么，还有做到了什么）。\n"
-    "- 同名即拒：与受信库或 staging 区既有词同名直接拒绝；想改进既有词"
-    "请换个新名字（词义不可变）。"
+    "artifact 是 v2 EDN map，统一复合 Operation 契约：\n"
+    '{:version 2 :name "词名" :description "说明"\n'
+    ' :input-schema {:type "object" :properties {:text {:type "string"}} :required ["text"] :additionalProperties false}\n'
+    ' :output-schema {:type "string"}\n'
+    ' :impl (fn [input] (str (get input :text) "!"))\n'
+    ' :examples [{:input {:text "hey"} :expect "hey!"}]}\n'
+    "- :impl 固定一个显式输入，不注入 self/env；只允许静态具名操作调用。\n"
+    "- 不接受 :args 或作者 :pure 声明；效果和传递依赖由编译器推导。\n"
+    f"- 纯词：{' '.join(_PURE_WORDS)}。\n"
+    f"- 可调用宿主操作：{' '.join(_ACTION_WORDS)}，也可调用已批准复合操作。\n"
+    "- 禁止包装控制操作及会话编排；缺依赖、环、名字碰撞、动态操作目标拒绝。\n"
+    "- 纯 examples 真执行；效果 examples 必须显式提供 :fake-results，"
+    '如 {"mail-send" [符合该操作 output schema 的结果]}；审批绝不执行真实效果。\n'
+    "- 一个 artifact 定义一个词；与已有库或 staging 同名直接拒绝。\n"
 )
 
 _DRAFT_SYSTEM_PROMPT = (
@@ -111,7 +76,7 @@ _DRAFT_SYSTEM_PROMPT = (
     "（记忆、蒸馏教训）、可选的既有受信词清单、指定的词名和一条能力意图；"
     "输出是一份**完整的 capability artifact**——突变出生即 tlosure artifact。\n"
     "要求：\n"
-    "- 只输出 artifact 文本本身——一个 v1 schema 的 EDN map；不要解释、"
+    "- 只输出 artifact 文本本身——一个 v2 schema 的 EDN map；不要解释、"
     "不要注释、不要 Markdown 代码围栏。\n"
     "- :name 必须恰好是指定的词名。\n"
     "- " + _ARTIFACT_HINT

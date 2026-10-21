@@ -33,10 +33,10 @@ function writeErrMsg(err: unknown): string {
   return errMsg(err);
 }
 
-/** Purity marker of one word (null = artifact failed fail-soft parsing). */
-function pureLabel(pure: boolean | null): string {
-  if (pure === null) return "PURE ?";
-  return pure ? "PURE" : "IMPURE";
+/** Compiler-derived effects; authors cannot declare their own purity. */
+function effectsLabel(effects: string[], error: string | null): string {
+  if (error) return "UNAVAILABLE";
+  return effects.length === 0 ? "PURE" : effects.join(" + ").toUpperCase();
 }
 
 export function CapabilitiesView({ rest }: ViewProps): ReactElement {
@@ -222,7 +222,12 @@ export function CapabilitiesView({ rest }: ViewProps): ReactElement {
                         REJECT
                       </button>
                     </>
-                  ) : null}
+                  ) : (
+                    <button type="button" className="btn btn--primary" disabled={busy}
+                      onClick={() => void approve(selected.name)}>
+                      REAPPROVE
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="btn btn--secondary"
@@ -244,13 +249,13 @@ export function CapabilitiesView({ rest }: ViewProps): ReactElement {
                         <span className="cap-meta-value">{detail.name}</span>
                       </div>
                       <div className="cap-meta-row">
-                        <span className="tech-label">PURITY</span>
+                        <span className="tech-label">EFFECTS</span>
                         <span
                           className={`cap-purity${
-                            detail.pure === false ? " cap-purity--impure" : ""
+                            detail.effects.length > 0 ? " cap-purity--impure" : ""
                           }`}
                         >
-                          {pureLabel(detail.pure)}
+                          {effectsLabel(detail.effects, detail.error)}
                         </span>
                       </div>
                       <div className="cap-meta-row">
@@ -280,6 +285,15 @@ export function CapabilitiesView({ rest }: ViewProps): ReactElement {
                         </div>
                       ) : null}
                     </div>
+                    {detail.error ? <div className="capabilities-error-bar">{detail.error}</div> : null}
+                    <span className="tech-label">DEPENDENCIES</span>
+                    <pre className="terminal">{JSON.stringify(detail.dependencies, null, 2)}</pre>
+                    <span className="tech-label">INPUT SCHEMA</span>
+                    <pre className="terminal">{JSON.stringify(detail.input_schema, null, 2)}</pre>
+                    <span className="tech-label">OUTPUT SCHEMA</span>
+                    <pre className="terminal">{JSON.stringify(detail.output_schema, null, 2)}</pre>
+                    <span className="tech-label">DEFINITION</span>
+                    <p>{detail.definition_id || "not approved"}</p>
                     <span className="tech-label">capability.tlon</span>
                     <pre className="terminal cap-artifact">{detail.artifact}</pre>
                     {detail.examples && detail.examples.length > 0 ? (
@@ -299,8 +313,8 @@ export function CapabilitiesView({ rest }: ViewProps): ReactElement {
                                 </span>
                               </div>
                               <div className="cap-meta-row">
-                                <span className="tech-label">ARGS</span>
-                                <span className="cap-meta-value">{ex.args}</span>
+                                <span className="tech-label">INPUT</span>
+                                <span className="cap-meta-value">{ex.input}</span>
                               </div>
                               <div className="cap-meta-row">
                                 <span className="tech-label">EXPECT</span>
@@ -401,9 +415,9 @@ function CapCard({
           {cap.name}
         </div>
         <span
-          className={`cap-purity${cap.pure === false ? " cap-purity--impure" : ""}`}
+          className={`cap-purity${cap.effects.length > 0 ? " cap-purity--impure" : ""}`}
         >
-          {pureLabel(cap.pure)}
+          {effectsLabel(cap.effects, cap.error)}
         </span>
         <span className={`cap-card-badge${staging ? " cap-card-badge--staging" : ""}`}>
           {staging ? "STAGING" : "TRUSTED"}
@@ -493,7 +507,7 @@ function NewProposalModal({
             value={artifact}
             autoFocus
             spellCheck={false}
-            placeholder='{:version 1 :name "word-name" :description "…" :args [] :impl (fn [] …) :pure true}'
+            placeholder='{:version 2 :name "word-name" :description "…" :input-schema {:type "object" :properties {} :required [] :additionalProperties false} :output-schema true :impl (fn [input] input)}'
             onChange={(e) => setArtifact(e.target.value)}
           />
         </label>

@@ -1,14 +1,7 @@
-"""Unified member-spec loader (phase C of the Agent/Script merge).
+"""Read current member source and admit it separately from frozen restoration.
 
-Phase A built the :class:`~tlon.agents.member_spec.MemberSpec` model; phase B
-made it the single spec flowing through the system (with legacy file formats
-still parsed behind projections); phase C unifies the file format itself —
-every member carries one rules-form ``behavior.tlon`` and this loader is the
-only read path.
-
-One function reads a member's behavior file and returns the validated
-:class:`MemberSpec` with provenance attached. The path layout is injected
-(``tlon_paths``) — there is no module-level default.
+The validated loader is the new-behavior gate. Recovery-only activation can read
+source structurally while a durable root supplies its own rule and dependencies.
 """
 
 import hashlib
@@ -18,6 +11,29 @@ from tlon.agents.member_spec import MemberSpec, validate_member_spec
 from tlon.base.paths import TlonPaths
 from tlosure.builtins import Builtin
 from tlosure.edn import loads
+
+
+def has_frozen_work(agent_id: str, tlon_paths: TlonPaths) -> bool:
+    """Inspect unfinished roots without authorizing their execution."""
+    from tlon.agents.program_store import ProgramStore
+    from tlon.agents.session_store import SessionStore
+
+    database = tlon_paths.agent_program_database_file(agent_id)
+    if database.exists() and ProgramStore(database).pending():
+        return True
+    return bool(SessionStore(tlon_paths.agent_sessions_database_file(agent_id)).unfinished_ids())
+
+
+def read_member_spec(agent_id: str, *, tlon_paths: TlonPaths) -> MemberSpec:
+    """Read current source structurally, retaining provenance for diagnostics.
+
+    This is not admission to new work; restoration can read invalid current
+    behavior while independently executing an older frozen program.
+    """
+    text = tlon_paths.agent_behavior_file(agent_id).read_text(encoding="utf-8")
+    member = MemberSpec.from_edn(loads(text))
+    source_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+    return replace(member, source_hash=source_hash)
 
 
 def load_member_spec(
@@ -33,7 +49,8 @@ def load_member_spec(
     to boot (the registry logs and isolates the failure; the server and
     other members are unaffected).
 
-    ``builtins`` is the registry validated against — host-less by default
+    ``builtins`` is the registry validated against — host words and approved
+    composites by default.
     Host query words are available only when explicitly injected by the
     caller. Adam passes its registry query builtins explicitly.
 
@@ -46,9 +63,10 @@ def load_member_spec(
         EDNParseError: file is not valid EDN
         MemberSpecValidationError: the spec fails the single validator
     """
-    behavior_file = tlon_paths.agent_behavior_file(agent_id)
-    text = behavior_file.read_text(encoding="utf-8")
-    member = MemberSpec.from_edn(loads(text))
-    member = validate_member_spec(member, builtins=builtins)
-    source_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
-    return replace(member, source_hash=source_hash)
+    if builtins is None:
+        from tlon.agents.capabilities.bridge import capability_validation_builtins
+
+        builtins = capability_validation_builtins(tlon_paths)
+    return validate_member_spec(
+        read_member_spec(agent_id, tlon_paths=tlon_paths), builtins=builtins
+    )

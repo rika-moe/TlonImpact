@@ -126,7 +126,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 | GET | `/admin/capabilities/staging` | `handle_list_staging_capabilities` | 无条件 |
 | POST | `/admin/capabilities/staging` | `handle_create_staging_capability` | 无条件 |
 | GET | `/admin/capabilities/staging/{name}` | `handle_get_staging_capability` | 无条件 |
-| POST | `/admin/capabilities/staging/{name}/approve` | `handle_approve_capability` | 无条件 |
+| POST | `/admin/capabilities/{name}/approve` | `handle_approve_capability` | 无条件 |
 | POST | `/admin/capabilities/staging/{name}/reject` | `handle_reject_capability` | 无条件 |
 | GET | `/admin/capabilities` | `handle_list_capabilities` | 无条件 |
 | GET | `/admin/capabilities/{name}` | `handle_get_capability` | 无条件 |

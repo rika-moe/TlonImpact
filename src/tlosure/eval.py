@@ -80,6 +80,8 @@ language's (ADR 0018 修订).
 """
 
 from collections.abc import Awaitable, Callable, Generator
+from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any
 
 from tlosure.builtins import (
@@ -179,6 +181,21 @@ def eval_form(
         raise EvalError("recur outside while") from e
 
 
+@dataclass
+class _Fuel:
+    remaining: int
+
+
+_CURRENT_EVALUATION: ContextVar[tuple["Evaluator", int] | None] = ContextVar(
+    "tlosure_evaluation", default=None
+)
+
+
+def current_evaluation() -> tuple["Evaluator", int] | None:
+    """Return the active language budget and call depth for a host boundary."""
+    return _CURRENT_EVALUATION.get()
+
+
 class Evaluator:
     """Stateful single-run evaluator: one instance = one fuel budget.
 
@@ -199,7 +216,7 @@ class Evaluator:
             raise ValueError(f"max_depth must be at least 1, got {max_depth}")
         self._builtins = builtins
         self._budget = fuel
-        self._fuel = fuel
+        self._fuel = _Fuel(fuel)
         self._max_depth = max_depth
         # Frame per enclosing while: the binding names its recur rebinds.
         self._loop_stack: list[list[str]] = []
@@ -212,7 +229,13 @@ class Evaluator:
     @property
     def fuel_remaining(self) -> int:
         """Fuel left; negative after exhaustion (the step that ran out)."""
-        return self._fuel
+        return self._fuel.remaining
+
+    def fork(self, builtins: dict[str, Builtin]) -> "Evaluator":
+        """Use a distinct vocabulary while retaining this evaluation's fuel/depth cap."""
+        evaluator = Evaluator(builtins, self._budget, self._max_depth)
+        evaluator._fuel = self._fuel
+        return evaluator
 
     def eval(self, value: Any, env: dict[str, Any], depth: int) -> Any:
         """Drive the shared kernel synchronously, preserving builtin return data."""
@@ -225,7 +248,11 @@ class Evaluator:
                 except StopIteration as done:
                     return done.value
                 try:
-                    result = call.invoke()
+                    token = _CURRENT_EVALUATION.set((self, call.depth))
+                    try:
+                        result = call.invoke()
+                    finally:
+                        _CURRENT_EVALUATION.reset(token)
                 except EvalError:
                     raise
                 except Exception as error:
@@ -257,7 +284,11 @@ class Evaluator:
                 # Host failures retain their type: the runtime distinguishes
                 # retryable I/O from invalid expressions. Pure builtin errors
                 # are still normalized by the shared kernel.
-                result = await handler(call)
+                token = _CURRENT_EVALUATION.set((self, call.depth))
+                try:
+                    result = await handler(call)
+                finally:
+                    _CURRENT_EVALUATION.reset(token)
         finally:
             program.close()
 
@@ -266,8 +297,8 @@ class Evaluator:
     ) -> Generator[BuiltinCall, Any, Any]:
         if depth > self._max_depth:
             raise EvalDepthError(f"evaluation depth exceeds {self._max_depth} at {dumps(value)}")
-        self._fuel -= 1
-        if self._fuel < 0:
+        self._fuel.remaining -= 1
+        if self._fuel.remaining < 0:
             raise FuelExhaustedError(
                 f"fuel exhausted (budget {self._budget}) while evaluating {dumps(value)}",
                 budget=self._budget,
@@ -333,13 +364,16 @@ class Evaluator:
         fn = builtin.fn
         assert fn is not None  # Builtin.__post_init__: exactly one of fn / closure
         if not builtin.pure:
-            return (yield BuiltinCall(name=name, builtin=builtin, args=args, env=env))
+            return (yield BuiltinCall(name=name, builtin=builtin, args=args, env=env, depth=depth))
+        token = _CURRENT_EVALUATION.set((self, depth))
         try:
             return fn(env, *args)
         except EvalError:
             raise
         except Exception as e:
             raise EvalError(f"{name} failed: {e} (in form {dumps(form)})") from e
+        finally:
+            _CURRENT_EVALUATION.reset(token)
 
     def _apply(
         self, closure: Closure, args: list[Any], depth: int

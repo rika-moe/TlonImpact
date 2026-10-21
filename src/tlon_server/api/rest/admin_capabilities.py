@@ -23,7 +23,12 @@ def _capability_payload(
     payload: dict[str, Any] = {
         "name": info.name,
         "description": info.description,
-        "pure": info.pure,
+        "effects": list(info.effects),
+        "input_schema": info.input_schema,
+        "output_schema": info.output_schema,
+        "dependencies": info.dependencies,
+        "definition_id": info.definition_id,
+        "error": info.error,
         "trusted": info.trusted,
         "author": info.author,
         "proposal_note": info.proposal_note,
@@ -148,7 +153,7 @@ class AdminCapabilityHandlers(RestHandlerBase):
         )
 
     async def handle_approve_capability(self, request: web.Request) -> web.Response:
-        """POST /admin/capabilities/staging/{name}/approve - promote a
+        """POST /admin/capabilities/{name}/approve - promote a
         staged capability to the trusted library (human approval; members
         pick the word up on next wake via the vocabulary bridge)."""
         guard = self._require_capabilities()

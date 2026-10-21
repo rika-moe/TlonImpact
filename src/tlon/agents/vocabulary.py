@@ -66,18 +66,7 @@ from contextvars import ContextVar
 from typing import Any, Protocol, TypedDict
 
 from tlon.operations.control import validate_control_forms
-from tlon.operations.evolution import evolution_operation_definitions
-from tlon.operations.filesystem import filesystem_operation_definitions
-from tlon.operations.identity import identity_operation_definitions
-from tlon.operations.lifecycle import lifecycle_operation_definitions
-from tlon.operations.mail import mail_builtin_definitions
-from tlon.operations.memory import memory_operation_definitions
-from tlon.operations.model import model_operation_definitions
-from tlon.operations.observability import observability_operation_definitions
-from tlon.operations.shell import shell_builtin_definitions
-from tlon.operations.state import state_operation_definitions
-from tlon.operations.tasks import task_operation_definitions
-from tlon.operations.time import time_operation_definitions
+from tlon.operations.definitions import host_operation_definitions
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlosure.builtins import (
     ARITHMETIC_BUILTINS,
@@ -443,13 +432,8 @@ STAGE_COND_BUILTINS: dict[str, Builtin] = {
 # unified member registry by :func:`make_member_builtins`.
 
 
-#: Pure accessors available to every rule kind. Pure only; evaluation is
-#: side-effect free by construction. Kept a superset of the capability
-#: admission registry (``CAPABILITY_PURE_BUILTINS`` = CORE + ARITHMETIC,
-#: ``agents/capabilities/spec.py``) so every word a capability ``:impl``
-#: may compose resolves in the caller's registry at runtime — the
-#: vocabulary bridge's runtime contract (a regression test in
-#: ``tests/agents/capabilities/test_bridge.py`` pins the subset relation).
+#: Rule accessors keep their current implicit environment until P6. Composite
+#: implementations instead receive only explicit input and core pure words.
 def _mail_field(env: dict[str, Any], mail: Any, field: Any) -> Any:
     fields = {
         "id": "id",
@@ -583,38 +567,9 @@ class ScriptHostQueries(Protocol):
 
 
 #: Effects available to every rule, independent of its event or other actions.
-MEMBER_ACTION_NAMES = frozenset(
-    {
-        "run-loop",
-        "state-get",
-        "state-put",
-        "model-call",
-        "mail-send",
-        "mail-forward",
-        "mail-check-inbox",
-        "mail-search",
-        "mail-mark-read",
-        "file-read",
-        "file-write",
-        "file-edit",
-        "file-list",
-        "file-search",
-        "shell-run",
-        "shell-check",
-        "time-now",
-    }
-) | frozenset(
-    operation.name
-    for operation in (
-        *evolution_operation_definitions(),
-        *lifecycle_operation_definitions(),
-        *memory_operation_definitions(),
-        *task_operation_definitions(),
-        *identity_operation_definitions(),
-        *observability_operation_definitions(),
-    )
+MEMBER_ACTION_NAMES = frozenset({"run-loop"}) | frozenset(
+    operation.name for operation in host_operation_definitions()
 )
-
 
 _EFFECT_COLLECTOR: ContextVar[list[ActionRequest] | None] = ContextVar(
     "tlon_effect_collector", default=None
@@ -666,22 +621,9 @@ def make_member_builtins(
         return _record(ActionRequest(kind="run_loop", data={"recipe": recipe}))
 
     builtins: dict[str, Builtin] = {
-        **mail_builtin_definitions(),
-        **shell_builtin_definitions(),
         **{
             operation.name: Builtin(fn=_unavailable_operation, pure=False)
-            for operation in (
-                *filesystem_operation_definitions(),
-                *time_operation_definitions(),
-                *state_operation_definitions(),
-                *model_operation_definitions(),
-                *lifecycle_operation_definitions(),
-                *evolution_operation_definitions(),
-                *memory_operation_definitions(),
-                *task_operation_definitions(),
-                *identity_operation_definitions(),
-                *observability_operation_definitions(),
-            )
+            for operation in host_operation_definitions()
         },
         **TRIGGER_BUILTINS,
         **SCRIPT_BUILTINS,

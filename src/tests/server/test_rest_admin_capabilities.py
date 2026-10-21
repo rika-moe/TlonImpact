@@ -8,51 +8,45 @@ reject exercise the real staging layout.
 """
 
 import json
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 from tests.identity_helpers import make_identity
-from tlon.agents.capabilities.staging import append_staging_review, write_staging_capability
+from tlon.agents.capabilities.spec import CapabilityError
+from tlon.agents.capabilities.staging import (
+    append_staging_review,
+    approve_capability,
+    write_staging_capability,
+)
 from tlon.api.capabilities import CapabilitiesFacade
 from tlon.base.paths import TlonPaths
 from tlon_server.api.rest import RESTAPIHandler
 
 VALID_CAPABILITY = """\
-{:version 1
- :name "thread-digest"
- :description "把邮件线程蒸馏成三段式摘要文本"
- :args [{:name "mails" :type :list :doc "按时间升序的邮件列表"}]
- :impl (fn [mails] (str "digest:" (count mails)))
- :pure true}
+{:version 2 :name "thread-digest" :description "把邮件线程蒸馏成三段式摘要文本"
+ :input-schema {:type "object" :properties {:mails {:type "array" :items true}} :required ["mails"] :additionalProperties false}
+ :output-schema {:type "string"} :impl (fn [input] (str "digest:" (count (get input :mails))))}
 """
 
 INVALID_CAPABILITY = """\
-{:version 1
- :name "wild"
- :description "组合未注册词汇"
- :args []
- :impl (fn [] (jump "x"))
- :pure false}
+{:version 2 :name "wild" :description "组合未注册词汇"
+ :input-schema {:type "object" :properties {} :required [] :additionalProperties false}
+ :output-schema true :impl (fn [input] (jump "x"))}
 """
 
 CAPABILITY_WITH_EXAMPLES = """\
-{:version 1
- :name "shout"
- :description "加感叹号"
- :args [{:name "s" :type :string :doc "原字符串"}]
- :impl (fn [s] (str s "!"))
- :pure true
- :examples [{:args ["hey"] :expect "hey!"}]}
+{:version 2 :name "shout" :description "加感叹号"
+ :input-schema {:type "object" :properties {:s {:type "string"}} :required ["s"] :additionalProperties false}
+ :output-schema {:type "string"} :impl (fn [input] (str (get input :s) "!"))
+ :examples [{:input {:s "hey"} :expect "hey!"}]}
 """
 
 CAPABILITY_WITH_FAILING_EXAMPLE = """\
-{:version 1
- :name "shout"
- :description "断言故意不符——受信库手写不走加载闸，detail 软降级呈现"
- :args [{:name "s" :type :number :doc "原数"}]
- :impl (fn [s] (inc s))
- :pure true
- :examples [{:args [1] :expect 3} {:args ["a"] :expect 1}]}
+{:version 2 :name "shout" :description "失败例子是评审材料"
+ :input-schema {:type "object" :properties {:s {:type "number"}} :required ["s"] :additionalProperties false}
+ :output-schema {:type "number"} :impl (fn [input] (inc (get input :s)))
+ :examples [{:input {:s 1} :expect 3} {:input {:s "a"} :expect 1}]}
 """
 
 
@@ -90,6 +84,9 @@ def _write_trusted(p: TlonPaths, text: str = VALID_CAPABILITY, name: str = "thre
     cap_dir = p.capabilities_dir() / name
     cap_dir.mkdir(parents=True)
     (cap_dir / "capability.tlon").write_text(text, encoding="utf-8")
+    # Intentionally invalid review artifacts remain visible, unapproved.
+    with suppress(CapabilityError):
+        approve_capability(name, p)
 
 
 class TestListCapabilities:
@@ -106,7 +103,7 @@ class TestListCapabilities:
         cap = body["capabilities"][0]
         assert cap["name"] == "thread-digest"
         assert cap["description"] == "把邮件线程蒸馏成三段式摘要文本"
-        assert cap["pure"] is True
+        assert cap["effects"] == []
         assert cap["trusted"] is True
         assert cap["deprecated"] is False
 
@@ -195,7 +192,7 @@ class TestCapabilityDetail:
         assert resp.status == 200
         cap = json.loads(resp.text)["capability"]
         assert cap["examples"] == [
-            {"args": '["hey"]', "expect": '"hey!"', "passed": True, "actual": '"hey!"'}
+            {"input": '{"s" "hey"}', "expect": '"hey!"', "passed": True, "actual": '"hey!"'}
         ]
 
     async def test_detail_includes_failed_examples(self, tmp_path: Path):
@@ -216,7 +213,7 @@ class TestCapabilityDetail:
         assert "error" not in mismatch
         assert eval_error["passed"] is False
         assert "actual" not in eval_error
-        assert "expected a number" in eval_error["error"]
+        assert "number" in eval_error["error"]
 
     async def test_detail_without_examples_has_empty_list(self, tmp_path: Path):
         handler, p = _handler(tmp_path)
@@ -242,7 +239,7 @@ class TestRunExamplesFacade:
         _write_trusted(p, CAPABILITY_WITH_EXAMPLES, name="shout")
         [result] = CapabilitiesFacade(tlon_paths=p).run_examples("shout")
         assert result.passed is True
-        assert result.args == ("hey",)
+        assert result.input == {"s": "hey"}
         assert result.expect == "hey!"
         assert result.actual == "hey!"
         assert result.error is None
@@ -357,3 +354,25 @@ class TestApproveReject:
 
         assert (await handler.handle_approve_capability(StubRequest(name="x"))).status == 503
         assert (await handler.handle_reject_capability(StubRequest(name="x"))).status == 503
+
+
+def test_approval_route_is_canonical_without_staging_alias(tmp_path: Path) -> None:
+    handler, _paths = _handler(tmp_path)
+    routes = {route.resource.canonical for route in handler.create_app().router.routes()}
+    assert "/admin/capabilities/{name}/approve" in routes
+    assert "/admin/capabilities/staging/{name}/approve" not in routes
+
+
+async def test_trusted_edit_requires_reapproval_and_rest_can_reapprove(tmp_path: Path) -> None:
+    handler, paths = _handler(tmp_path)
+    _write_trusted(paths)
+    artifact = paths.capabilities_dir() / "thread-digest/capability.tlon"
+    artifact.write_text(VALID_CAPABILITY.replace('"digest:"', '"summary:"'))
+    response = await handler.handle_get_capability(StubRequest(name="thread-digest"))
+    stale = json.loads(response.text)["capability"]
+    assert stale["error"] and stale["trusted"]
+    assert (
+        await handler.handle_approve_capability(StubRequest(name="thread-digest"))
+    ).status == 200
+    response = await handler.handle_get_capability(StubRequest(name="thread-digest"))
+    assert json.loads(response.text)["capability"]["error"] is None

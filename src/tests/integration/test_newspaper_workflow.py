@@ -14,8 +14,8 @@ from tlon.agents.program_driver import ProgramDriver
 from tlon.agents.program_store import ProgramStore
 from tlon.agents.vocabulary import make_member_builtins, rule_env
 from tlon.base.events.event_bus import EventBus
-from tlon.operations.adapters import DSLAdapter
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.dsl import DSLAdapter
 from tlon.operations.invocation import Invocation, registry_identity
 from tlon.operations.mail import make_mail_operations
 from tlon.operations.model import make_model_operations
@@ -228,7 +228,7 @@ async def test_member_runtime_recovers_a_read_publication_before_program_complet
             member_id="newspaper",
             name="来信报",
             event_bus=bus,
-            spec=paper.spec,
+            spec=MemberSpec(version=1, rules=()),
             builtins=make_member_builtins(),
             mailbox=Mailbox(tmp_path / "shared/mail.sqlite3", "newspaper"),
             post_office=paper.office,
@@ -248,6 +248,8 @@ async def test_member_runtime_recovers_a_read_publication_before_program_complet
                 store=member._program_store,
             )
         )
+        member._spec = paper.spec
+        member._operation_executor = adapter._executor
         member._operations = adapter
         member._builtins.update(adapter.builtins())
         return member

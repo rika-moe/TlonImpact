@@ -1,94 +1,111 @@
-"""The vocabulary bridge: trusted capability library → member registries
-(docs/design/capabilities.md 「词汇桥」, issue #45 slice 2/3).
+"""Trusted artifacts compile into the shared operation directory.
 
-At load time every artifact in the trusted library
-(``~/.tlon/capabilities/``) is parsed and run through the load gate
-(:func:`validate_capability` — structure, purity admission, namespace
-rejection), then registered as a **closure-backed** :class:`Builtin`:
-the entry carries a :class:`Closure` whose captured env is **empty**
-(the runtime face of the env contract "sees args only, zero injection")
-and whose body resolves words through the *caller's* registry — the
-admission gate already guaranteed the impl only references capability
-vocabulary. Application counts into the caller's fuel/depth budget,
-unlike a host builtin's unmetered internals.
-
-Blast-radius decision: one bad trusted artifact (unparseable, failing
-validation, unreadable) is logged and **excluded** — it never fails the
-whole registry. A spec referencing the excluded word fails its own load
-validation with "unknown function", so the blast radius is exactly the
-word's users, never the society.
-
-Deprecated words register like any other (the word stays usable; the
-``:deprecated`` marker lives in the metadata layer — ``info.py`` /
-``catalog.py`` — which the bridge does not read).
-
-The bridge is invoked on every member-spec load (``AgentRegistry``), not
-cached: the trusted library is small (a directory scan plus a few small
-artifacts), and recomputing aligns with the trust ladder's
-wake-reassembly semantics — a newly approved word takes effect at the
-member's next wake, no server restart, no cache invalidation.
+Approval binds the complete dependency content. A broken or stale definition is
+excluded with its dependents; unrelated words remain loadable.
 """
 
 from collections.abc import Iterable
+from typing import TYPE_CHECKING, Any
 
-from tlon.agents.capabilities.info import CAPABILITY_FILE, _is_capability_dir
-from tlon.agents.capabilities.spec import (
-    CapabilityError,
-    CapabilitySpec,
-    validate_capability,
-)
-from tlon.agents.vocabulary import make_member_builtins
+from tlon.agents.capabilities.spec import CapabilityArtifact, CapabilityError
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
-from tlosure.builtins import Builtin, Closure
-from tlosure.validate import _params
+from tlon.operations.composite import CompositeCatalog, compile_composites
+from tlon.operations.core import Operation
+from tlosure.edn import loads
+
+if TYPE_CHECKING:
+    from tlosure.builtins import Builtin
 
 logger = get_logger(__name__)
 
 
-def load_capability_builtins(
-    tlon_paths: TlonPaths, *, reserved: Iterable[str] = ()
-) -> dict[str, Builtin]:
-    """Load the trusted capability library as closure-backed registry entries.
-
-    Namespace: a word colliding with a special form, a builtin of the
-    capability registries, a name in ``reserved`` (the caller's host
-    vocabulary — closure-injected host words like ``member-roster`` are
-    absent from the host-less registry and must be passed explicitly),
-    or another trusted capability's word is rejected (shadowing is
-    rejected, never prefixed). The host-less ``make_member_builtins()``
-    word set is always reserved.
-
-    Returns:
-        The accepted words keyed by name, each a closure-backed
-        :class:`Builtin` with the artifact's declared purity marker.
-    """
+def read_trusted_artifacts(
+    tlon_paths: TlonPaths,
+) -> tuple[dict[str, CapabilityArtifact], dict[str, dict[str, Any]], dict[str, str]]:
+    artifacts: dict[str, CapabilityArtifact] = {}
+    approvals: dict[str, dict[str, Any]] = {}
+    errors: dict[str, str] = {}
     root = tlon_paths.capabilities_dir()
     if not root.exists():
-        return {}
-    taken = set(make_member_builtins()) | set(reserved)
-    words: dict[str, Builtin] = {}
-    for cap_dir in sorted(root.iterdir()):
-        if not cap_dir.is_dir() or not _is_capability_dir(cap_dir):
+        return artifacts, approvals, errors
+    for directory in sorted(root.iterdir()):
+        if not directory.is_dir() or not (directory / "capability.tlon").is_file():
             continue
         try:
-            spec = CapabilitySpec.from_edn((cap_dir / CAPABILITY_FILE).read_text(encoding="utf-8"))
-            validate_capability(spec, taken_names=taken)
-        except (CapabilityError, OSError) as e:
-            logger.error("capability_word_rejected", directory=cap_dir.name, error=str(e))
-            continue
-        words[spec.name] = _closure_backed(spec)
-        taken.add(spec.name)
-    return words
+            artifact = CapabilityArtifact.from_edn(
+                (directory / "capability.tlon").read_text(encoding="utf-8")
+            )
+            if artifact.name != directory.name:
+                raise CapabilityError("artifact name must match its directory")
+            metadata = loads((directory / "meta.tlon").read_text(encoding="utf-8"))
+            if type(metadata) is not dict or metadata.get("trusted") is not True:
+                raise CapabilityError("capability has not been approved")
+            artifacts[artifact.name] = artifact
+            approvals[artifact.name] = metadata
+        except (CapabilityError, OSError, ValueError) as error:
+            errors[directory.name] = str(error)
+    return artifacts, approvals, errors
 
 
-def _closure_backed(spec: CapabilitySpec) -> Builtin:
-    """Build the registry entry for one validated artifact.
+def load_capability_catalog(
+    tlon_paths: TlonPaths, *, hosts: Iterable[Operation] | None = None, reserved: Iterable[str] = ()
+) -> CompositeCatalog:
+    from tlon.operations.definitions import host_operation_definitions
 
-    The ``:impl`` fn literal becomes a :class:`Closure` with an empty
-    captured env (zero injection) named after the word, so arity errors
-    read ``thread-digest expects 1 arguments, got 2``.
+    reserved = set(reserved) | reserved_capability_names()
+    definitions = tuple(host_operation_definitions() if hosts is None else hosts)
+    artifacts, approvals, errors = read_trusted_artifacts(tlon_paths)
+    for name in set(artifacts) & set(reserved):
+        errors[name] = "capability name collides with reserved vocabulary"
+        artifacts.pop(name)
+    catalog = compile_composites(
+        (artifact.spec for artifact in artifacts.values()), definitions, strict=False
+    )
+    errors.update(catalog.errors)
+    accepted = dict(artifacts)
+    for name, definition in catalog.definitions.items():
+        metadata = approvals[name]
+        if (
+            metadata.get("definition-id") != definition.definition_id
+            or metadata.get("dependencies") != definition.dependency_ids
+        ):
+            errors[name] = "approved dependency fingerprint changed; explicit reapproval required"
+            accepted.pop(name, None)
+    # Removing a stale node makes every dependent fail normal graph validation.
+    catalog = compile_composites(
+        (artifact.spec for artifact in accepted.values()), definitions, strict=False
+    )
+    errors.update(catalog.errors)
+    catalog.errors.update(errors)
+    for name, error in errors.items():
+        logger.error("capability_operation_rejected", name=name, error=error)
+    return catalog
+
+
+def reserved_capability_names() -> set[str]:
+    """Host vocabulary and implicit Behavior bindings share one namespace."""
+    from tlon.agents.vocabulary import ACTION_SCOPE, RULE_SCOPE, make_member_builtins
+
+    return set(make_member_builtins()) | set(RULE_SCOPE) | set(ACTION_SCOPE)
+
+
+def capability_validation_builtins(
+    tlon_paths: TlonPaths, *, base: dict[str, "Builtin"] | None = None
+) -> dict[str, "Builtin"]:
+    """Project the approved directory for syntax admission without execution.
+
+    Templates and Behavior proposals know valid operation names. A concrete
+    member still validates again against its actual assembled operations.
     """
-    params, _ = _params(spec.impl[1], "fn")  # fixed arity, validated at admission
-    closure = Closure(params=params, rest=None, body=list(spec.impl[2:]), env={}, name=spec.name)
-    return Builtin.from_closure(closure, pure=spec.pure)
+    from tlon.agents.vocabulary import make_member_builtins
+    from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+    from tlon.operations.dsl import DSLAdapter
+
+    builtins = make_member_builtins() if base is None else dict(base)
+    catalog = load_capability_catalog(tlon_paths, reserved=builtins)
+    executor = OperationExecutor(
+        OperationRegistry(catalog.operations),
+        CallContext("validation", "validation", "validation"),
+    )
+    return {**builtins, **DSLAdapter(executor).builtins()}

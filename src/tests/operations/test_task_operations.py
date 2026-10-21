@@ -6,8 +6,8 @@ from unittest.mock import Mock
 import pytest
 
 from tlon.base.paths import TlonPaths
-from tlon.operations.adapters import DSLAdapter
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.dsl import DSLAdapter
 from tlon.operations.schema import InputError, OperationError, UnknownOutcomeError
 from tlon.operations.tasks import make_task_operations, task_operation_definitions
 from tlon.tasks.manager import TaskManager

@@ -11,6 +11,7 @@ import asyncio
 
 import pytest
 
+from tests.mail_helpers import make_office
 from tlon.agents.agent_registry import AgentRegistry, RegistryQueries
 from tlon.agents.lifecycle import StartRequest
 from tlon.agents.loader import load_member_spec
@@ -93,6 +94,7 @@ class TestRegistryStart:
                 }
             ),
             tlon_paths=p,
+            post_office=make_office(bus, tmp_path),
         )
         await registry.initialize()
 
@@ -128,6 +130,7 @@ class TestRegistryStart:
             event_bus=bus,
             agent_info_provider=_StaticProvider({}),
             tlon_paths=p,
+            post_office=make_office(bus, tmp_path),
         )
         await registry.initialize()
 
@@ -155,6 +158,7 @@ class TestSpecDerivedLifecycle:
             event_bus=bus,
             agent_info_provider=_StaticProvider(configs),
             tlon_paths=p,
+            post_office=make_office(bus, tmp_path),
         )
         await registry.initialize()
         for agent_id in configs:
@@ -310,6 +314,7 @@ class TestWakeOnMail:
                 }
             ),
             tlon_paths=p,
+            post_office=make_office(bus, tmp_path),
         )
         await registry.initialize()
         if running:
@@ -409,6 +414,7 @@ class TestWakeOnMail:
                 }
             ),
             tlon_paths=p,
+            post_office=make_office(bus, tmp_path),
         )
         from tlon.organization.mail.post_office import PostOffice
         from tlon.organization.mail.resolver import RecipientResolver
@@ -456,6 +462,7 @@ class TestMemberStopAndDrain:
             event_bus=bus,
             agent_info_provider=_StaticProvider(configs),
             tlon_paths=p,
+            post_office=make_office(bus, tmp_path),
         )
         await registry.initialize()
         for agent_id in configs:
@@ -551,6 +558,7 @@ class TestPendingStop:
                 }
             ),
             tlon_paths=p,
+            post_office=make_office(bus, tmp_path),
         )
         await registry.initialize()
         await bus.publish(

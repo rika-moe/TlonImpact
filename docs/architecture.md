@@ -123,3 +123,5 @@ serving 侧在 facade 上装配客户端会话、通知服务、通讯录和 HTT
 
 
 P3b 已将记忆/会话回读、任务、人格/联系人、只读观测及 state-get/state-put 接入相同 Operation 目录。成员身份由宿主绑定，操作输入不能改写拥有者；公开观察与私有资源保持各自边界。state-put 的两入口复用同一 ProgramStore 原子状态及 invocation 回执，TaskManager 已移至 `tlon.tasks`。P3c 已通过 #188 合并，统一生命周期、模型和提案操作并删除旧 Tool 机制。P4a 固定调用身份、契约与构建指纹，恢复拒绝漂移与旧格式；当前边界见 [调用恢复](design/invocation-recovery.md)。P4b 将两入口及其内部模型调用接入同一持久预算账本：程序 output 保留输出预留，session total 覆盖 stage、压缩及嵌套模型并按可靠实际 usage 结算，未知保留预留。取消约束当前进程任务树，deadline 与额度冻结跨重启保留；成员写 gate 按声明顺序执行写入，独立读取可并发。装配容器改名 MemberServices，旧宿主查询直接声明非 pure，详见 [执行作用域](design/execution-scope.md)。数据库格式 user_version=2，旧格式拒绝，无迁移。
+
+P5 复合能力使用 operations/composite.py 的共享契约与编译目录，DSL 投影在 operations/dsl.py，Tool 协议投影在 adapters.py；底层执行与沙箱不依赖 Tool 协议。ProgramStore 原子冻结源码、输入及 root_definitions，模型会话使用根级 ToolExecutor。批准保存传递依赖身份，运行宿主 build 与复合内容分离；当前行为失效时只允许明确的冻结工作恢复，不准入新规则。复合不重置 fuel/depth 或 token 额度。具体边界见 [复合操作](design/capabilities.md)。
