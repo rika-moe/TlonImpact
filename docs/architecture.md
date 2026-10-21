@@ -1,5 +1,8 @@
 # Tlon 系统架构
 
+> 已接受目标（尚未实施）：[ADR 0046](decisions/0046-programmable-workflows.md) 与 [可编程工作流程](design/programmable-workflows.md) 将以模块函数替代 stage 引擎，施工见[分阶段计划](design/programmable-workflows-plan.md)。本文仍描述现行机制。
+
+
 本文是当前系统的入口：先定义跨领域必须遵守的边界，再描述当前采用的结构与协作链路。领域内部的规则和机制在对应 design 完整定义；历史选择见 [决策索引](decisions/README.md)，文档维护规则见 [documentation.md](documentation.md)。
 
 ## 系统概念

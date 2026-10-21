@@ -63,7 +63,7 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 
 ## 行为与扩展
 
-[ADR 0044：统一操作](0044-unified-operations.md) 的方向已认可，EPIC A 已推进至 P3c；目标与阶段见 [operations](../design/operations.md) / [plan](../design/operations-plan.md)。宿主操作已逐域统一到 Operation，动态视图、复合能力及通用预算仍未实施。
+宿主操作已统一到 Operation，Capability 与复合操作由 ADR 0045 删除。新的工作程序方向见 [ADR 0046](0046-programmable-workflows.md) 与 [实施计划](../design/programmable-workflows-plan.md)，尚未实施；旧操作计划保留历史证据。
 
 | 决策 | 当前设计 | 有效范围与修订关系 |
 |---|---|---|
@@ -84,3 +84,5 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 | [ADR 0031：WebUI 邮箱同步、线程展示与人类已读管理](0031-webui-mail-consistency.md) | [webui](../design/webui.md)、[server-protocol](../design/server-protocol.md)、[mail](../design/mail.md) | 客户端同步及已读管理；旧验收流水作为历史证据保留 |
 
 [ADR 0045：删除 Capability](0045-remove-capabilities.md)：删除复合操作、提案审批及管理界面，保留宿主 Operation 与现有 Behavior。
+
+[ADR 0046：以模块函数统一成员工作程序](0046-programmable-workflows.md)：已接受、未实施；module、完整模型/工具交互、单一恢复权威和 stage 分阶段退役，见[目标设计](../design/programmable-workflows.md)。

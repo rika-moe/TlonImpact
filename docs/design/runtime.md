@@ -1,5 +1,8 @@
 # 成员运行时设计
 
+> 已接受目标（尚未实施）：[ADR 0046](../decisions/0046-programmable-workflows.md) 与 [可编程工作流程](programmable-workflows.md) 将以模块函数替代 stage 引擎，施工见[分阶段计划](programmable-workflows-plan.md)。本文仍描述现行机制。
+
+
 > P4a 已通过 #189 合并。P4b 将共享额度、取消/截止时间与成员写顺序接入同一宿主执行作用域，当前契约见 [执行作用域](execution-scope.md) 与 [调用恢复](invocation-recovery.md)。后续组合能力与动态工具视图见 [分阶段计划](operations-plan.md)。
 
 成员共用四态调度：活跃、等待、定时睡眠、死亡。活跃由实际执行、模型或工具调用及后台维护派生；等待实例可以卸载，卸载不等于睡眠；死亡拒收新邮件并保留历史。管理员可请求排空后等待、定时睡眠、提前唤醒或永久退出，完整契约见 [agent-scheduling-states](agent-scheduling-states.md)。
