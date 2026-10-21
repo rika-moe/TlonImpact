@@ -305,3 +305,5 @@ P4a #189 已合入 main。本阶段采用 Python asyncio 的任务取消、上�
 主会话复核最终 diff、超时/取消/历史回执及共享 gate 的调用点，重跑完整 `bash scripts/check_all.sh`：15/15 全绿，单元 2733 passed / 15 skipped，集成 34 passed，221 个源文件类型检查通过。首次单元检查的两项失败来自旧截止错误文案断言，已改为验证 ExecutionDeadlineError 类型及零写入，未删除测试。原审计脚本确认恢复 spawn 仍使用原 session 配额桶，演化预算拒绝在 DSL/Tool 均保持 BudgetExceededError。
 
 真实隔离 dream + SDK + 本地 OpenAI 兼容 fake provider 冒烟通过：5 次 provider 请求，程序 output 记 8，会话 4 次请求 total 记 60；重复 ToolCall.id、真实回信/标读/状态与父程序延续均正确。未调用外部模型，隔离 home、进程及端口已清理，8080 无残留。本次无数据库格式升级或迁移；EPIC B 未开工，收尾 PR 面向 main，等待人类合并。
+
+首轮 GitHub CI 的单元组在恢复测试末尾等队列排空时超出 2 秒；日志确认恢复已投递，worker 仍需完成持久回执与下一事件。恢复本身按 1 秒轮询，CI 上的线程 I/O 与错误日志让两轮工作挤进 2 秒的假设不成立。仅该恢复阶段改为最多等待 10 秒，仍断言恢复只投递一次、旧任务完成前新状态不写入、新状态最终提交；不修改运行时轮询或删除测试。集成与静态首轮已通过，修正后重跑完整质量门与 CI。

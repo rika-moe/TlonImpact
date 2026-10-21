@@ -58,8 +58,8 @@ def _event(mail: Mail) -> Event:
     )
 
 
-async def _drain(member: MemberRuntime) -> None:
-    await asyncio.wait_for(member._queue.join(), 2)
+async def _drain(member: MemberRuntime, timeout: float = 2) -> None:
+    await asyncio.wait_for(member._queue.join(), timeout)
 
 
 async def test_plain_loop_uses_no_session(tmp_path: Path) -> None:
@@ -752,7 +752,9 @@ async def test_pending_failure_blocks_new_state_updates_until_recovery(tmp_path:
         assert delivered == []
         assert member._queue.qsize() == 1
         blocked = False
-        await _drain(member)
+        # Recovery polls once per second and persists receipts in worker threads.
+        # Bound completion without requiring two polls plus CI I/O to fit in 2s.
+        await _drain(member, timeout=10)
         assert delivered == ["blocked"]
         assert member._program_store.state_get("new") is True
     finally:
