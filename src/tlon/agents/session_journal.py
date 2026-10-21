@@ -54,11 +54,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from tlon.agents.recovery import RecoveryBlockedError
 from tlon.agents.session import SessionState
 from tlon.agents.session_store import SessionStore
-from tlon.base.llm_client import LLMResponse, ToolCall
+from tlon.base.llm_client import LLMResponse, ToolCall, validate_tool_call_ids
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
+from tlon.operations.schema import RecoveryMismatchError
 from tlon.tools.base import ToolResult
 
 logger = get_logger(__name__)
@@ -130,6 +132,7 @@ class SessionJournal:
         tlon_paths: TlonPaths,
         *,
         verify_root: Callable[[str], Awaitable[str]] | None = None,
+        verify_invocation: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
         resolve_dispatch: Callable[[str, ToolCall, dict[str, Any]], Awaitable[ToolResult]]
         | None = None,
     ) -> None:
@@ -140,6 +143,7 @@ class SessionJournal:
             tlon_paths: Path resolver (tests inject an isolated home)
         """
         self._verify_root = verify_root
+        self._verify_invocation = verify_invocation
         self.resolve_dispatch = resolve_dispatch
         self._agent_id = agent_id
         self._database = tlon_paths.agent_sessions_database_file(agent_id)
@@ -184,6 +188,11 @@ class SessionJournal:
         events = await self.read_events(session_id)
         if not events:
             return None
+        blocked = next(
+            (event for event in events if event["type"] == "session/recovery-blocked"), None
+        )
+        if blocked is not None:
+            raise RecoveryBlockedError(str(blocked.get("error", "Session recovery blocked")))
 
         start: dict[str, Any] | None = None
         context: list[dict[str, Any]] = []
@@ -237,8 +246,12 @@ class SessionJournal:
                 last_response = LLMResponse.from_dict(raw) if raw else None
             elif event_type == "tool/dispatch":
                 operation_recovery.update(event.get("operation_recovery") or {})
-                for tc_dict in event.get("tool_calls") or []:
-                    tc = ToolCall.from_dict(tc_dict)
+                calls = [ToolCall.from_dict(item) for item in event.get("tool_calls") or []]
+                try:
+                    validate_tool_call_ids(calls)
+                except ValueError as error:
+                    raise RecoveryMismatchError(str(error)) from error
+                for tc in calls:
                     results.pop(tc.id, None)
                     dispatched[tc.id] = tc
             elif event_type == "tool/result":
@@ -273,12 +286,14 @@ class SessionJournal:
             logger.warning("session_journal_no_start", session_id=session_id)
             return None
 
+        if self._verify_invocation is not None:
+            await self._verify_invocation(dict(start.get("invocation") or {}))
         if self._verify_root is not None:
             if not start.get("build_id"):
-                raise ValueError("Session runtime build is missing or changed")
+                raise RecoveryMismatchError("Session runtime build is missing or changed")
             build_id = await self.verify_root(session_id)
             if start["build_id"] != build_id:
-                raise ValueError("Session runtime build is missing or changed")
+                raise RecoveryMismatchError("Session runtime build is missing or changed")
         pending_collect: list[tuple[ToolCall, ToolResult]] = []
         for tc_id, tc in dispatched.items():
             pair = results.get(tc_id)

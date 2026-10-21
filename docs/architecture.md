@@ -60,7 +60,7 @@ WebUI / Operator / Python SDK / Telegram
 | `tlon.memory` | claim 存储、蒸馏与检索；不依赖 agents/organization/tools/sandbox |
 | `tlon.sandbox` | 执行装置与资源监控；不依赖 agents/organization/memory/tools |
 | `tlon.operations` | 共享操作契约、成员作用域调用与 DSL/Tool 薄入口，生产宿主操作已统一装配，不依赖 agents/server/client/launcher。见 [reference](reference/operations-reference.md) |
-| `tlon.tools` | 成员工具；不得依赖 agents/server/client/launcher/prototypes，生命周期操作经注入端口 |
+| `tlon.tools` | 模型工具协议、结果与溢出文件适配；业务定义和执行位于 `tlon.operations`，不得反向依赖 agents/server/client/launcher/prototypes |
 | `tlon.agents` | 成员装配、调度、会话循环和策略接入；不依赖 server/client/launcher/prototypes |
 | `tlon.prototypes` | 随包携带的原型数据，启动时播种；不是原型管理服务 |
 | `tlon.api` | 当前有 members/mail/prototypes/observability/configs/events/arena/capabilities 八个 facade 与 runtime 装配；不依赖 server/client/launcher |

@@ -1,6 +1,6 @@
 # 执行作用域、共享额度与写入边界（P4b）
 
-状态：P4a 已通过 #189 合并，本页描述 P4b 实施契约；总体方案与验收见 [operations-plan](operations-plan.md)。调用结果仍以 [ProgramStore invocation](invocation-recovery.md) 为权威。
+状态：P4b #190 与审计收尾 #191 已合并；本文描述当前共享执行契约。总体方案与验收见 [operations-plan](operations-plan.md)，叶子结果以 [ProgramStore invocation](invocation-recovery.md) 为权威。
 
 ## 宿主作用域
 

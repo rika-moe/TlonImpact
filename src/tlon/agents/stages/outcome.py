@@ -4,7 +4,7 @@ Stages are pure transformations ``Session x Services -> StageOutcome``:
 every system-state change a stage wants (context appends, scratch
 writes, iteration/error counters, session-field writes such as the
 last LLM response / tool-result log / ACTIVE transition, and — from
-C2 — tool dispatches, the final reply, the completion signal)
+C2 — tool dispatches and the completion signal)
 is returned as data; the LoopDriver applies it. Read-only external
 queries (the LLM call) and observability (logs/events/traces) go
 through the injected :mod:`tlon.agents.stages.services` instead — they
@@ -63,14 +63,6 @@ class StageOutcome:
 
     tool_dispatches: list[ToolCall] = field(default_factory=list)
     """Tool calls to dispatch as background tasks (C2)."""
-
-    final_reply: str | None = None
-    """The session's final reply text (C2).
-
-    Captures the final reply text without executing rule actions.
-    Memory persistence is not derived from
-    this anymore (ADR 0009: summaries read the journal directly).
-    """
 
     complete: bool = False
     """Mark the session completed (C2)."""

@@ -76,11 +76,10 @@
 ### `tool`
 
 <!-- BEGIN GENERATED: agent-yaml-fields-tool -->
-`ToolConfig` 字段（3 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`ToolConfig` 字段（2 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `total_timeout` | `float` | 60.0 |  |
 | `per_timeout` | `float` | 30.0 |  |
 | `allowed_paths` | `list[str]` | ['/workspace'] |  |
 <!-- END GENERATED: agent-yaml-fields-tool -->
@@ -103,7 +102,6 @@ agent:
     cpu_limit: 1.0
     network_mode: none   # 默认断网（issue #23）；确需外联改为 "bridge" 等显式声明
   tool:
-    total_timeout: 60.0
     per_timeout: 30.0
     allowed_paths:
       - /workspace

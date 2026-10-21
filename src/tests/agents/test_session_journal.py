@@ -4,7 +4,7 @@ Pins the append/resume roundtrip (including the journaled responsibility
 snapshot), the orphan-dispatch self-healing, the "model-visible ⇒
 journaled" invariant (derive_context == session.context after a full
 driver run), crash recovery via resume_collect, boot recovery through
-``find_unfinished``/``_restore_unfinished``, original recipe and invocation
+``find_unfinished``/``_restore_session``, original recipe and invocation
 recovery, and the abnormal-termination failure replies — anchored on the
 responsibility set's human senders (ADR 0027 as revised by ADR 0028).
 """
@@ -37,7 +37,7 @@ from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.base.paths import TlonPaths
 from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
-from tlon.operations.schema import OperationError
+from tlon.operations.schema import OperationError, RecoveryMismatchError, UnknownOutcomeError
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.base import ToolResult
@@ -670,7 +670,9 @@ class TestDriverJournaling:
 
 
 class TestCrashRecovery:
-    async def test_orphan_tools_resume_to_completion(self, tmp_path: Path) -> None:
+    async def test_unsafe_orphan_preserves_known_receipt_and_blocks_continuation(
+        self, tmp_path: Path
+    ) -> None:
         mail = _mail()
         sid = f"agent1-{mail.id}"
         fast, slow = _tc("c-fast"), _tc("c-slow", "slowTool")
@@ -705,34 +707,27 @@ class TestCrashRecovery:
         await session.get_pending_tasks()["c-fast"]
         await session.cancel_pending()  # simulate the process dying
 
-        # Resume from the journal alone.
-        replay = await journal.resume(sid)
-        assert replay is not None and not replay.completed
-        by_id = {tc.id: result for tc, result in replay.pending_collect}
-        assert by_id["c-fast"].success is True
-        assert by_id["c-slow"].data["outcome"] == "unknown"
-        assert executed.count("slowTool") == 1
-
+        # No receipt can establish whether the unsafe slow write committed.
+        # Preserve its unknown, the known fast result, and block continuation.
+        with pytest.raises(UnknownOutcomeError):
+            await journal.resume(sid)
         scheduler = _make_scheduler(journal, loop_driver=driver)
-        resumed = await scheduler._restore_session(replay)
-
-        # First collect after resume consumes the journaled results.
-        await driver.resume_collect(resumed, replay.pending_collect)
-        assert resumed.state == SessionState.ACTIVE
-        assert resumed.iteration == 1
-        assert len(resumed.all_tool_results) == 2
-
-        # The session continues to completion — nothing is re-executed.
-        await _drive(driver, resumed)
-        assert resumed.is_completed
-        assert executed.count("someTool") == 1  # replayed, not re-run
-        assert executed.count("finish-turn") == 1
-        executor.send_mail.assert_not_awaited()
-        # The healed log replays cleanly end to end.
-        final = await journal.resume(sid)
-        assert final is not None and final.completed and final.end_reason == "complete"
-        assert final.pending_collect == []
-        assert await journal.derive_context(sid) == resumed.context
+        scheduler.start()
+        try:
+            await asyncio.wait_for(scheduler.wait_recovered(), 2)
+            assert await journal.end_reason(sid) == "recovery_blocked"
+            assert not scheduler._worker_task.done()
+            events = await journal.read_events(sid)
+            results = [event for event in events if event["type"] == "tool/result"]
+            assert len(results) == 1 and results[0]["tool_call"]["id"] == "c-fast"
+            assert results[0]["result"]["success"] is True
+            assert not any(event["type"] == "session/end" for event in events)
+            assert executed.count("slowTool") == 1
+            assert executed.count("someTool") == 1
+            assert executed.count("finish-turn") == 0
+            executor.send_mail.assert_not_awaited()
+        finally:
+            await scheduler.stop()
 
     async def test_restore_reads_back_responsibility(
         self, tmp_path: Path, tlon: TlonPaths, journal: SessionJournal
@@ -748,10 +743,10 @@ class TestCrashRecovery:
         await _start(journal, sid, responsibility=[mail.id])
         scheduler = _make_scheduler(journal, mailbox=mailbox)
 
-        pending = await scheduler._restore_unfinished()
-
-        assert pending is None  # no orphan dispatches → no resume_collect
-        session = scheduler._session
+        replay = await journal.resume((await journal.find_unfinished())[0])
+        assert replay is not None
+        session = await scheduler._restore_session(replay)
+        assert replay.pending_collect == []
         assert session is not None and session.id == sid
         assert [m.id for m in session.responsibility] == [mail.id]
 
@@ -817,11 +812,13 @@ class TestBootRecovery:
         journal.resolve_dispatch = _unknown_dispatch
         scheduler = _make_scheduler(journal)
 
-        pending = await scheduler._restore_unfinished()
-
-        assert pending is None
-        assert scheduler._session is None
-        journal.resume.assert_not_awaited()
+        scheduler.start()
+        try:
+            await asyncio.wait_for(scheduler.wait_recovered(), 2)
+            assert scheduler._session is None
+            journal.resume.assert_not_awaited()
+        finally:
+            await scheduler.stop()
 
     async def test_unfinished_log_resumes_with_pending_collect(
         self, journal: SessionJournal
@@ -833,9 +830,10 @@ class TestBootRecovery:
         journal.resolve_dispatch = _unknown_dispatch
         scheduler = _make_scheduler(journal)
 
-        pending = await scheduler._restore_unfinished()
-
-        session = scheduler._session
+        replay = await journal.resume((await journal.find_unfinished())[0])
+        assert replay is not None
+        pending = replay.pending_collect or None
+        session = await scheduler._restore_session(replay)
         assert session is not None and session.id == sid
         assert session.context == [{"role": "user", "content": "hi"}]
         assert session.carrier == {"trace_id": "t-1"}  # journaled carrier wins
@@ -1651,7 +1649,7 @@ async def test_wait_recovered_propagates_background_recovery_failure(
     journal: SessionJournal,
 ) -> None:
     scheduler = _make_scheduler(journal)
-    scheduler._restore_unfinished = AsyncMock(side_effect=OSError("journal unavailable"))
+    scheduler._journal.find_unfinished = AsyncMock(side_effect=OSError("journal unavailable"))
     scheduler.start()
     assert scheduler._worker_task is not None
     try:
@@ -1698,7 +1696,7 @@ async def test_resume_refuses_missing_or_changed_build_before_resolver(
     )
     await journal.append("frozen", "session/start", context=[], build_id=saved_build)
     await journal.append("frozen", "tool/dispatch", tool_calls=[_tc("lost").to_dict()])
-    with pytest.raises(ValueError, match="build is missing or changed"):
+    with pytest.raises(RecoveryMismatchError, match="build is missing or changed"):
         await journal.resume("frozen")
     resolver.assert_not_awaited()
     if saved_build is None:
@@ -1825,10 +1823,16 @@ async def test_both_scheduler_recovery_paths_verify_root_before_business(
         await journal.append("drifted", "session/end", reason="complete")
     scheduler = _make_scheduler(journal)
     scheduler._resume_invocation = AsyncMock()
-    with pytest.raises(ValueError, match="build is missing or changed"):
-        await scheduler.run()
-    scheduler._resume_invocation.assert_not_awaited()
-    assert scheduler.recovery_ready.is_set()
+    scheduler.start()
+    try:
+        await asyncio.wait_for(scheduler.wait_recovered(), 2)
+        scheduler._resume_invocation.assert_not_awaited()
+        assert scheduler.recovery_ready.is_set()
+        assert scheduler._worker_task is not None and not scheduler._worker_task.done()
+        assert await journal.end_reason("drifted") == "recovery_blocked"
+        assert await journal.list_completed() == []
+    finally:
+        await scheduler.stop()
 
 
 async def test_unknown_tool_recovers_known_rejection_after_result_journal_failure(
@@ -1887,7 +1891,7 @@ async def test_unknown_tool_recovery_requires_all_frozen_metadata(
     tc = _tc("unknown-call", "not-registered")
     metadata = driver._operation_recovery("frozen", tc, 0, None)
     del metadata[missing]
-    with pytest.raises(ValueError, match="lacks frozen invocation identity"):
+    with pytest.raises(RecoveryMismatchError, match="lacks frozen invocation identity"):
         await driver.resolve_dispatch("frozen", tc, metadata)
 
 
@@ -1908,6 +1912,6 @@ async def test_unknown_tool_recovery_refuses_later_registration(tmp_path: Path) 
         OperationRegistry([operation]), CallContext("agent1", "frozen", "unused")
     )
     driver._tool_executor.register_tool(OperationTool(execution, operation.name))
-    with pytest.raises(ValueError, match="operation definition changed"):
+    with pytest.raises(RecoveryMismatchError, match="operation definition changed"):
         await driver.resolve_dispatch("frozen", tc, metadata)
     business.assert_not_awaited()

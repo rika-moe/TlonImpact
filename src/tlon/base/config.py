@@ -136,7 +136,6 @@ class DockerRuntimeConfig(BaseModel):
 class ToolConfig(BaseModel):
     """Tool execution configuration for an agent."""
 
-    total_timeout: float = 60.0
     per_timeout: float = 30.0
     # Filesystem tools (read/write/edit/list/search) may only touch paths
     # under these absolute container directories.

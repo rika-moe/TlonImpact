@@ -61,7 +61,6 @@ def test_projection_definition_and_description_follow_operation() -> None:
     definition = tool.to_openai_definition()
     assert definition["function"]["name"] == operation.name
     assert definition["function"]["description"] == operation.description
-    assert "- title (string) (required): 标题" in tool.get_parameter_description()
-    assert "- value (JSON)" in tool.get_parameter_description()
+    assert definition["function"]["parameters"] == operation.input_schema
     definition["function"]["parameters"]["properties"].clear()
     assert "title" in tool.parameters["properties"]

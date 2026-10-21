@@ -7,8 +7,7 @@ harvests. Both are pure transformations ``Session x Services ->
 StageOutcome`` (C2): the stage declares *what* to dispatch and what the
 harvested results imply; the engine owns the concurrency (one
 background task per tool), the harvest (``session.collect_completed``),
-all session-field writes, and the external effects (mails, on-complete
-actions, completion).
+all session-field writes, and completion.
 """
 
 import json
@@ -18,7 +17,7 @@ from tlon.agents.session import AgentSession
 from tlon.agents.stages.outcome import StageOutcome
 from tlon.agents.stages.services import StageServices
 from tlon.base.events.event import EventType
-from tlon.base.llm_client import LLMResponse, ToolCall
+from tlon.base.llm_client import LLMResponse, ToolCall, validate_tool_call_ids
 from tlon.tools.base import ToolResult
 
 ENDING_TOOLS = frozenset({"finish-turn", "sleep-until", "exit-agent"})
@@ -52,7 +51,7 @@ async def act_stage_step(
 ) -> StageOutcome:
     """act stage, step half: declare this round's tool execution.
 
-    Covers the no-tool reminder, the mail-send conflict check, and the
+    Covers the no-tool reminder, identity/control conflict checks, and the
     dispatch declaration; the harvest half is act_stage_collect. The
     declared ``tool_dispatches`` are executed by the engine: one
     TOOL_EXECUTE_START event and one background task per tool call,
@@ -68,6 +67,19 @@ async def act_stage_step(
     if not response.tool_calls:
         return StageOutcome(
             context_appends=_no_tool_reminder_appends(response), advance_iteration=True
+        )
+
+    try:
+        validate_tool_call_ids(response.tool_calls)
+    except ValueError as error:
+        return StageOutcome(
+            context_appends=[
+                {
+                    "role": "user",
+                    "content": f"工具调用被拒绝：{error}。本轮没有执行任何工具，请使用不同的调用 ID 重试。",
+                }
+            ],
+            advance_iteration=True,
         )
 
     if (
@@ -98,15 +110,13 @@ async def act_stage_collect(
     ``completed`` is harvested by the engine
     (``session.collect_completed``); the stage only reads session state
     and declares everything it wants changed: the tool results to
-    record, the mail-send reply mails, the context appends, the
-    iteration advance / ACTIVE transition (continue thinking), or the
-    final reply + on-complete actions + completion signal (done).
+    record, the context appends, the iteration advance / ACTIVE
+    transition (continue thinking), or the completion signal (done).
     Completion is event-driven by explicit scheduling tools, not a loop
     boundary condition, so it stays outside the until expression.
 
     The engine applies the Outcome in this order: context appends ->
-    counters/state -> tool results -> mails -> on-complete ->
-    mark_completed.
+    counters/state -> tool results -> mark_completed.
     """
     if not completed:
         return StageOutcome()  # still waiting
@@ -161,11 +171,6 @@ async def act_stage_collect(
 
     if is_complete:
         svc.logger.info("session_completed", session_id=session.id)
-        # On-complete action expressions (phase 4b): declared here,
-        # executed by the engine with full failure isolation — they
-        # never affect the session lifecycle. The engine runs them
-        # inside the session span, so the spawn quota can attribute
-        # spawns to this session.
         outcome.complete = True
     elif not session.has_pending_tools:
         outcome.advance_iteration = True

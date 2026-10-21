@@ -1,12 +1,8 @@
-"""EffectExecutor — engine-side execution of stage-declared effects (C2).
+"""EffectExecutor — internal host notifications and observability.
 
-The pure stages declare their intended system-state changes as
-:class:`~tlon.agents.stages.outcome.StageOutcome` data; the LoopDriver
-applies the session-local fields itself and delegates the external
-effects here:
-
-- mails (``MailDraft`` -> PostOffice transaction, trace-injected;
-  failures propagate directly into the tool result)
+Business operations execute through OperationExecutor. The driver delegates
+only host-generated termination/failure mail drafts here, using the shared
+MemberMailService submission and its stable request-id deduplication.
 
 The engine-side event-publish closure for tool dispatch observability
 (TOOL_EXECUTE_START) also lives here.

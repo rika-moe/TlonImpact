@@ -1,6 +1,6 @@
 # 统一操作与可组合行为：目标设计
 
-状态：完整方案已于 2026-10-19 由用户认可，并授权提交设计 PR、开工 EPIC A；P1 最小契约已通过 #184 合并 main；P2 邮件双入口通过 #185 合并 main；P3a/P3b/P3c 已分别通过 #186/#187/#188 合并 main；P4a 已通过 #189 合并 main；P4b 共享执行作用域正在实施。实现计划见 [operations-plan](operations-plan.md)，决策摘要见 [ADR 0044](../decisions/0044-unified-operations.md)。按阶段验收推进；分支、提交和 PR 已获授权，合并仍由人类确认。
+状态：完整方案已于 2026-10-19 认可；EPIC A 的 P1–P4 与审计收尾已通过 #184–#191 合并 main。宿主操作双入口、回执、预算与写序已落地；外部审查的恢复根隔离修复独立交付。EPIC B P5–P8 尚未开工。实施与验收见 [operations-plan](operations-plan.md)，决策见 [ADR 0044](../decisions/0044-unified-operations.md)。合并由人类确认。
 
 当前落地范围：宿主 Operation、单份 schema、成员上下文与 DSL/Tool 薄入口，见 [当前操作契约](../reference/operations-reference.md)。当前调用记录与恢复边界见 [invocation-recovery](invocation-recovery.md)。当前共享预算和并发边界见 [execution-scope](execution-scope.md)。复合依赖和动态工具视图仍是后续阶段目标，不能视为当前保证。
 
@@ -99,6 +99,8 @@ PostOffice 的持久提交与 request_id 去重保留；state-put 与记录同�
 无副作用的独立读取可并发；同成员写操作按模型声明的调用顺序串行执行，复合写操作作为同一串行域；子调用重入当前执行上下文，不再抢自己持有的锁。原有并发读写行为的收紧在 P4 明确验收，不能偷偷变化。
 
 finish-turn/sleep-until/exit-agent 仍是独占的调度请求，等本轮排空后由 scheduler 提交；不得与普通操作混批，不得封装进复合操作后隐藏结束/睡眠/死亡。run-loop 是 Behavior 的会话控制边界，允许 Behavior 调用但不开放给复合 Operation 或 LLM，防止持有成员写执行域时再开启会话造成重入/死锁。这是控制流语义，不是按业务名称写在 LoopDriver 中的例外。
+
+当前宿主例外：终止/失败回信由内部 EffectExecutor 委托 MemberMailService，收件人限会话责任集合中的人类，内容由宿主生成，使用固定 request_id 去重。它不经过业务 Operation 的 invocation/write gate，不消耗模型 token；这是通知通道，不是授予模型第二个任意发信入口。P7 实施授权时保留宿主通知在只读业务阶段可达，普通邮件继续受授权闸约束；取消/截止仍检查。验收见实施计划。
 
 ## 6. 权限、工具视图与状态
 

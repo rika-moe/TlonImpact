@@ -14,6 +14,7 @@ from tlon.agents.context_builder import BuiltContext
 from tlon.agents.context_pressure import ContextPressure
 from tlon.agents.loop_driver import LoopDriver
 from tlon.agents.program_store import ProgramStore
+from tlon.agents.recovery import RecoveryBlockedError
 from tlon.agents.session import AgentSession
 from tlon.agents.session_journal import SessionJournal
 from tlon.agents.stages.critique import critique_stage
@@ -228,11 +229,14 @@ async def test_stable_program_session_does_not_bypass_unknown_on_reentry(tmp_pat
 
     driver.step_session = unknown  # type: ignore[method-assign]
     invocation = {"program_effect": {"run_id": "program", "index": 4}}
-    for _ in range(2):
-        with pytest.raises(UnknownOutcomeError):
-            await scheduler.run_invocation(recipe, "work", [], None, invocation)
-    assert len(sessions) == 2 and sessions[0] == sessions[1]
-    assert len(await journal.find_unfinished()) == 1
+    with pytest.raises(UnknownOutcomeError):
+        await scheduler.run_invocation(recipe, "work", [], None, invocation)
+    with pytest.raises(RecoveryBlockedError):
+        await scheduler.run_invocation(recipe, "work", [], None, invocation)
+    assert len(sessions) == 1
+    assert await journal.find_unfinished() == []
+    assert await journal.list_completed() == []
+    assert await journal.end_reason(sessions[0]) == "recovery_blocked"
     assert not any(
         event["type"] == "session/end" for event in await journal.read_events(sessions[0])
     )

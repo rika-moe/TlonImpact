@@ -4,8 +4,8 @@ Steps sessions through the think -> act -> observe cycle and collects
 background tool results. The driver runs on injected capabilities only
 (C2): identity/spec as plain data, :class:`StageServices` for
 queries/observability, :class:`EffectExecutor` for the external effects
-declared in stage outcomes, plus the tool executor, the on-complete
-runner, and a state-derivation closure. There is no host/Agent
+for internal notifications, plus the tool executor
+and a state-derivation closure. There is no host/Agent
 back-reference — the Agent <-> LoopDriver runtime cycle is broken.
 
 ``LoopSpec.stages`` is a vector of whitelisted stage forms executed in
@@ -69,9 +69,15 @@ from tlon.base.execution import (
     bind_execution,
     current_execution,
 )
-from tlon.base.llm_client import ContextWindowExceededError, LLMResponse, ToolCall
+from tlon.base.llm_client import (
+    ContextWindowExceededError,
+    LLMResponse,
+    ToolCall,
+    validate_tool_call_ids,
+)
 from tlon.base.logger import get_logger
 from tlon.operations.core import CallContext
+from tlon.operations.schema import RecoveryMismatchError, UnknownOutcomeError
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.member_mail import MailDraft
 from tlon.tools.base import ToolResult
@@ -340,11 +346,7 @@ class LoopDriver:
         A non-None ``outcome.response`` updates the round's response
         chain and is recorded as the session's last LLM response.
         Application order: context -> scratch -> counters/state ->
-        tool results -> response chain -> tool dispatch -> mails ->
-        on-complete actions -> completion —
-        equivalent to the pre-C2 interleaving (on-complete ->
-        mark_completed stays inside the session
-        span, so spawn quota attribution is unchanged).
+        tool results -> response chain -> tool dispatch -> completion.
 
         Event sourcing (ADR 0007): every session-state change is appended
         to the journal *before* the in-memory mutation; a failed append
@@ -396,6 +398,7 @@ class LoopDriver:
             session.set_last_llm_response(outcome.response)
             response = outcome.response
         if outcome.tool_dispatches:
+            validate_tool_call_ids(outcome.tool_dispatches)
             build_id = await self._journal.verify_root(session.id)
             # Declared by act; the concurrency is the engine's: one
             # background task and one TOOL_EXECUTE_START event per tool.
@@ -759,10 +762,10 @@ class LoopDriver:
             or not isinstance(metadata["call_path"], list)
             or not metadata["call_path"]
         ):
-            raise ValueError("Dispatch lacks frozen invocation identity")
+            raise RecoveryMismatchError("Dispatch lacks frozen invocation identity")
         build_id = await self._journal.verify_root(session_id)
         if metadata.get("build_id") != build_id:
-            raise ValueError("Dispatch runtime build changed")
+            raise RecoveryMismatchError("Dispatch runtime build changed")
         tool = (
             self._tool_executor.get_tool(tc.function_name)
             if self._tool_executor.has_tool(tc.function_name)
@@ -770,7 +773,7 @@ class LoopDriver:
         )
         definition_id = tool.definition_id if tool is not None else None
         if metadata["definition_id"] != definition_id:
-            raise ValueError("Dispatch operation definition changed")
+            raise RecoveryMismatchError("Dispatch operation definition changed")
         context = CallContext(
             self._identity.id,
             session_id,
@@ -780,6 +783,10 @@ class LoopDriver:
             execution=current_execution(),
         )
         _, result = await self.execute_one_tool(session_id, tc, context, journal_result=False)
+        if not result.success and result.error and result.error.startswith("UnknownOutcomeError:"):
+            # Recovery cannot collect an uncertain effect as a definite tool result.
+            # The scheduler either waits for safe reconciliation or blocks the root.
+            raise UnknownOutcomeError(result.error, result.data or {})
         return result
 
     # ── Synchronous message processing (for tests) ──

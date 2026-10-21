@@ -20,6 +20,7 @@ from tlon.agents.program_driver import ProgramDriver
 from tlon.agents.program_store import ProgramRun, ProgramStore
 from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
+from tlon.agents.recovery import RecoveryBlockedError, blocked_reason, blocks_recovery
 from tlon.agents.reflection import ReflectionEngine
 from tlon.agents.scheduler import SessionScheduler
 from tlon.agents.session import AgentSession
@@ -202,13 +203,10 @@ class MemberRuntime(Member):
         self._operations = DSLAdapter(operation_executor)
         self._builtins = {**builtins, **self._operations.builtins()}
         if services is not None:
+            from tlon.agents.assembly import REPRODUCTION_TOOLS
+
             for operation in operation_executor.registry.definitions():
-                if not services.is_full and operation.name in {
-                    "member-spawn",
-                    "prototype-write",
-                    "behavior-propose",
-                    "capability-propose",
-                }:
+                if not services.is_full and operation.name in REPRODUCTION_TOOLS:
                     continue
                 services.tool_executor.register_tool(
                     OperationTool(operation_executor, operation.name)
@@ -237,10 +235,20 @@ class MemberRuntime(Member):
         self._program_task: asyncio.Task[None] | None = None
         self._deferred_boot: list[MemberRule] = []
         self._journal = (
-            SessionJournal(member_id, services.tlon_paths, verify_root=self._verify_session_root)
+            SessionJournal(
+                member_id,
+                services.tlon_paths,
+                verify_root=self._verify_session_root,
+                verify_invocation=self._verify_invocation,
+            )
             if services
             else (
-                SessionJournal(member_id, tlon_paths, verify_root=self._verify_session_root)
+                SessionJournal(
+                    member_id,
+                    tlon_paths,
+                    verify_root=self._verify_session_root,
+                    verify_invocation=self._verify_invocation,
+                )
                 if tlon_paths is not None
                 else None
             )
@@ -597,8 +605,9 @@ class MemberRuntime(Member):
         for record in await asyncio.to_thread(self._program_store.pending):
             if not self._can_schedule():
                 break
-            rule, event, payload = self._program_input(record)
             try:
+                await asyncio.to_thread(self._program_store.ensure_root, record.run_id)
+                rule, event, payload = self._program_input(record)
                 completed = await self._run_rule(rule, event, payload, run_id=record.run_id)
                 mail = payload.get("mail") if isinstance(payload, dict) else None
                 if not completed:
@@ -606,6 +615,14 @@ class MemberRuntime(Member):
                 if isinstance(mail, Mail):
                     await self._complete_dispatch(mail.id, rule.name)
             except Exception as error:
+                if blocks_recovery(error):
+                    await asyncio.to_thread(
+                        self._program_store.fail, record.run_id, blocked_reason(error)
+                    )
+                    self._logger.error(
+                        "member_program_recovery_blocked", run_id=record.run_id, error=str(error)
+                    )
+                    continue
                 self._logger.error(
                     "member_program_recovery_failed",
                     run_id=record.run_id,
@@ -712,9 +729,12 @@ class MemberRuntime(Member):
                         continue_trace(trigger_event.trace_id, trigger_event.span_id)
                     )
                 await driver.run(rule, env)
-        except UnknownOutcomeError:
-            raise
         except (EvalError, ValueError) as error:
+            if blocks_recovery(error):
+                await asyncio.to_thread(self._program_store.fail, run_id, blocked_reason(error))
+                raise
+            if isinstance(error, UnknownOutcomeError):
+                raise
             await asyncio.to_thread(self._program_store.fail, run_id, str(error))
             self._state = MemberState.ERROR
             self._logger.warning(
@@ -866,6 +886,9 @@ class MemberRuntime(Member):
             if registry
             else None,
             resume_invocation=self._resume_invocation,
+            block_invocation=self._block_invocation,
+            verify_invocation=self._verify_invocation,
+            needs_continuation=self._needs_continuation,
             execution_factory=self._session_execution,
             maintenance_factory=self._maintenance_execution,
         )
@@ -898,7 +921,43 @@ class MemberRuntime(Member):
             invocation,
         )
 
+    async def _block_invocation(self, invocation: dict[str, Any], reason: str) -> None:
+        effect = invocation.get("program_effect")
+        if (
+            effect is not None
+            and await asyncio.to_thread(self._program_store.get_run, effect["run_id"]) is not None
+        ):
+            await asyncio.to_thread(self._program_store.fail, effect["run_id"], reason)
+
+    async def _needs_continuation(self, invocation: dict[str, Any]) -> bool:
+        effect = invocation.get("program_effect")
+        if effect is None:
+            return False
+        record = await asyncio.to_thread(self._program_store.get_run, effect["run_id"])
+        if record is not None and (record.completed or record.error is not None):
+            return False
+        found, _ = await asyncio.to_thread(
+            self._program_store.get_effect,
+            effect["run_id"],
+            effect["index"],
+            effect["name"],
+            effect["args_edn"],
+        )
+        return not found
+
+    async def _verify_invocation(self, invocation: dict[str, Any]) -> None:
+        effect = invocation.get("program_effect")
+        if effect is None:
+            return
+        record = await asyncio.to_thread(self._program_store.get_run, effect["run_id"])
+        if record is None:
+            raise RecoveryBlockedError("Frozen session parent program is missing")
+        if record.error is not None:
+            raise RecoveryBlockedError(record.error)
+        await asyncio.to_thread(self._program_store.ensure_root, effect["run_id"])
+
     async def _resume_invocation(self, session: AgentSession) -> None:
+        await self._verify_invocation(session.invocation)
         effect = session.invocation.get("program_effect")
         if effect is None:
             return

@@ -93,9 +93,15 @@ class ProgramStore:
             if self.database is None:
                 for run_id, _, _ in items:
                     previous = self._roots.get(run_id)
+                    frozen = self._runs.get(run_id)
+                    if frozen is not None and frozen.error is not None:
+                        continue
                     if previous is not None and previous != self.build_id:
                         raise RecoveryMismatchError("Runtime build changed for frozen root")
                 for run_id, rule_edn, input_edn in items:
+                    frozen = self._runs.get(run_id)
+                    if frozen is not None and frozen.error is not None:
+                        continue
                     self._root(run_id)
                     if run_id not in self._runs:
                         self._runs[run_id] = ProgramRun(run_id, rule_edn, input_edn, False)
@@ -103,6 +109,21 @@ class ProgramStore:
             with self._connection() as connection:
                 records: list[ProgramRun] = []
                 for run_id, rule_edn, input_edn in items:
+                    failed = connection.execute(
+                        "SELECT run_id,rule_edn,input_edn,completed,error FROM runs WHERE run_id=? AND error IS NOT NULL",
+                        (run_id,),
+                    ).fetchone()
+                    if failed is not None:
+                        records.append(
+                            ProgramRun(
+                                str(failed[0]),
+                                str(failed[1]),
+                                str(failed[2]),
+                                bool(failed[3]),
+                                failed[4],
+                            )
+                        )
+                        continue
                     self._root(run_id, connection)
                     connection.execute(
                         "INSERT OR IGNORE INTO runs(run_id,rule_edn,input_edn) VALUES (?,?,?)",
@@ -124,8 +145,6 @@ class ProgramStore:
                 records = [
                     run for run in self._runs.values() if not run.completed and run.error is None
                 ]
-                for run in records:
-                    self._root(run.run_id)
                 return records
             with self._connection() as connection:
                 records = [
@@ -134,9 +153,23 @@ class ProgramStore:
                         "SELECT run_id,rule_edn,input_edn FROM runs WHERE completed=0 AND error IS NULL ORDER BY rowid"
                     )
                 ]
-                for run in records:
-                    self._root(run.run_id, connection)
                 return records
+
+    def get_run(self, run_id: str) -> ProgramRun | None:
+        """Inspect durable lifecycle status without authorizing execution."""
+        with self._lock:
+            if self.database is None:
+                return self._runs.get(run_id)
+            with self._connection() as connection:
+                row = connection.execute(
+                    "SELECT run_id,rule_edn,input_edn,completed,error FROM runs WHERE run_id=?",
+                    (run_id,),
+                ).fetchone()
+                return (
+                    ProgramRun(str(row[0]), str(row[1]), str(row[2]), bool(row[3]), row[4])
+                    if row
+                    else None
+                )
 
     @staticmethod
     def _check(

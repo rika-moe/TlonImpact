@@ -38,11 +38,10 @@ class DSLAdapter:
     def owns(self, call: BuiltinCall) -> bool:
         return self._builtins.get(call.name) is call.builtin
 
-    def prepare(self, call: BuiltinCall) -> bool:
-        """Validate before durable dispatch; return whether replay is unsafe."""
+    def prepare(self, call: BuiltinCall) -> None:
+        """Validate arguments before durable dispatch."""
         operation = self._executor.registry.get(call.name)
         validate(operation.input_schema, self._arguments(call.args))
-        return "write" in operation.effects and not operation.retry_safe
 
     async def replay(self, call: BuiltinCall, context: CallContext) -> tuple[bool, Any]:
         found, value = await self._executor.replay(call.name, self._arguments(call.args), context)
@@ -71,10 +70,6 @@ class OperationTool:
     def definition_id(self) -> str:
         return self._executor.definition_id(self._operation)
 
-    @property
-    def default_timeout(self) -> float | None:
-        return self._operation.default_timeout
-
     def to_openai_definition(self) -> dict[str, Any]:
         return {
             "type": "function",
@@ -96,17 +91,6 @@ class OperationTool:
     @property
     def parameters(self) -> dict[str, Any]:
         return self._operation.input_schema
-
-    def get_parameter_description(self) -> str:
-        schema = self.parameters
-        required = schema.get("required", [])
-        lines = []
-        for name, field in schema.get("properties", {}).items():
-            kind = field.get("type", "JSON") if isinstance(field, dict) else "JSON"
-            description = field.get("description", "") if isinstance(field, dict) else ""
-            marker = " (required)" if name in required else ""
-            lines.append(f"  - {name} ({kind}){marker}: {description}")
-        return "\n".join(lines) if lines else "  (no parameters)"
 
     async def execute_context(
         self, arguments: dict[str, Any], context: CallContext | None = None
