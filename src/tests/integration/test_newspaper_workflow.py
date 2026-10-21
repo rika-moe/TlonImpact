@@ -302,7 +302,13 @@ async def test_member_runtime_recovers_a_read_publication_before_program_complet
 
         async def recovery_completed() -> None:
             for _ in range(300):
-                if not member._program_store.pending():
+                # Recovery precedes deferred boot work. An empty mail queue
+                # or a gap between those runs does not mean startup is idle.
+                if (
+                    not member._deferred_boot
+                    and member.active_session_count == 0
+                    and not member._program_store.pending()
+                ):
                     return
                 await asyncio.sleep(0.01)
             raise AssertionError("startup recovery did not complete")
