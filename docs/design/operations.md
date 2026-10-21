@@ -1,12 +1,12 @@
 # 统一操作与可组合行为：目标设计
 
-状态：完整方案已于 2026-10-19 认可；EPIC A 与恢复隔离审计收尾已通过 #184–#192 合并 main。EPIC B P5 已通过 #193 合并；P6 已在本分支完成验收、待合并，P7–P8 尚未开工。实施与验收见 [operations-plan](operations-plan.md)，决策见 [ADR 0044](../decisions/0044-unified-operations.md)。合并由人类确认。
+状态：2026-10-21，EPIC A #184–#192、EPIC B P5 #193 与 P6 #194 已合并 main。用户决定优先保持 tools 稳定以利缓存复用，P7 暂停；P8a 独立完成文档收口与旧机制审计，其余 P8 范围未实施。阶段与验收见 [operations-plan](operations-plan.md)，决策见 [ADR 0044](../decisions/0044-unified-operations.md)。合并由人类确认。
 
-当前落地范围：宿主 Operation、单份 schema、成员上下文与 DSL/Tool 薄入口，见 [当前操作契约](../reference/operations-reference.md)。当前调用记录与恢复边界见 [invocation-recovery](invocation-recovery.md)。当前共享预算和并发边界见 [execution-scope](execution-scope.md)。P5 复合依赖已落地，P6 统一纯条件在本分支验收；P7 动态工具视图仍是后续目标。
+当前落地范围：宿主 Operation、单份 schema、成员上下文与 DSL/Tool 薄入口，见 [当前操作契约](../reference/operations-reference.md)。当前调用记录与恢复边界见 [invocation-recovery](invocation-recovery.md)。当前共享预算和并发边界见 [execution-scope](execution-scope.md)。P5 复合依赖与 P6 统一纯条件已落地；当前工具面来自成员装配及运行根冻结目录，不提供请求级动态视图。当前与未实施边界见 [审计记录](operations-audit.md)。
 
 ## 1. 目标与范围
 
-统一“能力定义”，分离 DSL 与 LLM 的调用入口：同一操作只定义一次输入、输出、实现和效果，可以被 Behavior 直接调用，也可以按需作为 Tool 暴露给模型。复合操作能够引用其他复合操作。不同成员及同一成员的不同会话阶段，可以有不同工具视图。
+统一“能力定义”，分离 DSL 与 LLM 的调用入口：同一操作只定义一次输入、输出、实现和效果，可以被 Behavior 直接调用，也可以按需作为 Tool 暴露给模型。复合操作能够引用其他复合操作。不同成员可因装置、服务和信任约束形成不同工具集合；同一会话内 tools 尽量保持固定，阶段变化不再作为自动增删工具的建设目标。
 
 本次不重写 tlosure、不更换 SQLite/PostOffice、不引入外部工作流引擎，不增加第二种流程语言，不改变邮件作为成员通信通道的选择。先让一个真实操作贯通两种入口，再逐域收敛；不能先拆掉可工作的程序或会话驱动。
 
@@ -100,68 +100,39 @@ PostOffice 的持久提交与 request_id 去重保留；state-put 与记录同�
 
 finish-turn/sleep-until/exit-agent 仍是独占的调度请求，等本轮排空后由 scheduler 提交；不得与普通操作混批，不得封装进复合操作后隐藏结束/睡眠/死亡。run-loop 是 Behavior 的会话控制边界，允许 Behavior 调用但不开放给复合 Operation 或 LLM，防止持有成员写执行域时再开启会话造成重入/死锁。这是控制流语义，不是按业务名称写在 LoopDriver 中的例外。
 
-当前宿主例外：终止/失败回信由内部 EffectExecutor 委托 MemberMailService，收件人限会话责任集合中的人类，内容由宿主生成，使用固定 request_id 去重。它不经过业务 Operation 的 invocation/write gate，不消耗模型 token；这是通知通道，不是授予模型第二个任意发信入口。P7 实施授权时保留宿主通知在只读业务阶段可达，普通邮件继续受授权闸约束；取消/截止仍检查。验收见实施计划。
+当前宿主例外：终止/失败回信由内部 EffectExecutor 委托 MemberMailService，收件人限会话责任集合中的人类，内容由宿主生成，使用固定 request_id 去重。它不经过业务 Operation 的 invocation/write gate，不消耗模型 token；这是通知通道，不是授予模型第二个任意发信入口。P7 已暂停，当前没有新增只读授权阶段；取消/截止仍检查。该例外与四个 DSL 宿主查询在审计中单列，不宣称所有外部读取与通知都已进入 Operation。
 
-## 6. 权限、工具视图与状态
+## 6. 稳定工具面与执行边界
 
-### 6.1 三种不同事实
+### 6.1 定义、装配与执行是不同事实
 
-1. **定义存在**：目录中的宿主/受信复合操作。
-2. **执行获准**：宿主维护的成员授权，及装置/信任/资源/当前状态约束。
-3. **本次可见**：Behavior 为本次模型请求选择的工具视图。
+目录定义存在，不代表成员装配了所需服务；artifact 被批准，不会授予调用者额外路径、邮箱、配额或信任权限。当前按成员装配宿主服务，复合调用继承原成员上下文；执行约束仍由相应领域服务落实。P5 已处理必需依赖缺失及冻结定义，P6 已统一纯条件。
 
-执行授权放在宿主管理的成员配置，不能通过 Behavior、人格或 artifact 改写。初始实现用明确的 operation allowlist 加已有装置/信任约束；资源级限制沿用路径守卫、邮箱归属、生命周期配额等领域检查，不发明通用 ABAC 语言。涉及邮件/私有状态等现有成员基础操作，随装配明确生成初始授权，而非缺配置默认允许所有。
+当前不存在统一的成员 operation allowlist、请求级 ToolView、宿主只读/允许写授权阶段或运行中统一撤权闸。业务 state-put 写入 phase 或 approved=true 不构成授权。不能把领域检查和定义冻结说成已实现原 P7 的全部授权保证。
 
-授权以最终宿主操作为执行底线，复合依赖不会产生新权限；成员可以禁止某个复合入口，但批准该入口不自动授予其依赖权限。工具视图投影先过滤不可执行的依赖闭包，运行时仍逐叶检查实际资源。复合依赖不需要全部出现在 LLM 工具列表中。
+### 6.2 当前决策：tools 尽量保持固定
 
-工具视图 = Behavior 本阶段候选操作 ∩ 当前成员可执行操作 ∩ 本入口可暴露操作。默认空列表；未知名称在加载时拒绝；与权限求交而被过滤的项给出可观测原因，避免把成员级差异误报成无效 Behavior。视图只是发现与选择面，不是授权。
+用户于 2026-10-21 决定暂停 P7，优先保持发送给模型的工具名称、描述、schema 与顺序稳定，避免随业务 phase 或每轮状态频繁增删工具。不同成员可以有不同的稳定工具集合；稳定范围是同一配置与运行会话，不要求所有成员共享一份全局工具面，也不保证跨部署永久不变。
 
-### 6.2 动态工具视图
+当前会话在装配时创建根级 ToolExecutor，复合定义从根快照恢复；StageServices.think 读取这一目录的工具定义。当前没有 Behavior :tools 字段、逐请求视图 journal，也没有新加缓存控制、排序算法或缓存命中率实测。新批准定义进入后续装配，不静默替换旧根定义。具体链路与例外见 [审计记录](operations-audit.md)。
 
-Behavior 的 SessionRecipe 增加一个 `:tools` 纯表达式，返回操作名向量。它从显式的上下文数据选择，不新建状态机 DSL。每次 StageServices.think 发模型请求前求值，按名称稳定排序，冻结名称/schema/定义指纹/上下文版本和 request_id 并写入 journal；排序不采用随机目录扫描顺序。
+稳定工具面与执行授权分开：以后若需要更细授权或即时撤权，应独立讨论和实现，不能为了缓存延迟权限检查，也不能把“工具仍显示”当作获准执行。原 P7 的请求级动态筛选、allowlist 和受控阶段均保留为暂停方案，不作为当前系统保证或 P8a 验收前提。
 
-LLM 返回的每个调用必须属于该请求冻结视图，不能因为工具刚被新增就接受伪造名称。执行前再查当前授权、装置、业务状态及撤销，权限已收紧即拒绝；下一次模型请求才使用新的视图。重放模型请求沿用已记录视图与响应，不重新问模型或按现在时间重算过去的选择。
+### 6.3 宿主通知与人工批准
 
-时间先作为记录过的外部读取或宿主事件传入视图上下文，纯选择表达式不直接读时钟。同一成员的 business phase（如 reading/drafting）与 scheduler 的 active/waiting/sleeping/dead 不混用。业务 phase 可通过既有私有结构化状态保存，用于选择视图，本身不构成授权；模型不能伪造 runtime context。
+终止/失败通知仍按既有受限宿主路径发送给责任集合中的人类，使用固定 request_id；它不是模型可任意使用的发信入口。本次不新增只读阶段或草稿审批系统。未来需要批准流程时，必须绑定成员、内容、收件人和用途，不能依据模型自己写入的 approved=true 通过授权。
 
-仅改变视图不会禁止 DSL 绕路执行。需要强制“当前不可发送”时，管理员为成员声明宿主执行约束；首版提供既有成员调度/信任约束与明确的只读/允许写阶段约束，默认拒绝未知受控阶段。受控授权阶段与撤权元数据由宿主单独维护，不允许通用 state-put、Behavior 或模型修改；受信事件/管理动作触发宿主转换，在只读阶段也能执行这一宿主控制转换，不依赖普通业务 write。业务 phase 不得代替该授权事实。Behavior 可选择更窄的视图，但不能移除宿主约束。每个叶子写入在提交前检查；检查与状态变更须在同成员串行域内完成，已经开始的外部调用不声称可撤回。
+## 7. 当前端到端链路
 
-### 6.3 需要人工批准的业务
+宿主 mail-search、model-call、mail-send 各有单份 Operation 契约。summarize-thread 可以组合邮件查询与模型调用；send-thread-summary 再引用 summarize-thread 并发送邮件。两层复合以 version=2 artifact 提案，批准绑定传递依赖指纹，Behavior 或模型 Tool 调用同一个实现。完整格式见 [capabilities](capabilities.md) 与 [操作参考](../reference/operations-reference.md)。
 
-本 EPIC 不新建通用审批平台。示例中的发送批准，使用持久草稿/记录和宿主验证过的人类动作；批准绑定 member_id、内容哈希、收件人及用途，修改正文/收件人即失效。不能依据 LLM 在 state-put 写的 approved=true 授权。
+1. Prototype 渲染并复制完整 Behavior，创建独立 Agent；模型、人格与私有状态分别归属实例，公共复合源码不复制进每份 Behavior。Prototype 显式依赖声明属于剩余 P8 范围，尚未实现。
+2. Agent 按装置、信任和实际服务装配目录；缺失依赖拒载，定义与已批准 artifact 坏闭包隔离。
+3. Behavior 可直接调用 summarize-thread；LLM 通过 OperationTool 调用同一操作。会话工具集合保持稳定，不以 reading/sending 阶段自动增删。
+4. 程序和会话冻结各自所需复合定义，叶子调用共享原成员预算、取消/截止与写 gate；成功历史恢复优先于重新执行，不重复入箱。宿主无去重能力的未决调用保持 unknown。
+5. 纯操作 has-actionable-facts 可用于规则 when、会话 until 与 stage if，只见调用点显式传入的数据。不存在 tools 选择表达式。
 
-首版动态视图验收采用“管理员撤销发送权限”和“宿主只读阶段”即可完成，不以新的草稿审批系统为依赖。将来需要批准流程时按以上对象绑定约束单独设计。
-
-## 7. 端到端例子
-
-以下是目标调用示意，不是当前可运行格式；schema 完整字段由实施阶段 reference 定稿。
-
-宿主提供 `mail-read-thread`、`model-complete`、`mail-send`。复合操作定义：
-
-```clojure
-; summarize-thread 的 impl，input/output schema 在同一 artifact 定义
-(fn [input]
-  (let [thread (mail-read-thread {:thread-id (get input :thread-id)})
-        response (model-complete {:prompt (str "请摘要：" (get thread :content))})]
-    {:summary (get response :content)}))
-
-; 再组合已有复合操作，不展开/复制 summarize-thread
-(fn [input]
-  (let [summary (summarize-thread {:thread-id (get input :thread-id)})]
-    (mail-send {:to (get input :to)
-                :content (get summary :summary)})))
-```
-
-第二个操作命名 `send-thread-summary`，其效果为 read+write；上下游输入/输出在实际调用时校验，模型费用计入原成员预算。
-
-1. Prototype 打包 Behavior、默认参数和上述操作依赖说明，创建独立 Agent A/B；不复制操作源码进入每份 Behavior。
-2. A 只有读邮件/模型权限，B 还有发送权限；A 能使用 summarize-thread，不能执行 send-thread-summary。
-3. Behavior 可直接调用 summarize-thread；同一操作也能投影成工具供 LLM 调用，无需再写 Python SummaryTool。
-4. B 在 reading 阶段视图为 mail-read-thread/summarize-thread；sending 阶段可增加 send-thread-summary；内部 model-complete 不必暴露。
-5. B 的模型响应生成后管理员撤销发送权限，执行时 mail-send 仍被拒绝；如果摘要步骤已经完成，其消费和结果保留，不伪造整体原子回滚。
-6. 发送成功后、工具结果入会话前崩溃，恢复用稳定调用 ID 与 PostOffice 回执对账；不得再次投递。宿主无去重能力的调用保持 unknown。
-
-所有纯条件位置另用纯操作 `has-actionable-facts`：同一函数可用于规则 when、会话 until、stage if 和 tools 选择表达式，只见调用点显式传入的数据。
+当前已通过的两层复合、两入口、恢复与纯条件证据见 [实施计划](operations-plan.md)。原 P7 的 A/B allowlist、动态阶段视图、生成期间撤权与逐请求快照验收没有执行，不能据此声称已通过。
 
 ## 8. 保留、删除与统一
 
@@ -178,7 +149,7 @@ LLM 返回的每个调用必须属于该请求冻结视图，不能因为工具�
 | LoopDriver 按 sendEmail/forwardMail 名称提交、重复邮件参数规则 | 删除/统一 | P2 邮件垂直切换，同 PR 删除旧路径；统一邮件操作涵盖转发、回复、endorsement、mentor cc |
 | ProgramEffects/ToolExecutor 中重复业务分发与结果转换 | 删除/收敛 | P4 只留入口适配/驱动职责；领域执行进入共享操作实现 |
 | 纯条件的多张词汇白名单 | 统一 | P6 统一纯操作准入，保留不同数据作用域；读取状态先物化，不注入隐藏 env |
-| 全量工具注册列表就是模型工具列表 | 删除 | P7 使用请求级动态视图；注册表不再可变 unregister 来模拟阶段 |
+| 静态装配目录投影为模型工具集合 | 保留当前机制 | tools 尽量固定；P7 请求级动态视图暂停，不用注册/注销模拟阶段 |
 | 旧 MemberCapabilities 装配容器名称 | 改名 MemberServices | P4b 一次改调用点，无旧别名 |
 | 旧名称/旧 schema/旧存储的自动兼容 | 不增加 | 每阶段原子切换所属操作及调用者，旧入口直接删除；已有不兼容运行明确拒绝，禁止静默清库 |
 
@@ -190,8 +161,10 @@ LLM 返回的每个调用必须属于该请求冻结视图，不能因为工具�
 - [Temporal workflow definition](https://docs.temporal.io/workflow-definition)：借鉴确定性程序与外部调用结果记录的分离；沿用 Tlon SQLite 实现，不引入 Temporal。重放机制不等于外部调用 exactly-once。
 - [jsonschema 校验](https://python-jsonschema.readthedocs.io/en/stable/validate/)：复用已锁定成熟依赖的 schema/数据校验，不手写验证器。统一的是操作边界契约，不给 tlosure 加静态类型系统。
 
-代价：所有宿主操作需要明确输出契约；动态工具暴露增加请求快照；依赖与恢复需要定义快照和效果分析。这些直接支撑组合与恢复，不增加远程插件、版本协商、通用审批或分布式调度等未要求能力。
+代价：所有宿主操作需要明确输出契约；原 P7 的动态工具快照与统一授权建设已暂停；依赖与恢复需要定义快照和效果分析。这些直接支撑组合与恢复，不增加远程插件、版本协商、通用审批或分布式调度等未要求能力。
 
-## 10. 完成标准
+## 10. 当前完成边界
 
-不能以“有 Operation 类”或“工具数没有变化”为完成。必须由同一个复合操作同时跑通 DSL 与 LLM 入口，复合调用复合、纯函数跨条件复用、不同成员/阶段的工具视图、运行时撤权、嵌套预算及崩溃恢复；旧路径确实删除，完整质量门及真实邮件冒烟通过。逐阶段证据见 [实施计划](operations-plan.md)。
+P1–P6 已验收同一复合操作经 DSL/LLM 两入口、复合引用复合、纯函数跨条件复用、嵌套预算及崩溃恢复。P8a 记录旧机制审计、两项活跃例外与现行文档收口，并通过完整质量门和真实邮件冒烟复核。逐阶段证据见 [实施计划](operations-plan.md) 和 [审计记录](operations-audit.md)。
+
+原目标中的逐请求动态视图与运行中统一撤权随 P7 暂停；Prototype 显式依赖声明等剩余 P8 范围未实现。P8a 不据此关闭整个 EPIC B，也不把“工具集合稳定”当作已完成全部授权目标。

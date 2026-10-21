@@ -1,6 +1,6 @@
 # 调用记录与恢复权威（P4a）
 
-状态：P4a #189、P4b #190 与审计收尾 #191 已合并；本文描述当前恢复契约及外部审查后的根隔离决策。总体设计见 [operations](operations.md)，验收见 [operations-plan](operations-plan.md)，共享执行见 [execution-scope](execution-scope.md)。
+状态：EPIC A、P5 #193 与 P6 #194 已合并，P7 暂停；本文描述当前恢复契约及外部审查后的根隔离决策。总体设计见 [operations](operations.md)，验收见 [operations-plan](operations-plan.md)，共享执行见 [execution-scope](execution-scope.md)。
 
 ## 所有权
 
@@ -46,7 +46,7 @@ LoopDriver 的 tool/dispatch 保存 root/path/call_id/build_id/definition_id。S
 
 新 ProgramStore 使用明确的 SQLite user_version。包含旧表而没有新版本标记的数据库直接拒绝打开，不转换、不清库，不改写原历史。旧 session 缺少冻结身份时同样拒绝恢复；只读浏览已有 session 事件不受影响。使用者需要自行决定旧运行的处理方式，不能为通过恢复测试删除真实 ~/.tlon。
 
-P4b 使用同一数据库的 budgets/model_allocations 记录额度与预留，模型完整响应仍保存在 invocations；删除驱动局部计数、_HOST_QUERIES pure 重写与旧 MemberCapabilities 装配容器名。当前 ProgramStore 格式版本为 2，旧版本明确拒绝，不转换、不清库。P4a/P4b 及收尾已合并；复合依赖与动态视图仍属于 EPIC B。
+P4b 使用同一数据库的 budgets/model_allocations 记录额度与预留，模型完整响应仍保存在 invocations；删除驱动局部计数、_HOST_QUERIES pure 重写与旧 MemberCapabilities 装配容器名。当前 ProgramStore 格式版本为 2，旧版本明确拒绝，不转换、不清库。P4a/P4b 及收尾已合并；P5 已交付复合依赖快照。P7 动态视图与统一授权尚未实施，现已暂停。
 
 
 P4b 将 sleeping?、running?、lazy?、member-roster 收敛为非确定性只读查询，ProgramDriver 不再按名称改写 pure；每次外部读取采样并记录，重放返回原值。P6 进一步禁止其进入任何纯条件：读取放在 actions，已记录的返回值再参与计算。when、until 和 stage-if 共用纯函数准入与显式数据，Builtin.read_only 字段随旧条件准入一起删除。装配容器与入口现为 MemberServices / assemble_member_services，构造参数 services，无旧名称别名。
@@ -59,8 +59,10 @@ P4b 将 sleeping?、running?、lazy?、member-roster 收敛为非确定性只读
 
 ## P5 复合定义快照
 
-root_definitions 是 ProgramStore 中的运行输入，不是另一份交互日志或兼容版本库。程序源码/输入和所需定义在同一受理事务写入，会话在发模型前冻结静态暴露复合集合；空快照也是已经冻结的事实。恢复使用原源码/schema/依赖身份，宿主实现和契约仍验证；不把当前批准目录合并进旧根。
+root_definitions 是 ProgramStore 中的运行输入，不是另一份交互日志或兼容版本库。程序源码/输入和所需定义在同一受理事务写入，会话在发模型前冻结静态暴露复合集合，保持稳定的会话工具目录；空快照也是已经冻结的事实。恢复使用原源码/schema/依赖身份，宿主实现和契约仍验证；不把当前批准目录合并进旧根。
 
 复合没有非幂等父 dispatch intent，叶子回执决定重放。完成后的派生成功/输出错误缓存可直接重放，缓存未提交时仍由叶子历史恢复，不自动重复未知叶子。嵌套路径稳定、fuel/depth 与 token 根共享。新表由既有初始化创建，不转换或清空任何用户历史。旧 version=1 artifact 明确拒绝。
 
 当前 Behavior 缺少已删除能力时，存在冻结工作可以进入明确的仅恢复激活；新规则不被准入，诊断可见，修正后显式重载。详见 [复合操作](capabilities.md)。
+
+工具定义尽量固定，以保留请求前缀缓存机会。冻结复合源码与依赖是恢复身份保证，不是永久执行授权，也不表示当前已有逐请求 ToolView、统一 allowlist 或受控授权阶段。未来授权检查与工具展示分别设计；已记录结果仍按本文回执规则重放。

@@ -1,6 +1,6 @@
 # 执行作用域、共享额度与写入边界（P4b）
 
-状态：P4b #190 与审计收尾 #191 已合并；本文描述当前共享执行契约。总体方案与验收见 [operations-plan](operations-plan.md)，叶子结果以 [ProgramStore invocation](invocation-recovery.md) 为权威。
+状态：EPIC A、P5 #193 与 P6 #194 已合并，P7 暂停；本文描述当前共享执行契约。总体方案与验收见 [operations-plan](operations-plan.md)，叶子结果以 [ProgramStore invocation](invocation-recovery.md) 为权威。
 
 ## 宿主作用域
 
@@ -26,7 +26,7 @@ run-loop 的程序调用位置对应稳定 session ID。同进程重入和进程
 
 一批 Tool 里的写操作显式按模型声明顺序排等待链，读操作不进入该链。单靠锁的等待顺序不足以兑现声明顺序，因为 SQLite 查询等 await 会改变到锁先后。任务创建与登记之间不插入 await，随后才发布分发事件；取消时能够找到并等待全部子任务，不留下游离写入。
 
-历史回执在锁和当前取消检查之前返回。新效果在等锁后、写 intent 前以及进入 handler 前检查控制信号；超时由共享 executor 实施：成员 tool.per_timeout 是默认值，操作 default_timeout 覆盖，schema 声明的显式 timeout 再覆盖，另加操作 timeout_grace（Shell 为 10 秒），最后与根期限取小。该局部期限传给内部模型请求，但只收紧执行，不改写预算根冻结期限。LoopDriver 不另套计时或合成超时回执。取消不能回滚已经派发的外部效果，未知提交继续沿调用恢复契约处理。已提交状态与授权撤销后的新执行由同一成员写边界排序，不能用工具是否展示代替实际授权。spawn 配额根取宿主 CallContext.run_id，不取日志上下文；恢复仍使用原会话配额，直接 DSL 使用程序根。
+历史回执在锁和当前取消检查之前返回。新效果在等锁后、写 intent 前以及进入 handler 前检查控制信号；超时由共享 executor 实施：成员 tool.per_timeout 是默认值，操作 default_timeout 覆盖，schema 声明的显式 timeout 再覆盖，另加操作 timeout_grace（Shell 为 10 秒），最后与根期限取小。该局部期限传给内部模型请求，但只收紧执行，不改写预算根冻结期限。LoopDriver 不另套计时或合成超时回执。取消不能回滚已经派发的外部效果，未知提交继续沿调用恢复契约处理。该写边界不是统一授权闸；当前没有统一操作 allowlist 或受控授权阶段，不能声称已经支持统一撤权。tools 尽量固定，未来执行授权与工具展示稳定性分开设计；工具是否展示不能代替现有领域授权检查。spawn 配额根取宿主 CallContext.run_id，不取日志上下文；恢复仍使用原会话配额，直接 DSL 使用程序根。
 
 并发控制复用 [asyncio 任务取消](https://docs.python.org/3.13/library/asyncio-task.html#task-cancellation)与[锁](https://docs.python.org/3.13/library/asyncio-sync.html#lock)机制；保留项目现有跨轮 pending 任务所有权，不新增工作流框架。
 

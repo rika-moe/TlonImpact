@@ -39,13 +39,14 @@ architecture 区分规范与当前实现；design 负责当前领域模型和机
 | 人类接入 | [WebUI](design/webui.md) | 页面状态、邮箱同步、线程展示与管理交互 |
 | 人类接入 | [Telegram](design/telegram.md) | SDK 接入、回复关联与失败处理 |
 
-## 已认可方向、尚未实施的方案
+## 共享操作的当前机制与后续范围
 
-- [统一操作与可组合行为](design/operations.md)：能力定义与 DSL/LLM 入口分离、共享执行、复合依赖及动态工具视图。
-- [分阶段实施计划](design/operations-plan.md)：两个串行 EPIC、分阶段独立 PR 任务及验收标准；方案已认可并获准开工 EPIC A，按阶段验收推进。
-- [执行作用域与共享额度](design/execution-scope.md)：P4b 预算预留、取消/截止、声明顺序与可重入写边界。
-- [调用记录与恢复](design/invocation-recovery.md)：P4a 唯一叶子回执、冻结身份、unknown 与会话重放边界。
-- [ADR 0044](decisions/0044-unified-operations.md)：接受方向与目标替代范围。上述目标不代替下方 reference 的当前机制。
+- [统一操作与可组合行为](design/operations.md)：能力定义与 DSL/LLM 入口分离、共享执行、已落地复合依赖与统一纯条件；P7 暂停，tools 尽量固定。
+- [分阶段实施计划](design/operations-plan.md)：两个串行 EPIC、分阶段独立 PR 任务及验收标准；P1–P6 已合并；P8a 独立收口文档与审计，其余范围单列。
+- [执行作用域与共享额度](design/execution-scope.md)：已落地的 P4b 预算预留、取消/截止、声明顺序与可重入写边界。
+- [调用记录与恢复](design/invocation-recovery.md)：已落地的 P4a 唯一叶子回执、冻结身份、unknown 与会话重放边界。
+- [旧机制审计](design/operations-audit.md)：源码/测试证据、保留例外及未实施边界。
+- [ADR 0044](decisions/0044-unified-operations.md)：接受方向与目标替代范围。已实现与暂停范围分别标注，精确接口见下方 reference。
 
 ## 参考文档与操作指南
 
@@ -55,7 +56,7 @@ architecture 区分规范与当前实现；design 负责当前领域模型和机
 | [dsl-reference](reference/dsl-reference.md) | MemberSpec、领域词汇、stage/section 与政策格式 |
 | [config-reference](reference/config-reference.md) | agent.yaml、环境变量、人格/记忆配置与目录布局 |
 | [tools-reference](reference/tools-reference.md) | 工具参数与语义 |
-| [operations-reference](reference/operations-reference.md) | P1–P4a 共享操作契约、双入口、宿主领域与调用恢复 |
+| [operations-reference](reference/operations-reference.md) | P1–P6 共享操作契约、双入口、宿主领域与调用恢复 |
 | [api-reference](reference/api-reference.md) | REST/SSE 端点、字段、错误与事件 |
 | [quickstart](guides/quickstart.md) | 安装、启动、创建成员与发信 |
 | [writing-a-prototype](guides/writing-a-prototype.md) | 编写一个行为原型 |

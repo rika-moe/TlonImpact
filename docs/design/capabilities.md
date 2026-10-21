@@ -1,6 +1,6 @@
 # 可审批的复合 Operation
 
-状态：EPIC A #184–#192 与 EPIC B P5 #193 已合并；本页描述统一复合操作与 P6 纯条件准入。P6 正在验收，P7 动态工具视图尚未实施。目标与阶段见 [统一操作](operations.md) 和 [实施计划](operations-plan.md)。
+状态：EPIC A #184–#192 与 EPIC B P5 #193 已合并；P6 #194 已合并；本页描述统一复合操作与纯条件准入。P7 已暂停，P8a 只做独立文档收口与旧机制审计。目标与阶段见 [统一操作](operations.md) 和 [实施计划](operations-plan.md)。
 
 ## 一个定义，两个入口
 
@@ -16,8 +16,8 @@
                 :additionalProperties false}
  :output-schema {:type "string"}
  :impl (fn [input]
-         (let [mails (mail-search {:mail_id (get input :mail_id)})]
-           (get (model-call {:prompt (str mails) :max_tokens 256}) :content)))}
+         (let [result (mail-search {:mail_id (get input :mail_id)})]
+           (get (model-call {:prompt (str (get result :mail)) :max_tokens 256}) :content)))}
 ```
 
 impl 必须是固定一个参数的 fn；根输入必须是命名对象，输出使用同一 schema 支持子集。旧 version=1、args 位置参数与作者 pure 声明直接拒绝，无兼容读取、自动转换或别名。语言普通函数的多参数语法不受影响。
@@ -38,7 +38,7 @@ impl 只见 input、核心纯函数和依赖操作，不注入 self、msg、even
 
 受信加载重新编译并核对批准绑定。直接修改已批准定义或任一依赖不会被自动接纳：自身或上层拒载，直到人类明确重新批准。新增无关能力不会使其他成员所有在途根失配。手写 artifact 也必须明确批准，不能仅靠放入可信目录获得执行信任。
 
-管理 API 的批准入口为 `POST /admin/capabilities/{name}/approve`，支持从 staging 提升，以及对现有 trusted 定义重新批准；旧 staging 路径不保留。WebUI 展示输入/输出 schema、推导效果、依赖指纹、不可用原因和重新批准动作。批准不是成员执行授权，实际领域权限与装置约束仍在宿主边界检查，统一授权名单和动态视图属于 P7。
+管理 API 的批准入口为 `POST /admin/capabilities/{name}/approve`，支持从 staging 提升，以及对现有 trusted 定义重新批准；旧 staging 路径不保留。WebUI 展示输入/输出 schema、推导效果、依赖指纹、不可用原因和重新批准动作。批准不是成员执行授权，实际领域权限与装置约束仍在宿主边界检查，当前没有统一操作 allowlist、逐请求 ToolView 或受控授权阶段。P7 暂停不改变这些现有边界，也不等于批准后获得任意或永久执行权限。
 
 ## Examples 的安全边界
 
@@ -52,7 +52,7 @@ examples 是附加审查材料，使用共享编译器、schema 与 fuel 求值�
 
 复合执行继承调用者根预算、取消/截止与成员写 gate；嵌套复合共享语言 fuel/depth，不为每层重置。子调用 ID 由父路径和确定序号派生，完成顺序不改变身份。叶子 invocation 是外部效果的恢复权威；复合不创建会阻断叶子重放的非幂等父 intent。完整完成后才保存派生成功/输出错误缓存，历史成功先于当前预算、取消与截止检查。
 
-ProgramStore 原子保存程序源码、输入与所需复合闭包快照。会话在首次模型请求前冻结当时静态暴露的复合集合。root_definitions 保存源码/schema 及传递依赖身份，恢复从原快照编译，不从当前磁盘重新拼旧程序。宿主构建与宿主契约变化仍拒绝恢复；添加无关能力不会改变宿主 build_id。
+ProgramStore 原子保存程序源码、输入与所需复合闭包快照。会话在首次模型请求前冻结当时静态暴露的复合集合。为复用模型请求前缀，tools 尽量保持固定，不按轮次或业务状态频繁增删，也不将动态状态写入工具描述/schema；当前不新增动态工具视图机制。未来若需要统一执行授权，应与工具展示稳定性分开设计。root_definitions 保存源码/schema 及传递依赖身份，恢复从原快照编译，不从当前磁盘重新拼旧程序。宿主构建与宿主契约变化仍拒绝恢复；添加无关能力不会改变宿主 build_id。
 
 删除或修改能力文件后，已有根仍用旧快照；新工作只能使用当前已批准定义。若当前 Behavior 因缺依赖无法准入，但成员存在冻结待恢复工作，可明确进入“仅恢复”激活：只恢复旧根，不接受当前 boot/邮件/idle 等新规则，诊断说明 Behavior 不可用，修正后需要显式重载。没有待恢复事实时仍严格拒载。坏根隔离继续遵守 [调用恢复](invocation-recovery.md)，不删除历史、预留或用户文件。
 

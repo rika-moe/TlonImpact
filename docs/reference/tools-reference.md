@@ -12,7 +12,7 @@ agent 通过 OpenAI function calling 调用的宿主工具目录；成员还可�
 
 [ToolResult](../../src/tlon/tools/base.py) 保留协议回执 `success/data/error/message`；`ToolExecutor` 负责工具发现、跟踪与异常回执，领域执行权威仍是 OperationExecutor。
 
-P5 的复合定义使用同一 OperationTool 投影，不添加 Python 工具包装；定义与依赖随根冻结，恢复时不使用当前磁盘定义。控制工具从 Operation.control 推导。P7 的请求级动态视图和统一授权尚未实施。
+P5 的复合定义使用同一 OperationTool 投影，不添加 Python 工具包装；定义与依赖随根冻结，恢复时不使用当前磁盘定义。控制工具从 Operation.control 推导。P7 的请求级动态视图和统一授权暂停。tools 尽量保持固定，不随轮次或阶段主动裁剪；不同成员仍可因装配服务、执行装置、信任状态与有效批准依赖拥有不同的稳定目录。固定协议列表不表示永久授权，宿主领域检查仍生效；当前没有统一授权名单或运行中撤权保证。本次调整没有新增缓存机制或缓存命中率实测。
 
 ### ToolExecutor 执行模型
 
@@ -107,7 +107,7 @@ session 的 total 根由 recipe.max_tokens 建立，stage、压缩、model-call 
 
 上表是正式成员的满配。见习成员不注册 member-spawn、prototype-write、behavior-propose、capability-propose 四个生殖/演化工具；所有成员均可使用绑定自身的四个调度工具。L0 不注册 shell/filesystem 七个装置工具，L1 不注册 shell 两个工具。
 
-依赖倒置：`tlon.tools` 不许反向依赖 `tlon.agents`/`tlon.prototypes`，agents 域与 prototypes 域工具的端口（`AgentLifecycle` Protocol、`SpawnRejectedError`、`StopRejectedError`）声明在 [lifecycle/ports.py](../../src/tlon/lifecycle/ports.py)，原型端口（`PrototypeError`、`PrototypeSummary`）声明在 [evolution/ports.py](../../src/tlon/evolution/ports.py)；装配时由 `AgentRegistry` 把自身和原型库函数注入工具实例。
+依赖倒置：`tlon.tools` 不许反向依赖 `tlon.agents`/`tlon.prototypes`，agents 域与 prototypes 域工具的端口（`AgentLifecycle` Protocol、`SpawnRejectedError`、`StopRejectedError`）声明在 [lifecycle/ports.py](../../src/tlon/lifecycle/ports.py)，原型端口（`PrototypeError`、`PrototypeSummary`）声明在 [evolution/ports.py](../../src/tlon/evolution/ports.py)；装配时由 `AgentRegistry` 注入成员作用域领域服务，OperationTool 只投影相应操作。
 
 shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/docker_runtime.py](../../src/tlon/sandbox/docker_runtime.py)）。文件柜容器创建后**从不启动**（issue #25），首次文件 I/O 时惰性创建/按名重挂；自 issue #40 起五个 filesystem 工具全部经 get_archive/put_archive 读写（list/search 把目录 tar 拉回 host 侧解包，write 把缺失父目录作为 tar 目录条目带入），容器内零命令执行。Docker daemon 不可用时这些工具返回 `error="Docker runtime not initialized"`，agent 本体照常启动。`docker.level: L0` 的成员（issue #26）完全不装配这两域工具——无执行装置即无工具，不存在「工具有但装置为 None」的状态；`docker.level: L1` 的成员（issue #40）只有 filesystem 五件，shell 工具不注册且 `run()` 由装置层直接拒绝。
 
