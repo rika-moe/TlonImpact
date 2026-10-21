@@ -1,6 +1,6 @@
 # DSL 设计：行为即数据
 
-> 已接受目标（P1 已实现，其余待实施）：[ADR 0046](../decisions/0046-programmable-workflows.md) 与 [可编程工作流程](programmable-workflows.md) 将以模块函数替代 stage 引擎，施工见[分阶段计划](programmable-workflows-plan.md)。P1 的当前用法见 [模块程序指南](../guides/writing-a-module-program.md)。本文的 stage 描述仅适用于 v1。
+> 已接受目标（P1 已合并，P2 本阶段实现，其余待实施）：[ADR 0046](../decisions/0046-programmable-workflows.md) 与 [可编程工作流程](programmable-workflows.md) 将以模块函数替代 stage 引擎，施工见[分阶段计划](programmable-workflows-plan.md)。当前用法见 [模块程序指南](../guides/writing-a-module-program.md)。本文的 stage 描述仅适用于 v1。
 
 
 > 当前状态：[ADR 0045](../decisions/0045-remove-capabilities.md) 已删除 Capability 与复合 Operation；保留宿主 Operation 和现有 Behavior。
@@ -58,14 +58,14 @@ when、until、stage-if 共用纯函数准入：核心与算术函数、显式�
 这是 ADR 0043 对 ADR 0042 阶段“先完整求值、后执行所有效果”的替代。函数、条件和传统循环共享同一调用机制；未选分支没有效果。后面的表达式失败不会撤回已经提交的效果，不能将整条规则理解为外部事务。
 
 ```clojure
-(let [draft (model-call {:prompt "根据给定来源编辑简报" :max_tokens 256})]
+(let [draft (model-call {:messages [{:role "user" :content "根据给定来源编辑简报"}] :tools [] :max_tokens 256})]
   (when (not (= (get draft :content) ""))
     (state-put {:key "edition" :value (get draft :content)})))
 ```
 
 `ProgramStore` 保存成员私有状态、每次规则的原始程序与触发输入、每步效果参数和结果。恢复从原程序开始，已完成调用返回原结果，未完成调用继续执行；参数漂移报错。`state-put` 和效果结果同事务提交。模型结果成功记录后不会重复生成；已派发但本地未记录结果时保留 unknown，禁止自动重发，不能承诺模型恰好一次。
 
-`model-call` 不附工具，保留成员人格、RULES 与协议；输出上限传给 provider。规则内按请求上限预留共享输出额度，重放沿用预留，不因 usage 缺失获得无限额度。`mail-send` 返回真实邮局回执，稳定请求 ID 复用邮局幂等提交；明确拒收与未知提交均不能当成已发送。报社示例在发送前冻结期刊内容与订阅者快照，重试不会重新编辑或重发已提交的同一期邮件。
+`model-call` 使用消息列表与工具名列表，保留成员人格、RULES 与协议；模型只返回响应数据，输出上限传给 provider。规则内按请求上限预留共享输出额度，重放沿用预留，不因 usage 缺失获得无限额度。`mail-send` 返回真实邮局回执，稳定请求 ID 复用邮局幂等提交；明确拒收与未知提交均不能当成已发送。报社示例在发送前冻结期刊内容与订阅者快照，重试不会重新编辑或重发已提交的同一期邮件。
 
 环境由宿主物化为普通数据，没有属性/方法访问语法。`msg` 是邮件 record 或 nil；纯函数 `mail-field` 提供 ID、发件人、主题、正文等白名单字段，模型不能用杜撰的编号替代原始来源。宿主动态查询在程序执行中记录结果；能力 artifact 仍只接收显式参数，不获得隐式宿主上下文。
 

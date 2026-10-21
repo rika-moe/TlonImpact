@@ -206,7 +206,6 @@
 | `content-matches?` | 是 | Regex-search a mail's content or a plain string (e.g. ``result``). |
 <!-- END GENERATED: dsl-builtins-pure -->
 
-
 ### 4.2 when 数据
 
 作用域 `{msg, event, self}`。非邮件事件的 msg 为 nil；mail-field 读取显式邮件参数，from? 与 content-matches? 也不读取隐式身份。收件人条件：
@@ -249,7 +248,7 @@
 | --- | --- |
 | `(state-get {:key "key"})` | 成员私有状态；缺失返回 `nil`，读取结果被记录供重放 |
 | `(state-put {:key "key" :value value})` | 写入值；状态更新与统一 invocation 回执同事务提交 |
-| `(model-call {:prompt "任务数据" :max_tokens 256})` | `{:content "..." :usage {...}}`，usage 保留 provider 的 snake_case 键，如 `:completion_tokens` |
+| `(model-call {:messages [{:role "user" :content "任务数据"}] :tools [] :max_tokens 256})` | `{:content "..." :tool_calls [] :finish_reason "stop" :usage {...} :reasoning_content nil}`，usage 保留 provider 的 snake_case 键，如 `:completion_tokens` |
 
 邮件是统一 Operation，不再构造旧邮件 `ActionRequest`。DSL 使用一个命名参数 map，键与 JSON Tool 参数均为 snake_case：
 
@@ -263,7 +262,7 @@
 
 `:subject`、`:request_id` 可省略；宿主默认生成稳定调用 ID。回复显式传 `:in_reply_to`，收件人显式传 `:to`，不会隐式从触发邮件推断。完整参数以 [邮件操作 schema](../../src/tlon/operations/mail.py) 为权威。拒收和未知结果分别抛带结构化 data 的 `RejectedError` / `UnknownOutcomeError`，不返回伪成功；Tool 入口将同一错误投影为失败结果。请求 ID 相同但内容不同会冲突。邮局已有回执覆盖已入箱而程序尚未记结果的崩溃窗口；unknown 必须复用原 request_id 重试。接受只证明本地信箱提交，网关字段不证明外部送达。
 
-`model-call` 不附工具，保留人格、RULES 和协议。输出上限不超过请求值、规则剩余额度和成员 `llm.max_tokens`；程序直接调用按获准输出上限持久预留且不退款，重放还原既有占用、不再次扣额。已记录结果直接复用；模型调用属于非幂等写入，已分发但未记录结果时保留 unknown，不自动重发。
+`model-call` 接受消息列表和工具名列表（省略工具列表等同空列表），保留人格、RULES 和协议；工具建议仅返回数据，不自动执行。输出上限不超过请求值、规则剩余额度和成员 `llm.max_tokens`；程序直接调用按获准输出上限持久预留且不退款，重放还原既有占用、不再次扣额。已记录结果直接复用；模型调用属于非幂等写入，已分发但未记录结果时保留 unknown，不自动重发。
 
 `mail-field` 读取宿主物化邮件 record 的 `:id`、`:from`、`:to`、`:cc`、`:subject`、`:content`、`:timestamp`、`:thread-id`、`:in-reply-to`、`:forward-of`、`:endorsing`；`nil` 输入返回 `nil`，非 record 输入及未知字段报错。随包 [报社示例](../../src/tlon/resources/examples/newspaper/README.md) 演示先冻结期刊再逐人幂等投递，不自动创建默认成员。
 
@@ -291,7 +290,6 @@
 | `lazy?` | `host.is_lazy` | A member that can sleep / be drained: no ``:on :boot`` rule. |
 | `member-roster` | `host.member_roster` | The addressing yellow page: one pre-formatted line per member. |
 <!-- END GENERATED: bridge-query-ports -->
-
 
 ## 5. `run-loop` 与会话配方
 
@@ -526,3 +524,13 @@ MemberSpec 之外还有一种 DSL 文件：society 级政策文件 `policy.tlon`
 ## v2 模块入口（P1）
 
 v1 rules 与 stage 配方继续服务现有原型；v2 只允许 version、handlers、fuel、execution（source-hash 为宿主 provenance），不得混入 rules。handlers 为非空事件→限定导出函数 map，boot 对应启动，其他事件沿用既有事件名。fuel 默认 1000，上限 10000；入口固定一个参数，必须返回含 result 的 map，可选 next 仅支持 sleep-until/exit。模块语法、事件输入、发布和返回值边界见[模块程序指南](../guides/writing-a-module-program.md)。运行所用 modules 源文件随输入冻结，函数调用不包装成 Operation。
+
+## P2 模型消息与标准模块
+
+v2 模块可显式 `(:require [tlon.messages :as m])`。纯导出为 `(m/user content)`、`(m/assistant content)`、`(m/append messages message)`；append 返回新列表。tlon 命名空间由宿主保留，标准源码在链接及运行冻结中加入，不加入作者包 API。示例见[模块程序指南](../guides/writing-a-module-program.md)。
+
+`model-call` 必填非空 messages 列表与正整数 max_tokens，可选工具名称列表 tools（默认空）和 cache_prefix_len。消息允许 user/assistant/tool；不允许作者传 system 消息、prompt 字段或工具 schema。模型结果 content 可为 nil，tool_calls 项为 `{:id "..." :name "..." :arguments {...}}`；finish_reason、usage 与 reasoning_content 一并返回。模型响应不自动执行工具，完整工具循环待 P3。
+
+模块入口受理时冻结宿主系统词、工具定义与有效模型配置；嵌套函数共享根预算。已提交模型结果缺外层回执可从同一 ProgramStore 补回执，未提交结果的已派发请求仍为 unknown。内置 v1 run-loop/stage 暂留，P2 没有把它们包装成新函数。
+
+输入历史中的 assistant `tool_calls` 使用 provider 消息结构：`{:id "..." :type "function" :function {:name "..." :arguments "JSON字符串"}}`，tool 消息用 `tool_call_id` 关联。它与输出的规范化 `{id,name,arguments}` 不同，P2 不自动把建议执行成消息历史；工具执行和完整协议拼接在 P3 提供。

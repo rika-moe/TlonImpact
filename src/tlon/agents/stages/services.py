@@ -25,6 +25,7 @@ from tlon.base.events.event_bus import EventBus
 from tlon.base.execution import bind_execution, current_execution
 from tlon.base.llm_client import LLMClient, LLMResponse, _cache_token_counts
 from tlon.base.tracing.trace_context import continue_trace, get_current_trace, start_span
+from tlon.operations.model_service import ModelService
 
 if TYPE_CHECKING:
     import structlog
@@ -108,6 +109,9 @@ class StageServices:
         self._publish = publish
         self._tool_definitions = tool_definitions
         self._control_names = control_names
+        self._model_service = ModelService(
+            llm_client, context_builder.get_system_prompt, tool_definitions
+        )
 
     def control_names(self) -> frozenset[str]:
         if self._control_names is not None:
@@ -209,7 +213,6 @@ class StageServices:
         providers.
         """
         async with self.traced_span(span):
-            system_prompt = await self._context_builder.get_system_prompt()
             tools = self._tool_definitions()
 
             await self._emit_with_trace(
@@ -233,10 +236,8 @@ class StageServices:
             start_time = time.time()
             scope = current_execution()
             with bind_execution(scope.child("request") if scope else None):
-                response = await self._llm_client.chat(
-                    system_prompt=system_prompt,
+                response = await self._model_service.request(
                     messages=context,
-                    tools=tools if tools else None,
                     purpose=purpose,
                     session_id=session_id,
                     cache_prefix_len=cache_prefix_len,

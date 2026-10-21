@@ -1,6 +1,6 @@
 # 调用记录与恢复权威（P4a）
 
-> 已接受目标（P1 已实现，其余待实施）：[ADR 0046](../decisions/0046-programmable-workflows.md) 与 [可编程工作流程](programmable-workflows.md) 将以模块函数替代 stage 引擎，施工见[分阶段计划](programmable-workflows-plan.md)。P1 的当前用法见 [模块程序指南](../guides/writing-a-module-program.md)。本文的 stage 描述仅适用于 v1。
+> 已接受目标（P1/P2 已实现，其余待实施）：[ADR 0046](../decisions/0046-programmable-workflows.md) 与 [可编程工作流程](programmable-workflows.md) 将以模块函数替代 stage 引擎，施工见[分阶段计划](programmable-workflows-plan.md)。P1 的当前用法见 [模块程序指南](../guides/writing-a-module-program.md)。本文的 stage 描述仅适用于 v1。
 
 
 状态：EPIC A、P5 #193 与 P6 #194 已合并，P7 暂停；本文描述当前恢复契约及外部审查后的根隔离决策。总体设计见 [operations](operations.md)，验收见 [operations-plan](operations-plan.md)，共享执行见 [execution-scope](execution-scope.md)。
@@ -63,3 +63,9 @@ P4b 将 sleeping?、running?、lazy?、member-roster 收敛为非确定性只读
 ## Capability 删除后的边界
 
 [ADR 0045](../decisions/0045-remove-capabilities.md) 删除复合定义、目录及 root_definitions 快照。程序源码与输入仍冻结，宿主操作仍通过构建身份、调用参数和持久回执校验恢复。工具目录来自成员实际装配的宿主服务。
+
+## 模块程序模型边界（工作流程 P2）
+
+普通程序与 v1 stage 通过同一 ModelService 调用成员模型。v2 入口受理时将宿主系统提示、工具定义和非秘密模型配置随源码包原子冻结；后续调用使用冻结值。新请求还校验当前工具定义，已提交的历史结果则按冻结契约重放。纯消息模块 `tlon.messages` 随运行源码冻结，不新增模型结果日志。
+
+`model-call` 外层 Operation 与内部模型调用各有稳定路径。模型成功响应与额度结算已提交、外层回执缺失时，executor 在预算、取消和截止检查之前校验原请求并补回外层结果；明确拒绝已记录时补回 RejectedError，保留已退款事实。恢复只读取原模型记录，不派发 provider 请求。内部只有未知 intent 时仍拒绝自动重发，保留预留。output 成功保留输出上限费用，total 按可信实际用量结算，核验函数不会另建预算根。

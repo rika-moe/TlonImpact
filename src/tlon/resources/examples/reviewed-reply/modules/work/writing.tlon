@@ -1,0 +1,19 @@
+(ns work.writing
+  (:require [tlon.messages :as messages])
+  (:export generate review revise))
+
+(defn generate [task]
+  (get (model-call {:messages [(messages/user (str "Write a draft: " task))]
+                    :tools [] :max_tokens 128}) :content))
+
+(defn review [task draft]
+  (get (model-call {:messages [(messages/user (str "Review this draft against the task: " task))
+                              (messages/assistant draft)
+                              (messages/user "Identify unsupported claims and missing information.")]
+                    :tools [] :max_tokens 128}) :content))
+
+(defn revise [task draft review]
+  (get (model-call {:messages [(messages/user (str "Task: " task))
+                              (messages/assistant draft)
+                              (messages/user (str "Revise using this review: " review))]
+                    :tools [] :max_tokens 128}) :content))

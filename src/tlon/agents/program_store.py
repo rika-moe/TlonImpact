@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from tlon.base.execution import BudgetExceededError
 from tlon.operations.invocation import Invocation, InvocationOutcome
@@ -41,6 +41,7 @@ class ProgramStore:
         self._budgets: dict[str, dict[str, Any]] = {}
         self._allocations: dict[str, dict[str, Any]] = {}
         self._roots: dict[str, str] = {}
+        self._model_contexts: dict[tuple[str, str], str] = {}
         self._invocations: dict[str, tuple[Invocation, str | None]] = {}
         self.database = database
         self._lock = threading.RLock()
@@ -73,6 +74,7 @@ class ProgramStore:
                 "CREATE TABLE IF NOT EXISTS roots (root_id TEXT PRIMARY KEY, build_id TEXT NOT NULL);"
                 "CREATE TABLE IF NOT EXISTS invocations (call_id TEXT PRIMARY KEY, identity_json TEXT NOT NULL, outcome_json TEXT, root_id TEXT NOT NULL, path_json TEXT NOT NULL, UNIQUE(root_id,path_json));"
                 "PRAGMA user_version=2;"
+                "CREATE TABLE IF NOT EXISTS model_contexts (root_id TEXT NOT NULL, slot TEXT NOT NULL, value_json TEXT NOT NULL, PRIMARY KEY(root_id,slot));"
                 "CREATE TABLE IF NOT EXISTS budgets (root_id TEXT PRIMARY KEY, token_limit INTEGER NOT NULL, measure TEXT NOT NULL, deadline REAL);"
                 "CREATE TABLE IF NOT EXISTS model_allocations (call_id TEXT PRIMARY KEY, root_id TEXT NOT NULL, reserved INTEGER NOT NULL, output_limit INTEGER NOT NULL, charged INTEGER);"
                 "CREATE TABLE IF NOT EXISTS entry_programs (run_id TEXT PRIMARY KEY, package_edn TEXT NOT NULL, result_edn TEXT, scheduling_edn TEXT, scheduling_applied INTEGER NOT NULL DEFAULT 0);"
@@ -157,6 +159,10 @@ class ProgramStore:
     ) -> ProgramRun:
         """Freeze the source package and input atomically; retain existing snapshots."""
         encoded = dumps(edn_value(json_value(package)))
+        contexts = {
+            slot: json.dumps(json_value(value), sort_keys=True, allow_nan=False)
+            for slot, value in package.get("model_contexts", {}).items()
+        }
         with self._lock:
             if self.database is None:
                 self._root(run_id)
@@ -167,6 +173,8 @@ class ProgramStore:
                     return previous
                 run = ProgramRun(run_id, rule_edn, input_edn, False, package_edn=encoded)
                 self._runs[run_id] = run
+                for slot, value in contexts.items():
+                    self._model_contexts.setdefault((run_id, slot), value)
                 return run
             with self._connection() as connection:
                 self._root(run_id, connection)
@@ -182,6 +190,10 @@ class ProgramStore:
                 connection.execute(
                     "INSERT INTO entry_programs(run_id,package_edn) VALUES (?,?)", (run_id, encoded)
                 )
+                for slot, value in contexts.items():
+                    connection.execute(
+                        "INSERT OR IGNORE INTO model_contexts VALUES (?,?,?)", (run_id, slot, value)
+                    )
                 stored_run = self._read_run(connection, run_id)
                 assert stored_run is not None
                 return stored_run
@@ -663,6 +675,73 @@ class ProgramStore:
                 return self._peek_model(invocation)
             with self._connection() as connection:
                 return self._peek_model(invocation, connection)
+
+    def freeze_model_context(
+        self, root_id: str, slot: str, value: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Freeze host inputs once, returning isolated JSON data."""
+        encoded = json.dumps(json_value(value), sort_keys=True, ensure_ascii=False, allow_nan=False)
+        with self._lock:
+            if self.database is None:
+                self._root(root_id)
+                frozen = self._model_contexts.setdefault((root_id, slot), encoded)
+            else:
+                with self._connection() as connection:
+                    self._root(root_id, connection)
+                    connection.execute(
+                        "INSERT OR IGNORE INTO model_contexts VALUES (?,?,?)",
+                        (root_id, slot, encoded),
+                    )
+                    frozen = connection.execute(
+                        "SELECT value_json FROM model_contexts WHERE root_id=? AND slot=?",
+                        (root_id, slot),
+                    ).fetchone()[0]
+            return cast(dict[str, Any], json.loads(frozen))
+
+    def load_model_context(self, root_id: str, slot: str) -> dict[str, Any] | None:
+        """Read frozen inputs without exposing mutable storage."""
+        with self._lock:
+            if self.database is None:
+                self._root(root_id)
+                encoded = self._model_contexts.get((root_id, slot))
+            else:
+                with self._connection() as connection:
+                    self._root(root_id, connection)
+                    row = connection.execute(
+                        "SELECT value_json FROM model_contexts WHERE root_id=? AND slot=?",
+                        (root_id, slot),
+                    ).fetchone()
+                    encoded = row[0] if row else None
+            return json.loads(encoded) if encoded is not None else None
+
+    def lookup_model_path(self, root_id: str, path: tuple[str, ...]) -> dict[str, Any] | None:
+        """Query authoritative model state without dispatching a request."""
+
+        def lookup(connection: sqlite3.Connection | None = None) -> dict[str, Any] | None:
+            self._root(root_id, connection)
+            probe = self._model_invocation(root_id, path, "")
+            if connection is None:
+                item = self._invocations.get(probe.call_id)
+                encoded = item[0].arguments_json if item else None
+            else:
+                row = connection.execute(
+                    "SELECT identity_json FROM invocations WHERE call_id=?", (probe.call_id,)
+                ).fetchone()
+                encoded = json.loads(row[0])["arguments_json"] if row else None
+            if encoded is None:
+                return None
+            invocation = self._model_invocation(root_id, path, encoded)
+            if self._allocation(invocation.call_id, connection) is None:
+                raise RecoveryMismatchError("Model invocation has no allocation")
+            state = self._peek_model(invocation, connection)
+            assert state is not None
+            return {**state, "request_json": encoded, "request": json.loads(encoded)["request"]}
+
+        with self._lock:
+            if self.database is None:
+                return lookup()
+            with self._connection() as connection:
+                return lookup(connection)
 
     def _reserve_model(
         self,

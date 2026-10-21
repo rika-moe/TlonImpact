@@ -54,6 +54,8 @@ class NewspaperHarness:
                     content="来信简报：两位投稿人报告了各自观察，相关陈述尚待独立核实。",
                     usage={"completion_tokens": 30},
                     tool_calls=[],
+                    finish_reason="stop",
+                    reasoning_content=None,
                 )
             )
         )

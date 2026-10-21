@@ -245,6 +245,7 @@ async def test_v2_with_real_services_does_not_start_stage_scheduler(tmp_path: Pa
     shell = _member(tmp_path)
     llm = MagicMock()
     llm.config = LLMConfig(model_name="openai/gpt-test")
+    llm.configuration_snapshot.return_value = {"model_name": "openai/gpt-test"}
     llm.chat = AsyncMock(side_effect=AssertionError("P1 requires no model"))
     memory = MagicMock()
     memory.config = MemoryConfig()
@@ -339,3 +340,33 @@ def test_entry_sleep_preserves_future_timezone_constraint(at: str) -> None:
 
     with pytest.raises(EvalError, match="future ISO"):
         MemberRuntime._entry_result({"result": None, "next": {"kind": "sleep-until", "at": at}})
+
+
+def test_host_messages_library_is_linked_without_becoming_author_source() -> None:
+    from tlon.agents.program_package import program_builtins, program_module_sources
+    from tlosure.eval import eval_form
+    from tlosure.modules import ModulePackage
+
+    sources = {
+        "work/reply.tlon": """
+        (ns work.reply (:require [tlon.messages :as m]) (:export handle))
+        (defn handle [event]
+          (m/append [(m/user "question")] (m/assistant "answer")))
+        """
+    }
+    spec = validate_program_sources(BEHAVIOR, sources)
+    assert spec.module_sources == sources
+    package = ModulePackage.from_sources(program_module_sources(sources), program_builtins())
+    result = eval_form(
+        loads("(handle {})"), {"handle": package.entry("work.reply/handle")}, program_builtins()
+    )
+    assert result == [
+        {"role": "user", "content": "question"},
+        {"role": "assistant", "content": "answer"},
+    ]
+
+
+@pytest.mark.parametrize("path", ["tlon/messages.tlon", "tlon/custom.tlon", "tlon.tlon"])
+def test_authors_cannot_replace_host_module_namespace(path: str) -> None:
+    with pytest.raises(MemberSpecValidationError, match="reserved"):
+        validate_program_sources(BEHAVIOR, {**MODULES, path: "(ns tlon)"})

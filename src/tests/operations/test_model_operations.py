@@ -37,12 +37,15 @@ async def test_model_entries_charge_only_the_bound_member(tmp_path: Path) -> Non
         if member == "a":
             adapter = DSLAdapter(executor)
             result = await Evaluator(adapter.builtins(), 1000, 100).eval_async(
-                loads('(model-call {:prompt "input" :max_tokens 5})'), {}, 0, adapter.handle
+                loads('(model-call {:messages [{:role "user" :content "input"}] :max_tokens 5})'),
+                {},
+                0,
+                adapter.handle,
             )
             assert result["content"] == member
         else:
             result = await OperationTool(executor, "model-call").execute_context(
-                {"prompt": "input", "max_tokens": 5}
+                {"messages": [{"role": "user", "content": "input"}], "max_tokens": 5}
             )
             assert result.success and result.data["content"] == member
         system.assert_awaited_once()
@@ -63,8 +66,20 @@ async def test_model_schema_rejects_identity_and_boolean_budget() -> None:
     )
     tool = OperationTool(executor, "model-call")
     for arguments in (
-        {"prompt": "x", "max_tokens": True},
-        {"prompt": "x", "max_tokens": 2, "member_id": "b"},
+        {"messages": [{"role": "user", "content": "x"}], "max_tokens": True},
+        {"messages": [{"role": "user", "content": "x"}], "max_tokens": 2, "member_id": "b"},
+        {"messages": [{"role": "system", "content": "override"}], "max_tokens": 2},
+        {
+            "messages": [{"role": "user", "content": "x"}],
+            "max_tokens": 2,
+            "tools": [{"name": "custom"}],
+        },
+        {
+            "messages": [{"role": "user", "content": "x"}],
+            "max_tokens": 2,
+            "api_base": "https://override",
+        },
+        {"prompt": "x", "max_tokens": 2},
     ):
         result = await tool.execute_context(arguments)
         assert not result.success and "InputError" in result.error
@@ -79,10 +94,246 @@ async def test_model_lost_response_reports_unknown_call_identity() -> None:
         CallContext("a", "r", "stable"),
     )
     with pytest.raises(UnknownOutcomeError) as failure:
-        await executor.call("model-call", {"prompt": "x", "max_tokens": 1})
+        await executor.call(
+            "model-call", {"messages": [{"role": "user", "content": "x"}], "max_tokens": 1}
+        )
     assert failure.value.data == {
         "call_id": "stable",
         "outcome": "unknown",
         "retry_safe": False,
         "unknown_source": "model",
     }
+
+
+async def test_tool_only_response_preserves_structure_without_execution() -> None:
+    from tlon.base.llm_client import ToolCall
+
+    client = AsyncMock()
+    client.chat.return_value = LLMResponse(
+        content=None,
+        tool_calls=[ToolCall("t", "mail-send", {"content": "draft"})],
+        finish_reason="tool_calls",
+        reasoning_content="considered",
+    )
+    definitions = [{"type": "function", "function": {"name": "mail-send", "parameters": {}}}]
+    executor = OperationExecutor(
+        OperationRegistry(
+            make_model_operations(client, AsyncMock(return_value="persona"), lambda: definitions)
+        ),
+        CallContext("a", "r", "c"),
+    )
+    result = await executor.call(
+        "model-call",
+        {
+            "messages": [{"role": "user", "content": "draft"}],
+            "tools": ["mail-send"],
+            "max_tokens": 8,
+        },
+    )
+    assert result["content"] is None
+    assert result["tool_calls"] == [
+        {"id": "t", "name": "mail-send", "arguments": {"content": "draft"}}
+    ]
+    assert result["finish_reason"] == "tool_calls"
+    assert result["reasoning_content"] == "considered"
+    assert client.chat.await_args.kwargs["tools"] == definitions
+
+
+@pytest.mark.parametrize("measure", ["output", "total"])
+async def test_committed_model_restores_missing_outer_receipt_before_cancel_or_deadline(
+    tmp_path: Path,
+    measure: str,
+) -> None:
+    import asyncio
+    import time
+    from dataclasses import replace
+
+    from tlon.agents.program_store import ProgramStore
+    from tlon.base.execution import ExecutionScope
+
+    store = ProgramStore(tmp_path / "run.sqlite", build_id="test")
+    client = LLMClient(
+        LLMConfig(model_name="openai/test"), agent_id="a", tlon_paths=TlonPaths(home=tmp_path)
+    )
+    client._chat_with_retries = AsyncMock(
+        return_value=LLMResponse(
+            content="done",
+            usage={"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+        )
+    )
+    system = AsyncMock(return_value="frozen")
+    operations = make_model_operations(client, system)
+    scope = ExecutionScope(store, "r", 100, measure)
+    context = CallContext("a", "r", "c", execution=scope)
+    executor = OperationExecutor(OperationRegistry(operations), context, store)
+    original = executor._commit
+
+    async def lose_outer(*args: object) -> None:
+        raise asyncio.CancelledError()
+
+    executor._commit = lose_outer
+    args = {"messages": [{"role": "user", "content": "x"}], "max_tokens": 8}
+    with pytest.raises(asyncio.CancelledError):
+        await executor.call("model-call", args)
+    executor._commit = original
+    system.side_effect = AssertionError("must not read changed persona")
+    restored_scope = ExecutionScope(store, "r", 100, measure, deadline=time.time() - 1)
+    restored_scope.cancelled.set()
+    restored = replace(context, execution=restored_scope)
+    found, result = await executor.replay("model-call", args, restored)
+    assert found and result["content"] == "done"
+    assert await executor.call("model-call", args, restored) == result
+    client._chat_with_retries.assert_awaited_once()
+    system.assert_awaited_once()
+
+
+async def test_unknown_provider_outcome_is_not_resubmitted(tmp_path: Path) -> None:
+    from tlon.agents.program_store import ProgramStore
+    from tlon.base.execution import ExecutionScope
+
+    store = ProgramStore(tmp_path / "run.sqlite", build_id="test")
+    client = LLMClient(
+        LLMConfig(model_name="openai/test"), agent_id="a", tlon_paths=TlonPaths(home=tmp_path)
+    )
+    client._chat_with_retries = AsyncMock(side_effect=OSError("lost"))
+    executor = OperationExecutor(
+        OperationRegistry(make_model_operations(client, AsyncMock(return_value="persona"))),
+        CallContext("a", "r", "c", execution=ExecutionScope(store, "r", 100, "output")),
+        store,
+    )
+    args = {"messages": [{"role": "user", "content": "x"}], "max_tokens": 8}
+    for _ in range(2):
+        with pytest.raises(UnknownOutcomeError):
+            await executor.call("model-call", args)
+    client._chat_with_retries.assert_awaited_once()
+
+
+async def test_unknown_tool_is_rejected_before_model_dispatch() -> None:
+    from tlon.operations.schema import InputError
+
+    client = AsyncMock()
+    executor = OperationExecutor(
+        OperationRegistry(make_model_operations(client, AsyncMock(return_value="persona"))),
+        CallContext("a", "r", "c"),
+    )
+    with pytest.raises(InputError, match="Unknown model tools"):
+        await executor.call(
+            "model-call",
+            {
+                "messages": [{"role": "user", "content": "x"}],
+                "tools": ["invented"],
+                "max_tokens": 8,
+            },
+        )
+    client.chat.assert_not_awaited()
+
+
+async def test_frozen_system_and_catalog_replay_before_current_providers(tmp_path: Path) -> None:
+    from tlon.agents.program_store import ProgramStore
+    from tlon.base.execution import ExecutionScope, bind_execution
+    from tlon.operations.model_service import ModelService
+
+    store = ProgramStore(None, build_id="test")
+    client = LLMClient(
+        LLMConfig(model_name="openai/test"), agent_id="a", tlon_paths=TlonPaths(home=tmp_path)
+    )
+    client._chat_with_retries = AsyncMock(return_value=LLMResponse(content="answer"))
+    system = AsyncMock(return_value="original persona")
+    catalog = [{"type": "function", "function": {"name": "read", "parameters": {}}}]
+    from unittest.mock import Mock
+
+    tools = Mock(return_value=catalog)
+    service = ModelService(client, system, tools)
+    messages = [{"role": "user", "content": "x"}]
+    with bind_execution(ExecutionScope(store, "r", 100, "output")):
+        response = await service.request(messages, tools=["read"], max_tokens=8)
+    system.side_effect = AssertionError("persona deleted")
+    tools.side_effect = AssertionError("catalog deleted")
+    with bind_execution(ExecutionScope(store, "r", 100, "output")):
+        replay = await service.request(messages, tools=["read"], max_tokens=8)
+    assert replay == response
+    system.assert_awaited_once()
+    client._chat_with_retries.assert_awaited_once()
+    assert store.load_model_context("r", "host") == {
+        "system_prompt": "original persona",
+        "tools": catalog,
+    }
+
+
+async def test_same_scope_next_request_checks_revoked_tools(tmp_path: Path) -> None:
+    from unittest.mock import Mock
+
+    from tlon.agents.program_store import ProgramStore
+    from tlon.base.execution import ExecutionScope, bind_execution
+    from tlon.operations.model_service import ModelService
+    from tlon.operations.schema import InputError
+
+    store = ProgramStore(None, build_id="test")
+    client = LLMClient(
+        LLMConfig(model_name="openai/test"), agent_id="a", tlon_paths=TlonPaths(home=tmp_path)
+    )
+    client._chat_with_retries = AsyncMock(return_value=LLMResponse(content="answer"))
+    tools = Mock(
+        return_value=[{"type": "function", "function": {"name": "read", "parameters": {}}}]
+    )
+    service = ModelService(client, AsyncMock(return_value="persona"), tools)
+    messages = [{"role": "user", "content": "x"}]
+    with bind_execution(ExecutionScope(store, "r", 100, "output")):
+        await service.request(messages, tools=["read"], max_tokens=8)
+        tools.return_value = []
+        with pytest.raises(InputError, match="Unknown model tools"):
+            await service.request(messages, tools=["read"], max_tokens=8)
+    client._chat_with_retries.assert_awaited_once()
+
+
+@pytest.mark.parametrize("measure", ["output", "total"])
+async def test_recorded_rejection_restores_missing_outer_receipt_without_dispatch(
+    tmp_path: Path,
+    measure: str,
+) -> None:
+    import asyncio
+    import time
+    from dataclasses import replace
+
+    from tlon.agents.program_store import ProgramStore
+    from tlon.base.execution import ExecutionScope
+    from tlon.base.llm_client import ContextWindowExceededError
+    from tlon.operations.schema import RejectedError
+
+    store = ProgramStore(tmp_path / "rejected.sqlite", build_id="test")
+    client = LLMClient(
+        LLMConfig(model_name="openai/test"), agent_id="a", tlon_paths=TlonPaths(home=tmp_path)
+    )
+    client._chat_with_retries = AsyncMock(
+        side_effect=ContextWindowExceededError("context too long")
+    )
+    system = AsyncMock(return_value="persona")
+    context = CallContext("a", "r", "c", execution=ExecutionScope(store, "r", 100, measure))
+    executor = OperationExecutor(
+        OperationRegistry(make_model_operations(client, system)), context, store
+    )
+    original = executor._commit
+
+    async def lose_outer(*args: object) -> None:
+        raise asyncio.CancelledError()
+
+    executor._commit = lose_outer
+    args = {"messages": [{"role": "user", "content": "x"}], "max_tokens": 8}
+    with pytest.raises(asyncio.CancelledError):
+        await executor.call("model-call", args)
+    executor._commit = original
+    system.side_effect = AssertionError("persona must not be read")
+    expired = ExecutionScope(store, "r", 100, measure, deadline=time.time() - 1)
+    expired.cancelled.set()
+    recovered = replace(context, execution=expired)
+    for replay in (True, False):
+        with pytest.raises(RejectedError, match="context too long") as failure:
+            if replay:
+                await executor.replay("model-call", args, recovered)
+            else:
+                await executor.call("model-call", args, recovered)
+        assert failure.value.data == {"call_id": "c", "outcome": "rejected"}
+    assert store.budget_usage("r")["used"] == 0
+    assert store.budget_usage("r")["pending_count"] == 0
+    client._chat_with_retries.assert_awaited_once()
+    system.assert_awaited_once()

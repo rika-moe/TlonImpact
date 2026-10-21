@@ -1,6 +1,6 @@
 # 可编程工作流程：分阶段实施计划
 
-状态：2026-10-21，设计已接受，P0 为本次文档与 issue 建立；P1 已实现待本 PR 审核合并，P2–P5 未实施。设计基线 `9fe00817bd75944e49a05cfd8e0149fa240dc757`（#198）；P1 施工基线 `0650c9d`（#207）。设计权威：[目标设计](programmable-workflows.md)；选择理由：[ADR 0046](../decisions/0046-programmable-workflows.md)。当前代码不因此具备新能力。
+状态：2026-10-21，设计已接受，P0 为本次文档与 issue 建立；P1 已合并（#208），P2 本阶段实现待 PR 审核合并，P3–P5 未实施。设计基线 `9fe00817bd75944e49a05cfd8e0149fa240dc757`（#198）；P1 施工基线 `0650c9d`（#207），P2 以已合并 #208 为基线。设计权威：[目标设计](programmable-workflows.md)；选择理由：[ADR 0046](../decisions/0046-programmable-workflows.md)。当前能力以各阶段实施记录及 reference 为准。
 
 ## 施工与共同完成标准
 
@@ -135,7 +135,7 @@ issue 用于进度、PR 与证据，目标契约仍以本设计为准。阶段�
 <!-- WORKFLOW-ISSUES -->
 - [x] P0：ADR、目标设计、计划及 issue 已建立；发布与合并状态见文档 PR。
 - [ ] [EPIC A：可编程工作流程——模块、模型与工具的统一持久执行](https://github.com/rika-moe/TlonImpact/issues/199)
-- [ ] [P1 — 模块、入口、冻结程序包与最小发信链路](https://github.com/rika-moe/TlonImpact/issues/201)
+- [x] [P1 — 模块、入口、冻结程序包与最小发信链路](https://github.com/rika-moe/TlonImpact/issues/201)
 - [ ] [P2 — 完整模型 Operation 与函数式核验](https://github.com/rika-moe/TlonImpact/issues/202)
 - [ ] [P3 — 受控工具分派与可复用对话循环](https://github.com/rika-moe/TlonImpact/issues/203)
 - [ ] [EPIC B：可编程工作流程——标准程序、交互投影与 stage 退役](https://github.com/rika-moe/TlonImpact/issues/200)
@@ -146,10 +146,20 @@ issue 用于进度、PR 与证据，目标契约仍以本设计为准。阶段�
 
 ## P1 实施细化
 
-本 PR 实现独立 v2 handlers、tlosure 源码模块、人工完整包发布/审批/实例化及模块运行冻结和调度恢复。v1 仍服务旧原型，不进行格式迁移或执行 fallback。P1 不提供机器自动起草、完整对话循环或新交互投影。
+P1（#208）实现独立 v2 handlers、tlosure 源码模块、人工完整包发布/审批/实例化及模块运行冻结和调度恢复。v1 仍服务旧原型，不进行格式迁移或执行 fallback。P1 不提供机器自动起草、完整对话循环或新交互投影。
 
 v2 源码包采用不可变发布：staging/trusted 源码 PATCH 均拒绝，改源码创建带 parent 的新包；metadata 可编辑。这样复用目录原子发布，避免原位替换的崩溃缺席窗口，也不会把元数据修改变为重新批准。创建人工 staging 是新增管理入口；模块审阅在 API 和 WebUI 只读展示，现有人工 v1 编辑保持。
 
 ProgramStore 新增 entry_programs 表，不改旧 runs 列、不迁移/清库；输入和源码同事务，完成和调度意图同事务。调度库另存 run_id 接纳回执，与调度意图同事务提交，再由程序库确认已交付；跨库恢复靠幂等交付，不依赖分布式事务。
 
-首次全量验证在调度接口收敛过程中命中了新测试的旧 mock；改为实际新接口并增加确定性恢复等待后重新执行全量。最终命令与数量见本 PR；合并后再勾选 P1，不提前关闭 #201。
+首次全量验证在调度接口收敛过程中命中了新测试的旧 mock；改为实际新接口并增加确定性恢复等待后重新执行全量。最终命令与数量见 #208；该 PR 已合并，P1 已勾选。
+
+## P2 实施细化
+
+本阶段统一 messages/tools 名称列表模型契约及结构化响应；StageServices 复用 ModelService，不删除仍服务 v1 的 stage。增加纯 tlon.messages 和两模块生成/核验/修订示例；工具分派和对话循环仍属 P3，机器自动起草仍属 P4a，交互投影仍属 P4b。
+
+v2 在入口受理事务冻结 host/config，标准库源码和作者源码一起冻结，作者包不被标准库污染。模型内层响应与预算已提交、外层回执缺失时，从现有 ProgramStore 模型调用记录补回执；不新增账本，不重发 unknown。旧 prompt-only 契约、示例调用及对应专属契约测试已替换，无兼容字段。output/total 计量语义保持。
+
+确定性验收覆盖普通函数三请求共享根预算、空工具与带工具响应、宿主输入冻结、拒绝/未知/超时/取消及回执提交窗口。全量质量门与真实 provider 冒烟的最终证据记录在本阶段 PR 和 #202；未合并前不勾选 P2。
+
+P2 本地最终验证：`scripts/check_all.sh` 15/15 全绿，单元 2754 passed / 15 skipped，集成 37 passed。真实 dream + staging/approve + SDK submit_mail + DeepSeek 三次调用完成生成/核验/修订，同根 output 占用 384，SQLite 收件箱一封回信，运行成功结束。服务与隔离目录清理完成。初次冒烟脚本误等待不存在的调度意图，修正后重跑通过；沙箱限制 Node 管道的检查批次停止后，在具备本地通信权限的环境重新全量验证。

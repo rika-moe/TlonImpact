@@ -27,7 +27,7 @@ from tlon.base.execution import ExecutionScope, UnknownModelOutcomeError, bind_e
 from tlon.base.llm_client import LLMClient
 from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
-from tlon.operations.schema import RecoveryMismatchError, UnknownOutcomeError
+from tlon.operations.schema import UnknownOutcomeError
 
 
 def provider_response(content: str = "done") -> SimpleNamespace:
@@ -395,6 +395,6 @@ async def test_same_stage_location_cannot_switch_prompt_to_bypass_unknown(
     with bind_execution(scope.child(path)), pytest.raises(UnknownModelOutcomeError):
         await driver._services.think(messages, span="test", session_id=scope.root_id)
     driver._services._context_builder.get_system_prompt.return_value = "changed persona"
-    with bind_execution(scope.child(path)), pytest.raises(RecoveryMismatchError):
+    with bind_execution(scope.child(path)), pytest.raises(UnknownModelOutcomeError):
         await driver._services.think(messages, span="test", session_id=scope.root_id)
     assert provider.await_count == 1

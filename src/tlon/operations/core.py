@@ -56,6 +56,7 @@ class CallContext:
 
 Handler = Callable[[CallContext, dict[str, Any]], Any]
 AsyncHandler = Callable[[CallContext, dict[str, Any]], Awaitable[Any]]
+RecoverHandler = Callable[[CallContext, dict[str, Any]], Awaitable[InvocationOutcome | None]]
 
 
 @dataclass(frozen=True, init=False)
@@ -71,6 +72,7 @@ class Operation:
     effects: frozenset[Effect]
     handler: Handler | AsyncHandler
     retry_safe: bool
+    recover: RecoverHandler | None
     control: bool
     default_timeout: float | None
     timeout_grace: float
@@ -87,6 +89,7 @@ class Operation:
         *,
         effects: frozenset[Effect] = frozenset(),
         retry_safe: bool = False,
+        recover: RecoverHandler | None = None,
         control: bool = False,
         default_timeout: float | None = None,
         timeout_grace: float = 0,
@@ -119,6 +122,7 @@ class Operation:
         object.__setattr__(self, "timeout_grace", timeout_grace)
         object.__setattr__(self, "default_timeout", default_timeout)
         object.__setattr__(self, "retry_safe", retry_safe)
+        object.__setattr__(self, "recover", recover)
         object.__setattr__(self, "control", control)
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "description", description)
@@ -262,6 +266,7 @@ class OperationExecutor:
             "output": operation.output_schema,
             "effects": sorted(operation.effects),
             "retry_safe": operation.retry_safe,
+            "recover": operation.recover is not None,
             "control": operation.control,
             "default_timeout": operation.default_timeout,
             "timeout_grace": operation.timeout_grace,
@@ -293,12 +298,44 @@ class OperationExecutor:
         invocation = self._invocation(operation, inputs, bound)
         await asyncio.to_thread(self.store.ensure_root, bound.run_id)
         outcome = await asyncio.to_thread(self.store.lookup_invocation, invocation)
+        recovered = await self._recover(operation, inputs, bound, invocation, outcome)
+        if recovered is not None:
+            return True, self._restore(recovered)
         if outcome is None or (
             ("write" not in operation.effects or operation.retry_safe)
             and outcome.error_type == "UnknownOutcomeError"
         ):
             return False, None
         return True, self._restore(outcome)
+
+    async def _recover(
+        self,
+        operation: Operation,
+        inputs: dict[str, Any],
+        bound: CallContext,
+        invocation: Invocation,
+        previous: InvocationOutcome | None,
+    ) -> InvocationOutcome | None:
+        if operation.recover is None or (
+            previous is not None and previous.error_type != "UnknownOutcomeError"
+        ):
+            return None
+        scope = bound.execution or current_execution()
+        if scope is None:
+            return None
+        recovered = await operation.recover(
+            replace(bound, execution=scope.child(f"operation:{bound.call_id}")), inputs
+        )
+        if recovered is None:
+            return None
+        if not isinstance(recovered, InvocationOutcome) or (
+            not recovered.success and recovered.error_type != "RejectedError"
+        ):
+            raise OperationError("Recovery hook must return a committed success or known rejection")
+        if recovered.success:
+            validate(operation.output_schema, recovered.value, output=True)
+        await self._commit(invocation, recovered)
+        return recovered
 
     @staticmethod
     def _restore(outcome: InvocationOutcome) -> Any:
@@ -403,6 +440,9 @@ class OperationExecutor:
             lock = _InvocationLock()
             self._locks[key] = lock
         previous = await asyncio.to_thread(self.store.lookup_invocation, invocation)
+        recovered = await self._recover(operation, inputs, bound, invocation, previous)
+        if recovered is not None:
+            return self._restore(recovered)
         if previous is not None and not (
             ("write" not in operation.effects or operation.retry_safe)
             and previous.error_type == "UnknownOutcomeError"
