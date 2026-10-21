@@ -17,7 +17,6 @@ from tlon.agents.session_journal import SessionJournal
 from tlon.agents.stages.act import attempts_completion
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.agents.trigger import AgentIdentity
-from tlon.agents.vocabulary import STAGE_COND_BUILTINS
 from tlon.base.events.event_bus import EventBus
 from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.base.paths import TlonPaths
@@ -33,7 +32,7 @@ from tlon.organization.mail.member_mail import MemberMailService
 from tlon.tools.spill import ToolSpill
 from tlosure.edn import loads
 
-GATED_EDN = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona) (protocol)]} :stages [(think) (critique {:if (sending-mail?)}) (act {:if (or (not (sending-mail?)) (not (critique-failed?)))}) (revise {:if (critique-failed?)})] :until (or (iteration-limit-reached?) (error-limit-reached?)) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 5}}))]}]}'
+GATED_EDN = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona) (protocol)]} :stages [(think) (critique {:if (get round :sending_mail)}) (act {:if (or (not (get round :sending_mail)) (not (= (get (get scratch :critique) :passed) false)))}) (revise {:if (= (get (get scratch :critique) :passed) false)})] :until (or (>= (get state :iteration) (get limits :max_iterations)) (>= (get state :error_count) (get limits :max_consecutive_errors))) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 5}}))]}]}'
 
 
 def _mail() -> Mail:
@@ -191,14 +190,6 @@ class TestAttemptsCompletion:
             ],
         )
         assert attempts_completion(response) is False
-
-    def test_builtin_reads_round_section_none_safe(self) -> None:
-        completing = STAGE_COND_BUILTINS["completing?"].fn
-        assert completing({"round": {"completing": True}}) is True
-        assert completing({"round": {"completing": False}}) is False
-        assert completing({"round": {}}) is False
-        assert completing({}) is False
-        assert completing({"round": None}) is False
 
 
 class TestCompletionGate:

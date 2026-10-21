@@ -48,7 +48,7 @@ class _MemoryStub:
 def _rule_with_sections(sections: str) -> MemberRule:
     spec = MemberSpec.from_edn(
         loads(
-            '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections SECTIONS} :stages [(think)] :until (iteration-limit-reached?) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'.replace(
+            '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections SECTIONS} :stages [(think)] :until (>= (get state :iteration) (get limits :max_iterations)) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'.replace(
                 "SECTIONS", sections
             )
         )
@@ -145,14 +145,14 @@ async def _build(
 def test_current_task_section_accepted() -> None:
     spec = MemberSpec.from_edn(
         loads(
-            '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona) (current-task) (mail-history 5)]} :stages [(think)] :until (iteration-limit-reached?) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'
+            '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona) (current-task) (mail-history 5)]} :stages [(think)] :until (>= (get state :iteration) (get limits :max_iterations)) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'
         )
     )
     validate_member_spec(spec)
 
 
 def test_current_task_section_rejects_arguments() -> None:
-    rule_spec = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(current-task 3)]} :stages [(think)] :until (iteration-limit-reached?) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'
+    rule_spec = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(current-task 3)]} :stages [(think)] :until (>= (get state :iteration) (get limits :max_iterations)) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'
     spec = MemberSpec.from_edn(loads(rule_spec))
     with pytest.raises(MemberSpecValidationError, match="takes no arguments"):
         validate_member_spec(spec)
@@ -305,14 +305,14 @@ async def test_section_follows_vector_order(tmp_path: Path) -> None:
 def test_thread_recap_section_accepted() -> None:
     spec = MemberSpec.from_edn(
         loads(
-            '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(thread-recap) (mail-history 5)]} :stages [(think)] :until (iteration-limit-reached?) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'
+            '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(thread-recap) (mail-history 5)]} :stages [(think)] :until (>= (get state :iteration) (get limits :max_iterations)) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'
         )
     )
     validate_member_spec(spec)
 
 
 def test_thread_recap_section_rejects_arguments() -> None:
-    rule_spec = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(thread-recap 3)]} :stages [(think)] :until (iteration-limit-reached?) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'
+    rule_spec = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(thread-recap 3)]} :stages [(think)] :until (>= (get state :iteration) (get limits :max_iterations)) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'
     spec = MemberSpec.from_edn(loads(rule_spec))
     with pytest.raises(MemberSpecValidationError, match="takes no arguments"):
         validate_member_spec(spec)
@@ -524,7 +524,7 @@ def _make_lessons_builder(tmp_path: Path, sections: str) -> ContextBuilder:
 def test_lessons_section_accepted() -> None:
     spec = MemberSpec.from_edn(
         loads(
-            '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona) (lessons) (mail-history 5)]} :stages [(think)] :until (iteration-limit-reached?) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'
+            '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona) (lessons) (mail-history 5)]} :stages [(think)] :until (>= (get state :iteration) (get limits :max_iterations)) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'
         )
     )
     validate_member_spec(spec)
@@ -533,7 +533,7 @@ def test_lessons_section_accepted() -> None:
 def test_lessons_section_rejects_arguments() -> None:
     spec = MemberSpec.from_edn(
         loads(
-            '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(lessons 3)]} :stages [(think)] :until (iteration-limit-reached?) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'
+            '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(lessons 3)]} :stages [(think)] :until (>= (get state :iteration) (get limits :max_iterations)) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'
         )
     )
     with pytest.raises(MemberSpecValidationError, match="takes no arguments"):

@@ -16,7 +16,7 @@
  :rules
  [{:name "respond"
    :on :mail-delivered
-   :when (or (addressed-to-me? msg) (cc-ed? msg))
+   :when (or (contains? (or (mail-field msg :to) []) (get self :address)) (contains? (or (mail-field msg :cc) []) (get self :address)))
    :actions
    [(run-loop
      (quote
@@ -24,11 +24,11 @@
                             (knowledge) (current-task) (mail-history 20 10)
                             (thread-recap)]}
        :stages [(think)
-                (critique {:if (sending-mail?)})
-                (act {:if (or (not (sending-mail?)) (not (critique-failed?)))})
-                (revise {:if (critique-failed?)})]
-       :until (or (iteration-limit-reached?) (error-limit-reached?)
-                  (token-limit-reached?))
+                (critique {:if (get round :sending_mail)})
+                (act {:if (or (not (get round :sending_mail)) (not (= (get (get scratch :critique) :passed) false)))})
+                (revise {:if (= (get (get scratch :critique) :passed) false)})]
+       :until (or (>= (get state :iteration) (get limits :max_iterations)) (>= (get state :error_count) (get limits :max_consecutive_errors))
+                  (>= (get state :token_usage) (get limits :max_tokens)))
        :max-iterations 3
        :max-consecutive-errors 3
        :max-tokens 32000
@@ -53,7 +53,7 @@
  :rules
  [{:name "relay"
    :on :mail-delivered
-   :when (or (addressed-to-me? msg) (cc-ed? msg))
+   :when (or (contains? (or (mail-field msg :to) []) (get self :address)) (contains? (or (mail-field msg :cc) []) (get self :address)))
    :actions [(mail-forward {:mail_id (mail-field msg :id) :to ${to}}) (mail-mark-read {:mail_ids [(mail-field msg :id)]})]}
   {:name "boot" :on :boot :actions []}]}
 ```

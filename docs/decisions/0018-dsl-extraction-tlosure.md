@@ -69,3 +69,6 @@ tlosure 只依赖标准库。import-linter 增加契约固话此方向（`root_p
 
 
 后续修订：ADR 0042 删除独立的 on_complete 模块和完成环境，所有规则效果由统一成员程序执行；语言核心继续保持宿主无关。
+
+
+P6 修订：以上旧邮件谓词与宿主条件准入记录保留为历史。当前 when/until/stage-if 共用纯函数准入和显式数据；addressed-to-me?/cc-ed? 已删除，收件人检查使用 mail-field 与 self.address。外部宿主查询移到 actions，采样记录后再计算。见 [实施计划](../design/operations-plan.md)。

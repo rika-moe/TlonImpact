@@ -31,7 +31,7 @@ from tlon.tools.spill import ToolSpill
 from tlosure.edn import loads
 from tlosure.eval import Evaluator
 
-SESSION_EDN = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona)]} :stages [(think) (act)] :until (iteration-limit-reached?) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 5}}))]}]}'
+SESSION_EDN = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona)]} :stages [(think) (act)] :until (>= (get state :iteration) (get limits :max_iterations)) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 5}}))]}]}'
 
 
 @pytest.fixture(params=[False, True], ids=["memory", "sqlite"])

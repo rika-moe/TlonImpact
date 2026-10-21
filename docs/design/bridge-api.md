@@ -1,6 +1,6 @@
 # Bridge API：宿主机制与 tlosure 策略的接口
 
-> 后续方案（邮件 P2 与文件/Shell/时间 P3a 已分别通过 #185/#186 合并；P3b 已接入，后续仍分阶段实施）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
+> 当前施工（EPIC A 与 P5 已合并；P6 已在本分支完成验收、待合并，P7/P8 尚未实施）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
 
 Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值语境能使用哪些词汇。它由 Python 协议、builtin 注册表、环境契约和 `ActionRequest` 组成；不是通用 FFI。语言及行为模型见 [DSL 设计](dsl.md)，字段与词汇见 [DSL reference](../reference/dsl-reference.md)。
 
@@ -9,7 +9,7 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 - 调度、并发、持久化、LLM 调用、Docker 和权限检查留在宿主机制层；策略组合已有机制。
 - 查询只暴露受控视图，不向 DSL 开放任意 Python 属性或方法调用。
 - 宿主效果统一进入 Operation，仅 `run-loop` 保留 `ActionRequest` 配方声明；异步求值在调用处交给宿主执行，记录实际结果后继续表达式。参数形状在构造请求时校验；配额、信任和实时状态仍由执行侧检查。
-- 每个语境有自己的词汇注册表、符号作用域和 fuel 预算；新增词汇必须明确适用语境。
+- when、until、stage-if 共用纯函数准入，各自声明符号作用域与 fuel 预算；actions 才能调用效果。
 - 函数可以返回动作意图，也可以在函数体内调用效果词。动作位置不再靠语法分区枚举；纯语境通过可见词汇约束效果。
 - tlosure 核心保持宿主无关；领域端口位于 tlon。纯度标记描述效果权限，不能将“读取宿主状态”误解成可重放的常量计算。
 
@@ -17,9 +17,9 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 
 ### 查询
 
-[agents/vocabulary.py](../../src/tlon/agents/vocabulary.py) 的 `ScriptHostQueries` 声明宿主查询协议，`make_member_builtins(host)` 通过闭包注入查询。实现由 [agent_registry.py](../../src/tlon/agents/agent_registry.py) 的 `RegistryQueries` 提供。Adam 获得注册表状态查询，普通成员不因此获得同样权限。
+[agents/vocabulary.py](../../src/tlon/agents/vocabulary.py) 的 `ScriptHostQueries` 声明宿主查询协议，`make_member_builtins(host)` 通过闭包注入查询。实现由 [agent_registry.py](../../src/tlon/agents/agent_registry.py) 的 `RegistryQueries` 提供。注入由宿主装配决定，不构成纯条件准入。
 
-查询词登记为 `pure=True`，表示不执行外部写入；结果来自当前宿主视图，未必在不同时刻相同。生产程序驱动器将这些动态查询作为需记录的读取，恢复时复用原结果。能力 artifact 不能直接引用这些依赖隐式上下文的查询，必须由调用方显式传入数据。
+查询词登记为 `pure=False`：虽然不写外部状态，结果仍来自随时间变化的宿主视图。生产程序驱动器将这些动态查询作为需记录的读取，恢复时复用原结果。能力 artifact 不能直接引用这些依赖隐式上下文的查询，必须由调用方显式传入数据。
 
 ### 效果
 
@@ -53,7 +53,7 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 
 ### 注册表
 
-成员动作、会话终止条件和 stage 条件分别使用 `make_member_builtins`、`LOOP_BUILTINS`、`STAGE_COND_BUILTINS`。加载校验与执行须使用相同词汇；受信能力注入成员词汇，暂不扩展到固定的会话条件注册表，详见 [capabilities](capabilities.md)。
+成员动作使用 make_member_builtins 接入完整目录；when、until 和 stage-if 从同一目录选择纯函数（SCRIPT_BUILTINS 和 effects 为空且 control=false 的 Operation），加载与执行使用相同准入。三处保留各自数据作用域，作用域绑定缺失明确报错；纯复合操作只接收自己的单对象输入。外部只读查询仍是效果，先在 actions 物化记录再参与条件，详见 [capabilities](capabilities.md)。
 
 ## 当前政策数据的归属
 

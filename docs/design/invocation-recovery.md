@@ -49,7 +49,7 @@ LoopDriver 的 tool/dispatch 保存 root/path/call_id/build_id/definition_id。S
 P4b 使用同一数据库的 budgets/model_allocations 记录额度与预留，模型完整响应仍保存在 invocations；删除驱动局部计数、_HOST_QUERIES pure 重写与旧 MemberCapabilities 装配容器名。当前 ProgramStore 格式版本为 2，旧版本明确拒绝，不转换、不清库。P4a/P4b 及收尾已合并；复合依赖与动态视图仍属于 EPIC B。
 
 
-P4b 宿主查询收敛：`sleeping?`、`running?`、`lazy?`、`member-roster` 在注册时直接声明非确定性只读；`Builtin.read_only` 只控制规则 `:when` 准入，`pure` 控制确定性求值与挂起。ProgramDriver 不再按名称改写 pure；每次外部读取采样并记录，重放返回原值。until、stage 条件、社会政策和能力 artifact 的词表不扩大。装配容器与入口现为 MemberServices / assemble_member_services，构造参数 services，无旧名称别名。
+P4b 将 sleeping?、running?、lazy?、member-roster 收敛为非确定性只读查询，ProgramDriver 不再按名称改写 pure；每次外部读取采样并记录，重放返回原值。P6 进一步禁止其进入任何纯条件：读取放在 actions，已记录的返回值再参与计算。when、until 和 stage-if 共用纯函数准入与显式数据，Builtin.read_only 字段随旧条件准入一起删除。装配容器与入口现为 MemberServices / assemble_member_services，构造参数 services，无旧名称别名。
 
 ## 坏根隔离与操作员排查
 

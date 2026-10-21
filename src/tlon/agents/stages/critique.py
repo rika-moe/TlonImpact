@@ -36,8 +36,8 @@ async def critique_stage(
     with the remaining text as feedback; an unparseable first line is
     "we don't know the review outcome" — treating it as PASS would be
     fail-open, so the critique is skipped like a soft failure (warning
-    logged, any previous verdict cleared: neither critique-passed? nor
-    critique-failed? fires, revise is not triggered). The verdict is
+    logged, any previous verdict cleared: neither explicit passed=true nor
+    passed=false condition matches, so revise is not triggered). The verdict is
     declared for the loop scratchpad. Fails soft like plan; does not
     consume or produce the round's response.
     """
@@ -94,7 +94,7 @@ async def critique_stage(
         # Unparseable verdict: an unknown review outcome must not be
         # recorded as PASS (fail-open). Skip this critique like the
         # soft-failure path above — clear any previous verdict, so neither
-        # critique-passed? nor critique-failed? fires and revise is not
+        # explicit passed=true nor passed=false condition matches and revise is not
         # triggered — but leave a visible warning.
         svc.logger.warning(
             "critique_verdict_unparseable",

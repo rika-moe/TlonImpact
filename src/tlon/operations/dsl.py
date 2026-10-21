@@ -13,7 +13,9 @@ class DSLAdapter:
     def __init__(self, executor: OperationExecutor) -> None:
         self._executor = executor
         self._builtins = {
-            operation.name: self._builtin(operation.name, pure=not operation.effects)
+            operation.name: self._builtin(
+                operation.name, pure=not operation.effects and not operation.control
+            )
             for operation in executor.registry.definitions()
         }
 

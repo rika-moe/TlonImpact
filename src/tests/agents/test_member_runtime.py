@@ -20,7 +20,7 @@ from tlon.organization.mail.mailbox import Mailbox
 from tlosure.edn import loads
 
 RECIPE = """{:context {:sections [(persona)]} :stages [(think) (act)]
-:until (iteration-limit-reached?) :max-iterations 2 :max-consecutive-errors 2
+:until (>= (get state :iteration) (get limits :max_iterations)) :max-iterations 2 :max-consecutive-errors 2
 :max-tokens 10000 :reflect {:enabled false :interval-minutes 5}}"""
 
 

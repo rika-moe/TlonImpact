@@ -1,8 +1,8 @@
 # 统一操作与可组合行为：目标设计
 
-状态：完整方案已于 2026-10-19 认可；EPIC A 的 P1–P4 与审计收尾已通过 #184–#191 合并 main。宿主操作双入口、回执、预算与写序已落地；外部审查的恢复根隔离修复独立交付。EPIC B P5 正在实现验收；P6–P8 尚未开工。实施与验收见 [operations-plan](operations-plan.md)，决策见 [ADR 0044](../decisions/0044-unified-operations.md)。合并由人类确认。
+状态：完整方案已于 2026-10-19 认可；EPIC A 与恢复隔离审计收尾已通过 #184–#192 合并 main。EPIC B P5 已通过 #193 合并；P6 已在本分支完成验收、待合并，P7–P8 尚未开工。实施与验收见 [operations-plan](operations-plan.md)，决策见 [ADR 0044](../decisions/0044-unified-operations.md)。合并由人类确认。
 
-当前落地范围：宿主 Operation、单份 schema、成员上下文与 DSL/Tool 薄入口，见 [当前操作契约](../reference/operations-reference.md)。当前调用记录与恢复边界见 [invocation-recovery](invocation-recovery.md)。当前共享预算和并发边界见 [execution-scope](execution-scope.md)。复合依赖和动态工具视图仍是后续阶段目标，不能视为当前保证。
+当前落地范围：宿主 Operation、单份 schema、成员上下文与 DSL/Tool 薄入口，见 [当前操作契约](../reference/operations-reference.md)。当前调用记录与恢复边界见 [invocation-recovery](invocation-recovery.md)。当前共享预算和并发边界见 [execution-scope](execution-scope.md)。P5 复合依赖已落地，P6 统一纯条件在本分支验收；P7 动态工具视图仍是后续目标。
 
 ## 1. 目标与范围
 
@@ -21,10 +21,10 @@
 | [Tool / ToolResult](../../src/tlon/tools/base.py)、[ToolExecutor](../../src/tlon/agents/tool_executor.py) | Python Tool 同时定义 schema、实现和 LLM 协议；参数校验是手写浅层子集；返回 ToolResult | 拆出 Operation 契约和实现；Tool 只做协议适配；删除手写参数校验 |
 | [assemble_member_services](../../src/tlon/agents/assembly.py) | 满配 46 个工具，按装置/信任/服务装配；LLM 工具面来自注册列表 | 保留装置和信任约束，工具视图从操作集合投影，不再靠复制注册代码区分成员 |
 | [CapabilitySpec](../../src/tlon/agents/capabilities/spec.py)、[词汇桥](../../src/tlon/agents/capabilities/bridge.py) | 一个 artifact 一个闭包；只见参数；纯度准入；不能依赖其他能力；只进入 DSL | artifact 成为复合 Operation；保留零隐式 env 和审批；开放显式可分析依赖及 Tool 投影 |
-| [MemberSpec](../../src/tlon/agents/member_spec.py)、[vocabulary](../../src/tlon/agents/vocabulary.py) | when/actions、until、stage-if 使用不同注册表，复合词不能自然用于所有纯条件 | 统一纯函数准入；保留各位置明确的数据作用域 |
+| [MemberSpec](../../src/tlon/agents/member_spec.py)、[vocabulary](../../src/tlon/agents/vocabulary.py) | P6 前 when/actions、until、stage-if 使用不同注册表，复合词不能自然用于所有纯条件 | 统一纯函数准入；保留各位置明确的数据作用域 |
 | [ProgramDriver](../../src/tlon/agents/program_driver.py)、[ProgramStore](../../src/tlon/agents/program_store.py) | 冻结规则/输入；按调用序号及名称/参数核对重放；state-put 与结果可同事务提交 | 保留并扩展定义快照、嵌套调用标识；不重做另一套执行数据库 |
 | [LoopDriver](../../src/tlon/agents/loop_driver.py)、[ProgramEffects](../../src/tlon/operations/model.py)、[EffectExecutor](../../src/tlon/agents/executor.py) | Tool 邮件返回数据后由 LoopDriver 按工具名提交；DSL 邮件走 ProgramEffects；底层均已使用 PostOffice | 邮件领域逻辑和提交统一；两种驱动仍各自负责程序与会话生命周期 |
-| [宿主查询注册](../../src/tlon/agents/vocabulary.py) | 外部查询直接注册为非 pure、read_only；驱动不改写 | read_only 仅声明规则条件准入；外部读取采样与重放独立于纯计算 |
+| [宿主查询注册](../../src/tlon/agents/vocabulary.py) | 外部查询注册为非 pure；驱动不改写 | P6 删除 Builtin.read_only 准入字段；外部读取在 actions 采样与重放后参与计算 |
 | [StageServices.think](../../src/tlon/agents/stages/services.py) | 每次模型请求读取工具定义；尚无请求级工具快照与状态准入契约 | 在该边界生成并记录请求快照，执行时重新授权 |
 | [instantiate](../../src/tlon/agents/prototypes/instantiate.py)、[MemberServices](../../src/tlon/agents/member_runtime.py) | 原型复制完整 Behavior；MemberServices 实际为成员服务装配容器 | 保留复制；装配对象改名 MemberServices，避免与能力 artifact 混淆 |
 

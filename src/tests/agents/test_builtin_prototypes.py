@@ -29,8 +29,7 @@ from tlon.agents.prototypes.instantiate import instantiate
 from tlon.agents.session import AgentSession, SessionState
 from tlon.agents.stages.plan import plan_stage
 from tlon.agents.vocabulary import (
-    LOOP_BUILTINS,
-    STAGE_COND_BUILTINS,
+    condition_builtins,
     make_member_builtins,
     stage_cond_env,
 )
@@ -43,6 +42,8 @@ from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 from tlosure.edn import dumps, loads
 from tlosure.eval import eval_form
+
+_CONDITION_BUILTINS = condition_builtins(make_member_builtins())
 
 # Fixed package IDs are discovered by behavioral labels, never by historical roles.
 BUILTIN_PARAMS: dict[str, dict] = {
@@ -116,14 +117,14 @@ class TestBuiltinPrototypes:
 
 #: The default session recipe (docs/design/runtime.md): a lightweight
 #: pre-submission review. critique fires only when the round's pending response would
-#: end the session (``completing?``) — one review per completion attempt,
+#: end the session (``round.completing``) — one review per completion attempt,
 #: independent of the round count; a FAIL blocks act and revise feeds the
 #: feedback back for the next think.
 DEFAULT_REVIEW_STAGES = [
     "(think)",
-    "(critique {:if (sending-mail?)})",
-    "(act {:if (or (not (sending-mail?)) (not (critique-failed?)))})",
-    "(revise {:if (critique-failed?)})",
+    "(critique {:if (get round :sending_mail)})",
+    "(act {:if (or (not (get round :sending_mail)) (not (= (get (get scratch :critique) :passed) false)))})",
+    "(revise {:if (= (get (get scratch :critique) :passed) false)})",
 ]
 
 #: Minimal-context and forwarding programs deliberately omit the default loop.
@@ -228,7 +229,7 @@ class TestDistinctBehaviorPrototypes:
                 scratch=session.loop_scratch,
                 completing=False,
             )
-            if eval_form(opts["if"], dict(env), STAGE_COND_BUILTINS):
+            if eval_form(opts["if"], dict(env), _CONDITION_BUILTINS):
                 outcome = await plan_stage(svc, session, None, opts)
                 session.loop_scratch.update(outcome.scratch_updates)
                 session.context.extend(outcome.context_appends)
@@ -259,7 +260,7 @@ class TestDistinctBehaviorPrototypes:
                             "max_tokens": loop.max_tokens,
                         },
                     },
-                    LOOP_BUILTINS,
+                    _CONDITION_BUILTINS,
                 )
                 is exhausted
             )
@@ -282,9 +283,9 @@ class TestDistinctBehaviorPrototypes:
                 sending_mail=True,
             )
         )
-        assert eval_form(options[0]["if"], env, STAGE_COND_BUILTINS) is True
-        assert eval_form(options[1]["if"], env, STAGE_COND_BUILTINS) is (passed is True)
-        assert eval_form(options[2]["if"], env, STAGE_COND_BUILTINS) is (passed is not True)
+        assert eval_form(options[0]["if"], env, _CONDITION_BUILTINS) is True
+        assert eval_form(options[1]["if"], env, _CONDITION_BUILTINS) is (passed is True)
+        assert eval_form(options[2]["if"], env, _CONDITION_BUILTINS) is (passed is not True)
 
     @pytest.mark.parametrize(
         ("sender", "content", "recipient", "matches"),

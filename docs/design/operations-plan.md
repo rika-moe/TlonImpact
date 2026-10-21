@@ -1,6 +1,6 @@
 # 统一操作：分阶段实施计划
 
-状态：2026-10-21，EPIC A 的 P1–P4 与审计收尾已通过 #184–#191 合并 main，双入口操作切换完成。外部审查发现的恢复根隔离缺陷正在单独修复；EPIC B P5 正在实现验收，P6–P8 未开工，P5/P7 前置拆解见本文。合并仍由人类确认。
+状态：2026-10-21，EPIC A 与审计收尾已合并 main（#184–#192）；EPIC B P5 已通过 #193 合并。P6 已在本分支完成验收，等待 PR 合并；P7–P8 未开工。合并仍由人类确认。
 
 设计权威：[operations](operations.md)；决策：[ADR 0044](../decisions/0044-unified-operations.md)。代码基线为 `d35c3a546a5e3dacef331b5d39d3e1cc7efd4e9a`。GitHub 跟踪链接见本文末尾；Issue/PR 负责验收证据，不复制一份持续漂移的设计。
 
@@ -141,7 +141,16 @@ EPIC A 完成标准：全部既有可调用宿主能力经一份权威实现服�
 
 实施：when/until/stage-if 均可调用统一目录的纯操作；每处上下文作为明确数据传参。将依赖隐式 env 的领域谓词改为显式输入纯函数或在调用点用核心函数表达，外部查询先物化记录再进入条件。不改语言 map/filter/reduce，也不重建 stage/section 实现。
 
-删除：TRIGGER/LOOP/STAGE_COND 的分裂纯词白名单与旧隐式谓词入口；更新所有仓库原型、测试及文档，不保留旧语义别名。
+删除：TRIGGER/LOOP/STAGE_COND 的分裂纯词白名单、旧隐式谓词入口与无消费者的 Builtin.read_only 字段；更新所有仓库原型、测试及文档，不保留旧语义别名。
+
+P6 实施决策：
+
+- 三处条件共享同一纯函数准入：语言核心函数、显式输入的领域纯函数，以及统一目录中 effects 为空且 control=false 的 Operation（含复合操作）。非确定性的只读宿主操作不属于纯条件；不能通过局部 fn、复合依赖或嵌套调用绕过准入。
+- 函数准入相同，数据作用域各自明确：when 提供 msg、event、self；until 提供 self、state、limits；stage-if 提供 state、scratch、round。静态校验拒绝引用未提供的符号，执行缺少必需作用域数据必须明确报错。复合操作只接收自己的单对象 schema 输入，不继承调用方 env；同一纯操作在三处由调用方分别构造输入。
+- 旧隐式谓词直接删除，使用核心函数读取显式数据。例如迭代上限写为 `(>= (get state :iteration) (get limits :max_iterations))`；完成状态写为 `(get round :completing)`；评审通过写为 `(= (get (get scratch :critique) :passed) true)`；首轮为 iteration=0。预算计数、终止边界与宿主完成通知保持原有语义。
+- 邮件访问保留显式参数的 mail-field、from?、content-matches?；收件人判断写为 `(contains? (or (mail-field msg :to) []) (get self :address))`。sleeping?、running?、lazy?、member-roster 等外部查询只能在 actions 中取得已记录结果，再由核心表达式作决定，不在 when 内发起 I/O。
+- 不改语言 map/filter/reduce，不增加另一套复合执行器；本阶段不实现 P7 的授权名单和动态 ToolView。
+
 
 验收：同一个 has-actionable-facts 在三处得到一致结果；作用域数据缺失加载/执行明确报错；纯条件不能经局部 fn 或复合依赖读时钟、模型/邮箱或写状态；现有预算/终止条件和完成通知语义保持。
 
@@ -199,7 +208,7 @@ EPIC B 完成标准：目标设计完成；工具只是入口，复合能力可�
 - [EPIC A #180](https://github.com/rika-moe/TlonImpact/issues/180)：P1、P2、P3a/P3b/P3c、P4a/P4b 及审计收尾。
 - [EPIC B #181](https://github.com/rika-moe/TlonImpact/issues/181)：依赖 A，P5-P8，四个串行 PR。
 
-P1 已通过 [#184](https://github.com/rika-moe/TlonImpact/pull/184) 合并 main。P2 已通过 [#185](https://github.com/rika-moe/TlonImpact/pull/185) 合并 main。P3a 已通过 #186 合并 main；P3b 已通过 #187 合入 main；P3c 已通过 #188 合并 main；P4a/P4b 与审计收尾已通过 #189/#190/#191 合并；P5 正在实现验收，P6-P8 未实施。关联的 [#173](https://github.com/rika-moe/TlonImpact/issues/173) 继续保留为长期工作方式/习惯学习方向，本计划不将其一并关闭。
+P1 已通过 [#184](https://github.com/rika-moe/TlonImpact/pull/184) 合并 main。P2 已通过 [#185](https://github.com/rika-moe/TlonImpact/pull/185) 合并 main。P3a 已通过 #186 合并 main；P3b 已通过 #187 合入 main；P3c 已通过 #188 合并 main；P4a/P4b 与审计收尾已通过 #189/#190/#191 合并；P5 已通过 #193 合并；P6 正在验收，P7–P8 未实施。关联的 [#173](https://github.com/rika-moe/TlonImpact/issues/173) 继续保留为长期工作方式/习惯学习方向，本计划不将其一并关闭。
 
 ## P3a 实施细化（2026-10-20）
 
@@ -272,7 +281,7 @@ P4a #189 已合入 main。本阶段采用 Python asyncio 的任务取消、上�
 
 成员共用 task-owner 可重入写 gate；仅同一 asyncio task 的嵌套 await 可重入，同根的不同并行 task 仍互斥。同一批 Tool 的写操作显式按声明顺序建立等待链，读操作不入链。先登记全部子任务再发布分发事件，取消时等待已登记任务清理。历史调用先重放，新效果在等锁后、写 intent 前及 handler 前检查取消/截止时间；不声称取消能撤销已提交的外部效果。正常 session 结束不取消父程序延续。
 
-删除 _HOST_QUERIES 的运行时 pure 重写：四个宿主查询直接声明非 pure 与 read_only，规则 when 仅按确定性或只读准入；until、stage-if、policy、Capability 的独立词表不扩张。MemberCapabilities/assemble_member_capabilities 改为 MemberServices/assemble_member_services，不留别名，artifact 与 API facade 的 capability 概念不改。
+P4b 当时删除 _HOST_QUERIES 的运行时 pure 重写：四个宿主查询直接声明非 pure 与 read_only，规则 when 按确定性或只读准入；其他独立词表不扩张。此条件准入随后由 P6 替代，并删除 Builtin.read_only 字段：所有纯条件禁止外部查询，查询在 actions 中物化并记录。MemberCapabilities/assemble_member_capabilities 改为 MemberServices/assemble_member_services，不留别名，artifact 与 API facade 的 capability 概念不改。
 
 验收覆盖并发预留、历史响应与结算原子性、usage 缺失/超额、同进程及重启不换 ID 绕过未知模型请求、stage/压缩/内嵌调用共享额度、写顺序/读并发/同 task 重入、等锁取消与分发事件取消窗口、冻结截止恢复，以及查询采样与各词表权限边界。最终完整质量门、真实 dream + SDK 冒烟及 main PR 均完成后交付，仍由人类合并。
 
@@ -381,4 +390,17 @@ P4a #189 已合入 main。本阶段采用 Python asyncio 的任务取消、上�
 
 过程补齐：早期全仓诊断暴露测试替身未提供控制元数据/邮局服务，已修正装配并保留原断言；真实冒烟发现原型仍按宿主词表拒绝已批准操作，现已接通全部行为准入入口。独立复核指出冻结受理窗口、父缓存前崩溃与保留名碰撞，均加回归。没有通过扩大旧格式读取或放宽服务准入规避失败。最终以本节质量门和冒烟为验收依据。
 
-P5 PR 面向 main，等待人类合并；P5 合并前不勾选，P6/P7/P8 未开工。审批绑定依赖、实际成员服务校验已落实本阶段前置拆解；P7 的统一授权和动态视图仍单列待办。
+P5 已通过 [#193](https://github.com/rika-moe/TlonImpact/pull/193) 合并 main，P6 从合并提交 `c18bc8d` 开工；P7/P8 未开工。审批绑定依赖、实际成员服务校验已落实本阶段前置拆解；P7 的统一授权和动态视图仍单列待办。
+
+
+## P6 本地交付与验收（2026-10-21）
+
+从 main `c18bc8d`（#193 合并提交）新建独立分支。when、until、stage-if 共享纯目录准入，数据作用域独立显式；删除三套固定白名单、隐式谓词和已无消费者的 Builtin.read_only。纯 Operation 必须 effects 为空且 control=false。邮件先物化为记录，动态与字面量 session recipe 都使用当前运行目录校验，会话条件使用该根冻结目录。没有新增执行器，没有实施 P7/P8；预算硬上限与受限宿主终止通知保持。
+
+主会话亲自审 diff、复核调用方与独立审查结论，并重跑完整 `bash scripts/check_all.sh`：15/15 全绿，单元 2806 passed / 15 skipped，集成 34 passed，227 个源文件类型检查通过；import-linter 13 kept / 0 broken，TS 门实跑。新增 45 项纯条件验收，覆盖同一 has-actionable-facts 在三处的值与 schema 拒绝、局部函数和传递依赖隐藏效果拒绝、缺作用域与非数据对象错误、纯 control 排除、动态 recipe、共享 fuel 与旧根保留旧定义。
+
+真实隔离 dream + SDK + 本地 OpenAI 兼容 fake provider：REST 批准同一个 has-actionable-facts 后用于 when、until、stage-if，继续执行两层模型/发信复合；验证一次真实邮箱投递、标读、状态与父程序延续。共 5 次 provider 请求，程序 output 记 8，会话 4 次请求 total 记 60；未调用外部模型。临时 home、dream、provider 和端口清理。
+
+过程记录：首轮全量仅一项旧夹具绕过 rule_env 直接给 mail-field 传 Python Mail 对象；保留该测试并改为物化记录，同时补上旧对象明确拒绝断言。60 项针对性回归通过后重跑全量门得到上述结果，没有删除失败测试，也没有增加旧行为兼容或迁移。旧 Behavior 若引用删除的隐式词必须更新为显式数据表达式；不自动改写用户文件。
+
+本阶段 PR 直接面向 main，等待人类合并；#181 的 P6 合并前不勾选，P7/P8 保持未开工。

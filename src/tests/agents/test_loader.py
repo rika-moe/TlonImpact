@@ -46,7 +46,7 @@ class TestLoadMemberSpec:
         _write_behavior(
             tlon,
             "thinker-1",
-            '{:version 1 :rules [{:name "respond" :on :mail-delivered :when (addressed-to-me? msg) :actions [(run-loop (quote {:context {:sections [(persona) (protocol)]} :stages [(think) (act)] :until (or (iteration-limit-reached?) (error-limit-reached?)) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 5}}))]}]}',
+            '{:version 1 :rules [{:name "respond" :on :mail-delivered :when (contains? (or (mail-field msg :to) []) (get self :address)) :actions [(run-loop (quote {:context {:sections [(persona) (protocol)]} :stages [(think) (act)] :until (or (>= (get state :iteration) (get limits :max_iterations)) (>= (get state :error_count) (get limits :max_consecutive_errors))) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 5}}))]}]}',
         )
         spec = load_member_spec("thinker-1", tlon_paths=tlon)
         assert recipe_for(spec.rules[0]) is not None

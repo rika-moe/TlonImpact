@@ -3,7 +3,7 @@
  :rules
  [{:name "newspaper"
    :on :mail-delivered
-   :when (addressed-to-me? msg)
+   :when (contains? (or (mail-field msg :to) []) (get self :address))
    :fuel 10000
    :actions
    [(defn accept-submission [mail]

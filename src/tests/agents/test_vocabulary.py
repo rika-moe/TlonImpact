@@ -1,7 +1,7 @@
 """tlon's DSL domain vocabulary (``tlon/agents/vocabulary.py``, ADR 0018 修订).
 
 The host layer over the tlosure language core: the mail predicates
-(reading real :class:`Mail` objects and the injected ``self.address``),
+(reading explicit mail records and a supplied ``self.address``),
 the action family and the unified member registry
 (:func:`make_member_builtins`), host query injection
 (:class:`ScriptHostQueries`), and the action-position static gate
@@ -12,8 +12,7 @@ are tested in ``src/tests/tlosure/test_eval.py``.
 import pytest
 
 from tlon.agents.vocabulary import (
-    LOOP_BUILTINS,
-    STAGE_COND_BUILTINS,
+    condition_builtins,
     make_member_builtins,
     stage_cond_env,
     validate_member_actions,
@@ -21,6 +20,8 @@ from tlon.agents.vocabulary import (
 from tlon.organization.mail.mail import Mail
 from tlosure.edn import loads
 from tlosure.eval import EvalError, eval_form, validate_form
+
+_CONDITION_BUILTINS = condition_builtins(make_member_builtins())
 
 #: The unified member registry (pure predicates + arithmetic + actions) —
 #: the full registry the ADR 0021 action gate validates against.
@@ -37,24 +38,49 @@ def _mail(
 
 
 class TestMailPredicates:
-    """Mail predicates see real ``Mail`` objects directly (ADR 0018 修订)."""
+    """Mail predicates receive explicit materialized mail records."""
 
     def _env(self, msg: Mail | None) -> dict:
-        return {"msg": msg, "self": {"address": "me@tlon.internal"}}
+        return {"msg": msg.to_dict() if msg else None, "self": {"address": "me@tlon.internal"}}
 
     def test_addressed_to_me(self):
         mine = _mail(to=["me@tlon.internal"])
-        assert eval_form(loads("(addressed-to-me? msg)"), self._env(mine), _BUILTINS) is True
+        assert (
+            eval_form(
+                loads("(contains? (or (mail-field msg :to) []) (get self :address))"),
+                self._env(mine),
+                _BUILTINS,
+            )
+            is True
+        )
         other = _mail(to=["you@tlon.internal"])
-        assert eval_form(loads("(addressed-to-me? msg)"), self._env(other), _BUILTINS) is False
+        assert (
+            eval_form(
+                loads("(contains? (or (mail-field msg :to) []) (get self :address))"),
+                self._env(other),
+                _BUILTINS,
+            )
+            is False
+        )
 
     def test_cc_ed(self):
         mail = _mail(to=["you@tlon.internal"], cc=["me@tlon.internal"])
-        assert eval_form(loads("(cc-ed? msg)"), self._env(mail), _BUILTINS) is True
+        assert (
+            eval_form(
+                loads("(contains? (or (mail-field msg :cc) []) (get self :address))"),
+                self._env(mail),
+                _BUILTINS,
+            )
+            is True
+        )
 
-    def test_non_mail_msg_is_never_addressed(self):
-        assert eval_form(loads("(addressed-to-me? msg)"), self._env(None), _BUILTINS) is False
-        assert eval_form(loads("(cc-ed? msg)"), self._env(None), _BUILTINS) is False
+    def test_missing_self_is_an_explicit_error(self) -> None:
+        with pytest.raises(EvalError, match="undefined symbol: self"):
+            eval_form(
+                loads("(contains? (or (mail-field msg :to) []) (get self :address))"),
+                {"msg": _mail(to=["me@tlon.internal"]).to_dict()},
+                _CONDITION_BUILTINS,
+            )
 
     def test_from(self):
         mail = _mail(from_address="postmaster@tlon.internal", to=["me@tlon.internal"])
@@ -134,7 +160,7 @@ class TestValidateMemberActions:
         validate_member_actions(
             (
                 loads(
-                    '(if (addressed-to-me? msg) (mail-send {:to ["sink@tlon.internal"] :content "a"}) (mail-send {:to ["sink@tlon.internal"] :content "b"}))'
+                    '(if (contains? (or (mail-field msg :to) []) (get self :address)) (mail-send {:to ["sink@tlon.internal"] :content "a"}) (mail-send {:to ["sink@tlon.internal"] :content "b"}))'
                 ),
                 loads('(let [x "hi"] (mail-send {:to ["sink@tlon.internal"] :content x}))'),
                 loads('(str "just" " compute")'),
@@ -182,7 +208,9 @@ class TestValidateForm:
     host vocabulary — the core suite uses the general vocabulary)."""
 
     def test_accepts_legit_expression(self):
-        form = loads('(and (addressed-to-me? msg) (content-matches? msg "hi"))')
+        form = loads(
+            '(and (contains? (or (mail-field msg :to) []) (get self :address)) (content-matches? msg "hi"))'
+        )
         validate_form(form, _BUILTINS, scope={"msg", "self"})
 
     def test_rejects_non_whitelisted_form(self):
@@ -195,44 +223,44 @@ class TestValidateForm:
 
     def test_rejects_undefined_symbol(self):
         with pytest.raises(EvalError, match="undefined symbol: foo"):
-            validate_form(loads("(addressed-to-me? foo)"), _BUILTINS, scope={"msg", "self"})
+            validate_form(
+                loads("(contains? (mail-field foo :to) (get self :address))"),
+                _BUILTINS,
+                scope={"msg", "self"},
+            )
 
     def test_let_extends_scope(self):
-        validate_form(loads("(let [x msg] (addressed-to-me? x))"), _BUILTINS, scope={"msg"})
+        validate_form(
+            loads('(let [x msg] (contains? (mail-field x :to) "me@tlon.internal"))'),
+            _BUILTINS,
+            scope={"msg"},
+        )
         with pytest.raises(EvalError, match="undefined symbol: y"):
-            validate_form(loads("(let [x 1] (addressed-to-me? y))"), _BUILTINS, scope={"msg"})
+            validate_form(
+                loads('(let [x 1] (contains? (mail-field y :to) "me@tlon.internal"))'),
+                _BUILTINS,
+                scope={"msg"},
+            )
 
 
-class TestTokenLimitPredicate:
-    """``token-limit-reached?`` (ADR 0023): the loop ``:until`` predicate
-    over the session token budget — true at/over the cap, false below,
-    and safely false when the env keys are absent."""
-
-    def test_reached_at_and_over_cap(self):
-        env = {"state": {"token_usage": 1000}, "limits": {"max_tokens": 1000}}
-        assert eval_form(loads("(token-limit-reached?)"), env, LOOP_BUILTINS) is True
-        env = {"state": {"token_usage": 1500}, "limits": {"max_tokens": 1000}}
-        assert eval_form(loads("(token-limit-reached?)"), env, LOOP_BUILTINS) is True
-
-    def test_not_reached_below_cap(self):
-        env = {"state": {"token_usage": 999}, "limits": {"max_tokens": 1000}}
-        assert eval_form(loads("(token-limit-reached?)"), env, LOOP_BUILTINS) is False
-
-    def test_missing_keys_safely_false(self):
+class TestExplicitTokenLimit:
+    @pytest.mark.parametrize("used,expected", [(999, False), (1000, True), (1500, True)])
+    def test_budget_comparison(self, used: int, expected: bool) -> None:
         assert (
             eval_form(
-                loads("(token-limit-reached?)"),
-                {"state": {}, "limits": {}},
-                LOOP_BUILTINS,
+                loads("(>= (get state :token_usage) (get limits :max_tokens))"),
+                {"state": {"token_usage": used}, "limits": {"max_tokens": 1000}},
+                _CONDITION_BUILTINS,
             )
-            is False
+            is expected
         )
-        assert eval_form(loads("(token-limit-reached?)"), {}, LOOP_BUILTINS) is False
 
-    def test_validates_in_loop_registry(self):
-        """The word is registered loop vocabulary — load-time validation
-        of an ``:until`` using it passes (empty scope, as the engine does)."""
-        validate_form(loads("(token-limit-reached?)"), LOOP_BUILTINS, scope=set())
+    def test_missing_scope_is_an_explicit_error(self) -> None:
+        expression = loads("(>= (get state :token_usage) (get limits :max_tokens))")
+        with pytest.raises(EvalError, match="undefined symbol: state"):
+            eval_form(expression, {}, _CONDITION_BUILTINS)
+        with pytest.raises(EvalError, match="undefined symbol: state"):
+            validate_form(expression, _CONDITION_BUILTINS, scope=set())
 
 
 class TestIndependentRoundFacts:
@@ -250,9 +278,10 @@ class TestIndependentRoundFacts:
                 sending_mail=sending,
             )
         )
-        assert eval_form(loads("(sending-mail?)"), env, STAGE_COND_BUILTINS) is sending
-        assert eval_form(loads("(completing?)"), env, STAGE_COND_BUILTINS) is ending
+        assert eval_form(loads("(get round :sending_mail)"), env, _CONDITION_BUILTINS) is sending
+        assert eval_form(loads("(get round :completing)"), env, _CONDITION_BUILTINS) is ending
 
-    def test_absent_round_is_neither_mail_nor_completion(self) -> None:
-        assert not eval_form(loads("(sending-mail?)"), {}, STAGE_COND_BUILTINS)
-        assert not eval_form(loads("(completing?)"), {}, STAGE_COND_BUILTINS)
+    def test_absent_round_is_an_explicit_error(self) -> None:
+        for expression in ["(get round :sending_mail)", "(get round :completing)"]:
+            with pytest.raises(EvalError, match="undefined symbol: round"):
+                eval_form(loads(expression), {}, _CONDITION_BUILTINS)

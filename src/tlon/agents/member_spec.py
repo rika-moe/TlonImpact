@@ -9,10 +9,11 @@ from typing import Any
 
 from tlon.agents.vocabulary import (
     ACTION_SCOPE,
-    LOOP_BUILTINS,
+    LOOP_SCOPE,
     RULE_SCOPE,
-    STAGE_COND_BUILTINS,
+    STAGE_SCOPE,
     make_member_builtins,
+    validate_condition,
     validate_member_actions,
 )
 from tlon.base.events.event import EventType
@@ -20,7 +21,6 @@ from tlon.base.logger import get_logger
 from tlosure.builtins import Builtin, EvalError
 from tlosure.edn import EDNParseError, Form, Keyword, Symbol, dumps, loads
 from tlosure.eval import MAX_FUEL
-from tlosure.validate import validate_form
 
 logger = get_logger(__name__)
 
@@ -320,7 +320,7 @@ def validate_member_spec(
 
     Every expression field of every rule is checked against the unified
     member vocabulary: ``:when`` admits deterministic computation and
-    declared read-only queries from the member registry under :data:`~tlon.agents.vocabulary.RULE_SCOPE`;
+    pure functions from the member registry under :data:`~tlon.agents.vocabulary.RULE_SCOPE`;
     actions validate as a sequence against the *full* member registry
     under :data:`~tlon.agents.vocabulary.ACTION_SCOPE` via
     :func:`~tlon.agents.vocabulary.validate_member_actions` (ADR 0021:
@@ -338,15 +338,12 @@ def validate_member_spec(
     names = [rule.name for rule in member.rules]
     if len(names) != len(set(names)):
         raise MemberSpecValidationError("rule names must be unique within one member")
-    registry = builtins or make_member_builtins()
-    pure = {
-        name: builtin for name, builtin in registry.items() if builtin.pure or builtin.read_only
-    }
+    registry = make_member_builtins() if builtins is None else builtins
     for rule in member.rules:
         label = f"rule {rule.name!r}"
-        _validate_when(rule, label, pure)
+        _validate_when(rule, label, registry)
         _validate_actions(rule, label, registry)
-        _validate_literal_recipes(rule.actions, label)
+        _validate_literal_recipes(rule.actions, label, registry)
         _validate_fuel(rule, label)
     return member
 
@@ -369,12 +366,12 @@ def _validate_fuel(rule: MemberRule, label: str) -> None:
             )
 
 
-def _validate_when(rule: MemberRule, label: str, pure: dict[str, Builtin]) -> None:
-    """Validate ``:when`` against deterministic/read-only words, unified env scope."""
+def _validate_when(rule: MemberRule, label: str, registry: dict[str, Builtin]) -> None:
+    """Validate ``:when`` against pure words, unified env scope."""
     if rule.when is None:
         return
     try:
-        validate_form(rule.when, pure, scope=set(RULE_SCOPE))
+        validate_condition(rule.when, registry, RULE_SCOPE)
     except EvalError as e:
         raise MemberSpecValidationError(f"{label}: invalid :when expression: {e}") from e
 
@@ -392,22 +389,28 @@ def _validate_actions(rule: MemberRule, label: str, registry: dict[str, Builtin]
         raise MemberSpecValidationError(f"{label}: invalid action: {e}") from e
 
 
-def validate_session_recipe(recipe: SessionRecipe, label: str = "run-loop") -> SessionRecipe:
+def validate_session_recipe(
+    recipe: SessionRecipe,
+    label: str = "run-loop",
+    *,
+    builtins: dict[str, Builtin] | None = None,
+) -> SessionRecipe:
     """Validate one session request independently of its rule and event."""
+    registry = make_member_builtins() if builtins is None else builtins
     _validate_sections(recipe.context_sections, label)
-    _validate_stages(recipe.stages, label)
+    _validate_stages(recipe.stages, label, registry)
     if recipe.fuel is not None and not 0 < recipe.fuel <= MAX_FUEL:
         raise MemberSpecValidationError(
             f"{label}: :fuel must be positive and under hard cap {MAX_FUEL}"
         )
     try:
-        validate_form(recipe.until, LOOP_BUILTINS, scope=set())
+        validate_condition(recipe.until, registry, LOOP_SCOPE)
     except EvalError as e:
         raise MemberSpecValidationError(f"{label}: invalid :until expression: {e}") from e
     return recipe
 
 
-def _validate_literal_recipes(value: Any, label: str) -> None:
+def _validate_literal_recipes(value: Any, label: str, registry: dict[str, Builtin]) -> None:
     """Check literal session recipes wherever calls occur, leaving data quoted."""
     if isinstance(value, Form):
         if value and value[0] == Symbol("quote"):
@@ -415,15 +418,17 @@ def _validate_literal_recipes(value: Any, label: str) -> None:
         if len(value) == 2 and value[0] == Symbol("run-loop"):
             argument = value[1]
             if isinstance(argument, Form) and len(argument) == 2 and argument[0] == Symbol("quote"):
-                validate_session_recipe(SessionRecipe.from_edn(argument[1]), label)
+                validate_session_recipe(
+                    SessionRecipe.from_edn(argument[1]), label, builtins=registry
+                )
         for item in value:
-            _validate_literal_recipes(item, label)
+            _validate_literal_recipes(item, label, registry)
     elif isinstance(value, (list, tuple)):
         for item in value:
-            _validate_literal_recipes(item, label)
+            _validate_literal_recipes(item, label, registry)
     elif isinstance(value, dict):
         for item in value.values():
-            _validate_literal_recipes(item, label)
+            _validate_literal_recipes(item, label, registry)
 
 
 def _validate_sections(sections: tuple[Form, ...], label: str) -> None:
@@ -466,7 +471,7 @@ def _validate_sections(sections: tuple[Form, ...], label: str) -> None:
             )
 
 
-def _validate_stages(stages: tuple[Form, ...], label: str) -> None:
+def _validate_stages(stages: tuple[Form, ...], label: str, registry: dict[str, Builtin]) -> None:
     """Validate the stage vector (mirrored the legacy AgentSpec's stage checks)."""
     if not stages:
         raise MemberSpecValidationError(
@@ -498,10 +503,12 @@ def _validate_stages(stages: tuple[Form, ...], label: str) -> None:
                 raise MemberSpecValidationError(
                     f"{label}: stage {name!r} opts must be a map, got {dumps(opts)}"
                 )
-            _validate_stage_opts(name, opts, form, label)
+            _validate_stage_opts(name, opts, form, label, registry)
 
 
-def _validate_stage_opts(name: str, opts: dict[Any, Any], form: Form, label: str) -> None:
+def _validate_stage_opts(
+    name: str, opts: dict[Any, Any], form: Form, label: str, registry: dict[str, Builtin]
+) -> None:
     """Validate one stage's opts map (mirrored the legacy AgentSpec's phase 7c checks)."""
     allowed = {"if"}
     if name == "plan":
@@ -520,7 +527,7 @@ def _validate_stage_opts(name: str, opts: dict[Any, Any], form: Form, label: str
             )
         if str(key) == "if":
             try:
-                validate_form(value, STAGE_COND_BUILTINS, scope=set())
+                validate_condition(value, registry, STAGE_SCOPE)
             except EvalError as e:
                 raise MemberSpecValidationError(f"{label}: stage {name!r} :if: {e}") from e
         elif str(key) == "instructions":

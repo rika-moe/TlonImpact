@@ -3,8 +3,7 @@
 A legal PASS/FAIL verdict is declared to the loop scratchpad as before.
 An unparseable verdict is "we don't know the review outcome": it is NOT
 recorded as PASS (fail-open) — the critique is skipped like a soft
-failure (no verdict in scratch, so neither ``critique-passed?`` nor
-``critique-failed?`` fires and revise is not triggered), with a warning
+failure (no verdict in scratch, so neither explicit true nor false comparison matches and revise is not triggered), with a warning
 log as the visible signal.
 """
 
@@ -17,11 +16,13 @@ import pytest
 from tlon.agents.session import AgentSession
 from tlon.agents.stages.critique import critique_stage
 from tlon.agents.stages.revise import revise_stage
-from tlon.agents.vocabulary import STAGE_COND_BUILTINS
+from tlon.agents.vocabulary import condition_builtins, make_member_builtins
 from tlon.base.llm_client import ContextWindowExceededError, LLMResponse, ToolCall
 from tlon.tools.base import ToolResult
 from tlosure.edn import loads
 from tlosure.eval import eval_form
+
+_CONDITION_BUILTINS = condition_builtins(make_member_builtins())
 
 
 def _make_services(verdict_text: str) -> MagicMock:
@@ -98,8 +99,12 @@ class TestCritiqueVerdict:
         assert outcome.scratch_updates == {"critique": None}
         session.loop_scratch.update(outcome.scratch_updates)
         env = {"scratch": session.loop_scratch}
-        assert not eval_form(loads("(critique-passed?)"), env, STAGE_COND_BUILTINS)
-        assert not eval_form(loads("(critique-failed?)"), env, STAGE_COND_BUILTINS)
+        assert not eval_form(
+            loads("(= (get (get scratch :critique) :passed) true)"), env, _CONDITION_BUILTINS
+        )
+        assert not eval_form(
+            loads("(= (get (get scratch :critique) :passed) false)"), env, _CONDITION_BUILTINS
+        )
         assert svc.logger.warning.call_args.args[0] == "critique_verdict_unparseable"
 
     async def test_skipped_critique_does_not_trigger_revise(self) -> None:
@@ -135,8 +140,12 @@ class TestCritiqueVerdict:
         assert session.loop_scratch["critique"] == previous  # pure stage
         session.loop_scratch.update(outcome.scratch_updates)
         env = {"scratch": session.loop_scratch}
-        assert not eval_form(loads("(critique-passed?)"), env, STAGE_COND_BUILTINS)
-        assert not eval_form(loads("(critique-failed?)"), env, STAGE_COND_BUILTINS)
+        assert not eval_form(
+            loads("(= (get (get scratch :critique) :passed) true)"), env, _CONDITION_BUILTINS
+        )
+        assert not eval_form(
+            loads("(= (get (get scratch :critique) :passed) false)"), env, _CONDITION_BUILTINS
+        )
         svc.logger.warning.assert_called_once()
 
     async def test_context_overflow_propagates_for_engine_retry(self) -> None:

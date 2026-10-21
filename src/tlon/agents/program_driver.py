@@ -7,6 +7,7 @@ from typing import Any
 
 from tlon.agents.member_spec import MemberRule
 from tlon.agents.program_store import ProgramStore
+from tlon.agents.vocabulary import RULE_SCOPE, condition_builtins, condition_env, validate_condition
 from tlon.base.execution import (
     BudgetExceededError,
     ExecutionDeadlineError,
@@ -80,9 +81,14 @@ class ProgramDriver:
             else None
         )
         if rule.when is not None:
-            validate_control_forms([rule.when], allow_direct=False, controls=self._control_names)
-            gate = shared or Evaluator(self.builtins, DEFAULT_WHEN_FUEL, DEFAULT_MAX_DEPTH)
-            if not await gate.eval_async(rule.when, env, 0, self._call):
+            validate_condition(rule.when, self.builtins, RULE_SCOPE)
+            pure = condition_builtins(self.builtins)
+            gate = (
+                shared.fork(pure)
+                if shared is not None
+                else Evaluator(pure, DEFAULT_WHEN_FUEL, DEFAULT_MAX_DEPTH)
+            )
+            if not gate.eval(rule.when, condition_env(env, RULE_SCOPE), 0):
                 return
         self._control_allowed = bool(
             rule.actions

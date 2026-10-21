@@ -38,7 +38,7 @@ BOOT_ONLY_EDN = """\
 """
 
 #: A member program with auto-optout, session response and boot rules.
-MIXED_MEMBER_EDN = '{:version 1 :rules [{:name "auto-optout" :on :mail-delivered :when (content-matches? msg "退订") :actions [(mail-send {:to [(mail-field msg :from)] :content "已为您处理退订" :in_reply_to (mail-field msg :id)})]} {:name "respond" :on :mail-delivered :when (and (addressed-to-me? msg) (not (content-matches? msg "退订"))) :actions [(run-loop (quote {:context {:sections [(persona) (protocol)]} :stages [(think) (act)] :until (or (iteration-limit-reached?) (error-limit-reached?)) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 5}}))]} {:name "boot" :on :boot :actions []}]}'
+MIXED_MEMBER_EDN = '{:version 1 :rules [{:name "auto-optout" :on :mail-delivered :when (content-matches? msg "退订") :actions [(mail-send {:to [(mail-field msg :from)] :content "已为您处理退订" :in_reply_to (mail-field msg :id)})]} {:name "respond" :on :mail-delivered :when (and (contains? (or (mail-field msg :to) []) (get self :address)) (not (content-matches? msg "退订"))) :actions [(run-loop (quote {:context {:sections [(persona) (protocol)]} :stages [(think) (act)] :until (or (>= (get state :iteration) (get limits :max_iterations)) (>= (get state :error_count) (get limits :max_consecutive_errors))) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 5}}))]} {:name "boot" :on :boot :actions []}]}'
 
 
 class _StaticProvider(AgentInfoProvider):

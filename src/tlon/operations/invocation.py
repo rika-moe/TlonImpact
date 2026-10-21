@@ -52,7 +52,6 @@ def registry_identity(builtins: dict[str, "Builtin"]) -> str:
     definitions = {
         name: {
             "pure": builtin.pure,
-            "read_only": builtin.read_only,
             "params": builtin.closure.params if builtin.closure else None,
             "rest": builtin.closure.rest if builtin.closure else None,
             "body": dumps(builtin.closure.body) if builtin.closure else None,
