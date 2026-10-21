@@ -22,11 +22,11 @@ run-loop 的程序调用位置对应稳定 session ID。同进程重入和进程
 
 ## 成员写入与取消
 
-成员只装配一个写 gate。读操作仍可并发；写操作在 gate 内检查当前取消、截止和实际领域授权后执行。同一 asyncio task 的嵌套 await 可以重入；同一根的不同 task 不能借相同 root_id 重入。父程序等待 run-loop 时不持有写锁。
+成员只装配一个写 gate，显式注入 OperationExecutor 与 MemoryManager；反思、蒸馏和直接记忆写入也使用同一把锁。读操作仍可并发；写操作在 gate 内检查当前取消、截止和实际领域授权后执行。同一 asyncio task 的嵌套 await 可以重入；同一根的不同 task 不能借相同 root_id 重入。父程序等待 run-loop 时不持有写锁。
 
 一批 Tool 里的写操作显式按模型声明顺序排等待链，读操作不进入该链。单靠锁的等待顺序不足以兑现声明顺序，因为 SQLite 查询等 await 会改变到锁先后。任务创建与登记之间不插入 await，随后才发布分发事件；取消时能够找到并等待全部子任务，不留下游离写入。
 
-历史回执在锁和当前取消检查之前返回。新效果在等锁后、写 intent 前以及进入 handler 前检查控制信号；调用上限取操作自身超时与根剩余时间的较小值。取消不能回滚已经派发的外部效果，未知提交继续沿调用恢复契约处理。已提交状态与授权撤销后的新执行由同一成员写边界排序，不能用工具是否展示代替实际授权。
+历史回执在锁和当前取消检查之前返回。新效果在等锁后、写 intent 前以及进入 handler 前检查控制信号；超时由共享 executor 实施：成员 tool.per_timeout 是默认值，操作 default_timeout 覆盖，schema 声明的显式 timeout 再覆盖，另加操作 timeout_grace（Shell 为 10 秒），最后与根期限取小。该局部期限传给内部模型请求，但只收紧执行，不改写预算根冻结期限。LoopDriver 不另套计时或合成超时回执。取消不能回滚已经派发的外部效果，未知提交继续沿调用恢复契约处理。已提交状态与授权撤销后的新执行由同一成员写边界排序，不能用工具是否展示代替实际授权。spawn 配额根取宿主 CallContext.run_id，不取日志上下文；恢复仍使用原会话配额，直接 DSL 使用程序根。
 
 并发控制复用 [asyncio 任务取消](https://docs.python.org/3.13/library/asyncio-task.html#task-cancellation)与[锁](https://docs.python.org/3.13/library/asyncio-sync.html#lock)机制；保留项目现有跨轮 pending 任务所有权，不新增工作流框架。
 

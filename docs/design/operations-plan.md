@@ -286,3 +286,22 @@ P4a #189 已合入 main。本阶段采用 Python asyncio 的任务取消、上�
 真实冒烟发现 LiteLLM 工具计数器不支持合法 boolean 子 schema，已改用同一库分别统计消息和完整工具 JSON，并以真实完整装配工具表补回归；修复维护轮询没有任务也落空预算的问题。故障审查另修锁序死锁、模型未知被预算/until 误终止、调用位置按输入 hash 绕过身份检查，以及先创建任务后登记的取消窗口。最终集成遇到已有管理测试把文件存在当作 schema 就绪的竞态，改为明确查询 sqlite_master 等待 runs 表提交，保留原断言，3 项针对性及最终 34 项集成均通过；未删除失败测试。
 
 本阶段保留两个既有 token 计量口径并统一账本与内部调用入口；旧数据库版本明确拒绝，无迁移或清库。PR 面向 main 等待人类合并；P4 与 EPIC A 只有在 P4b 合并后才能标记完成，EPIC B 未开工。
+
+## EPIC A 审计收尾（2026-10-21，#190 合并后）
+
+#190 已合并 main；独立审计确认旧业务 Tool 已全部投影为 Operation，但发现执行契约仍有遗漏。本次先修复，不开启 EPIC B：
+
+- 超时统一由 OperationExecutor 决定和执行：成员配置 tool.per_timeout 作为共享默认，操作 default_timeout 优先，已声明的显式 timeout 参数再优先；Shell 保留 10 秒结果清理宽限并声明为操作元数据。取该次调用期限与继承根期限的较早者，DSL 与 Tool 共用。LoopDriver 删除独立 wait_for 和凭工具名/效果合成超时回执的路径。先查询历史；计时覆盖等待写 gate、持久化与 handler，已提交回执优先，未进入 handler 的本次调用不能谎报已派发未知；不得将旧未知 intent 或另一并发调用的 intent 覆写成确定拒绝。
+- 调用的局部截止时间向内部模型请求传播，但不改写预算根的冻结截止时间；恢复不能通过局部超时延长根期限。外部取消继续传播，不把 shutdown 吞成正常完成，已知提交事实保留。
+- spawn 配额身份改为宿主 CallContext.run_id，模型会话和恢复使用原 session 根，直接 DSL 使用程序根；日志 ContextVar 不再承担配额授权。恢复前该会话已达配额时仍须拒绝，不能换入无会话桶。
+- 演化及其他写服务包装透传确定的预算/截止拒绝，明确的 provider 拒绝保持 rejected，真正模型未知仍保持 unknown；内部冲突判断/蒸馏不能吞掉执行控制错误后继续落盘。
+- 成员装配一把 task-owner 可重入 write gate，显式注入 executor 与 MemoryManager。普通操作、反思、蒸馏和直接记忆修改共享它；不在父任务持锁后启动等待同锁的后台任务。读操作仍可并发。
+- 删除无人使用的 tools/prototypes/ports.py 与当前旧说明，领域类型仅保留 evolution.ports 的权威定义，无旧别名。
+
+针对性验收重现审计中的已提交却被报 unknown、等锁未执行却报 unknown、两入口超时不一致、恢复 spawn 绕配额、确定预算错误被永久未知化、维护写越过 gate。每项加入回归，最终亲自审 diff、完整质量门与隔离 dream/SDK 冒烟通过后用 gh 创建 main PR，合并仍由人类执行。EPIC A 在这些遗漏修复验收合并前不关闭。
+
+### 审计收尾本地验收
+
+主会话复核最终 diff、超时/取消/历史回执及共享 gate 的调用点，重跑完整 `bash scripts/check_all.sh`：15/15 全绿，单元 2733 passed / 15 skipped，集成 34 passed，221 个源文件类型检查通过。首次单元检查的两项失败来自旧截止错误文案断言，已改为验证 ExecutionDeadlineError 类型及零写入，未删除测试。原审计脚本确认恢复 spawn 仍使用原 session 配额桶，演化预算拒绝在 DSL/Tool 均保持 BudgetExceededError。
+
+真实隔离 dream + SDK + 本地 OpenAI 兼容 fake provider 冒烟通过：5 次 provider 请求，程序 output 记 8，会话 4 次请求 total 记 60；重复 ToolCall.id、真实回信/标读/状态与父程序延续均正确。未调用外部模型，隔离 home、进程及端口已清理，8080 无残留。本次无数据库格式升级或迁移；EPIC B 未开工，收尾 PR 面向 main，等待人类合并。

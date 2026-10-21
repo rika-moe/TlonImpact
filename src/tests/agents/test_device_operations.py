@@ -12,6 +12,7 @@ from tlon.agents.tool_executor import ToolExecutor
 from tlon.agents.vocabulary import make_member_builtins
 from tlon.base.config import AgentConfig, DockerRuntimeConfig, LLMConfig
 from tlon.base.events.event_bus import EventBus
+from tlon.base.execution import MemberWriteGate
 from tlon.base.paths import TlonPaths
 from tlon.operations.core import CallContext
 from tlon.operations.filesystem import make_filesystem_operations
@@ -32,6 +33,7 @@ def member_at(
     if shell:
         operations = (*operations, *make_shell_operations(shell))
     caps = MemberServices(
+        write_gate=MemberWriteGate(),
         config=AgentConfig(
             id="device-member", name="Device", llm=LLMConfig(model_name="test/model"), docker=config
         ),

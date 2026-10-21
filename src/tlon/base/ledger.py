@@ -2,7 +2,7 @@
 
 Write side: ``LLMClient.chat`` (the only LLM exit) appends one ``llm_call``
 record per successful call carrying usage to
-``~/.tlon/{agent_id}/ledger.jsonl``; ``UpdatePersonaTool`` (tools layer)
+``~/.tlon/{agent_id}/ledger.jsonl``; ``PersonaService.update`` (identity domain)
 appends one ``persona_update`` audit record per persona rewrite (ADR 0024
 决策 2: accountability, not approval). A client built without an
 ``agent_id`` (system-level) records nothing.

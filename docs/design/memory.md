@@ -1,6 +1,6 @@
 # 记忆系统设计
 
-Tlon 的记忆不是检索增强的附件，而是 agent 会话循环的一部分：session journal（ADR 0007）是交互的唯一真相，已完成的 session 成批蒸馏成 claim（自然语言断言）进入长期记忆，下一轮对话再把它们拼回上下文。本文解释这套系统为什么长现在这样，以当前实现为准（存储层在 [src/tlon/memory/](../../src/tlon/memory)，agent 侧工具在 [src/tlon/tools/memory/](../../src/tlon/operations/memory.py)，反思在 [src/tlon/agents/reflection.py](../../src/tlon/agents/reflection.py)）。设计选择的历史见 [ADR 0017](../decisions/0017-claim-based-memory.md)；会话 journal 的事实与恢复契约见 [runtime.md](./runtime.md)。
+Tlon 的记忆不是检索增强的附件，而是 agent 会话循环的一部分：session journal（ADR 0007）是交互的唯一真相，已完成的 session 成批蒸馏成 claim（自然语言断言）进入长期记忆，下一轮对话再把它们拼回上下文。本文解释这套系统为什么长现在这样，以当前实现为准（存储层在 [src/tlon/memory/](../../src/tlon/memory)，agent 侧工具在 [src/tlon/operations/memory.py](../../src/tlon/operations/memory.py)，反思在 [src/tlon/agents/reflection.py](../../src/tlon/agents/reflection.py)）。设计选择的历史见 [ADR 0017](../decisions/0017-claim-based-memory.md)；会话 journal 的事实与恢复契约见 [runtime.md](./runtime.md)。
 
 ## 定位：可审计的个体记忆
 
@@ -87,7 +87,7 @@ Distiller 的输入是 **session 事件投影**（`SessionProjection`，[memory/
 
 ## agent 侧接口
 
-agent 通过 [src/tlon/tools/memory/](../../src/tlon/operations/memory.py) 下的四个工具读写自己的记忆，全部在 `assemble_member_services`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配成员服务时注册；前三个直接持有本 agent 的 `MemoryManager` 实例，`session-read` 持有本 agent 的 session journal（`SessionLogReader` 端口）：
+agent 通过 [src/tlon/operations/memory.py](../../src/tlon/operations/memory.py) 下的四个工具读写自己的记忆，全部在 `assemble_member_services`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配成员服务时注册；前三个直接持有本 agent 的 `MemoryManager` 实例，`session-read` 持有本 agent 的 session journal（`SessionLogReader` 端口）：
 
 - `memory-remember`（`remember_fact.py` 的 `RememberFactTool`）——立即写一条 claim（参数为 `fact` 文本与 `importance`）。新 claim 不在当前 session 重新注入（注入只在 session 首步构建一次），但经 `memory-search` 立即可查，下个 session 进 JIT 注入。
 - `memory-search`（`search_memories.py` 的 `SearchMemoriesTool`）——向量检索：query embed 后按相似度取 top-k active claims，每条结果带日期与 `source_session_ids` 来源引用；索引不可用时降级关键词子串匹配。

@@ -2,6 +2,11 @@
 
 from typing import Any, Protocol
 
+from tlon.base.execution import (
+    BudgetExceededError,
+    ExecutionDeadlineError,
+    ModelRequestRejectedError,
+)
 from tlon.memory.session_digest import render_session_digest
 from tlon.operations.core import CallContext, Operation
 from tlon.operations.schema import OperationError, RejectedError, UnknownOutcomeError
@@ -37,6 +42,10 @@ def make_memory_operations(memory: MemoryPort, logs: SessionReadPort) -> tuple[O
             return {
                 "claim_id": await memory.remember_fact(args["fact"], args.get("importance", 0.5))
             }
+        except (OperationError, BudgetExceededError, ExecutionDeadlineError):
+            raise
+        except ModelRequestRejectedError as error:
+            raise RejectedError(str(error), {"reason": error.error_type}) from error
         except Exception as error:
             raise unknown(context, error) from error
 
@@ -48,6 +57,10 @@ def make_memory_operations(memory: MemoryPort, logs: SessionReadPort) -> tuple[O
         check(context)
         try:
             return {"result": await memory.forget(args["query"], args.get("confirm", False))}
+        except (OperationError, BudgetExceededError, ExecutionDeadlineError):
+            raise
+        except ModelRequestRejectedError as error:
+            raise RejectedError(str(error), {"reason": error.error_type}) from error
         except Exception as error:
             if args.get("confirm", False):
                 raise unknown(context, error) from error

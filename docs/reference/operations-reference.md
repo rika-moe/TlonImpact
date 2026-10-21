@@ -52,7 +52,7 @@ Tool 协议根参数必须是 JSON object 的字符串键。OperationTool 在 To
 
 文件服务只使用成员的 ExecutionDevice，沿用容器工作目录、读写路径白名单与 archive-only 文件柜。读取额外允许自身只读 `/tlon-home`；写入仅可到配置的 allowed_paths。没有通用宿主文件系统后门。归档内容仅在内存读取，成员路径和归档条目仍需独立校验。
 
-`default_timeout` 是宿主操作声明的默认执行秒数；Shell handler 和引擎等待预算引用同一默认值，显式 timeout 参数仍优先，schema 不因此引入 default 关键字。
+`default_timeout` 是宿主操作默认执行秒数，覆盖成员的 tool.per_timeout；schema 声明的显式 timeout 参数再优先。`timeout_grace` 是操作声明的清理宽限（默认 0，Shell 为 10 秒），与继承根剩余期限取小。两入口均由 OperationExecutor 实施，LoopDriver 不再维护第二套计时。局部期限向内部模型传播，但不改写预算根冻结期限。
 
 `retry_safe` 是宿主对中断后重新调用是否安全的最小声明。程序沿用同一 ProgramStore 数据库：非幂等 write 先写 intent，再调用 handler，再记录结果；已有结果重放，只有 intent 而无结果时返回 unknown，禁止自动重新执行。取消同样不能当作无副作用。邮件仍使用 PostOffice 的稳定 request_id 幂等重试。P4a 将这些 intent 和回执统一到 ProgramStore 的 invocations；P4b 新增共享额度根，并让新写入按成员 gate 及模型声明顺序执行。
 
@@ -78,3 +78,8 @@ state-put 将状态与该次调用结果放在 ProgramStore 的同一事务；�
 程序直接模型调用使用持久 output 根，额度来自成员 llm.max_tokens；获准的输出预留成功后不退款，实际输出上限还受请求值和剩余额度限制。run-loop 显式创建 recipe.max_tokens 的 total 根，session 内 stage、上下文压缩和 Tool/提案/评审内部模型调用共享它。total 成功按可靠的实际 usage 结算；缺少 usage 或提交未知时保留预留，实际超额如实记账并阻止后续请求，token 估算不是硬上界。
 
 模型响应与额度结算原子提交，已提交历史只还原，不重新扣额或请求 provider；未知提交不自动重发。后台反思和蒸馏另建维护根。宿主 ContextVar 传播作用域，业务参数不能重置额度；取消只作用于当前进程任务树，冻结 deadline 和预算跨重启保留。详情见 [执行作用域](../design/execution-scope.md)。
+
+
+## EPIC A 审计收尾边界
+
+spawn 的配额归属取冻结 CallContext.run_id：Tool 与恢复使用 session 根，直接 DSL 使用程序根，日志 ContextVar 不参与授权。演化和记忆的领域包装透传确定的预算/截止拒绝，provider 明确拒绝为 rejected，未知提交仍为 unknown。成员同一 write gate 显式注入 OperationExecutor 与 MemoryManager，反思/蒸馏与普通调用共享写边界。超时先返回已提交回执；未派发的新调用明确拒绝，不把旧未知 intent 覆写为失败。

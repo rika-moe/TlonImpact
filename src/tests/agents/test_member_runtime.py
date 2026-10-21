@@ -13,6 +13,7 @@ from tlon.agents.member_spec import MemberSpec
 from tlon.agents.vocabulary import make_member_builtins
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
+from tlon.base.execution import MemberWriteGate
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
@@ -409,6 +410,7 @@ async def test_real_session_then_forward_uses_same_trigger(tmp_path: Path) -> No
     memory.maybe_distill_completed_sessions = AsyncMock(return_value=0)
     tools = ToolExecutor()
     caps = MemberServices(
+        write_gate=MemberWriteGate(),
         config=AgentConfig(id="member", name="Member"),
         llm_client=llm,
         memory=memory,

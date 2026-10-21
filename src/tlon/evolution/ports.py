@@ -12,7 +12,7 @@ class PrototypeError(ValueError):
 
 
 class PrototypeSummary(Protocol):
-    """Read-only view of a prototype's metadata used by the tools.
+    """Read-only view of prototype metadata used by evolution services.
 
     No runtime is declared or derived (unified member model, ADR 0006):
     a prototype is a behavior template, not a member class.

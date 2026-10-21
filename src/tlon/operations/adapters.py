@@ -108,23 +108,6 @@ class OperationTool:
             lines.append(f"  - {name} ({kind}){marker}: {description}")
         return "\n".join(lines) if lines else "  (no parameters)"
 
-    def recovery_metadata(self, arguments: dict[str, Any], context: CallContext) -> dict[str, Any]:
-        if "write" not in self._operation.effects:
-            return {}
-        if not self._operation.retry_safe:
-            return {"call_id": context.call_id, "outcome": "unknown", "retry_safe": False}
-        if "request_id" not in self._operation.input_schema["properties"]:
-            return {"call_id": context.call_id, "outcome": "unknown", "retry_safe": True}
-        return {"request_id": arguments.get("request_id") or context.call_id, "outcome": "unknown"}
-
-    def timeout_result(self, arguments: dict[str, Any], context: CallContext) -> ToolResult:
-        data = self.recovery_metadata(arguments, context)
-        return ToolResult(
-            success=False,
-            data=data,
-            error="Operation interrupted; outcome unknown" if data else "Operation interrupted",
-        )
-
     async def execute_context(
         self, arguments: dict[str, Any], context: CallContext | None = None
     ) -> ToolResult:

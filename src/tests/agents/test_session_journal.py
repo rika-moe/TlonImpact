@@ -492,7 +492,6 @@ def _make_driver(
         services=services,
         executor=executor,
         tool_executor=tool_executor,
-        per_tool_timeout=5.0,
         journal=journal,
         spill=ToolSpill(TlonPaths(home=tmp_path), "agent1"),
         # Default context window: the threshold is never crossed here.

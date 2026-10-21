@@ -87,7 +87,6 @@ async def engine(tmp_path: Path) -> AsyncGenerator[tuple[LoopDriver, PostOffice,
         services=services,
         executor=executor,
         tool_executor=tools,
-        per_tool_timeout=5,
         journal=journal,
         spill=ToolSpill(paths, "agent1"),
         pressure=ContextPressure(MagicMock(), journal, 262144),
@@ -164,13 +163,15 @@ async def test_timeout_after_real_commit_preserves_key_and_safe_retry(
         await asyncio.Event().wait()
 
     monkeypatch.setattr(office, "_notify", blocked_notify)
-    driver._per_tool_timeout = 0.2
+    driver._tool_executor.get_tool("mail-send")._executor.default_timeout = 0.2
     completed = await driver.execute_one_tool("session1", _call())
     assert committed.is_set(), "timeout should occur after the real database commit"
     assert not completed[1].success
     assert completed[1].data == {
         "request_id": "session:session1:round:0:tool1",
+        "call_id": "session:session1:round:0:tool1",
         "outcome": "unknown",
+        "retry_safe": True,
     }
     assert len(office.store.mails("human:bob")) == 1
     monkeypatch.setattr(office, "_notify", original_notify)

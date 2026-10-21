@@ -85,7 +85,7 @@
 | `allowed_paths` | `list[str]` | ['/workspace'] |  |
 <!-- END GENERATED: agent-yaml-fields-tool -->
 
-`per_timeout` 是单个工具超时，见 [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的 `execute_one_tool`；`allowed_paths` 是文件工具只允许触碰的**容器内绝对路径**（file-write/file-edit 的完整白名单），非空、必须 `/` 开头（校验器强制）。file-read/file-list/file-search 在此之上额外放行 `/tlon-home`（agent 自己家目录的只读挂载，见 tools-reference.md filesystem 一节），该路径不进 `allowed_paths` 配置。
+`per_timeout` 是成员宿主操作的共享默认超时（DSL 与 Tool 相同），见 [OperationExecutor](../../src/tlon/operations/core.py)；操作默认值、已声明的显式 timeout 和根期限可以覆盖或收紧它；`allowed_paths` 是文件工具只允许触碰的**容器内绝对路径**（file-write/file-edit 的完整白名单），非空、必须 `/` 开头（校验器强制）。file-read/file-list/file-search 在此之上额外放行 `/tlon-home`（agent 自己家目录的只读挂载，见 tools-reference.md filesystem 一节），该路径不进 `allowed_paths` 配置。
 
 ### 完整示例
 
@@ -202,7 +202,7 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 ├── policy.tlon                       # 社会政策文件（可选；ADR 0022，tilt/solvent?/full-member? hook；缺失即内嵌默认政策）
 ├── shared/
 │   ├── mail.sqlite3                  # 邮件、邮箱归属、已读状态、幂等与退休记录
-│   ├── spawn-quota.json              # 每 spawner/session 的 spawn 配额账本
+│   ├── spawn-quota.json              # 每 spawner/调用根的 spawn 配额账本
 │   ├── traces/
 │   │   └── trace-{uuid}.jsonl        # 会话追踪
 │   └── logs/

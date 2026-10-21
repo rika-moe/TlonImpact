@@ -22,7 +22,7 @@ def tool(paths):
     return _tool(paths, "persona-update")
 
 
-class TestUpdatePersonaTool:
+class TestPersonaService:
     async def test_updates_identity_file(self, tool, paths):
         result = await tool.execute_context(
             {"file": "identity", "content": "# 我是谁\n\n核心自我认知。"}

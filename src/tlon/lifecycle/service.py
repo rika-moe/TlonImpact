@@ -5,8 +5,6 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from structlog.contextvars import get_contextvars
-
 from tlon.evolution.ports import PrototypeError
 from tlon.lifecycle.ports import (
     AgentLifecycle,
@@ -46,18 +44,18 @@ class LifecycleService:
         if context.member_id != self.member_id:
             raise InputError("lifecycle service belongs to another member")
 
-    async def spawn(self, args: dict[str, Any]) -> dict[str, Any]:
+    async def spawn(self, args: dict[str, Any], context: CallContext) -> dict[str, Any]:
+        self.check_context(context)
         if self.apprentice:
             raise RejectedError("probationary members cannot spawn", {"reason": "probationary"})
         if self.registry is None:
             raise OperationError("member lifecycle registry is not bound")
-        session_id = get_contextvars().get("session_id")
         try:
             config = await self.registry.spawn_member(
                 prototype=args["prototype"],
                 name=args["name"],
                 spawner_id=self.member_id,
-                session_id=str(session_id) if session_id else None,
+                session_id=context.run_id,
                 params=args.get("params"),
             )
         except SpawnRejectedError as error:

@@ -33,6 +33,7 @@ from tlon.agents.reputation import reputation_provider
 from tlon.agents.session_journal import SessionJournal
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.config import DEFAULT_CONTEXT_WINDOW, AgentConfig, LLMConfig
+from tlon.base.execution import MemberWriteGate
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.metrics import MetricsService
@@ -195,9 +196,11 @@ async def assemble_member_services(
     # agent.yaml memory section (the old base/config.MemoryConfig is
     # gone — its fields were never consumed).
     memory_config = MemoryConfig()
+    write_gate = MemberWriteGate()
     memory = MemoryManager(
         agent_id=config.id,
         config=memory_config,
+        write_gate=write_gate,
         data_dir=agent_home,
         llm_config=llm_config,
         tlon_paths=tlon_paths,
@@ -354,6 +357,7 @@ async def assemble_member_services(
         config=config.model_copy(update={"llm": llm_config}),
         llm_client=llm_client,
         memory=memory,
+        write_gate=write_gate,
         task_manager=task_manager,
         tool_executor=tool_executor,
         tlon_paths=tlon_paths,

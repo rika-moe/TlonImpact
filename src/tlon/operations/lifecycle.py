@@ -3,6 +3,7 @@
 from collections.abc import Awaitable
 from typing import Any, TypeVar
 
+from tlon.base.execution import BudgetExceededError, ExecutionDeadlineError
 from tlon.lifecycle.service import LifecycleService, scheduling_request
 from tlon.operations.core import AsyncHandler, CallContext, Operation
 from tlon.operations.schema import OperationError, UnknownOutcomeError
@@ -43,7 +44,7 @@ def make_lifecycle_operations(service: LifecycleService | None) -> tuple[Operati
     async def mutate(context: CallContext, pending: Awaitable[_T]) -> _T:
         try:
             return await pending
-        except OperationError:
+        except (OperationError, BudgetExceededError, ExecutionDeadlineError):
             raise
         except Exception as error:
             raise UnknownOutcomeError(
@@ -56,7 +57,7 @@ def make_lifecycle_operations(service: LifecycleService | None) -> tuple[Operati
             ) from error
 
     async def spawn(context: CallContext, args: dict[str, Any]) -> dict[str, Any]:
-        return await mutate(context, bound(context).spawn(args))
+        return await mutate(context, bound(context).spawn(args, context))
 
     async def members(context: CallContext, args: dict[str, Any]) -> list[dict[str, str]]:
         return await bound(context).members()

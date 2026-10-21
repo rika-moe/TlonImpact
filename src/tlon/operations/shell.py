@@ -50,6 +50,7 @@ def make_shell_operations(service: MemberShellService) -> tuple[Operation, ...]:
             run,
             effects=frozenset({"write"}),
             default_timeout=DEFAULT_TIMEOUT,
+            timeout_grace=10,
         ),
         Operation(
             "shell-check",

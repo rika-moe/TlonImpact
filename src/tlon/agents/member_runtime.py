@@ -33,7 +33,7 @@ from tlon.base.config import DEFAULT_CONTEXT_WINDOW, AgentConfig
 from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
-from tlon.base.execution import ExecutionScope, bind_execution, current_execution
+from tlon.base.execution import ExecutionScope, MemberWriteGate, bind_execution, current_execution
 from tlon.base.llm_client import LLMClient, ToolCall
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
@@ -89,6 +89,7 @@ class MemberServices:
     task_manager: TaskManager
     tool_executor: ToolExecutor
     tlon_paths: TlonPaths
+    write_gate: MemberWriteGate
     per_tool_timeout: float = 30.0
     registry: "AgentRegistry | None" = None
     # Trust ladder (docs/design/unified-member-model.md): a probationary
@@ -195,6 +196,8 @@ class MemberRuntime(Member):
             OperationRegistry(operations),
             CallContext(member_id, "member", "member"),
             self._program_store,
+            default_timeout=services.per_tool_timeout if services is not None else 30.0,
+            write_gate=services.write_gate if services is not None else None,
         )
         self._operations = DSLAdapter(operation_executor)
         self._builtins = {**builtins, **self._operations.builtins()}
@@ -981,7 +984,6 @@ class MemberRuntime(Member):
             services=self._stage_services,
             executor=self._effect_executor,
             tool_executor=caps.tool_executor,
-            per_tool_timeout=caps.per_tool_timeout,
             journal=journal,
             spill=ToolSpill(caps.tlon_paths, self._member_id),
             # Context pressure relief (ADR 0008): same journal, the

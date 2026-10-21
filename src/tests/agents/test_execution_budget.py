@@ -405,3 +405,34 @@ async def test_pending_count_distinguishes_unknown_from_committed_response(
     assert store.budget_usage("session")["pending_count"] == 1
     await scope.child("done").model_call({}, 5, AsyncMock(return_value=response()))
     assert store.budget_usage("session")["pending_count"] == 1
+
+
+async def test_call_deadline_does_not_rewrite_root_budget_and_history_still_replays(
+    store: ProgramStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = time.time()
+    root = ExecutionScope(store, "bounded-root", 20, "output", deadline=now + 100)
+    child = root.child("operation", deadline=now + 2)
+    await child.initialize()
+    execute = AsyncMock(return_value=response())
+    await child.model_call({}, 4, execute)
+    assert store.budget_usage("bounded-root")["deadline"] == now + 100
+    monkeypatch.setattr("tlon.base.execution.time.time", lambda: now + 3)
+    with pytest.raises(ExecutionDeadlineError):
+        child.check()
+    root.check()
+    replay = root.child("operation", deadline=now + 2)
+    assert (await replay.model_call({}, 4, execute))["content"] == "answer"
+    execute.assert_awaited_once()
+    assert store.budget_usage("bounded-root")["used"] == 4
+
+
+async def test_child_cannot_extend_frozen_root_deadline(store: ProgramStore) -> None:
+    now = time.time()
+    root = ExecutionScope(store, "expired-root", 20, "output", deadline=now - 1)
+    await root.initialize()
+    child = root.child("operation", deadline=now + 100)
+    await child.initialize()
+    with pytest.raises(ExecutionDeadlineError):
+        child.check()
+    assert store.budget_usage("expired-root")["deadline"] == now - 1
