@@ -10,12 +10,14 @@ from typing import TYPE_CHECKING, Any
 
 from structlog.contextvars import bound_contextvars
 
+from tlon.agents.capabilities.bridge import load_capability_catalog
 from tlon.agents.context_builder import ContextBuilder
 from tlon.agents.context_pressure import ContextPressure
 from tlon.agents.executor import EffectExecutor
 from tlon.agents.lifecycle import StartRequest, StopRequest
+from tlon.agents.loader import has_frozen_work
 from tlon.agents.loop_driver import LoopDriver
-from tlon.agents.member_spec import MemberRule, MemberSpec, SessionRecipe
+from tlon.agents.member_spec import MemberRule, MemberSpec, SessionRecipe, validate_member_spec
 from tlon.agents.program_driver import ProgramDriver
 from tlon.agents.program_store import ProgramRun, ProgramStore
 from tlon.agents.prompt_builder import SystemPromptBuilder
@@ -41,8 +43,10 @@ from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_context import continue_trace
 from tlon.lifecycle.service import LifecycleService
 from tlon.memory.manager import MemoryManager
-from tlon.operations.adapters import DSLAdapter, OperationTool
+from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
+from tlon.operations.definitions import host_operation_definitions
+from tlon.operations.dsl import DSLAdapter
 from tlon.operations.invocation import registry_identity
 from tlon.operations.lifecycle import make_lifecycle_operations
 from tlon.operations.mail import make_mail_operations
@@ -61,7 +65,7 @@ from tlon.tasks.manager import TaskManager
 from tlon.tools.base import ToolResult
 from tlon.tools.spill import ToolSpill
 from tlosure.builtins import ActionRequest, Builtin, EvalError, FuelExhaustedError
-from tlosure.edn import dumps, loads
+from tlosure.edn import Symbol, dumps, loads
 
 if TYPE_CHECKING:
     from tlon.agents.agent_registry import AgentRegistry
@@ -193,6 +197,17 @@ class MemberRuntime(Member):
                 member_id, mailbox, post_office, services.mentor_cc if services else None
             )
             operations.extend(make_mail_operations(mail_service))
+        host_names = {operation.name for operation in host_operation_definitions()}
+        self._host_builtins = {
+            name: builtin for name, builtin in builtins.items() if name not in host_names
+        }
+        composition_errors: dict[str, str] = {}
+        if self._paths is not None:
+            catalog = load_capability_catalog(
+                self._paths, hosts=operations, reserved=self._host_builtins
+            )
+            operations.extend(catalog.operations)
+            composition_errors = catalog.errors
         operation_executor = OperationExecutor(
             OperationRegistry(operations),
             CallContext(member_id, "member", "member"),
@@ -200,8 +215,29 @@ class MemberRuntime(Member):
             default_timeout=services.per_tool_timeout if services is not None else 30.0,
             write_gate=services.write_gate if services is not None else None,
         )
+        self._operation_executor = operation_executor
         self._operations = DSLAdapter(operation_executor)
-        self._builtins = {**builtins, **self._operations.builtins()}
+        self._builtins = {**self._host_builtins, **self._operations.builtins()}
+        self._behavior_error: str | None = None
+        try:
+            validate_member_spec(spec, builtins=self._builtins)
+        except ValueError as error:
+            referenced = self._referenced_names(
+                [item for rule in spec.rules for item in [rule.when, *rule.actions]]
+            )
+            unavailable = sorted(referenced & (host_names - set(self._operations.builtins())))
+            reasons = {
+                name: reason for name, reason in composition_errors.items() if name in referenced
+            }
+            message = f"member {member_id}: required operation admission failed: {error}"
+            if unavailable:
+                message += f"; service not assembled for {unavailable}"
+            if reasons:
+                message += f"; rejected composite definitions: {reasons}"
+            if self._paths is None or not has_frozen_work(member_id, self._paths):
+                raise ValueError(message) from error
+            self._behavior_error = message
+            logger.error("member_recovery_only", member_id=member_id, error=message)
         if services is not None:
             from tlon.agents.assembly import REPRODUCTION_TOOLS
 
@@ -294,7 +330,7 @@ class MemberRuntime(Member):
         events = await self._journal.read_events(session_id)
         start = next(event for event in events if event["type"] == "session/start")
         recipe = SessionRecipe.from_edn(loads(start["recipe"]))
-        driver = self._assemble_session(self._services, recipe)
+        driver = self._assemble_session(self._services, recipe, root_id=session_id)
         scope = await self._session_execution(session_id, recipe)
         with bind_execution(scope):
             return await driver.resolve_dispatch(session_id, tool_call, metadata)
@@ -321,7 +357,9 @@ class MemberRuntime(Member):
 
     def get_diagnostic_error(self) -> str | None:
         """Runtime failure is a diagnostic, never a scheduling state."""
-        return "runtime error" if self._state is MemberState.ERROR else None
+        return self._behavior_error or (
+            "runtime error" if self._state is MemberState.ERROR else None
+        )
 
     @property
     def active_session_count(self) -> int:
@@ -359,10 +397,11 @@ class MemberRuntime(Member):
         if self._scheduler is not None:
             self._scheduler.start()
             await self._scheduler.wait_ready()
-        event_types = {rule.on for rule in self._spec.rules if rule.on is not None}
+        admitted_rules = self._spec.rules if self._behavior_error is None else ()
+        event_types = {rule.on for rule in admitted_rules if rule.on is not None}
         for event_type in sorted(event_types, key=str):
             self.subscribe(event_type, self._on_event)
-        for rule in self._spec.rules:
+        for rule in admitted_rules:
             if rule.on is None:
                 self._deferred_boot.append(rule)
         self._program_task = asyncio.create_task(self._program_loop())
@@ -425,7 +464,7 @@ class MemberRuntime(Member):
     # ── Event dispatch ──
 
     async def _on_event(self, event: Event) -> None:
-        if not self._can_schedule():
+        if self._behavior_error is not None or not self._can_schedule():
             return
         mail = event.payload.get("mail") if isinstance(event.payload, dict) else None
         if event.type is EventType.MAIL_DELIVERED:
@@ -506,15 +545,22 @@ class MemberRuntime(Member):
                 self._queue.task_done()
 
     async def _dispatch_event(self, event: Event) -> None:
-        if not self._can_schedule():
+        if self._behavior_error is not None or not self._can_schedule():
             return
         mail = event.payload.get("mail") if isinstance(event.payload, dict) else None
         rules = [rule for rule in self._spec.rules if rule.on == event.type]
         # Admit every matching rule in one durable transaction. A prior rule
         # may mark the source read; later rules must survive without rescans.
+        items = [self._program_record_data(rule, event, event.payload) for rule in rules]
         records = await asyncio.to_thread(
             self._program_store.ensure_many,
-            [self._program_record_data(rule, event, event.payload) for rule in rules],
+            items,
+            definitions={
+                item[0]: self._operation_executor.definition_snapshot(
+                    self._referenced_names([rule.when, *rule.actions])
+                )
+                for item, rule in zip(items, rules, strict=True)
+            },
         )
         for record in records:
             rule, source, payload = self._program_input(record)
@@ -669,6 +715,25 @@ class MemberRuntime(Member):
             ),
         )
 
+    @staticmethod
+    def _referenced_names(value: Any) -> set[str]:
+        """Conservatively retain named source dependencies, including data literals.
+
+        Retaining quoted names is harmless and keeps this scan independent
+        of the language's static admission; execution still uses frozen source.
+        """
+        if isinstance(value, Symbol):
+            return {str(value)}
+        names: set[str] = set()
+        if isinstance(value, dict):
+            for key, item in value.items():
+                names.update(MemberRuntime._referenced_names(key))
+                names.update(MemberRuntime._referenced_names(item))
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                names.update(MemberRuntime._referenced_names(item))
+        return names
+
     async def _run_rule_body(
         self,
         rule: MemberRule,
@@ -680,6 +745,9 @@ class MemberRuntime(Member):
         record = await asyncio.to_thread(
             self._program_store.ensure,
             *self._program_record_data(rule, trigger_event, payload, run_id),
+            definitions=self._operation_executor.definition_snapshot(
+                self._referenced_names([rule.when, *rule.actions])
+            ),
         )
         run_id = record.run_id
         if record.completed or record.error is not None:
@@ -707,12 +775,18 @@ class MemberRuntime(Member):
                 return None
             raise EvalError(f"unknown orchestration request: {request.kind}")
 
+        root_executor = await asyncio.to_thread(
+            self._operation_executor.for_root,
+            run_id,
+            self._referenced_names([rule.when, *rule.actions]),
+        )
+        root_operations = DSLAdapter(root_executor)
         driver = ProgramDriver(
             self._program_store,
             run_id,
-            self._builtins,
+            {**self._host_builtins, **root_operations.builtins()},
             execute,
-            operations=self._operations,
+            operations=root_operations,
             member_id=self._member_id,
             on_operation=self._record_activity,
             on_control=self._apply_program_control,
@@ -819,7 +893,7 @@ class MemberRuntime(Member):
             )
 
     async def _scan_unread_mail(self) -> None:
-        if not self._can_schedule() or self._mailbox is None:
+        if self._behavior_error is not None or not self._can_schedule() or self._mailbox is None:
             return
         try:
             for mail in await self._mailbox.unread():
@@ -854,7 +928,7 @@ class MemberRuntime(Member):
         registry = self._registry
 
         async def check_reflection() -> None:
-            if self._reflection is not None:
+            if self._behavior_error is None and self._reflection is not None:
                 scope = self._maintenance_execution("reflection")
                 with bind_execution(scope):
                     await self._reflection.check_trigger()
@@ -970,11 +1044,25 @@ class MemberRuntime(Member):
             dumps(None),
         )
 
-    def _assemble_session(self, caps: MemberServices, recipe: SessionRecipe) -> LoopDriver:
+    def _assemble_session(
+        self, caps: MemberServices, recipe: SessionRecipe, *, root_id: str | None = None
+    ) -> LoopDriver:
         """Assemble the session engine from services — the injected
         services, plain data, and closures over the event bus — never a
         back-reference to this runtime."""
         registry = caps.registry
+        scope = current_execution()
+        root_id = root_id or (scope.root_id if scope is not None else None)
+        tool_executor = caps.tool_executor
+        if root_id is not None:
+            root_executor = self._operation_executor.for_root(root_id)
+            tool_executor = ToolExecutor()
+            from tlon.agents.assembly import REPRODUCTION_TOOLS
+
+            for operation in root_executor.registry.definitions():
+                if not caps.is_full and operation.name in REPRODUCTION_TOOLS:
+                    continue
+                tool_executor.register_tool(OperationTool(root_executor, operation.name))
 
         self._logger = logger.bind(agent_id=self._member_id)
 
@@ -1015,7 +1103,8 @@ class MemberRuntime(Member):
             llm_client=caps.llm_client,
             context_builder=self._context_builder,
             publish=publisher,
-            tool_definitions=caps.tool_executor.get_tool_definitions,
+            tool_definitions=tool_executor.get_tool_definitions,
+            control_names=tool_executor.control_names,
             logger=self._logger,
         )
         self._effect_executor = EffectExecutor(
@@ -1042,7 +1131,7 @@ class MemberRuntime(Member):
             recipe=recipe,
             services=self._stage_services,
             executor=self._effect_executor,
-            tool_executor=caps.tool_executor,
+            tool_executor=tool_executor,
             journal=journal,
             spill=ToolSpill(caps.tlon_paths, self._member_id),
             # Context pressure relief (ADR 0008): same journal, the

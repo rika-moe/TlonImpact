@@ -6,6 +6,7 @@ import shutil
 from typing import Any
 
 from tlon.agents.behavior_template import BehaviorTemplateError, analyze
+from tlon.agents.capabilities.bridge import capability_validation_builtins
 from tlon.agents.member_spec import (
     MemberSpec,
     MemberSpecValidationError,
@@ -37,12 +38,12 @@ logger = get_logger(__name__)
 # ==================== Staging area (stage 4a trust gate) ====================
 
 
-def _validate_behavior(behavior_edn: str) -> str:
+def _validate_behavior(behavior_edn: str, *, tlon_paths: TlonPaths) -> str:
     """Run the write-side validation chain; return the normalized spec text.
 
     The gate runs the same chain a runtime load would — template analysis,
-    EDN parse, then the single validator (host-less default registry: host
-    predicates are Adam's vocabulary and must not pass).
+    EDN parse, then the single validator with host words and currently
+    approved composite operations. No template or operation is executed.
 
     Args:
         behavior_edn: raw EDN text of the unified behavior spec
@@ -56,7 +57,10 @@ def _validate_behavior(behavior_edn: str) -> str:
     spec_text = behavior_edn if behavior_edn.endswith("\n") else behavior_edn + "\n"
     try:
         template = analyze(spec_text)
-        validate_member_spec(MemberSpec.from_edn(loads(template.standin_text)))
+        validate_member_spec(
+            MemberSpec.from_edn(loads(template.standin_text)),
+            builtins=capability_validation_builtins(tlon_paths),
+        )
     except BehaviorTemplateError as e:
         raise PrototypeError(f"behavior template error: {e}") from e
     except EDNParseError as e:
@@ -124,7 +128,7 @@ def write_staging_prototype(
     _validate_display_name(display_name)
     # Validate first: a broken spec must never reach disk.
     generation = _resolve_parent_generation(parent, p) if parent is not None else 1
-    spec_text = _validate_behavior(behavior_edn)
+    spec_text = _validate_behavior(behavior_edn, tlon_paths=p)
 
     name = new_prototype_id()
     if (p.prototypes_dir() / name).exists() or (p.prototypes_staging_dir() / name).exists():
@@ -182,6 +186,7 @@ def approve_prototype(name: str, tlon_paths: TlonPaths) -> PrototypeInfo:
     if target_dir.exists():
         raise PrototypeError(f"prototype '{name}' already exists in the trusted library")
 
+    _validate_behavior((staging_dir / BEHAVIOR_FILE).read_text(encoding="utf-8"), tlon_paths=p)
     target_dir.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(staging_dir), str(target_dir))
 

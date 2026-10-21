@@ -22,6 +22,7 @@ from tlon.base.events.event_bus import EventBus
 from tlon.base.llm_client import ToolCall
 from tlon.base.paths import TlonPaths
 from tlon.operations.adapters import OperationTool
+from tlon.operations.control import control_names
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
 from tlon.operations.mail import make_mail_operations
 from tlon.organization.mail.mail import Mail
@@ -53,6 +54,7 @@ async def engine(tmp_path: Path) -> AsyncGenerator[tuple[LoopDriver, PostOffice,
     identity = AgentIdentity(id="agent1", name="Agent", address="agent1@tlon.internal")
     recipe = SessionRecipe((), (), Form(), 10, 3, 1000000, ReflectSpec(False, 0))
     services = MagicMock()
+    services.control_names.return_value = control_names()
     services.identity = identity
     services.publish_event = AsyncMock()
     executor = EffectExecutor(

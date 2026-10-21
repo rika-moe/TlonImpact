@@ -6,8 +6,9 @@ from typing import Any
 import pytest
 
 from tlon.agents.tool_executor import ToolExecutor
-from tlon.operations.adapters import DSLAdapter, OperationTool
+from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
+from tlon.operations.dsl import DSLAdapter
 from tlon.operations.schema import (
     DefinitionError,
     InputError,

@@ -1,6 +1,6 @@
 # Tlon 工具手册
 
-agent 通过 OpenAI function calling 调用的全部工具。所有参数与结果以 [tlon.operations](../../src/tlon/operations) 中的 Operation 定义为准，工具是该定义的协议投影。本文只描述当前实现。
+agent 通过 OpenAI function calling 调用的宿主工具目录；成员还可使用已批准且依赖可用的复合 Operation 投影。所有参数与结果以 [tlon.operations](../../src/tlon/operations) 中的 Operation 定义为准，工具是该定义的协议投影。本文只描述当前实现。
 
 ## 总述
 
@@ -12,9 +12,11 @@ agent 通过 OpenAI function calling 调用的全部工具。所有参数与结�
 
 [ToolResult](../../src/tlon/tools/base.py) 保留协议回执 `success/data/error/message`；`ToolExecutor` 负责工具发现、跟踪与异常回执，领域执行权威仍是 OperationExecutor。
 
+P5 的复合定义使用同一 OperationTool 投影，不添加 Python 工具包装；定义与依赖随根冻结，恢复时不使用当前磁盘定义。控制工具从 Operation.control 推导。P7 的请求级动态视图和统一授权尚未实施。
+
 ### ToolExecutor 执行模型
 
-[agents/tool_executor.py](../../src/tlon/agents/tool_executor.py) 的 `ToolExecutor` 是每 agent 一个的工具注册表：直接 async 调用，不经过 EventBus。`execute(tool_name, arguments)` 包住一层 tracing span（`tool.{name}`，参数截断到 200 字符），三类失败都转成 `ToolResult(success=False)` 而不是抛异常：工具未注册、参数校验失败、`execute` 内部抛异常（记日志后返回 `error="Execution error: ..."`）。
+[agents/tool_executor.py](../../src/tlon/agents/tool_executor.py) 的 `ToolExecutor` 是成员工具协议注册表，会话按冻结根构造独立实例：直接 async 调用，不经过 EventBus。`execute(tool_name, arguments)` 包住一层 tracing span（`tool.{name}`，参数截断到 200 字符），三类失败都转成 `ToolResult(success=False)` 而不是抛异常：工具未注册、参数校验失败、`execute` 内部抛异常（记日志后返回 `error="Execution error: ..."`）。
 
 会话循环里的并发分发不在 ToolExecutor，而在引擎侧：
 

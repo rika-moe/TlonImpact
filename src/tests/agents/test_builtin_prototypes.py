@@ -38,6 +38,7 @@ from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.llm_client import LLMResponse
 from tlon.base.paths import TlonPaths
+from tlon.operations.control import control_names
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 from tlosure.edn import dumps, loads
@@ -216,6 +217,7 @@ class TestDistinctBehaviorPrototypes:
         assert str(form[0]) == "plan"
         opts = {str(key): value for key, value in form[1].items()}
         svc = MagicMock()
+        svc.control_names.return_value = control_names()
         svc.think = AsyncMock(return_value=LLMResponse(content="1. 检查输入\n2. 执行并验证"))
         session = AgentSession(session_id="plan-once", trigger_content="处理任务")
         for iteration in range(3):

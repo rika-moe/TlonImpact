@@ -9,8 +9,9 @@ import pytest
 from tlon.base.config import LLMConfig
 from tlon.base.llm_client import LLMClient, LLMResponse
 from tlon.base.paths import TlonPaths
-from tlon.operations.adapters import DSLAdapter, OperationTool
+from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.dsl import DSLAdapter
 from tlon.operations.model import make_model_operations
 from tlon.operations.schema import UnknownOutcomeError
 from tlosure.edn import loads

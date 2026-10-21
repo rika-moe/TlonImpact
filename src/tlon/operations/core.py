@@ -10,8 +10,9 @@ import time
 import weakref
 from collections.abc import Awaitable, Callable, Iterable
 from contextlib import nullcontext, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
-from typing import Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 from tlon.base.execution import (
     BudgetExceededError,
@@ -37,6 +38,9 @@ from tlon.operations.schema import (
 from tlosure.builtins import ARITHMETIC_BUILTINS, CORE_BUILTINS
 from tlosure.eval import SPECIAL_FORMS
 
+if TYPE_CHECKING:
+    from tlon.operations.composite import CompositeDefinition
+
 Effect = Literal["read", "write"]
 
 
@@ -52,6 +56,26 @@ class CallContext:
     arguments_json: str | None = None
     invocation: Invocation | None = None
     execution: ExecutionScope | None = None
+
+
+_ACTIVE_LEAVES: ContextVar[dict[str, tuple["Operation", dict[str, Any], CallContext]] | None] = (
+    ContextVar("composite_active_leaves", default=None)
+)
+
+
+_HISTORY_ONLY: ContextVar[bool] = ContextVar("composite_history_only", default=False)
+
+
+def _mark_leaf(operation: "Operation", inputs: dict[str, Any], context: CallContext) -> None:
+    active = _ACTIVE_LEAVES.get()
+    if active is not None:
+        active[context.call_id] = (operation, inputs, context)
+
+
+def _forget_leaf(call_id: str) -> None:
+    active = _ACTIVE_LEAVES.get()
+    if active is not None:
+        active.pop(call_id, None)
 
 
 Handler = Callable[[CallContext, dict[str, Any]], Any]
@@ -74,6 +98,7 @@ class Operation:
     control: bool
     default_timeout: float | None
     timeout_grace: float
+    composition: "CompositeDefinition | None"
     _input_json: str
     _output_json: str
 
@@ -90,6 +115,7 @@ class Operation:
         control: bool = False,
         default_timeout: float | None = None,
         timeout_grace: float = 0,
+        composition: "CompositeDefinition | None" = None,
     ) -> None:
         if len(name) > 64 or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", name):
             raise DefinitionError("operation name must be a DSL/Tool identifier")
@@ -116,6 +142,7 @@ class Operation:
             or timeout_grace < 0
         ):
             raise DefinitionError("timeout_grace must be a finite nonnegative number")
+        object.__setattr__(self, "composition", composition)
         object.__setattr__(self, "timeout_grace", timeout_grace)
         object.__setattr__(self, "default_timeout", default_timeout)
         object.__setattr__(self, "retry_safe", retry_safe)
@@ -202,6 +229,7 @@ class OperationExecutor:
     ) -> None:
         self.registry = registry
         self.context = context
+        self._frozen_root: str | None = None
         self.store = store
         if (
             type(default_timeout) not in (int, float)
@@ -227,12 +255,82 @@ class OperationExecutor:
                 self._store_locks[store] = locks
             self._locks = locks
 
+    def bind(self, context: CallContext) -> "OperationExecutor":
+        """Bind a nested host identity while retaining the same member authority."""
+        bound = self._context(context)
+        executor = OperationExecutor(
+            self.registry,
+            bound,
+            self.store,
+            default_timeout=self.default_timeout,
+            write_gate=self._writer,
+        )
+        executor._frozen_root = self._frozen_root
+        return executor
+
+    def definition_snapshot(self, names: Iterable[str] | None = None) -> dict[str, dict[str, Any]]:
+        """Project immutable source/dependency facts for atomic run admission."""
+        selected = set(names) if names is not None else None
+        definitions = {
+            op.name: op.composition
+            for op in self.registry.definitions()
+            if op.composition is not None
+        }
+        if selected is not None:
+            for name in tuple(selected):
+                definition = definitions.get(name)
+                if definition is not None:
+                    selected.update(definition.dependency_ids)
+        return {
+            name: {"source": definition.spec.to_edn(), "dependency_ids": definition.dependency_ids}
+            for name, definition in definitions.items()
+            if selected is None or name in selected
+        }
+
+    def for_root(self, root_id: str, names: Iterable[str] | None = None) -> "OperationExecutor":
+        """Reconstitute a root from its first immutable source/dependency snapshot."""
+        if self._frozen_root == root_id or self.store is None:
+            return self
+        from tlon.operations.composite import CompositeSpec, compile_composites
+
+        snapshot = self.store.load_definitions(root_id)
+        if snapshot is None:
+            snapshot = self.store.freeze_definitions(root_id, self.definition_snapshot(names))
+        hosts = tuple(op for op in self.registry.definitions() if op.composition is None)
+        try:
+            catalog = compile_composites(
+                (CompositeSpec.from_edn(value["source"]) for value in snapshot.values()), hosts
+            )
+            if set(catalog.definitions) != set(snapshot):
+                raise DefinitionError("frozen composite names changed")
+            for name, definition in catalog.definitions.items():
+                if definition.dependency_ids != snapshot[name]["dependency_ids"]:
+                    raise DefinitionError(f"frozen operation dependencies changed: {name}")
+        except (DefinitionError, KeyError, TypeError) as error:
+            raise RecoveryMismatchError(str(error)) from error
+        executor = OperationExecutor(
+            OperationRegistry((*hosts, *catalog.operations)),
+            replace(self.context, run_id=root_id),
+            self.store,
+            default_timeout=self.default_timeout,
+            write_gate=self._writer,
+        )
+        executor._frozen_root = root_id
+        return executor
+
     def call_pure(self, name: str, arguments: Any, context: CallContext | None = None) -> Any:
+        bound = self._context(context)
+        if self.store is not None and self._frozen_root != bound.run_id:
+            return self.for_root(bound.run_id).call_pure(name, arguments, bound)
         operation = self.registry.get(name)
         if operation.effects:
             raise OperationError(f"{name}: effectful operation requires async invocation")
         inputs = validate(operation.input_schema, arguments)
-        result = cast(Handler, operation.handler)(self._context(context), inputs)
+        result = (
+            operation.composition.evaluate_pure(self, bound, inputs)
+            if operation.composition is not None
+            else cast(Handler, operation.handler)(bound, inputs)
+        )
         if inspect.isawaitable(result):
             if inspect.iscoroutine(result):
                 result.close()
@@ -241,6 +339,8 @@ class OperationExecutor:
 
     @staticmethod
     def definition_id(operation: Operation) -> str:
+        if operation.composition is not None:
+            return operation.composition.definition_id
         definition = {
             "name": operation.name,
             "input": operation.input_schema,
@@ -270,16 +370,23 @@ class OperationExecutor:
 
     async def replay(self, name: str, arguments: Any, context: CallContext) -> tuple[bool, Any]:
         """Inspect committed history before a driver applies a fresh-call budget cap."""
+        bound = self._context(context)
+        if self.store is not None and self._frozen_root != bound.run_id:
+            executor = await asyncio.to_thread(self.for_root, bound.run_id)
+            return await executor.replay(name, arguments, bound)
         operation = self.registry.get(name)
         inputs = validate(operation.input_schema, arguments)
-        bound = self._context(context)
         if self.store is None:
             return False, None
         invocation = self._invocation(operation, inputs, bound)
         await asyncio.to_thread(self.store.ensure_root, bound.run_id)
         outcome = await asyncio.to_thread(self.store.lookup_invocation, invocation)
         if outcome is None or (
-            ("write" not in operation.effects or operation.retry_safe)
+            (
+                operation.composition is not None
+                or "write" not in operation.effects
+                or operation.retry_safe
+            )
             and outcome.error_type == "UnknownOutcomeError"
         ):
             return False, None
@@ -335,14 +442,131 @@ class OperationExecutor:
         remaining = scope.remaining_seconds() if scope is not None else None
         return min(seconds, remaining) if remaining is not None else seconds
 
+    async def _call_composite(
+        self,
+        operation: Operation,
+        inputs: dict[str, Any],
+        bound: CallContext,
+    ) -> Any:
+        assert operation.composition is not None
+        invocation = self._invocation(operation, inputs, bound) if self.store is not None else None
+        if invocation is not None:
+            cached = await self._committed(invocation)
+            if cached is not None and cached.error_type != "UnknownOutcomeError":
+                return self._restore(cached)
+        active = _ACTIVE_LEAVES.get()
+        if active is None:
+            active = {}
+        token = _ACTIVE_LEAVES.set(active)
+        scope = bound.execution or current_execution()
+        timeout = self._timeout(operation, inputs, scope)
+        local = (
+            scope.child(f"operation:{bound.call_id}", deadline=time.time() + timeout)
+            if scope
+            else None
+        )
+
+        async def evaluate() -> Any:
+            assert operation.composition is not None
+            value = await operation.composition.evaluate(
+                self, replace(bound, execution=local), inputs
+            )
+            try:
+                value = validate(operation.output_schema, value, output=True)
+            except OutputError as error:
+                if invocation is not None:
+                    await self._cache_composite(
+                        invocation,
+                        InvocationOutcome(
+                            False,
+                            error_type="OutputError",
+                            error_message=str(error),
+                            raw_result=value,
+                        ),
+                    )
+                raise
+            if invocation is not None:
+                await self._cache_composite(invocation, InvocationOutcome(True, value=value))
+            return value
+
+        history_only = _HISTORY_ONLY.get()
+        if scope is not None and not history_only:
+            try:
+                scope.check()
+            except (ExecutionDeadlineError, asyncio.CancelledError):
+                history_only = True
+        try:
+            if history_only:
+                # Traversal may derive a result from immutable receipts, even
+                # when no fresh effect is allowed. Every leaf's replay check
+                # precedes the history-only dispatch veto below. No member
+                # writer gate is needed because this path cannot submit work.
+                history_token = _HISTORY_ONLY.set(True)
+                try:
+                    with bind_execution(local) if local else nullcontext():
+                        return await evaluate()
+                finally:
+                    _HISTORY_ONLY.reset(history_token)
+            with bind_execution(local) if local else nullcontext():
+                async with asyncio.timeout(timeout):
+                    if local is not None:
+                        await local.initialize()
+                        local.check()
+                    async with self._writer.hold("write" in operation.effects):
+                        return await evaluate()
+        except ExecutionDeadlineError:
+            raise
+        except TimeoutError as error:
+            if invocation is not None:
+                committed = await self._committed(invocation)
+                if committed is not None and committed.error_type != "UnknownOutcomeError":
+                    return self._restore(committed)
+            for pending_operation, pending_inputs, pending_context in tuple(active.values()):
+                if self.store is not None:
+                    pending_invocation = self._invocation(
+                        pending_operation, pending_inputs, pending_context
+                    )
+                    committed = await self._committed(pending_invocation)
+                    if committed is not None and committed.error_type != "UnknownOutcomeError":
+                        continue
+                raise UnknownOutcomeError(
+                    "Composite deadline elapsed with an unresolved dispatched child",
+                    {
+                        **self._unknown_data(
+                            pending_operation, pending_inputs, pending_context.call_id
+                        ),
+                        "operation": pending_operation.name,
+                        "composite": operation.name,
+                    },
+                ) from error
+            raise ExecutionDeadlineError(
+                "Composite execution deadline exhausted; child receipts retained"
+            ) from error
+        finally:
+            _ACTIVE_LEAVES.reset(token)
+
+    async def _cache_composite(self, invocation: Invocation, outcome: InvocationOutcome) -> None:
+        assert self.store is not None
+        # No parent intent exists while business effects are running. A crash
+        # in this derived-cache write leaves traversal governed by child receipts.
+        await asyncio.to_thread(self.store.begin_invocation, invocation)
+        await self._commit(invocation, outcome)
+
     async def call(self, name: str, arguments: Any, context: CallContext | None = None) -> Any:
+        bound = self._context(context)
+        if self.store is not None and self._frozen_root != bound.run_id:
+            executor = await asyncio.to_thread(self.for_root, bound.run_id)
+            return await executor.call(name, arguments, bound)
         operation = self.registry.get(name)
         if not operation.effects:
             return self.call_pure(name, arguments, context)
         inputs = validate(operation.input_schema, arguments)
         bound = self._context(context)
         scope = bound.execution or current_execution()
+        if operation.composition is not None:
+            return await self._call_composite(operation, inputs, bound)
         if self.store is None:
+            self._check_history_dispatch(scope)
             timeout = self._timeout(operation, inputs, scope)
             operation_scope = (
                 scope.child(f"operation:{bound.call_id}", deadline=time.time() + timeout)
@@ -360,13 +584,16 @@ class OperationExecutor:
                             if operation_scope is not None:
                                 operation_scope.check()
                             handler_started = True
-                            return validate(
+                            _mark_leaf(operation, inputs, bound)
+                            value = validate(
                                 operation.output_schema,
                                 await cast(AsyncHandler, operation.handler)(
                                     replace(bound, execution=operation_scope), inputs
                                 ),
                                 output=True,
                             )
+                            _forget_leaf(bound.call_id)
+                            return value
             except ExecutionDeadlineError:
                 raise
             except TimeoutError as error:
@@ -391,6 +618,7 @@ class OperationExecutor:
             and previous.error_type == "UnknownOutcomeError"
         ):
             return self._restore(previous)
+        self._check_history_dispatch(scope)
         timeout = self._timeout(operation, inputs, scope)
         operation_scope = (
             scope.child(f"operation:{bound.call_id}", deadline=time.time() + timeout)
@@ -430,6 +658,7 @@ class OperationExecutor:
                             operation_scope.check()
                         try:
                             handler_started = True
+                            _mark_leaf(operation, inputs, bound)
                             result = await cast(AsyncHandler, operation.handler)(
                                 replace(bound, invocation=invocation, execution=operation_scope),
                                 inputs,
@@ -579,6 +808,13 @@ class OperationExecutor:
             raise unknown from error
 
     @staticmethod
+    def _check_history_dispatch(scope: ExecutionScope | None) -> None:
+        if _HISTORY_ONLY.get():
+            if scope is not None:
+                scope.check()
+            raise ExecutionDeadlineError("History-only traversal has no committed child receipt")
+
+    @staticmethod
     async def _finish_begin(task: asyncio.Task[bool]) -> bool:
         while not task.done():
             try:
@@ -590,7 +826,10 @@ class OperationExecutor:
     async def _committed(self, invocation: Invocation) -> InvocationOutcome | None:
         assert self.store is not None
         try:
-            return await asyncio.to_thread(self.store.lookup_invocation, invocation)
+            outcome = await asyncio.to_thread(self.store.lookup_invocation, invocation)
+            if outcome is not None and outcome.error_type != "UnknownOutcomeError":
+                _forget_leaf(invocation.call_id)
+            return outcome
         except RecoveryMismatchError:
             raise
         except Exception:
@@ -601,6 +840,8 @@ class OperationExecutor:
         assert self.store is not None
         try:
             await asyncio.to_thread(self.store.commit_invocation, invocation, outcome)
+            if outcome.error_type != "UnknownOutcomeError":
+                _forget_leaf(invocation.call_id)
         except Exception as error:
             committed = await self._committed(invocation)
             if committed is not None and committed == outcome:

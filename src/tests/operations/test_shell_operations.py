@@ -10,8 +10,9 @@ from tlon.agents.member_spec import MemberSpec
 from tlon.agents.program_driver import ProgramDriver
 from tlon.agents.program_store import ProgramStore
 from tlon.base.config import DockerRuntimeConfig
-from tlon.operations.adapters import DSLAdapter, OperationTool
+from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.dsl import DSLAdapter
 from tlon.operations.schema import InputError, UnknownOutcomeError
 from tlon.operations.shell import make_shell_operations
 from tlon.operations.time import time_operation_definitions

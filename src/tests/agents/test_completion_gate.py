@@ -23,6 +23,7 @@ from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.base.paths import TlonPaths
 from tlon.lifecycle.service import LifecycleService
 from tlon.operations.adapters import OperationTool
+from tlon.operations.control import control_names
 from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
 from tlon.operations.lifecycle import make_lifecycle_operations
 from tlon.operations.mail import make_mail_operations
@@ -60,6 +61,7 @@ def _make_driver(
 
     services = MagicMock()
     services.logger = MagicMock()
+    services.control_names.return_value = control_names()
     services.publish_event = AsyncMock()
     services.build_context = AsyncMock(
         return_value=BuiltContext(messages=[{"role": "user", "content": "hi"}], anchor_len=1)

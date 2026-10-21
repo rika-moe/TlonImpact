@@ -1,42 +1,24 @@
-"""Staging area (trust gate): LLM-authored capability artifacts and the
-human approval flow — structurally aligned with the prototype channel
-(``agents/prototypes/staging.py``, docs/design/capabilities.md).
-"""
+"""Human approval publishes a frozen composite dependency contract."""
 
 import shutil
 from typing import Any
 
-from tlon.agents.capabilities.catalog import _list_from
+from tlon.agents.capabilities.catalog import _candidate_catalog, _list_from, capability_info
 from tlon.agents.capabilities.info import (
     CAPABILITY_FILE,
     METADATA_FILE,
     REVIEWS_FILE,
     CapabilityInfo,
     _is_capability_dir,
-    _read_metadata,
     _validate_name,
 )
-from tlon.agents.capabilities.spec import (
-    CapabilityError,
-    CapabilitySpec,
-    validate_capability,
-)
+from tlon.agents.capabilities.spec import CapabilityArtifact, CapabilityError, validate_examples
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.evolution.publication import publish_directory
 from tlosure.edn import Keyword, dumps, loads
 
 logger = get_logger(__name__)
-
-
-def _trusted_word_names(p: TlonPaths) -> set[str]:
-    """The word names of the trusted library (directory names — the
-    staging channel writes directories named after the artifact's
-    ``:name``, and the trusted library follows the same convention)."""
-    root = p.capabilities_dir()
-    if not root.exists():
-        return set()
-    return {d.name for d in root.iterdir() if d.is_dir() and _is_capability_dir(d)}
 
 
 def write_staging_capability(
@@ -46,109 +28,93 @@ def write_staging_capability(
     *,
     tlon_paths: TlonPaths,
 ) -> CapabilityInfo:
-    """Write an LLM-authored capability artifact to the staging area (untrusted).
-
-    Validation happens **before** anything touches disk: artifact parse
-    and structural checks, then the full load gate (namespace rejection
-    against the trusted library, purity admission, impl static
-    validation). The capability's identity is the artifact's ``:name`` —
-    the staging directory is named after it (one artifact, one word).
-
-    The metadata is written with ``:trusted false`` and ``:author``
-    recording the authoring agent, so the loader must refuse the word
-    until a human approves it.
-
-    Args:
-        capability_edn: raw EDN text of the capability artifact
-        author_id: id of the agent that authored the artifact (audit)
-        proposal_note: free-text description of what this word adds
-        tlon_paths: path resolver for the target layout
-
-    Returns:
-        Metadata of the staged capability (``trusted=False``).
-
-    Raises:
-        CapabilityError: invalid artifact, name conflict with the trusted
-            library or the staging area, or validation failure (nothing
-            is written in any case)
-    """
-    p = tlon_paths
-
-    # Validate first: a broken artifact must never reach disk.
-    spec = CapabilitySpec.from_edn(capability_edn)
-    name = spec.name
+    artifact = CapabilityArtifact.from_edn(capability_edn)
+    name = artifact.name
     _validate_name(name)
-    validate_capability(spec, taken_names=_trusted_word_names(p))
-
-    if (p.capabilities_dir() / name / CAPABILITY_FILE).exists():
+    if (tlon_paths.capabilities_dir() / name / CAPABILITY_FILE).exists():
         raise CapabilityError(f"capability '{name}' already exists in the trusted library")
-    staging_dir = p.capabilities_staging_dir() / name
-    if staging_dir.exists():
+    directory = tlon_paths.capabilities_staging_dir() / name
+    if directory.exists():
         raise CapabilityError(f"capability '{name}' already exists in the staging area")
-
-    capability_text = capability_edn if capability_edn.endswith("\n") else capability_edn + "\n"
-
+    catalog = _candidate_catalog(artifact, tlon_paths)
+    if name not in catalog.definitions:
+        raise CapabilityError(catalog.errors.get(name, "capability cannot be compiled"))
+    validate_examples(artifact, catalog)
     metadata: dict[Any, Any] = {
-        Keyword("name"): Keyword(name),
+        Keyword("name"): name,
         Keyword("trusted"): False,
         Keyword("author"): author_id,
     }
     if proposal_note:
         metadata[Keyword("proposal-note")] = proposal_note
     publish_directory(
-        staging_dir, {CAPABILITY_FILE: capability_text, METADATA_FILE: dumps(metadata) + "\n"}
+        directory,
+        {CAPABILITY_FILE: capability_edn.rstrip() + "\n", METADATA_FILE: dumps(metadata) + "\n"},
     )
-
-    logger.info(
-        "staging_capability_written",
-        name=name,
-        author_id=author_id,
-        pure=spec.pure,
-    )
-    return _read_metadata(staging_dir)
+    logger.info("staging_capability_written", name=name, author_id=author_id)
+    return capability_info(name, tlon_paths, staging=True)
 
 
 def list_staging_capabilities(tlon_paths: TlonPaths) -> list[CapabilityInfo]:
-    """List capabilities awaiting approval in ``~/.tlon/capabilities-staging/``."""
-    return _list_from(tlon_paths.capabilities_staging_dir())
+    return [
+        capability_info(info.name, tlon_paths, staging=True)
+        for info in _list_from(tlon_paths.capabilities_staging_dir())
+    ]
 
 
 def approve_capability(name: str, tlon_paths: TlonPaths) -> CapabilityInfo:
-    """Promote a staged capability to the trusted library (human approval).
+    """Approve staged content, or explicitly reapprove edited trusted content.
 
-    Moves the directory to ``~/.tlon/capabilities/`` and rewrites its
-    metadata with ``:trusted true``; the ``:author`` record is kept.
-    The whole-directory move carries any ``REVIEW.md`` along, so the
-    review trail survives promotion.
-
-    Raises:
-        CapabilityError: invalid name, nothing staged under that name, or the
-            trusted library already has a capability with that name
+    Validation and fake examples complete before publication. Approval records
+    bind both the definition and its transitive dependency identities.
     """
-    p = tlon_paths
     _validate_name(name)
-    staging_dir = p.capabilities_staging_dir() / name
-    if not _is_capability_dir(staging_dir):
-        raise CapabilityError(f"no staged capability named '{name}'")
-    target_dir = p.capabilities_dir() / name
-    if target_dir.exists():
+    staged = tlon_paths.capabilities_staging_dir() / name
+    target = tlon_paths.capabilities_dir() / name
+    is_staging = _is_capability_dir(staged)
+    source = staged if is_staging else target
+    if not _is_capability_dir(source):
+        raise CapabilityError(f"no staged or trusted capability named '{name}'")
+    if is_staging and target.exists():
         raise CapabilityError(f"capability '{name}' already exists in the trusted library")
-
-    target_dir.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(staging_dir), str(target_dir))
-
-    metadata_file = target_dir / METADATA_FILE
+    artifact = CapabilityArtifact.from_edn((source / CAPABILITY_FILE).read_text(encoding="utf-8"))
+    if artifact.name != name:
+        raise CapabilityError("artifact name must match its directory")
+    catalog = _candidate_catalog(artifact, tlon_paths)
+    if name not in catalog.definitions:
+        raise CapabilityError(catalog.errors.get(name, "capability cannot be compiled"))
+    validate_examples(artifact, catalog)
+    definition = catalog.definitions[name]
     data: dict[Any, Any] = {}
+    metadata_file = source / METADATA_FILE
     if metadata_file.exists():
-        parsed = loads(metadata_file.read_text(encoding="utf-8"))
-        if isinstance(parsed, dict):
-            data = dict(parsed)
+        try:
+            parsed = loads(metadata_file.read_text(encoding="utf-8"))
+        except ValueError as error:
+            raise CapabilityError(f"invalid capability metadata: {error}") from error
+        if type(parsed) is not dict:
+            raise CapabilityError("capability metadata must be a map")
+        data.update(parsed)
+    data[Keyword("name")] = name
     data[Keyword("trusted")] = True
-    data.setdefault(Keyword("name"), Keyword(name))
-    metadata_file.write_text(dumps(data) + "\n", encoding="utf-8")
-
-    logger.info("capability_approved", name=name, author=str(data.get("author") or ""))
-    return _read_metadata(target_dir)
+    data[Keyword("definition-id")] = definition.definition_id
+    data[Keyword("dependencies")] = definition.dependency_ids
+    metadata = dumps(data) + "\n"
+    if is_staging:
+        files = {
+            file.name: file.read_text(encoding="utf-8")
+            for file in source.iterdir()
+            if file.is_file()
+        }
+        files[METADATA_FILE] = metadata
+        publish_directory(target, files)
+        shutil.rmtree(source)
+    else:
+        temporary = metadata_file.with_suffix(".tmp")
+        temporary.write_text(metadata, encoding="utf-8")
+        temporary.replace(metadata_file)
+    logger.info("capability_approved", name=name)
+    return capability_info(name, tlon_paths)
 
 
 def reject_capability(name: str, tlon_paths: TlonPaths) -> None:

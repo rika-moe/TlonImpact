@@ -27,8 +27,9 @@ from tlon.evolution.propose_capability import CapabilityProposer
 from tlon.evolution.review_prototype import PrototypeReviewer
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
-from tlon.operations.adapters import DSLAdapter, OperationTool
+from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.dsl import DSLAdapter
 from tlon.operations.evolution import make_evolution_operations
 from tlon.operations.schema import RejectedError, UnknownOutcomeError, edn_value
 from tlosure.builtins import BuiltinCall

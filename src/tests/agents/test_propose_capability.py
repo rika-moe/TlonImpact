@@ -17,7 +17,6 @@ from typing import Any
 
 from tests.evolution_helpers import make_capability_tool
 from tlon.agents.assembly import _render_trusted_capability_words
-from tlon.agents.capabilities.spec import CAPABILITY_ACTION_BUILTINS, CAPABILITY_PURE_BUILTINS
 from tlon.agents.capabilities.staging import approve_capability, write_staging_capability
 from tlon.agents.session_journal import SessionJournal
 from tlon.base.llm_client import LLMResponse
@@ -26,33 +25,27 @@ from tlon.evolution.propose_capability import _ACTION_WORDS, _ARTIFACT_HINT, _PU
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
 from tlon.operations.adapters import OperationTool
+from tlon.operations.definitions import host_operation_definitions
+from tlosure.builtins import ARITHMETIC_BUILTINS, CORE_BUILTINS
 
 _DRAFT_ARTIFACT = """\
-{:version 1
- :name "thread-digest"
- :description "把邮件主题列表蒸馏成一行摘要"
- :args [{:name "subjects" :type :list :doc "按时间升序的主题列表"}]
- :impl (fn [subjects] (join " / " subjects))
- :pure true
- :examples [{:args [["a" "b"]] :expect "a / b"}]}
+{:version 2 :name "thread-digest" :description "把邮件主题列表蒸馏成一行摘要"
+ :input-schema {:type "object" :properties {:subjects {:type "array" :items {:type "string"}}} :required ["subjects"] :additionalProperties false}
+ :output-schema {:type "string"}
+ :impl (fn [input] (join " / " (get input :subjects)))
+ :examples [{:input {:subjects ["a" "b"]} :expect "a / b"}]}
 """
 
 _INVALID_ARTIFACT = """\
-{:version 1
- :name "wild-word"
- :description "组合未注册词汇"
- :args []
- :impl (fn [] (jump {:to ["x@tlon.internal"]}))
- :pure true}
+{:version 2 :name "wild-word" :description "组合未注册词汇"
+ :input-schema {:type "object" :properties {} :required [] :additionalProperties false}
+ :output-schema true :impl (fn [input] (jump {:to ["x@tlon.internal"]}))}
 """
 
 _OTHER_NAME_ARTIFACT = """\
-{:version 1
- :name "other-word"
- :description "词名与请求不一致"
- :args []
- :impl (fn [] "x")
- :pure true}
+{:version 2 :name "other-word" :description "词名与请求不一致"
+ :input-schema {:type "object" :properties {} :required [] :additionalProperties false}
+ :output-schema {:type "string"} :impl (fn [input] "x")}
 """
 
 
@@ -271,19 +264,21 @@ class TestHintVocabularyAnchor:
     """起草 hint 的词表与真实注册表防漂移锚定。"""
 
     def test_pure_words_match_load_gate_registry(self) -> None:
-        assert set(_PURE_WORDS) == set(CAPABILITY_PURE_BUILTINS)
-        assert " ".join(sorted(CAPABILITY_PURE_BUILTINS)) in _ARTIFACT_HINT
+        assert set(_PURE_WORDS) == set(CORE_BUILTINS) | set(ARITHMETIC_BUILTINS)
+        assert " ".join(sorted({**CORE_BUILTINS, **ARITHMETIC_BUILTINS})) in _ARTIFACT_HINT
 
     def test_action_words_match_member_vocabulary(self) -> None:
-        assert set(_ACTION_WORDS) == set(CAPABILITY_ACTION_BUILTINS)
-        for word in CAPABILITY_ACTION_BUILTINS:
+        assert set(_ACTION_WORDS) == {
+            op.name for op in host_operation_definitions() if not op.control
+        }
+        for word in _ACTION_WORDS:
             assert word in _ARTIFACT_HINT
 
 
 async def test_draft_name_cannot_be_spoofed_by_edn_comment(tmp_path: Path) -> None:
     paths = TlonPaths(home=tmp_path)
     draft = _DRAFT_ARTIFACT.replace(':name "thread-digest"', ':name "other-word"').replace(
-        ":version 1", ':version 1\n ; :name "thread-digest"'
+        ":version 2", ':version 2\n ; :name "thread-digest"'
     )
     tool = _make_tool(paths, "author", _FakeLLM(draft))
     result = await tool.execute_context({"intent": "造词", "name": "thread-digest"})

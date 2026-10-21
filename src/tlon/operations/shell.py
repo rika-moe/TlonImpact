@@ -5,7 +5,6 @@ from typing import Any
 from tlon.operations.core import CallContext, Operation
 from tlon.operations.schema import UnknownOutcomeError
 from tlon.sandbox.shell import DEFAULT_TIMEOUT, MemberShellService
-from tlosure.builtins import Builtin
 
 _OUTPUT = {
     "type": "object",
@@ -72,15 +71,3 @@ def shell_operation_definitions() -> tuple[Operation, ...]:
     from tlon.base.config import DockerRuntimeConfig
 
     return make_shell_operations(MemberShellService(DockerRuntimeConfig(level="L0"), None))
-
-
-def shell_builtin_definitions() -> dict[str, Builtin]:
-    def unbound(_env: dict[str, Any], *args: Any) -> Any:
-        from tlon.operations.schema import OperationError
-
-        raise OperationError("Shell operation unavailable for this member")
-
-    return {
-        operation.name: Builtin(fn=unbound, pure=False)
-        for operation in shell_operation_definitions()
-    }

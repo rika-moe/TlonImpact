@@ -59,11 +59,11 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from tlon.agents.assembly import assemble_member_services
-from tlon.agents.capabilities.bridge import load_capability_builtins
+from tlon.agents.capabilities.bridge import load_capability_catalog
 from tlon.agents.cron import CronScheduler
 from tlon.agents.health import PublicHealthMonitor
 from tlon.agents.lifecycle import StartRequest, StopRequest
-from tlon.agents.loader import load_member_spec
+from tlon.agents.loader import has_frozen_work, load_member_spec, read_member_spec
 from tlon.agents.member_runtime import MemberRuntime
 from tlon.agents.member_spec import MemberSpec
 from tlon.agents.policy import (
@@ -312,20 +312,21 @@ class AgentRegistry(Component):
         logger.info("agent_registry_constructed")
 
     def _member_builtins(self) -> dict[str, Builtin]:
-        """The full member registry: host builtins + trusted capability words.
+        """Build a syntax registry from host contracts and approved composites.
 
-        The capability part (the vocabulary bridge, issue #45 slice 2/3)
-        is recomputed on every call — the trusted library is small (a
-        directory scan plus a few small artifacts), so this stays cheap
-        and carries no cache-invalidation problem. The semantics align
-        with the loader being the only disk-read path and the trust
-        ladder's wake reassembly: a newly approved word takes effect at
-        the member's next spec load (next wake), no server restart. The
-        host words are reserved in the bridge, so the merge never
-        shadows them.
+        This registry does not grant execution. MemberRuntime replaces global
+        host placeholders with actual service definitions and validates required
+        dependencies again before admitting any new behavior.
         """
-        capabilities = load_capability_builtins(self._paths, reserved=self._host_builtins)
-        return {**self._host_builtins, **capabilities}
+        from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+        from tlon.operations.dsl import DSLAdapter
+
+        catalog = load_capability_catalog(self._paths, reserved=self._host_builtins)
+        executor = OperationExecutor(
+            OperationRegistry(catalog.operations),
+            CallContext("validation", "validation", "validation"),
+        )
+        return {**self._host_builtins, **DSLAdapter(executor).builtins()}
 
     def register(self, agent_id: str) -> None:
         """Register an agent to be started.
@@ -357,6 +358,11 @@ class AgentRegistry(Component):
 
     # ==================== Spec-derived lifecycle (phase E) ====================
 
+    def _load_activation_spec(self, agent_id: str, builtins: dict[str, Builtin]) -> MemberSpec:
+        if has_frozen_work(agent_id, self._paths):
+            return read_member_spec(agent_id, tlon_paths=self._paths)
+        return load_member_spec(agent_id, tlon_paths=self._paths, builtins=builtins)
+
     def _spec_profile(self, agent_id: str) -> MemberSpec | None:
         """Load (and cache) a member's validated spec, or None if unreadable.
 
@@ -373,9 +379,7 @@ class AgentRegistry(Component):
         if agent_id in self._profiles:
             return None  # cached failure
         try:
-            spec = load_member_spec(
-                agent_id, tlon_paths=self._paths, builtins=self._member_builtins()
-            )
+            spec = self._load_activation_spec(agent_id, self._member_builtins())
         except (FileNotFoundError, ValueError, OSError) as e:
             logger.warning("member_spec_unreadable", agent_id=agent_id, error=str(e))
             self._profiles[agent_id] = None
@@ -584,7 +588,7 @@ class AgentRegistry(Component):
             # validation too (D6.6: host predicates open to registry
             # members).
             builtins = self._member_builtins()
-            spec = load_member_spec(agent_id, tlon_paths=self._paths, builtins=builtins)
+            spec = self._load_activation_spec(agent_id, builtins)
             self._profiles[agent_id] = spec  # cache the profile (phase E)
             mailbox = Mailbox(self._paths.mail_database_file(), config.id)
             services = await assemble_member_services(
@@ -601,7 +605,7 @@ class AgentRegistry(Component):
                 name=config.name,
                 event_bus=self.event_bus,
                 spec=spec,
-                builtins=builtins,
+                builtins=self._host_builtins,
                 mailbox=mailbox,
                 services=services,
                 registry=self,

@@ -1,112 +1,57 @@
-# 能力数据化：复合能力成为可审批的数据 artifact
+# 可审批的复合 Operation
 
-> 当前状态（2026-10-21）：EPIC A 宿主操作切换已通过 #184–#191 合并；本页的旧 Capability artifact 机制仍在使用，将在 EPIC B P5 统一为 Operation artifact。目标见 [统一操作](operations.md)，施工前拆解项见 [实施计划](operations-plan.md)。
+状态：EPIC A #184–#192 已合并；本页描述 EPIC B P5 的实现。P5 待独立 PR 验收合并，P6 纯条件准入与 P7 动态工具视图尚未实施。目标与阶段见 [统一操作](operations.md) 和 [实施计划](operations-plan.md)。
 
-复合能力是可审批的 tlosure 函数 artifact，批准后成为成员 spec 可调用的词。本文定义当前准入、注册、执行和提案机制；行为语言见 [dsl](dsl.md)，宿主接口见 [bridge-api](bridge-api.md)。
+## 一个定义，两个入口
 
-## 复合能力与宿主原语
-
-[dsl.md](./dsl.md) 的信任边界长期划在**行为重组**：LLM 可以组合已有机制写出新行为，但工具清单、动作词汇表都是 Python 侧的白名单常量，新增能力只能人类改代码发版。愿景第三步「开放」要求能力也能从社会内部生长——而「能自己定义工具的 DSL」曾经是信任模型的禁区。
-
-开闸的钥匙在**形态选择**：能力不是宿主代码，而是 tlosure 表达式。tlosure 求值器以 fuel/depth 定界，不直接执行外部效果——把能力限制在这个形态里，开闸就不等于抽掉地基。
-
-## 领域约束
-
-| 约束 | 当前规则 |
-|---|---|
-| 数据形态 | **tlosure 函数 artifact**（`{:name :args :impl (fn ...)}`），非宿主代码、非 WASM |
-| 信任通道 | **staging + 人工批准**原样套用（与原型同一模式） |
-| 权限 | **不放大**：能力产出 ActionRequest 数据，引擎按**调用者**的配额与信任级执行 |
-| 能力天花板 | **复合可进化、原语不可进化**：组合既有词汇的能力走本通道；新增模型服务、IO、Docker 或异步机制等宿主原语仍需 Python + 人类写 + 发版；可组合已准入的 model-call 等动作 |
-| env 契约 | **最小化：只见 args**，零注入 |
-| artifact 粒度 | **一个 artifact 一个词** |
-| 语境可见性 | 准入声明纯度；纯词可进门控语境，非纯词仅 `:actions` |
-| 命名空间 | **遮蔽即拒**（与既有 builtin/特殊形式同名拒载），不加前缀机制 |
-| 退役 | vocabulary only grows；deprecated → 全仓零引用才物理删 |
-
-## artifact 形态
+`capability.tlon` 保存复合 Operation 的源码与 JSON Schema。文件名及提案通道保留 Capability 术语，执行只有 OperationExecutor；不再注册另一套闭包能力执行器。Behavior 直接调用和 LLM Tool 投影使用同一输入、输出、效果与实现。
 
 ```clojure
-{:version 1
- :name "double-value"
- :description "把输入数字乘以二"
- :args [{:name "n" :type :number :doc "待计算的数字"}]
- :impl (fn [n] (* n 2))
- :pure true
- :examples [{:args [3] :expect 6}]}
+{:version 2
+ :name "thread-digest"
+ :description "读取邮件并提取摘要"
+ :input-schema {:type "object"
+                :properties {:mail_id {:type "string"}}
+                :required ["mail_id"]
+                :additionalProperties false}
+ :output-schema {:type "string"}
+ :impl (fn [input]
+         (let [mails (mail-search {:mail_id (get input :mail_id)})]
+           (get (model-call {:prompt (str mails) :max_tokens 256}) :content)))}
 ```
 
-- **`:impl` 是能力行为的全部**——tlosure 表达式，全文可读、加载期静态校验、fuel 有界。能力文本即行为全部，与 spec 同一套审计
-- **`:args` 是显式声明的位置参数 schema**。类型注解（`:string` / `:number` / `:boolean` / `:list` / `:map`）是**评审材料不是静态保证**——tlosure 无类型系统，元数由 fn 应用在运行时兜住（与 builtin 同）。写清楚是为了评审时能判断「这个词的契约是什么」
-- **`:pure` 是准入声明**，不是作者自觉——加载期校验强制（见「语境可见性」）
-- **`:examples` 是可选的输入/输出断言**（仅 `:pure true` 可携带——非纯 impl 产出 ActionRequest 宿主对象，无法与 EDN 值比对）：`{:args [...] :expect <值>}` 列表，`:args` 是**字面数据不求值**，数量须等于 `:args` 声明数。准入校验时在沙盒求值器跑断言（纯注册表 + 零注入 env + DEFAULT_FUEL 计量），任一失败即拒载；detail 端点同步呈现逐条 PASS/FAIL 与实际值/错误（见「信任通道」）
-- v1 边界：**`:impl` 只能组合内置词汇**（builtin 注册表 + 动作词），不能引用其他能力词——能力引能力的依赖图与退役级联留待真实需求出现再设计。当前词汇：纯词注册表 = `CORE_BUILTINS` + `ARITHMETIC_BUILTINS`（24 词，不读 env，与 `POLICY_BUILTINS` 同组成同契约）；非纯词注册表 = 纯词 + `MEMBER_ACTION_NAMES` 的 12 个动作词。**不含** trigger/loop/stage-cond 语境谓词（`addressed-to-me?`、`iteration-limit-reached?` 等直接读 env 的 `self`/`state`/`scratch` 段）与 host 查询词（`sleeping?` 等读注册表状态）——它们依赖隐式上下文，在零注入 env 下会静默退化；需要上下文一律调用点显式传参
+impl 必须是固定一个参数的 fn；根输入必须是命名对象，输出使用同一 schema 支持子集。旧 version=1、args 位置参数与作者 pure 声明直接拒绝，无兼容读取、自动转换或别名。语言普通函数的多参数语法不受影响。
 
-## env 契约：只见 args
+## 静态依赖与效果
 
-能力求值的 env = 调用方传入的位置参数，**零注入**：没有 `msg`、没有记忆、没有 `self`、没有任何隐式上下文。
+编译器使用 tlosure 通用作用域分析接口，遍历所有可执行分支、局部 fn/defn、map/filter/reduce 与循环；quote 作为数据处理。只允许静态具名操作调用，未知函数目标、将参数当函数、通过计算选择操作均拒绝。局部函数递归仍受 fuel/depth 约束，注册操作不能作为值传递来隐藏依赖。
 
-- 需要上下文？**调用点显式传参**：`(double-value (get event :count))`（调用语境须提供 `event`，且 `:count` 为数字）——能看见什么全写在调用点上，评审不用猜隐式依赖
-- 推论一：能力词在所有成员、所有 spec 里语义一致——可静态推理、可缓存、可 Diff 评审
-- 推论二：这是数据能力与 Python builtin 的本质差异。builtin 有各自的 env 契约（TypedDict，如 `RuleEnv`/`LoopEnv`）；数据能力没有家——这正是它比 builtin 更安全的原因
-- **fuel**：`:impl` 体求值**计入调用方的 fuel 预算**（Closure 应用照计，与 Python builtin 的「宿主资源域」豁免不同）。晋升的词不会成为预算黑洞——这是特性：能力留在 fuel 纪律内，与 tlosure 的计量求值边界一致
+直接依赖拓扑编译，递归得到传递依赖指纹与 read/write 效果集合；空集合才是纯操作。缺失依赖、环、语言/宿主/复合名称碰撞明确拒绝。一个坏定义只影响自身和依赖它的闭包，其他定义可继续装配。实际成员服务缺失时，该闭包不会因静态目录中的名字存在而获准执行。
 
-## 信任通道：staging 复用
+impl 只见 input、核心纯函数和依赖操作，不注入 self、msg、event 或成员运行环境。宿主身份由调用上下文传递，不能以作者身份代调用。
 
-- **存储**：受信库 `~/.tlon/capabilities/` + staging 区 `~/.tlon/capabilities-staging/`，目录布局、元数据（`meta.tlon`）、REVIEW.md、批准移动（staging → 受信库）全部对齐原型通道（[prototypes.md](./prototypes.md)、`agents/prototypes/staging.py` 模式）
-- **信任模型同构**：受信是默认（人类手写进受信库即可信），staging 写入显式 `:trusted false`；approve/reject 是纯人类决定
-- **动态验证 = `:examples` 断言**：artifact 携带 `{:args [...] :expect ...}` 输入/输出对，准入校验时在沙盒求值器跑断言（纯词 + fuel 计量，天然安全）——评审看到的不只是「它声称做什么」，还有「它做到了什么」。更重的行为验证（携带该能力的 staging 原型进演武场，轨迹即证据，见 [arena.md](./arena.md)）留作后续独立项
-- **异质评审**可复用 prototype-review 的模式（独立模型血线的评审意见，advisory）
+控制保护依赖 Operation.control 元数据，编译器拒绝引用控制操作的复合定义，包含间接依赖。finish-turn/sleep-until/exit-agent 的名字没有第二份保护名单；不同名称但 control=true 的宿主操作同样受保护。run-loop 保留为 Behavior 编排边界，不属于复合操作目录。
 
-## 语境可见性与纯度
+## 批准与重新批准
 
-准入强制 `:pure` 声明：纯能力只能引用纯注册表；非纯能力可组合动作词、产出 `ActionRequest`。接受的设计边界是纯词可用于纯语境，非纯词只用于动作语境，不能通过函数封装逃逸纯度限制。
+目录为 `~/.tlon/capabilities-staging/<name>/` 与 `~/.tlon/capabilities/<name>/`。artifact 的 name 必须与目录相同，meta.tlon 保留作者、提案说明与人工信任记录。批准前静态编译并验证当前依赖图，保存 definition-id 和 dependencies（完整传递依赖内容身份）。审批不执行真实宿主效果。
 
-**当前接线范围**：`AgentRegistry._member_builtins` 将受信词加入成员注册表，规则 `:when` 使用其纯子集，规则 `:actions` 使用全表。这两类执行点已经接通能力库。
+受信加载重新编译并核对批准绑定。直接修改已批准定义或任一依赖不会被自动接纳：自身或上层拒载，直到人类明确重新批准。新增无关能力不会使其他成员所有在途根失配。手写 artifact 也必须明确批准，不能仅靠放入可信目录获得执行信任。
 
-**语境边界**：会话配方的 `:until` 和 stage `:if` 使用固定注册表，能力词在这些位置加载即被拒绝。普通规则动作统一使用含受信能力的成员注册表，不再有另一套完成动作求值器。能力可组合不等于可以绕过宿主词汇、效果权限或预算限制。
+管理 API 的批准入口为 `POST /admin/capabilities/{name}/approve`，支持从 staging 提升，以及对现有 trusted 定义重新批准；旧 staging 路径不保留。WebUI 展示输入/输出 schema、推导效果、依赖指纹、不可用原因和重新批准动作。批准不是成员执行授权，实际领域权限与装置约束仍在宿主边界检查，统一授权名单和动态视图属于 P7。
 
-**命名空间**：词名与既有 builtin、特殊形式、其他受信能力同名即**拒载**（遮蔽即拒）。不加前缀机制——约定优于机制：词汇表总共几十个词，碰撞人眼可查；词的出处（哪个提案引入）记录在 artifact 元数据里。
+## Examples 的安全边界
 
-## 词汇桥：受信能力库进入成员注册表
+```clojure
+:examples [{:input {:value "sample"} :expect "sample"}]
+```
 
-单次求值中的 `defn` 不能自行成为其他成员可用的词。能力库通过独立准入与注册把经过批准的函数暴露给其他 spec。
+examples 是附加审查材料，使用共享编译器、schema 与 fuel 求值。纯 examples 真正计算；效果 examples 必须显式提供 fake-results，例如 `{"mail-send" [receipt]}` 的逐叶结果队列。隔离执行器只有 fake 宿主，缺失队列、输出不合约或有未消费结果都失败；详情、提案、审批不得调用真实邮箱、Shell、模型服务或其他写端口。示例通过不构成执行授权。
 
-机制答案：**受信能力库 → 成员注册表**。成员加载链上把受信库里每个 artifact 的 `:impl` 校验（结构 + 纯度 + 命名空间）后注册进成员 spec 的校验/求值注册表——从此全社会每个成员都能在自己的 spec 里组合它。直接起草的能力与人类提交的能力共用这一条受信词汇桥。
+## 执行、冻结与恢复
 
-当前实现：`Builtin` 注册表条目从「只有宿主 fn」扩成两形——宿主 fn（内部不计费）或 **closure-backed**（携带 `Closure`，求值器命中时走 closure 应用，body 计入调用方 fuel/depth）；captured env 为空，body 只见自己的参数绑定，body 内的词经调用方注册表解析。桥本身（`agents/capabilities/bridge.py` 的 `load_capability_builtins`）在**注册表为成员加载 spec 时重算**（受信库是小数据，无缓存失效问题）——新批准的词在成员下次 wake 自然生效。单个坏 artifact 只排除该词（fail-soft），引用它的成员在自身加载校验处报未注册词汇。
+复合执行继承调用者根预算、取消/截止与成员写 gate；嵌套复合共享语言 fuel/depth，不为每层重置。子调用 ID 由父路径和确定序号派生，完成顺序不改变身份。叶子 invocation 是外部效果的恢复权威；复合不创建会阻断叶子重放的非幂等父 intent。完整完成后才保存派生成功/输出错误缓存，历史成功先于当前预算、取消与截止检查。
 
-## 退役纪律
+ProgramStore 原子保存程序源码、输入与所需复合闭包快照。会话在首次模型请求前冻结当时静态暴露的复合集合。root_definitions 保存源码/schema 及传递依赖身份，恢复从原快照编译，不从当前磁盘重新拼旧程序。宿主构建与宿主契约变化仍拒绝恢复；添加无关能力不会改变宿主 build_id。
 
-对齐既有「vocabulary only grows, semantics only tighten」：
-
-- 词**只增不删**；要退役先 `:deprecated true`（元数据标记 + detail 呈现 + 评审警告）
-- **物理删除的唯一前提：受信能力与所有受管理的原型、staging/成员 spec 零引用**（删除前显式核查）。删除是显式的人类动作——加载期校验是守门人：删掉仍被引用的词 = 引用者全部拒载，但当前没有自动检查全库引用并阻止删除的退役闸，删除前的引用核查仍是治理责任
-
-## 信任边界（不做什么）
-
-- **权限不放大**：能力产出的是 ActionRequest **数据**，引擎按调用者身份执行——一个能力词做不到调用者本人做不到的事
-- **能力不能新增宿主原语**：`:impl` 可组合已准入动作，包括 model-call、state-get/state-put 等；模型服务、IO、Docker 或异步机制的新增实现仍在 Python 宿主层。fuel 不约束宿主内部成本，模型调用还受程序驱动的 token 预算限制
-- **v1 能力词只在 DSL 语境**（spec 的 rules/actions），不进 LLM 工具面——ToolExecutor 注册（LLM 可动态调用的工具）需要 参数 schema → tool schema 的映射设计，是独立后续决策。这收窄了 issue #45 原清单的「ToolExecutor 从 artifact 注册」一项：DSL 词汇先行，当前使用入口是成员 **spec** 中的词汇组合
-- 能力引能力（`:impl` 引用其他能力词）v1 不做
-
-## 当前提案机制
-
-突变直接起草为 tlosure artifact：成员从意图、记忆 digest 与 lessons 生成 `:impl`，不以 workspace 程序为起点。`capability-propose` 由 [evolution/propose_capability.py](../../src/tlon/evolution/propose_capability.py) 的 `CapabilityProposer` 实现：
-
-1. 在起草前执行血脉偿付政策检查；政策求值异常采用既定 fail-open 处理。
-2. 一次 LLM 起草调用提取 EDN，并核对词名必须等于申请名称。
-3. 经 `write_staging_capability` 运行结构、纯度、命名空间及 examples 准入；校验错误和格式提示返回给调用者，由外层会话循环决定重试。
-4. 产物进入 staging，由人类评审并批准。已有受信词清单提供给起草 prompt，避免重复造词；同名仍由准入硬拒绝。
-
-工具属于 `REPRODUCTION_TOOLS`，见习成员不注册。不存在给成员绕开起草与 staging 校验的裸写工具；人类可以通过管理界面提交 artifact。
-
-类型与校验在 [agents/capabilities/spec.py](../../src/tlon/agents/capabilities/spec.py) 的 `CapabilitySpec` / `validate_capability`；example 求值由 `evaluate_capability_examples` 完成；[agents/capabilities/bridge.py](../../src/tlon/agents/capabilities/bridge.py) 的 `load_capability_builtins` 负责词汇桥。工具层依赖 proposal 端口，不能反向 import agents 实现。
-
-## 演进与未实施方向
-
-同名即拒，改进使用新名；词义不原地替换。deprecated 元数据用于目录和评审呈现，词仍注册；物理删除需先确认引用已经清除。该规则记录当前接受的能力治理约束，不增加旧格式解析或运行时版本矩阵。
-
-尚未实施：能力进入 LLM ToolExecutor、能力引用其他能力、自动相似能力检测、携带候选能力的原型演武。后者与当前纯 examples 动态断言不同，不能把 examples 的通过视为认知行为评估通过。
-
-历史来源为能力数据化 Issue #45 与直接起草/动态断言 Issue #30；原型通道的完整设计见 [prototypes](prototypes.md)。
+删除或修改能力文件后，已有根仍用旧快照；新工作只能使用当前已批准定义。若当前 Behavior 因缺依赖无法准入，但成员存在冻结待恢复工作，可明确进入“仅恢复”激活：只恢复旧根，不接受当前 boot/邮件/idle 等新规则，诊断说明 Behavior 不可用，修正后需要显式重载。没有待恢复事实时仍严格拒载。坏根隔离继续遵守 [调用恢复](invocation-recovery.md)，不删除历史、预留或用户文件。

@@ -1,6 +1,6 @@
-# Operation 调用契约（P1–P4b）
+# Operation 调用契约（P1–P5）
 
-当前状态：P1 至 P3c 已通过 #184–#188 合入 main。P4a 已通过 #189 合并，将 DSL 与模型 Tool 的调用记录、指纹及恢复收敛至同一边界。P4b 实现共享账本、取消/截止时间、成员写排序及 MemberServices 改名，契约见 [execution-scope](../design/execution-scope.md)。Capability artifact 尚未转换为复合 Operation。当前恢复契约见 [invocation-recovery](../design/invocation-recovery.md)，目标设计见 [operations](../design/operations.md)，实施顺序见 [operations-plan](../design/operations-plan.md)。
+当前状态：P1 至 P3c 已通过 #184–#188 合入 main。P4a 已通过 #189 合并，将 DSL 与模型 Tool 的调用记录、指纹及恢复收敛至同一边界。P4b 实现共享账本、取消/截止时间、成员写排序及 MemberServices 改名，契约见 [execution-scope](../design/execution-scope.md)。P5 将 Capability artifact 转换为共享复合 Operation，待本阶段 PR 合并。当前恢复契约见 [invocation-recovery](../design/invocation-recovery.md)，目标设计见 [operations](../design/operations.md)，实施顺序见 [operations-plan](../design/operations-plan.md)。
 
 ## 定义和执行
 
@@ -8,13 +8,13 @@
 
 空 effects 表示纯计算：handler 是同步 `(CallContext, dict[str, Any]) -> Any`。非空 effects 是 read/write 集合：handler 必须是 async，并由异步执行边界等待结果。纯 handler 返回 awaitable 会被拒绝，不能把异步 IO 谎报为纯计算。注册表固定定义集合，同名拒绝；宿主给不同成员构造 scoped handler 和 `CallContext(member_id, run_id, call_id)`，上下文不在业务参数或 DSL env 内。
 
-`OperationExecutor.call_pure` 仅执行纯操作；`call` 支持两类操作。纯操作直接执行；效果操作依次执行输入严格 JSON 复制与 schema 校验、稳定身份与历史核对、持久化 intent、handler、输出校验及回执提交。已有回执在进入当前 handler 前还原；参数错误不写 intent。修改 handler 参数、返回值或 Tool schema 投影都不能污染原调用数据或权威 schema。
+`OperationExecutor.call_pure` 仅执行纯操作；`call` 支持两类操作。纯操作直接执行；宿主效果操作依次执行输入严格 JSON 复制与 schema 校验、稳定身份与历史核对、持久化 intent、handler、输出校验及回执提交。复合操作继承这些边界，叶子仍按此提交，复合自身只有完成后的派生结果缓存，没有阻断叶子重放的非幂等父 intent。已有回执在进入当前 handler 前还原；参数错误不写 intent。修改 handler 参数、返回值或 Tool schema 投影都不能污染原调用数据或权威 schema。
 
-当前不提供通用授权名单、动态工具视图或复合依赖；共享执行作用域已覆盖现有模型调用入口。真实 runtime 为两入口注入同一成员 ProgramStore；session journal 保留会话协议历史，PostOffice 保留邮件领域幂等回执，不另建第三权威日志。上下文隔离不是完整授权系统。输出不合约报 `OutputError`，不得据此假定效果未发生或自动重试。
+当前提供静态复合依赖；尚不提供通用授权名单或动态工具视图；共享执行作用域已覆盖现有模型调用入口。真实 runtime 为两入口注入同一成员 ProgramStore；session journal 保留会话协议历史，PostOffice 保留邮件领域幂等回执，不另建第三权威日志。上下文隔离不是完整授权系统。输出不合约报 `OutputError`，不得据此假定效果未发生或自动重试。
 
 ## 调用记录与指纹 P4a
 
-宿主上下文包含 member_id、run_id、call_id、call_path、origin、冻结输入及 Invocation；业务参数不能覆盖它们。输入以键排序的 canonical JSON 固定身份，输出回执保留对象键顺序，因为 DSL 的 keys/str 能观察该顺序。恢复同时核对路径、参数、操作契约指纹和宿主构建指纹；构建身份包含宿主代码、锁文件摘要、已安装依赖身份与已加载 Capability 闭包。当前数据库格式为 user_version=2；旧数据库或无构建身份的会话拒绝恢复，不迁移或清库。
+宿主上下文包含 member_id、run_id、call_id、call_path、origin、冻结输入及 Invocation；业务参数不能覆盖它们。输入以键排序的 canonical JSON 固定身份，输出回执保留对象键顺序，因为 DSL 的 keys/str 能观察该顺序。恢复同时核对路径、参数、操作契约指纹和宿主构建指纹；构建身份包含宿主代码、锁文件摘要、已安装依赖身份与宿主 builtin 定义；复合源码与传递依赖按根冻结。当前数据库格式为 user_version=2；旧数据库或无构建身份的会话拒绝恢复，不迁移或清库。
 
 每个调用的成功、明确拒绝、输出契约错误以及未知结果均有明确记录。输出不合约时保留原 JSON 回执；非 JSON 对象只保存类型与 repr 诊断，不能声称恢复任意 Python 对象。记录失败不返回成功；领域已原子提交回执时，对账返回该真实结果。同一进程内相同调用合流，独立根调用不共享完成序号。完整边界见 [调用恢复](../design/invocation-recovery.md)。
 
@@ -83,3 +83,9 @@ state-put 将状态与该次调用结果放在 ProgramStore 的同一事务；�
 ## EPIC A 审计收尾边界
 
 spawn 的配额归属取冻结 CallContext.run_id：Tool 与恢复使用 session 根，直接 DSL 使用程序根，日志 ContextVar 不参与授权。演化和记忆的领域包装透传确定的预算/截止拒绝，provider 明确拒绝为 rejected，未知提交仍为 unknown。成员同一 write gate 显式注入 OperationExecutor 与 MemoryManager，反思/蒸馏与普通调用共享写边界。超时先返回已提交回执；未派发的新调用明确拒绝，不把旧未知 intent 覆写为失败。
+
+## 复合操作（P5）
+
+复合 artifact 使用 version=2、input-schema/output-schema 与单参数 impl，经统一目录编译为 Operation，同样投影到 DSL/Tool。依赖和 read/write 从静态调用闭包推导，control 元数据禁止复合包装。完整格式、批准指纹与 fake examples 见 [复合操作设计](../design/capabilities.md)。
+
+以上自动生成的宿主目录不包含用户批准的复合定义数量；成员实际目录还取决于当前可用服务与已批准的有效依赖闭包。P7 动态视图和统一授权尚未实施，不能把静态存在误当作成员执行许可。

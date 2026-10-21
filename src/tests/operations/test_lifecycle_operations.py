@@ -151,7 +151,8 @@ async def test_real_spawn_quota_uses_frozen_root_for_normal_and_recovered_calls(
     from tests.agents.test_spawn import _FakeRegistry, _write_prototype
     from tlon.agents.spawn import SpawnManager
     from tlon.base.paths import TlonPaths
-    from tlon.operations.adapters import DSLAdapter, OperationTool
+    from tlon.operations.adapters import OperationTool
+    from tlon.operations.dsl import DSLAdapter
     from tlosure.builtins import BuiltinCall
     from tlosure.edn import Keyword
 

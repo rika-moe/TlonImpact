@@ -239,9 +239,7 @@ class RESTAPIHandler(
         app.router.add_get("/admin/capabilities/staging", self.handle_list_staging_capabilities)
         app.router.add_post("/admin/capabilities/staging", self.handle_create_staging_capability)
         app.router.add_get("/admin/capabilities/staging/{name}", self.handle_get_staging_capability)
-        app.router.add_post(
-            "/admin/capabilities/staging/{name}/approve", self.handle_approve_capability
-        )
+        app.router.add_post("/admin/capabilities/{name}/approve", self.handle_approve_capability)
         app.router.add_post(
             "/admin/capabilities/staging/{name}/reject", self.handle_reject_capability
         )

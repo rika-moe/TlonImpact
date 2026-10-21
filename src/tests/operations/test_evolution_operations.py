@@ -11,15 +11,16 @@ from tlon.base.paths import TlonPaths
 from tlon.evolution.list_staging import StagingCatalog
 from tlon.evolution.publication import publish_directory
 from tlon.evolution.write_prototype import PrototypeWriter
-from tlon.operations.adapters import DSLAdapter, OperationTool
+from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.dsl import DSLAdapter
 from tlon.operations.evolution import make_evolution_operations
 from tlon.operations.schema import OperationError, RejectedError, json_value
 from tlosure.builtins import BuiltinCall
 from tlosure.edn import Keyword
 
 _SPEC = '{:version 1 :rules [{:name "boot" :on :boot :actions []}]}'
-_CAPABILITY = '{:version 1 :name "echo-word" :description "identity" :args [{:name "x" :type :string :doc "x"}] :impl (fn [x] x) :pure true}'
+_CAPABILITY = '{:version 2 :name "echo-word" :description "identity" :input-schema {:type "object" :properties {:x {:type "string"}} :required ["x"] :additionalProperties false} :output-schema {:type "string"} :impl (fn [input] (get input :x))}'
 
 
 def _bound(paths: TlonPaths, *, full: bool = True) -> OperationExecutor:

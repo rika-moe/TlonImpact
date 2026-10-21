@@ -10,8 +10,9 @@ import pytest
 from tlon.agents.mail_stats import mail_stats_provider
 from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_store import SpanRecord, TraceRecord, TraceStore
-from tlon.operations.adapters import DSLAdapter, OperationTool
+from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.dsl import DSLAdapter
 from tlon.operations.observability import make_observability_operations
 from tlon.operations.schema import OutputError, json_value
 from tlosure.builtins import BuiltinCall

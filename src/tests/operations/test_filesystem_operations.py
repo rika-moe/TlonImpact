@@ -8,8 +8,9 @@ import pytest
 from docker.errors import NotFound
 
 from tlon.base.config import DockerRuntimeConfig
-from tlon.operations.adapters import DSLAdapter, OperationTool
+from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.dsl import DSLAdapter
 from tlon.operations.filesystem import make_filesystem_operations
 from tlon.operations.schema import UnknownOutcomeError
 from tlon.sandbox.archive import DirectoryArchive

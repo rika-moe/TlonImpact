@@ -23,8 +23,9 @@ from tlon.base.execution import (
 )
 from tlon.base.llm_client import ToolCall
 from tlon.base.paths import TlonPaths
-from tlon.operations.adapters import DSLAdapter, OperationTool
+from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
+from tlon.operations.dsl import DSLAdapter
 from tlon.operations.schema import DefinitionError, UnknownOutcomeError
 from tlon.tools.spill import ToolSpill
 from tlosure.edn import loads

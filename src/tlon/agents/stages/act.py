@@ -18,27 +18,32 @@ from tlon.agents.stages.outcome import StageOutcome
 from tlon.agents.stages.services import StageServices
 from tlon.base.events.event import EventType
 from tlon.base.llm_client import LLMResponse, ToolCall, validate_tool_call_ids
+from tlon.operations.control import control_names
 from tlon.tools.base import ToolResult
 
-ENDING_TOOLS = frozenset({"finish-turn", "sleep-until", "exit-agent"})
 
-
-def attempts_completion(response: LLMResponse | None) -> bool:
+def attempts_completion(
+    response: LLMResponse | None, *, controls: frozenset[str] | None = None
+) -> bool:
     """Ending requests are dispatched only when they are the sole tool call."""
+    names = control_names() if controls is None else controls
     return bool(
         response
         and response.tool_calls
         and len(response.tool_calls) == 1
-        and response.tool_calls[0].function_name in ENDING_TOOLS
+        and response.tool_calls[0].function_name in names
     )
 
 
-def attempts_mail_delivery(response: LLMResponse | None) -> bool:
+def attempts_mail_delivery(
+    response: LLMResponse | None, *, controls: frozenset[str] | None = None
+) -> bool:
     """Whether act would dispatch mail delivery in this response."""
+    names = control_names() if controls is None else controls
     return bool(
         response
         and response.tool_calls
-        and not any(tc.function_name in ENDING_TOOLS for tc in response.tool_calls)
+        and not any(tc.function_name in names for tc in response.tool_calls)
         and any(tc.function_name in {"mail-send", "mail-forward"} for tc in response.tool_calls)
     )
 
@@ -57,6 +62,7 @@ async def act_stage_step(
     TOOL_EXECUTE_START event and one background task per tool call,
     then ``session.dispatch_tools`` + ``mark_waiting``.
     """
+    names = svc.control_names()
     if response is None:
         svc.logger.debug(
             "loop_stage_skipped", session_id=session.id, stage="act", reason="no_response"
@@ -83,14 +89,14 @@ async def act_stage_step(
         )
 
     if (
-        any(tc.function_name in ENDING_TOOLS for tc in response.tool_calls)
+        any(tc.function_name in names for tc in response.tool_calls)
         and len(response.tool_calls) != 1
     ):
         return StageOutcome(
             context_appends=[
                 {
                     "role": "user",
-                    "content": "冲突：finish-turn、sleep-until、exit-agent 必须单独调用，不能与其他工具同时调用。请另起一轮。",
+                    "content": "冲突：控制操作必须单独调用，不能与其他工具同时调用。请另起一轮。",
                 }
             ],
             advance_iteration=True,
@@ -121,6 +127,7 @@ async def act_stage_collect(
     if not completed:
         return StageOutcome()  # still waiting
 
+    names = svc.control_names()
     outcome = StageOutcome()
     is_complete = False
 
@@ -145,7 +152,7 @@ async def act_stage_collect(
                 },
             )
 
-        if tc.function_name in ENDING_TOOLS and result.success:
+        if tc.function_name in names and result.success:
             request = result.data.get("scheduling_request")
             if request:
                 is_complete = True

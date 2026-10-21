@@ -13,8 +13,8 @@ from tlon.agents.program_driver import ProgramDriver
 from tlon.agents.program_store import ProgramStore
 from tlon.agents.vocabulary import make_member_builtins
 from tlon.base.execution import ExecutionDeadlineError, ExecutionScope, current_execution
-from tlon.operations.adapters import DSLAdapter
 from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
+from tlon.operations.dsl import DSLAdapter
 from tlon.operations.model import model_operation_definitions
 from tlon.operations.state import make_state_operations
 from tlosure.builtins import EvalError

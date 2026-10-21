@@ -63,7 +63,7 @@ def write_trusted_prototype(
     p = tlon_paths
     _validate_display_name(display_name)
     generation = _resolve_parent_generation(parent, p) if parent is not None else 1
-    spec_text = _validate_behavior(behavior_edn)
+    spec_text = _validate_behavior(behavior_edn, tlon_paths=p)
 
     name = new_prototype_id()
     if (p.prototypes_dir() / name).exists() or (p.prototypes_staging_dir() / name).exists():
@@ -161,7 +161,7 @@ def update_prototype(
     parent_generation: int | None = None
     if parent is not None:
         parent_generation = _resolve_parent_generation(parent, p)
-    spec_text = _validate_behavior(behavior_edn) if behavior_edn is not None else None
+    spec_text = _validate_behavior(behavior_edn, tlon_paths=p) if behavior_edn is not None else None
 
     if spec_text is not None:
         (proto_dir / BEHAVIOR_FILE).write_text(spec_text, encoding="utf-8")

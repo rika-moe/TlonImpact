@@ -2,7 +2,7 @@
 
 日期：2026-10-19。
 
-状态：已接受。设计 #182、EPIC A P1–P4 与审计收尾 #184–#191 已合并 main，宿主业务已切换到共享 Operation；EPIC B 的复合依赖、纯操作准入与动态工具视图尚未实施。外部审查恢复隔离修复见 [实施计划](../design/operations-plan.md)。
+状态：已接受。设计 #182、EPIC A P1–P4 与审计收尾 #184–#191 已合并 main，宿主业务已切换到共享 Operation；EPIC B P5 的复合依赖正在实施验收；P6 纯操作准入与 P7 动态工具视图尚未实施。外部审查恢复隔离修复见 [实施计划](../design/operations-plan.md)。
 
 ## 背景
 
@@ -40,3 +40,5 @@ Capability artifact 与 Python Tool 分别绑定了实现形态和调用入口�
 完整契约见 [目标设计](../design/operations.md)，阶段边界和验收见 [实施计划](../design/operations-plan.md)。每任务独立 PR、严格串行；用户已授权分支、提交、推送和创建 PR，未授权自动合并。
 
 P4b 实施说明：成员服务容器已统一命名 `MemberServices`，装配函数为 `assemble_member_services`，不提供旧名别名；Capability artifact 的目录、管理 facade 与符号保持其原有含义。
+
+P5 实施决策：宿主 build_id 与按根冻结的复合定义分开；受信 artifact version=2 使用统一 schema 和单参数 impl，审批绑定传递依赖指纹。控制准入由 Operation.control 统一推导，DSL 与 Tool 投影分置 dsl.py/adapters.py，保持底层不依赖 Tool 协议。程序源码与依赖原子受理，会话冻结静态暴露集合；仅恢复激活不为新行为补定义。实施和验收见 operations-plan。

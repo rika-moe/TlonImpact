@@ -45,7 +45,7 @@ def example_result_payload(result: ExampleResult) -> dict[str, Any]:
     when the example evaluated; ``error`` only when it did not.
     """
     payload: dict[str, Any] = {
-        "args": dumps(list(result.args)),
+        "input": dumps(result.input),
         "expect": dumps(result.expect),
         "passed": result.passed,
     }

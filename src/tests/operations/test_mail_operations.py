@@ -7,8 +7,9 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tests.unit.test_post_office import office_at
-from tlon.operations.adapters import DSLAdapter, OperationTool
+from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.dsl import DSLAdapter
 from tlon.operations.mail import make_mail_operations
 from tlon.operations.schema import RejectedError, UnknownOutcomeError
 from tlon.organization.mail.mail import Mail

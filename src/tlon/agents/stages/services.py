@@ -86,6 +86,7 @@ class StageServices:
         publish: EventPublisher,
         tool_definitions: ToolDefinitions,
         logger: "structlog.stdlib.BoundLogger",
+        control_names: Callable[[], frozenset[str]] | None = None,
     ):
         """Assemble the bundle from the Agent's injected dependencies.
 
@@ -106,6 +107,14 @@ class StageServices:
         self._context_builder = context_builder
         self._publish = publish
         self._tool_definitions = tool_definitions
+        self._control_names = control_names
+
+    def control_names(self) -> frozenset[str]:
+        if self._control_names is not None:
+            return self._control_names()
+        from tlon.operations.control import control_names
+
+        return control_names()
 
     @contextlib.asynccontextmanager
     async def traced_span(self, name: str) -> AsyncIterator[Any]:

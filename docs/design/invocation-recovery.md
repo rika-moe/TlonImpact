@@ -4,7 +4,7 @@
 
 ## 所有权
 
-Operation 定义输入、输出、效果和宿主实现；DSL 与模型 Tool 只负责入口投影。OperationExecutor 在调用实际 handler 前后统一处理持久化。ProgramStore 是叶子操作结果的唯一权威，继续使用成员原有 SQLite，不增加另一套数据库。程序 runs 保存冻结规则与输入；effects 仅保留 run-loop 和现有非 Operation 宿主查询的编排记录。SessionJournal 保留模型请求、工具分发和交互结果，恢复时通过 invocation 引用查询同一 ProgramStore。
+Operation 定义输入、输出、效果和宿主实现；DSL 与模型 Tool 只负责入口投影，分别位于 operations/dsl.py 与 operations/adapters.py。OperationExecutor 在调用实际 handler 前后统一处理持久化。ProgramStore 是叶子操作结果的唯一权威，继续使用成员原有 SQLite，不增加另一套数据库。程序 runs 保存冻结规则与输入；effects 仅保留 run-loop 和现有非 Operation 宿主查询的编排记录。SessionJournal 保留模型请求、工具分发和交互结果，恢复时通过 invocation 引用查询同一 ProgramStore。
 
 纯计算不写叶子记录。运行时始终给 executor 注入成员 ProgramStore；低层隔离测试可以使用无存储 executor，但该模式不提供恢复保证。私有状态写入与 invocation 成功回执在同一 SQLite 事务提交，不再另建 state 专用 effects 回执。
 
@@ -12,7 +12,7 @@ Operation 定义输入、输出、效果和宿主实现；DSL 与模型 Tool 只
 
 每个调用持久化 call_id、root_id、结构路径、操作名、规范化输入 JSON、契约 definition_id 和宿主 build_id。程序路径由求值顺序产生；会话路径包含 round 序号和模型 ToolCall.id，因此不同轮重复的模型 ID 不会共用调用记录。同一轮重复 ToolCall.id 在分发前整轮拒绝，不启动任何工具或 intent；恢复遇到这种已歧义的旧 dispatch 也拒绝，不能按最后一个同 ID 结果覆盖。完成先后不能改变身份。文件溢出回执的文件名取完整 call_id 的哈希，模型协议仍保留原 ToolCall.id。
 
-root 首次创建时冻结宿主身份。宿主身份覆盖 tlon/tlosure Python 运行代码、打包的 uv.lock 摘要、Python 版本、已安装 distribution 的版本，以及成员加载的闭包定义。契约另有内容指纹。恢复先核对冻结身份，再进入程序或构建会话上下文；已存调用同样核对名称、路径、输入和契约。任何不一致都报告 RecoveryMismatchError，不能将旧位置解释成新工作。不同根独立校验，一个旧根失配不阻止其他成员或新根运行。
+root 首次创建时冻结宿主身份。宿主身份覆盖 tlon/tlosure Python 运行代码、打包的 uv.lock 摘要、Python 版本、已安装 distribution 的版本，以及宿主 builtin 定义；复合 artifact 不进入全局宿主身份，按根冻结。契约另有内容指纹。恢复先核对冻结身份，再进入程序或构建会话上下文；已存调用同样核对名称、路径、输入和契约。任何不一致都报告 RecoveryMismatchError，不能将旧位置解释成新工作。不同根独立校验，一个旧根失配不阻止其他成员或新根运行。
 
 这是保守拒绝策略：不恢复旧宿主代码，不提供跨版本兼容。无关已安装包版本变化也可能使旧根失配。构建脚本与质量门检查打包摘要是否与 uv.lock 一致，wheel 携带摘要模块，运行时无需源码仓库中的锁文件。
 
@@ -56,3 +56,11 @@ P4b 宿主查询收敛：`sleeping?`、`running?`、`lazy?`、`member-roster` �
 恢复失配和无法自动重试的效果未知（含模型请求）只隔离其原根。程序在 runs.error 保存 recovery_blocked 与原因，completed 不伪装为成功；会话写 session/recovery-blocked，并在既有生命周期元数据标记隔离。它不属于正常完成会话，不进入蒸馏；再次恢复会明确抛出 RecoveryBlockedError，不能返回成功，也不能重新请求模型。相关父程序同样隔离，防止会话以后继续写入新状态。可按幂等回执恢复的临时邮件失败仍等待原根恢复。
 
 操作员可先通过会话事件查看 session/recovery-blocked 的 session_id、原因和关联程序；程序错误及冻结输入保留在成员 program.sqlite3 的 runs 表，invocations 与 model_allocations 保留调用和预留事实。隔离后新邮件与其他根可继续工作，无需删库。没有提供“强制重放未知效果”按钮；需要重做业务时应在确认外部效果后显式发起新的任务，不修改旧根身份、不清空真实 ~/.tlon。数据库整体格式不兼容仍在打开时拒绝，这是与单根身份失配不同的错误。
+
+## P5 复合定义快照
+
+root_definitions 是 ProgramStore 中的运行输入，不是另一份交互日志或兼容版本库。程序源码/输入和所需定义在同一受理事务写入，会话在发模型前冻结静态暴露复合集合；空快照也是已经冻结的事实。恢复使用原源码/schema/依赖身份，宿主实现和契约仍验证；不把当前批准目录合并进旧根。
+
+复合没有非幂等父 dispatch intent，叶子回执决定重放。完成后的派生成功/输出错误缓存可直接重放，缓存未提交时仍由叶子历史恢复，不自动重复未知叶子。嵌套路径稳定、fuel/depth 与 token 根共享。新表由既有初始化创建，不转换或清空任何用户历史。旧 version=1 artifact 明确拒绝。
+
+当前 Behavior 缺少已删除能力时，存在冻结工作可以进入明确的仅恢复激活；新规则不被准入，诊断可见，修正后显式重载。详见 [复合操作](capabilities.md)。

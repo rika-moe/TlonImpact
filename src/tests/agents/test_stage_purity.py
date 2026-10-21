@@ -23,6 +23,7 @@ from tlon.agents.stages.think import think_stage
 from tlon.agents.trigger import AgentIdentity
 from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.base.paths import TlonPaths
+from tlon.operations.control import control_names
 from tlon.tools.base import ToolResult
 from tlon.tools.spill import ToolSpill
 from tlosure.edn import Form
@@ -31,6 +32,7 @@ from tlosure.edn import Form
 def _make_services() -> MagicMock:
     svc = MagicMock()
     svc.logger = MagicMock()
+    svc.control_names.return_value = control_names()
     svc.publish_event = AsyncMock()
     return svc
 
@@ -333,3 +335,51 @@ async def test_duplicate_call_ids_reject_whole_round_without_dispatch(
     driver._execute_declared_tool.assert_not_awaited()
     assert not session.has_pending_tools
     assert await driver._journal.read_events(session.id) == []
+
+
+async def test_control_semantics_follow_definition_not_operation_name() -> None:
+    from tlon.operations.control import validate_control_forms
+    from tlon.operations.core import Operation
+    from tlon.operations.schema import InputError
+    from tlosure.edn import loads
+
+    async def stop(_context: object, _arguments: dict[str, object]) -> dict[str, object]:
+        return {"scheduling_request": {"action": "finish"}}
+
+    control = Operation(
+        "custom-halt",
+        "host control",
+        {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+        True,
+        stop,
+        effects=frozenset({"write"}),
+        control=True,
+    )
+    names = control_names([control])
+    validate_control_forms([loads("(custom-halt {})")], controls=names)
+    with pytest.raises(InputError, match="sole direct"):
+        validate_control_forms([loads("(let [x true] (custom-halt {}))")], controls=names)
+    svc = _make_services()
+    svc.control_names.return_value = names
+    session = AgentSession(session_id="custom-control", trigger_content="trigger")
+    response = LLMResponse(
+        content=None,
+        tool_calls=[
+            ToolCall(id="control", function_name="custom-halt", arguments={}),
+            ToolCall(id="read", function_name="state-get", arguments={"key": "x"}),
+        ],
+    )
+    outcome = await act_stage_step(svc, session, response)
+    assert not outcome.tool_dispatches
+    assert "冲突" in outcome.context_appends[0]["content"]
+    outcome = await act_stage_collect(
+        svc,
+        session,
+        [
+            (
+                response.tool_calls[0],
+                ToolResult(success=True, data={"scheduling_request": {"action": "finish"}}),
+            )
+        ],
+    )
+    assert outcome.complete

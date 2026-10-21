@@ -14,9 +14,9 @@ from tlon.base.execution import (
     bind_execution,
     current_execution,
 )
-from tlon.operations.adapters import DSLAdapter
-from tlon.operations.control import CONTROL_NAMES, validate_control_forms
+from tlon.operations.control import control_names, validate_control_forms
 from tlon.operations.core import CallContext
+from tlon.operations.dsl import DSLAdapter
 from tlon.operations.schema import json_value
 from tlosure.builtins import ActionRequest, Builtin, BuiltinCall, EvalError
 from tlosure.edn import Form, dumps, loads
@@ -44,6 +44,9 @@ class ProgramDriver:
     ) -> None:
         self.on_control = on_control
         self._control_allowed = False
+        self._control_names = (
+            operations.control_names() if operations is not None else control_names()
+        )
         self.operations = operations
         self.member_id = member_id
         self.on_operation = on_operation
@@ -69,7 +72,7 @@ class ProgramDriver:
     async def _run(self, rule: MemberRule, env: dict[str, Any]) -> None:
         await asyncio.to_thread(self.store.ensure_root, self.run_id)
         await self.execution_scope.initialize()
-        validate_control_forms(rule.actions)
+        validate_control_forms(rule.actions, controls=self._control_names)
         self._control_allowed = False
         shared = (
             Evaluator(self.builtins, rule.fuel, DEFAULT_MAX_DEPTH)
@@ -77,7 +80,7 @@ class ProgramDriver:
             else None
         )
         if rule.when is not None:
-            validate_control_forms([rule.when], allow_direct=False)
+            validate_control_forms([rule.when], allow_direct=False, controls=self._control_names)
             gate = shared or Evaluator(self.builtins, DEFAULT_WHEN_FUEL, DEFAULT_MAX_DEPTH)
             if not await gate.eval_async(rule.when, env, 0, self._call):
                 return
@@ -85,14 +88,14 @@ class ProgramDriver:
             rule.actions
             and isinstance(rule.actions[0], Form)
             and rule.actions[0]
-            and str(rule.actions[0][0]) in CONTROL_NAMES
+            and str(rule.actions[0][0]) in self._control_names
         )
         for action in rule.actions:
             evaluator = shared or Evaluator(self.builtins, DEFAULT_FUEL, DEFAULT_MAX_DEPTH)
             await evaluator.eval_async(action, env, 0, self._call)
 
     async def _call(self, call: BuiltinCall) -> Any:
-        if call.name in CONTROL_NAMES and not self._control_allowed:
+        if call.name in self._control_names and not self._control_allowed:
             raise EvalError("nested control operation is forbidden")
         index = self.index
         self.index += 1
@@ -115,7 +118,7 @@ class ProgramDriver:
                 if self.on_operation is not None:
                     self.on_operation()
                 result = await self.operations.handle(call, context)
-            if call.name in CONTROL_NAMES and self.on_control is not None:
+            if call.name in self._control_names and self.on_control is not None:
                 await self.on_control(json_value(result, edn_keys=True)["scheduling_request"])
             return result
         found, result_edn = await asyncio.to_thread(
