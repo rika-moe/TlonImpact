@@ -91,6 +91,17 @@ def loads(text: str) -> Any:
     return value
 
 
+def loads_all(text: str) -> list[Any]:
+    """Parse every top-level EDN form, including an empty source."""
+    parser = _Parser(text)
+    forms: list[Any] = []
+    parser.skip_whitespace()
+    while not parser.at_end:
+        forms.append(parser.parse_value())
+        parser.skip_whitespace()
+    return forms
+
+
 def dumps(value: Any) -> str:
     """Serialize Python data back to an EDN literal.
 

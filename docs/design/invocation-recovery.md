@@ -1,6 +1,6 @@
 # 调用记录与恢复权威（P4a）
 
-> 已接受目标（尚未实施）：[ADR 0046](../decisions/0046-programmable-workflows.md) 与 [可编程工作流程](programmable-workflows.md) 将以模块函数替代 stage 引擎，施工见[分阶段计划](programmable-workflows-plan.md)。本文仍描述现行机制。
+> 已接受目标（P1 已实现，其余待实施）：[ADR 0046](../decisions/0046-programmable-workflows.md) 与 [可编程工作流程](programmable-workflows.md) 将以模块函数替代 stage 引擎，施工见[分阶段计划](programmable-workflows-plan.md)。P1 的当前用法见 [模块程序指南](../guides/writing-a-module-program.md)。本文的 stage 描述仅适用于 v1。
 
 
 状态：EPIC A、P5 #193 与 P6 #194 已合并，P7 暂停；本文描述当前恢复契约及外部审查后的根隔离决策。总体设计见 [operations](operations.md)，验收见 [operations-plan](operations-plan.md)，共享执行见 [execution-scope](execution-scope.md)。

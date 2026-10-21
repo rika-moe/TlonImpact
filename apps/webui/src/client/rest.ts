@@ -165,6 +165,7 @@ export type PrototypeSummary = {
 /** Prototype detail: list metadata + full behavior.tlon source. */
 export type PrototypeDetail = PrototypeSummary & {
   behavior: string;
+  modules: Record<string, string>;
   /** Derived from the spec's :execution section; null when undeclared or unparseable. */
   execution_level: string | null;
   /** Server-derived review red flags (e.g. staging + L2 declaration). */
@@ -218,12 +219,14 @@ export type ArenaRunReport = {
 /** Handwritten prototype creation body (POST /admin/prototypes). */
 export type PrototypeCreate = {
   behavior: string;
+  modules?: Record<string, string>;
   display_name: string;
   description?: string;
 };
 
 /** Prototype edit body (PATCH); only changed fields are sent. */
 export type PrototypePatch = {
+  modules?: Record<string, string>;
   display_name?: string;
   description?: string;
   behavior?: string;

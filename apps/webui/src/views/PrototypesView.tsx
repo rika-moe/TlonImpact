@@ -332,6 +332,12 @@ export function PrototypesView({ rest }: ViewProps): ReactElement {
                       </div>
                     ) : null}
                     <pre className="terminal proto-behavior">{detail.behavior}</pre>
+                    {Object.entries(detail.modules).map(([path, source]) => (
+                      <div key={path}>
+                        <span className="tech-label">modules/{path}</span>
+                        <pre className="terminal proto-behavior">{source}</pre>
+                      </div>
+                    ))}
                     {selected.staging ? (
                       <ArenaPanel
                         rest={rest}
@@ -633,10 +639,14 @@ function EditModal({
           />
         </label>
         <label className="proto-form-row">
+          {Object.keys(detail.modules).length > 0 ? (
+            <p>Module program sources are immutable. Create a new prototype to change the program.</p>
+          ) : null}
           <span className="tech-label">behavior.tlon</span>
           <textarea
             className="input proto-form-behavior"
             value={behavior}
+            readOnly={Object.keys(detail.modules).length > 0}
             spellCheck={false}
             onChange={(e) => setBehavior(e.target.value)}
           />

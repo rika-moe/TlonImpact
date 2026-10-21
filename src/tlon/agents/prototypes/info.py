@@ -59,7 +59,14 @@ class PrototypeInfo:
 
 def _is_prototype_dir(proto_dir: Path) -> bool:
     """A directory qualifies when it carries the unified behavior file."""
-    return (proto_dir / BEHAVIOR_FILE).exists()
+    return (
+        not proto_dir.is_symlink()
+        and not any(
+            (proto_dir / name).is_symlink()
+            for name in (BEHAVIOR_FILE, METADATA_FILE, LESSONS_FILE, REVIEWS_FILE)
+        )
+        and (proto_dir / BEHAVIOR_FILE).is_file()
+    )
 
 
 def _find_prototype_dir(name: str, p: TlonPaths) -> Path | None:

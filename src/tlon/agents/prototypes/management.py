@@ -3,6 +3,12 @@
 import shutil
 from typing import Any
 
+from tlon.agents.behavior_template import analyze
+from tlon.agents.program_package import (
+    program_digest,
+    read_module_sources,
+    validate_program_sources,
+)
 from tlon.agents.prototypes.info import (
     BEHAVIOR_FILE,
     LESSONS_FILE,
@@ -19,6 +25,7 @@ from tlon.base.identifiers import new_prototype_id
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.evolution.ports import PrototypeError
+from tlon.evolution.publication import publish_directory
 from tlosure.edn import Keyword, dumps, loads
 
 logger = get_logger(__name__)
@@ -32,6 +39,7 @@ def write_trusted_prototype(
     parent: str | None = None,
     proposal_note: str | None = None,
     lessons: str | None = None,
+    modules: dict[str, str] | None = None,
     tlon_paths: TlonPaths,
 ) -> PrototypeInfo:
     """Write a human-authored prototype directly into the trusted library.
@@ -63,17 +71,12 @@ def write_trusted_prototype(
     p = tlon_paths
     _validate_display_name(display_name)
     generation = _resolve_parent_generation(parent, p) if parent is not None else 1
-    spec_text = _validate_behavior(behavior_edn, tlon_paths=p)
+    spec_text = _validate_behavior(behavior_edn, tlon_paths=p, modules=modules)
 
     name = new_prototype_id()
     if (p.prototypes_dir() / name).exists() or (p.prototypes_staging_dir() / name).exists():
         raise PrototypeError(f"prototype '{name}' already exists")
     proto_dir = p.prototypes_dir() / name
-    proto_dir.mkdir(parents=True)
-    (proto_dir / BEHAVIOR_FILE).write_text(spec_text, encoding="utf-8")
-    if lessons:
-        (proto_dir / LESSONS_FILE).write_text(lessons, encoding="utf-8")
-
     metadata: dict[Any, Any] = {
         Keyword("name"): Keyword(name),
         Keyword("display-name"): display_name,
@@ -85,7 +88,12 @@ def write_trusted_prototype(
         metadata[Keyword("parent")] = Keyword(parent)
     if proposal_note:
         metadata[Keyword("proposal-note")] = proposal_note
-    (proto_dir / METADATA_FILE).write_text(dumps(metadata) + "\n", encoding="utf-8")
+    metadata[Keyword("program-digest")] = program_digest(spec_text, modules or {})
+    files = {BEHAVIOR_FILE: spec_text, METADATA_FILE: dumps(metadata) + "\n"}
+    files.update({f"modules/{path}": text for path, text in (modules or {}).items()})
+    if lessons:
+        files[LESSONS_FILE] = lessons
+    publish_directory(proto_dir, files)
 
     logger.info("trusted_prototype_written", name=name)
     return _read_metadata(proto_dir)
@@ -100,12 +108,14 @@ def update_prototype(
     parent: str | None = None,
     proposal_note: str | None = None,
     lessons: str | None = None,
+    modules: dict[str, str] | None = None,
     staging: bool = False,
     tlon_paths: TlonPaths,
 ) -> PrototypeInfo:
     """Update a prototype's metadata and/or rewrite its behavior file.
 
-    A behavior change runs the full validation chain first — a broken spec
+    Version 2 source packages are immutable: author a new prototype to change
+    behavior/modules. Version 1 behavior changes run the full validation chain first — a broken spec
     raises and leaves the disk untouched. The metadata rewrite preserves
     the existing ``:trusted``/``:author`` fields (only the explicitly
     provided fields change). Lineage (see docs/design/prototypes.md):
@@ -148,6 +158,7 @@ def update_prototype(
         and parent is None
         and proposal_note is None
         and lessons is None
+        and modules is None
     ):
         raise PrototypeError(
             "nothing to update: provide display_name, description, behavior_edn, "
@@ -161,39 +172,52 @@ def update_prototype(
     parent_generation: int | None = None
     if parent is not None:
         parent_generation = _resolve_parent_generation(parent, p)
-    spec_text = _validate_behavior(behavior_edn, tlon_paths=p) if behavior_edn is not None else None
-
-    if spec_text is not None:
-        (proto_dir / BEHAVIOR_FILE).write_text(spec_text, encoding="utf-8")
-    if lessons is not None:
-        (proto_dir / LESSONS_FILE).write_text(lessons, encoding="utf-8")
-
-    if (
-        display_name is not None
-        or description is not None
-        or parent is not None
-        or proposal_note is not None
+    try:
+        package_modules = read_module_sources(proto_dir / "modules") if modules is None else modules
+    except ValueError as e:
+        raise PrototypeError(str(e)) from e
+    old_behavior = (proto_dir / BEHAVIOR_FILE).read_text(encoding="utf-8")
+    spec_text = _validate_behavior(
+        old_behavior if behavior_edn is None else behavior_edn,
+        tlon_paths=p,
+        modules=package_modules,
+    )
+    old_spec = validate_program_sources(
+        analyze(old_behavior).standin_text, read_module_sources(proto_dir / "modules")
+    )
+    new_spec = validate_program_sources(analyze(spec_text).standin_text, package_modules)
+    if (old_spec.version == 2 or new_spec.version == 2) and (
+        behavior_edn is not None or modules is not None
     ):
-        metadata_file = proto_dir / METADATA_FILE
-        data: dict[Any, Any] = {}
-        if metadata_file.exists():
-            parsed = loads(metadata_file.read_text(encoding="utf-8"))
-            if isinstance(parsed, dict):
-                data = dict(parsed)
-        if display_name is not None:
-            data[Keyword("display-name")] = display_name
-        if description is not None:
-            data[Keyword("description")] = description
-        if parent is not None:
-            data[Keyword("parent")] = Keyword(parent)
-            data[Keyword("generation")] = parent_generation
-        if proposal_note is not None:
-            data[Keyword("proposal-note")] = proposal_note
-        data.setdefault(Keyword("name"), Keyword(name))
-        data.setdefault(Keyword("display-name"), name)
-        data.setdefault(Keyword("description"), "")
-        data.setdefault(Keyword("trusted"), not staging)
-        metadata_file.write_text(dumps(data) + "\n", encoding="utf-8")
+        raise PrototypeError(
+            "module program packages are immutable; create a new prototype with parent instead"
+        )
+    metadata_file = proto_dir / METADATA_FILE
+    if metadata_file.is_symlink():
+        raise PrototypeError("prototype metadata must not be a symlink")
+    parsed = loads(metadata_file.read_text(encoding="utf-8")) if metadata_file.exists() else {}
+    data: dict[Any, Any] = dict(parsed)
+    if display_name is not None:
+        data[Keyword("display-name")] = display_name
+    if description is not None:
+        data[Keyword("description")] = description
+    if parent is not None:
+        data[Keyword("parent")] = Keyword(parent)
+        data[Keyword("generation")] = parent_generation
+    if proposal_note is not None:
+        data[Keyword("proposal-note")] = proposal_note
+    data.setdefault(Keyword("name"), Keyword(name))
+    data.setdefault(Keyword("display-name"), name)
+    data.setdefault(Keyword("trusted"), not staging)
+    lessons_file = proto_dir / LESSONS_FILE
+    if lessons is not None and lessons_file.is_symlink():
+        raise PrototypeError("prototype lessons must not be a symlink")
+    if old_spec.version == 1 and behavior_edn is not None:
+        (proto_dir / BEHAVIOR_FILE).write_text(spec_text, encoding="utf-8")
+        data[Keyword("program-digest")] = program_digest(spec_text, package_modules)
+    if lessons is not None:
+        lessons_file.write_text(lessons, encoding="utf-8")
+    metadata_file.write_text(dumps(data) + "\n", encoding="utf-8")
 
     logger.info(
         "prototype_updated",

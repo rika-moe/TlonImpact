@@ -1324,6 +1324,49 @@ class AgentRegistry(Component):
                     self._scheduling_intents[member_id] = old
                 raise
 
+    async def apply_program_scheduling(
+        self, member_id: str, run_id: str, request: dict[str, Any]
+    ) -> None:
+        """Durably accept an entry result once without reviving old sleep/exit intents."""
+        action = request["action"]
+        if action not in {"finish", "sleep", "exit"}:
+            raise ValueError("unknown scheduling action")
+        wake_at = None
+        if action == "sleep":
+            deadline = datetime.fromisoformat(request["wake_at"])
+            if deadline.tzinfo is None:
+                raise ValueError("wake_at must include timezone")
+            wake_at = deadline.astimezone(UTC).isoformat()
+        lock = self._wake_locks.setdefault(member_id, asyncio.Lock())
+        async with lock:
+            retired = await asyncio.to_thread(
+                MailStore(self._paths.mail_database_file()).is_retired, member_id
+            )
+            blocked = (
+                retired
+                or member_id in self._dead
+                or member_id in self._pending_stops
+                or member_id in self._terminating
+            )
+            intent = await asyncio.to_thread(
+                self._scheduling_store.accept_program,
+                member_id,
+                run_id,
+                action,
+                wake_at,
+                blocked=blocked,
+            )
+            if intent is None:
+                return
+            self._scheduling_intents[member_id] = intent
+        await self.publish_scheduling_state(member_id)
+        if intent[0] == "exit":
+            self._launch_lifecycle(
+                self.stop_member(member_id, stopped_by=member_id, when_idle=True)
+            )
+        else:
+            self._launch_lifecycle(self._drain_scheduling_request(member_id, intent))
+
     async def apply_scheduling_request(self, member_id: str, request: dict[str, Any]) -> None:
         """Reap released its slot; independently drain without holding a wake lock."""
         if request["action"] == "finish":

@@ -18,6 +18,11 @@ class SchedulingStore:
                 "CREATE TABLE IF NOT EXISTS scheduling_intents ("
                 "member_id TEXT PRIMARY KEY, action TEXT NOT NULL, wake_at TEXT, session_id TEXT NOT NULL)"
             )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS program_schedule_receipts ("
+                "member_id TEXT NOT NULL, run_id TEXT NOT NULL, action TEXT NOT NULL, wake_at TEXT, "
+                "PRIMARY KEY(member_id,run_id))"
+            )
         except Exception:
             connection.close()
             raise
@@ -45,6 +50,54 @@ class SchedulingStore:
                     "wake_at=excluded.wake_at, session_id=excluded.session_id",
                     (member_id, action, wake_at, session_id),
                 )
+        finally:
+            connection.close()
+
+    def accept_program(
+        self,
+        member_id: str,
+        run_id: str,
+        action: str,
+        wake_at: str | None,
+        *,
+        blocked: bool = False,
+    ) -> tuple[str, str | None, str] | None:
+        """Accept a program intent once, atomically with its durable receipt.
+
+        A receipt survives wake, replacement and retirement. Replays may only
+        resume the original still-current intent; they never recreate it.
+        Rejected requests are consumed too, so later replay cannot supersede
+        an administrator's decision after that decision has been applied.
+        """
+        connection = self._connect()
+        origin = f"program:{run_id}"
+        try:
+            with connection:
+                connection.execute("BEGIN IMMEDIATE")
+                receipt = connection.execute(
+                    "SELECT action,wake_at FROM program_schedule_receipts "
+                    "WHERE member_id=? AND run_id=?",
+                    (member_id, run_id),
+                ).fetchone()
+                current = connection.execute(
+                    "SELECT action,wake_at,session_id FROM scheduling_intents WHERE member_id=?",
+                    (member_id,),
+                ).fetchone()
+                if receipt is not None:
+                    if receipt != (action, wake_at):
+                        raise ValueError("Program scheduling request changed")
+                    return current if not blocked and current == (action, wake_at, origin) else None
+                connection.execute(
+                    "INSERT INTO program_schedule_receipts VALUES (?,?,?,?)",
+                    (member_id, run_id, action, wake_at),
+                )
+                if blocked or current is not None or action == "finish":
+                    return None
+                intent = (action, wake_at, origin)
+                connection.execute(
+                    "INSERT INTO scheduling_intents VALUES (?,?,?,?)", (member_id, *intent)
+                )
+                return intent
         finally:
             connection.close()
 

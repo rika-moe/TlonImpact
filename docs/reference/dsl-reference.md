@@ -522,3 +522,7 @@ MemberSpec 之外还有一种 DSL 文件：society 级政策文件 `policy.tlon`
 | `<=` | 是 |  |
 | `>=` | 是 |  |
 <!-- END GENERATED: dsl-builtins-policy -->
+
+## v2 模块入口（P1）
+
+v1 rules 与 stage 配方继续服务现有原型；v2 只允许 version、handlers、fuel、execution（source-hash 为宿主 provenance），不得混入 rules。handlers 为非空事件→限定导出函数 map，boot 对应启动，其他事件沿用既有事件名。fuel 默认 1000，上限 10000；入口固定一个参数，必须返回含 result 的 map，可选 next 仅支持 sleep-until/exit。模块语法、事件输入、发布和返回值边界见[模块程序指南](../guides/writing-a-module-program.md)。运行所用 modules 源文件随输入冻结，函数调用不包装成 Operation。

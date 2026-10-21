@@ -197,6 +197,7 @@ class RESTAPIHandler(
         # Admin LLM registry (ADR 0016 §4): model metadata for the WebUI dropdown
         app.router.add_get("/admin/llm/models", self.handle_list_llm_models)
         app.router.add_get("/admin/prototypes/staging", self.handle_list_staging)
+        app.router.add_post("/admin/prototypes/staging", self.handle_create_staging_prototype)
         app.router.add_get("/admin/prototypes/staging/{name}", self.handle_get_staging_prototype)
         app.router.add_patch(
             "/admin/prototypes/staging/{name}", self.handle_update_staging_prototype

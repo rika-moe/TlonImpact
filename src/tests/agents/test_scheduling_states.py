@@ -428,3 +428,46 @@ async def test_unfinished_admin_sleep_is_not_committed_across_restart(
     assert registry.can_schedule("member")
     assert SchedulingStore(registry._paths.mail_database_file()).load() == {}
     assert (await registry.get_agent_status("member"))["state"] == "waiting"
+
+
+async def test_program_sleep_replay_after_wake_does_not_sleep_again(
+    registry: AgentRegistry,
+) -> None:
+    request = {"action": "sleep", "wake_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat()}
+    await registry.apply_program_scheduling("member", "entry:one", request)
+    await settle(lambda: "member" in registry._sleep_tasks)
+    await registry.wake_member("member")
+    await registry.shutdown()
+    await registry.initialize()
+    await registry.apply_program_scheduling("member", "entry:one", request)
+    assert registry.can_schedule("member")
+    assert registry._scheduling_store.load() == {}
+
+
+async def test_program_replay_cannot_replace_new_admin_sleep(registry: AgentRegistry) -> None:
+    request = {"action": "sleep", "wake_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat()}
+    await registry.apply_program_scheduling("member", "entry:one", request)
+    await settle(lambda: "member" in registry._sleep_tasks)
+    admin_deadline = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
+    await registry.sleep_member("member", admin_deadline)
+    before = registry._scheduling_store.load()
+    await registry.apply_program_scheduling("member", "entry:one", request)
+    assert registry._scheduling_store.load() == before
+
+
+async def test_program_request_blocked_by_admin_is_consumed(registry: AgentRegistry) -> None:
+    request = {"action": "sleep", "wake_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat()}
+    await registry.sleep_member("member", request["wake_at"])
+    await registry.apply_program_scheduling("member", "entry:blocked", request)
+    await registry.wake_member("member")
+    await registry.apply_program_scheduling("member", "entry:blocked", request)
+    assert registry.can_schedule("member")
+
+
+async def test_program_replay_after_exit_cannot_resurrect_member(registry: AgentRegistry) -> None:
+    request = {"action": "sleep", "wake_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat()}
+    await registry.apply_program_scheduling("member", "entry:one", request)
+    await registry.stop_member("member", stopped_by="admin")
+    await registry.apply_program_scheduling("member", "entry:one", request)
+    assert "member" in registry._dead
+    assert registry._scheduling_store.load() == {}

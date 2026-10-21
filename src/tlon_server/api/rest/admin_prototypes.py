@@ -12,6 +12,12 @@ from tlon.api.prototypes import PrototypeError, PrototypeInfo, parse_execution_l
 from .common import RestHandlerBase
 
 
+def _valid_modules(value: object) -> bool:
+    return isinstance(value, dict) and all(
+        isinstance(path, str) and isinstance(source, str) for path, source in value.items()
+    )
+
+
 def _prototype_payload(
     info: PrototypeInfo,
     behavior: str | None = None,
@@ -115,6 +121,7 @@ class AdminPrototypeHandlers(RestHandlerBase):
                 {"error": str(e), "reason": "prototype_not_found"}, status=404
             )
         payload = _prototype_payload(info, behavior, lessons, reviews)
+        payload["modules"] = self.prototypes.get_modules(name, staging=staging)
         # Lineage (see docs/design/prototypes.md): the derived parent chain, including per-generation
         # diffs — first-class data on the detail endpoint.
         payload["lineage"] = self.prototypes.get_lineage(name)
@@ -125,6 +132,10 @@ class AdminPrototypeHandlers(RestHandlerBase):
             payload["arena"] = self.arena.latest_report(name) if self.arena else None
         return self._json_response({"status": "success", "prototype": payload})
 
+    async def handle_create_staging_prototype(self, request: web.Request) -> web.Response:
+        """POST /admin/prototypes/staging: draft a complete program package."""
+        return await self._handle_create(request, staging=True)
+
     async def handle_create_prototype(self, request: web.Request) -> web.Response:
         """POST /admin/prototypes - human-authored prototype, written
         directly into the trusted library (handwritten implies trusted).
@@ -133,6 +144,9 @@ class AdminPrototypeHandlers(RestHandlerBase):
         success; 400 invalid_prototype on missing fields or a spec that
         fails the validation chain (nothing is written in that case).
         """
+        return await self._handle_create(request, staging=False)
+
+    async def _handle_create(self, request: web.Request, *, staging: bool) -> web.Response:
         guard = self._require_prototypes()
         if guard is not None:
             return guard
@@ -142,6 +156,12 @@ class AdminPrototypeHandlers(RestHandlerBase):
         except Exception:
             return self._json_response(
                 {"error": "Invalid JSON", "reason": "invalid_json"}, status=400
+            )
+        if not isinstance(body, dict):
+            return self._json_response({"error": "JSON object required"}, status=400)
+        if "modules" in body and not _valid_modules(body["modules"]):
+            return self._json_response(
+                {"error": "modules must map paths to source strings"}, status=400
             )
         if "name" in body:
             return self._json_response(
@@ -164,13 +184,15 @@ class AdminPrototypeHandlers(RestHandlerBase):
                 status=400,
             )
         try:
-            info = self.prototypes.create(
+            create = self.prototypes.create_staging if staging else self.prototypes.create
+            info = create(
                 behavior,
                 display_name=display_name.strip(),
                 description=str(body.get("description") or ""),
                 parent=str(body["parent"]) if body.get("parent") else None,
                 proposal_note=(str(body["proposal_note"]) if body.get("proposal_note") else None),
                 lessons=str(body["lessons"]) if body.get("lessons") else None,
+                modules=body.get("modules"),
             )
         except PrototypeError as e:
             return self._json_response({"error": str(e), "reason": "invalid_prototype"}, status=400)
@@ -201,6 +223,12 @@ class AdminPrototypeHandlers(RestHandlerBase):
             return self._json_response(
                 {"error": "Invalid JSON", "reason": "invalid_json"}, status=400
             )
+        if not isinstance(body, dict) or (
+            "modules" in body and not _valid_modules(body["modules"])
+        ):
+            return self._json_response(
+                {"error": "modules must map paths to source strings"}, status=400
+            )
         try:
             self.prototypes.get_detail(name, staging=staging)
         except PrototypeError as e:
@@ -213,6 +241,7 @@ class AdminPrototypeHandlers(RestHandlerBase):
         parent = body.get("parent")
         proposal_note = body.get("proposal_note")
         lessons = body.get("lessons")
+        modules = body.get("modules")
         if (
             display_name is None
             and description is None
@@ -220,6 +249,7 @@ class AdminPrototypeHandlers(RestHandlerBase):
             and parent is None
             and proposal_note is None
             and lessons is None
+            and modules is None
         ):
             return self._json_response(
                 {
@@ -238,6 +268,7 @@ class AdminPrototypeHandlers(RestHandlerBase):
                 parent=str(parent) if parent else None,
                 proposal_note=str(proposal_note) if proposal_note else None,
                 lessons=str(lessons) if lessons else None,
+                modules=modules,
                 staging=staging,
             )
         except PrototypeError as e:

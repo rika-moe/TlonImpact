@@ -176,3 +176,7 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 - 求值入口：`eval_form(form, env, builtins, fuel=DEFAULT_FUEL, max_depth=DEFAULT_MAX_DEPTH)`；加载期先跑 `validate_form` 静态拒绝非法表达式。多表达式共享一个总预算时用公开的 `Evaluator`（见 §2.2 预算分摊）。
 - 宿主职责：组装 `builtins`（并入第 3 节通用词汇 + 自有领域词汇）、构造 `env`、按场景给 `fuel`（不得越过 `MAX_FUEL` 硬顶）、执行求值产出的 `ActionRequest`。
 - tlon 宿主的领域词汇（谓词、动作族、宿主查询注入）与 MemberSpec schema 见 [dsl-reference.md](./dsl-reference.md)。
+
+## 源码模块（P1）
+
+`edn.loads_all` 解析多个顶层 form；`ModulePackage.from_sources(sources, builtins)` 只接受宿主提供的 `.tlon` 源码映射，不自行读盘。`ns` 声明与文件路径一一对应，`:require [namespace :as alias]` 导入导出函数，`:export` 显式导出；`defn` 为普通函数，顶层 `def` 只接受字面常量。模块加载不运行函数体或宿主调用。`exports` 为限定名到闭包的映射，`entry` 要求固定单参数；闭包在当前求值器共享 fuel/depth。完整示例见[指南](../guides/writing-a-module-program.md)。

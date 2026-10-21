@@ -5,6 +5,7 @@ import contextlib
 import time
 import uuid
 from dataclasses import asdict, dataclass, is_dataclass
+from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -18,6 +19,7 @@ from tlon.agents.loader import has_frozen_work
 from tlon.agents.loop_driver import LoopDriver
 from tlon.agents.member_spec import MemberRule, MemberSpec, SessionRecipe, validate_member_spec
 from tlon.agents.program_driver import ProgramDriver
+from tlon.agents.program_package import program_builtins, validate_program_sources
 from tlon.agents.program_store import ProgramRun, ProgramStore
 from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
@@ -50,7 +52,7 @@ from tlon.operations.invocation import registry_identity
 from tlon.operations.lifecycle import make_lifecycle_operations
 from tlon.operations.mail import make_mail_operations
 from tlon.operations.model import make_model_operations
-from tlon.operations.schema import UnknownOutcomeError
+from tlon.operations.schema import UnknownOutcomeError, json_value
 from tlon.operations.state import make_state_operations
 from tlon.operations.time import time_operation_definitions
 from tlon.organization.mail.mail import Mail, address_for_member
@@ -64,7 +66,8 @@ from tlon.tasks.manager import TaskManager
 from tlon.tools.base import ToolResult
 from tlon.tools.spill import ToolSpill
 from tlosure.builtins import ActionRequest, Builtin, EvalError, FuelExhaustedError
-from tlosure.edn import Symbol, dumps, loads
+from tlosure.edn import Keyword, Symbol, dumps, loads
+from tlosure.modules import ModuleError, ModulePackage
 
 if TYPE_CHECKING:
     from tlon.agents.agent_registry import AgentRegistry
@@ -212,7 +215,10 @@ class MemberRuntime(Member):
         self._builtins = {**self._host_builtins, **self._operations.builtins()}
         self._behavior_error: str | None = None
         try:
-            validate_member_spec(spec, builtins=self._builtins)
+            if spec.version == 2:
+                validate_program_sources(spec.to_edn(), spec.module_sources, self._builtins)
+            else:
+                validate_member_spec(spec, builtins=self._builtins)
         except ValueError as error:
             referenced = self._referenced_names(
                 [item for rule in spec.rules for item in [rule.when, *rule.actions]]
@@ -276,7 +282,7 @@ class MemberRuntime(Member):
                 else None
             )
         )
-        if services is not None:
+        if services is not None and spec.version == 1:
             assert self._journal is not None
             self._journal.resolve_dispatch = self._resolve_session_dispatch
             self._assemble_scheduler(services)
@@ -381,7 +387,7 @@ class MemberRuntime(Member):
             self._services.task_manager.load()
         self._initialized = True
         self._initialized_at = time.monotonic()
-        if self._scheduler is not None:
+        if self._scheduler is not None and self._spec.version == 1:
             self._scheduler.start()
             await self._scheduler.wait_ready()
         admitted_rules = self._spec.rules if self._behavior_error is None else ()
@@ -441,8 +447,7 @@ class MemberRuntime(Member):
                             member_id=self._member_id,
                             error=str(e),
                         )
-            if self._scheduler is not None:
-                self._state = MemberState.SHUTDOWN
+            self._state = MemberState.SHUTDOWN
             self._program_store.close()
             self._initialized = False
             self._initialized_at = None
@@ -477,9 +482,15 @@ class MemberRuntime(Member):
             self._logger.error("member_program_worker_failed", error=str(error))
 
     async def _program_loop(self) -> None:
-        if self._scheduler is not None:
+        if self._scheduler is not None and self._spec.version == 1:
             await self._scheduler.wait_recovered()
         while True:
+            try:
+                await self._restore_entry_scheduling()
+            except Exception as error:
+                self._logger.error("entry_scheduling_recovery_failed", error=str(error))
+                await asyncio.sleep(1)
+                continue
             # An unfinished rule owns the serial member until it completes.
             # Interleaving newer state writes would let an old continuation
             # overwrite a newer subscriber or submission on retry.
@@ -538,6 +549,12 @@ class MemberRuntime(Member):
         rules = [rule for rule in self._spec.rules if rule.on == event.type]
         # Admit every matching rule in one durable transaction. A prior rule
         # may mark the source read; later rules must survive without rescans.
+        if self._spec.version == 2:
+            for rule in rules:
+                completed = await self._run_rule(rule, event, event.payload)
+                if not completed:
+                    break
+            return
         items = [self._program_record_data(rule, event, event.payload) for rule in rules]
         records = await asyncio.to_thread(
             self._program_store.ensure_many,
@@ -552,6 +569,9 @@ class MemberRuntime(Member):
                 await self._complete_dispatch(mail.id, rule.name)
 
     async def _dispatch_completed(self, mail_id: str, rule_name: str) -> bool:
+        if self._spec.version == 2:
+            run = await asyncio.to_thread(self._program_store.get_run, f"{mail_id}:{rule_name}")
+            return run is not None and (run.completed or run.error is not None)
         key = (mail_id, rule_name)
         if key in self._completed_dispatches:
             return True
@@ -629,11 +649,17 @@ class MemberRuntime(Member):
         return value
 
     async def _restore_programs(self) -> None:
+        await self._restore_entry_scheduling()
         for record in await asyncio.to_thread(self._program_store.pending):
             if not self._can_schedule():
                 break
             try:
                 await asyncio.to_thread(self._program_store.ensure_root, record.run_id)
+                if record.package_edn is not None:
+                    await self._run_entry_record(record)
+                    continue
+                if self._spec.version == 2:
+                    raise RecoveryBlockedError("legacy rule requires its original behavior engine")
                 rule, event, payload = self._program_input(record)
                 completed = await self._run_rule(rule, event, payload, run_id=record.run_id)
                 mail = payload.get("mail") if isinstance(payload, dict) else None
@@ -723,6 +749,25 @@ class MemberRuntime(Member):
         *,
         run_id: str | None = None,
     ) -> bool:
+        frozen = await asyncio.to_thread(self._program_store.get_run, run_id) if run_id else None
+        if self._spec.version == 2 and (frozen is None or frozen.package_edn is not None):
+            identity, _, input_edn = self._program_record_data(rule, trigger_event, payload, run_id)
+            record = await asyncio.to_thread(
+                self._program_store.ensure_entry,
+                identity,
+                self._spec.to_edn(),
+                input_edn,
+                {
+                    "behavior": self._spec.to_edn(),
+                    "modules": self._spec.module_sources,
+                    "entry": dict(self._spec.handlers)[rule.name.removeprefix("handler:")],
+                    "fuel": self._spec.fuel,
+                    "token_budget": self._services.config.llm.max_tokens
+                    if self._services and self._services.config.llm
+                    else 4096,
+                },
+            )
+            return await self._run_entry_record(record)
         record = await asyncio.to_thread(
             self._program_store.ensure,
             *self._program_record_data(rule, trigger_event, payload, run_id),
@@ -795,6 +840,121 @@ class MemberRuntime(Member):
             )
             return True
         await asyncio.to_thread(self._program_store.complete, run_id)
+        return True
+
+    @staticmethod
+    def _entry_result(value: Any) -> tuple[Any, dict[str, Any] | None]:
+        if type(value) is dict and type(value.get("next")) is dict:
+            next_value = value["next"]
+            if isinstance(next_value.get("kind"), Keyword):
+                value = {**value, "next": {**next_value, "kind": str(next_value["kind"])}}
+        result = json_value(value, edn_keys=True)
+        if type(result) is not dict or "result" not in result or set(result) - {"result", "next"}:
+            raise EvalError("entry must return {:result value :next optional-scheduling}")
+        if "next" not in result:
+            return result["result"], None
+        request = result["next"]
+        if type(request) is not dict:
+            raise EvalError("entry :next must be a scheduling map")
+        if request.get("kind") == "exit" and set(request) == {"kind"}:
+            return result["result"], {"action": "exit", "reason": "program completed"}
+        if request.get("kind") == "sleep-until" and set(request) == {"kind", "at"}:
+            try:
+                deadline = datetime.fromisoformat(request["at"])
+                if deadline.tzinfo is None:
+                    raise ValueError("missing timezone")
+                if deadline <= datetime.now(UTC):
+                    raise ValueError("deadline must be in the future")
+            except (TypeError, ValueError) as error:
+                raise EvalError(
+                    "sleep-until :at must be a future ISO timestamp with timezone"
+                ) from error
+            return result["result"], {
+                "action": "sleep",
+                "wake_at": deadline.astimezone(UTC).isoformat(),
+                "reason": "program completed",
+            }
+        raise EvalError("invalid entry scheduling request")
+
+    async def _apply_entry_scheduling(self, record: ProgramRun) -> None:
+        if record.scheduling_edn is None or record.scheduling_applied:
+            return
+        if self._registry is None:
+            raise EvalError("entry scheduling requires a member registry")
+        request = loads(record.scheduling_edn)
+        # The registry durably owns the intention before the program marks
+        # delivery complete. Repeating this stable run identity is idempotent.
+        await self._registry.apply_program_scheduling(self._member_id, record.run_id, request)
+        await asyncio.to_thread(self._program_store.mark_scheduling_applied, record.run_id)
+
+    async def _restore_entry_scheduling(self) -> None:
+        for record in await asyncio.to_thread(self._program_store.pending_scheduling):
+            await self._apply_entry_scheduling(record)
+
+    async def _run_entry_record(self, record: ProgramRun) -> bool:
+        self._active_actions += 1
+        try:
+            return await self._execute_entry_record(record)
+        finally:
+            self._active_actions -= 1
+
+    async def _execute_entry_record(self, record: ProgramRun) -> bool:
+        if record.error is not None:
+            return True
+        if record.completed:
+            await self._apply_entry_scheduling(record)
+            return True
+        assert record.package_edn is not None
+        try:
+            package = loads(record.package_edn)
+            sources = package["modules"]
+            builtins = program_builtins(self._builtins)
+            try:
+                linked = ModulePackage.from_sources(sources, builtins)
+                entry = linked.entry(package["entry"])
+            except ModuleError as error:
+                raise RecoveryBlockedError(
+                    f"Frozen module package is unavailable: {error}"
+                ) from error
+            snapshot = loads(record.input_edn)
+            event_data = snapshot["event"] or {"type": "boot"}
+            payload = snapshot["payload"]
+            event = {**event_data, "payload": payload, "self": snapshot["self"]}
+            mail = payload.get("mail") if isinstance(payload, dict) else None
+            if isinstance(mail, dict) and "__tlon_mail__" in mail:
+                event["mail"] = mail["__tlon_mail__"]
+                event["sender"] = event["mail"]["from_address"]
+
+            async def forbidden(request: ActionRequest, name: str, index: int, args: str) -> Any:
+                raise EvalError("module programs cannot invoke legacy orchestration")
+
+            driver = ProgramDriver(
+                self._program_store,
+                record.run_id,
+                builtins,
+                forbidden,
+                operations=self._operations,
+                member_id=self._member_id,
+                on_operation=self._record_activity,
+                token_budget=package["token_budget"],
+            )
+            value = await driver.run_entry(entry, event, fuel=package["fuel"])
+            result, scheduling = self._entry_result(value)
+            committed = await asyncio.to_thread(
+                self._program_store.complete_entry, record.run_id, result, scheduling
+            )
+        except (EvalError, ValueError) as error:
+            if blocks_recovery(error):
+                await asyncio.to_thread(
+                    self._program_store.fail, record.run_id, blocked_reason(error)
+                )
+                raise
+            if isinstance(error, UnknownOutcomeError):
+                raise
+            await asyncio.to_thread(self._program_store.fail, record.run_id, str(error))
+            self._logger.warning("member_entry_failed", run_id=record.run_id, error=str(error))
+            return True
+        await self._apply_entry_scheduling(committed)
         return True
 
     def _record_activity(self) -> None:

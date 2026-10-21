@@ -6,7 +6,7 @@ import sqlite3
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +23,10 @@ class ProgramRun:
     input_edn: str
     completed: bool
     error: str | None = None
+    package_edn: str | None = None
+    result_edn: str | None = None
+    scheduling_edn: str | None = None
+    scheduling_applied: bool = False
 
 
 class ProgramStore:
@@ -71,6 +75,7 @@ class ProgramStore:
                 "PRAGMA user_version=2;"
                 "CREATE TABLE IF NOT EXISTS budgets (root_id TEXT PRIMARY KEY, token_limit INTEGER NOT NULL, measure TEXT NOT NULL, deadline REAL);"
                 "CREATE TABLE IF NOT EXISTS model_allocations (call_id TEXT PRIMARY KEY, root_id TEXT NOT NULL, reserved INTEGER NOT NULL, output_limit INTEGER NOT NULL, charged INTEGER);"
+                "CREATE TABLE IF NOT EXISTS entry_programs (run_id TEXT PRIMARY KEY, package_edn TEXT NOT NULL, result_edn TEXT, scheduling_edn TEXT, scheduling_applied INTEGER NOT NULL DEFAULT 0);"
                 "CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value_edn TEXT NOT NULL);"
             )
             with connection:
@@ -117,51 +122,79 @@ class ProgramStore:
             with self._connection() as connection:
                 records: list[ProgramRun] = []
                 for run_id, rule_edn, input_edn in items:
-                    failed = connection.execute(
-                        "SELECT run_id,rule_edn,input_edn,completed,error FROM runs WHERE run_id=? AND error IS NOT NULL",
-                        (run_id,),
-                    ).fetchone()
-                    if failed is not None:
-                        records.append(
-                            ProgramRun(
-                                str(failed[0]),
-                                str(failed[1]),
-                                str(failed[2]),
-                                bool(failed[3]),
-                                failed[4],
-                            )
-                        )
+                    stored = self._read_run(connection, run_id)
+                    if stored is not None and stored.error is not None:
+                        records.append(stored)
                         continue
                     self._root(run_id, connection)
                     connection.execute(
                         "INSERT OR IGNORE INTO runs(run_id,rule_edn,input_edn) VALUES (?,?,?)",
                         (run_id, rule_edn, input_edn),
                     )
-                    row = connection.execute(
-                        "SELECT run_id,rule_edn,input_edn,completed,error FROM runs WHERE run_id=?",
-                        (run_id,),
-                    ).fetchone()
-                    assert row is not None
-                    records.append(
-                        ProgramRun(str(row[0]), str(row[1]), str(row[2]), bool(row[3]), row[4])
-                    )
+                    run = self._read_run(connection, run_id)
+                    assert run is not None
+                    records.append(run)
                 return records
+
+    @staticmethod
+    def _read_run(connection: sqlite3.Connection, run_id: str) -> ProgramRun | None:
+        row = connection.execute(
+            "SELECT r.run_id,r.rule_edn,r.input_edn,r.completed,r.error,"
+            "e.package_edn,e.result_edn,e.scheduling_edn,e.scheduling_applied "
+            "FROM runs r LEFT JOIN entry_programs e ON r.run_id=e.run_id WHERE r.run_id=?",
+            (run_id,),
+        ).fetchone()
+        return (
+            ProgramRun(
+                row[0], row[1], row[2], bool(row[3]), row[4], row[5], row[6], row[7], bool(row[8])
+            )
+            if row
+            else None
+        )
+
+    def ensure_entry(
+        self, run_id: str, rule_edn: str, input_edn: str, package: dict[str, Any]
+    ) -> ProgramRun:
+        """Freeze the source package and input atomically; retain existing snapshots."""
+        encoded = dumps(edn_value(json_value(package)))
+        with self._lock:
+            if self.database is None:
+                self._root(run_id)
+                previous = self._runs.get(run_id)
+                if previous is not None:
+                    if previous.package_edn is None:
+                        raise RecoveryMismatchError("Run is not a module entry")
+                    return previous
+                run = ProgramRun(run_id, rule_edn, input_edn, False, package_edn=encoded)
+                self._runs[run_id] = run
+                return run
+            with self._connection() as connection:
+                self._root(run_id, connection)
+                previous = self._read_run(connection, run_id)
+                if previous is not None:
+                    if previous.package_edn is None:
+                        raise RecoveryMismatchError("Run is not a module entry")
+                    return previous
+                connection.execute(
+                    "INSERT INTO runs(run_id,rule_edn,input_edn) VALUES (?,?,?)",
+                    (run_id, rule_edn, input_edn),
+                )
+                connection.execute(
+                    "INSERT INTO entry_programs(run_id,package_edn) VALUES (?,?)", (run_id, encoded)
+                )
+                stored_run = self._read_run(connection, run_id)
+                assert stored_run is not None
+                return stored_run
 
     def pending(self) -> list[ProgramRun]:
         with self._lock:
             if self.database is None:
-                records = [
-                    run for run in self._runs.values() if not run.completed and run.error is None
-                ]
-                return records
+                return [r for r in self._runs.values() if not r.completed and r.error is None]
             with self._connection() as connection:
-                records = [
-                    ProgramRun(str(row[0]), str(row[1]), str(row[2]), False)
-                    for row in connection.execute(
-                        "SELECT run_id,rule_edn,input_edn FROM runs WHERE completed=0 AND error IS NULL ORDER BY rowid"
-                    )
-                ]
-                return records
+                ids = connection.execute(
+                    "SELECT run_id FROM runs WHERE completed=0 AND error IS NULL ORDER BY rowid"
+                ).fetchall()
+                return [r for (key,) in ids if (r := self._read_run(connection, key)) is not None]
 
     def get_run(self, run_id: str) -> ProgramRun | None:
         """Inspect durable lifecycle status without authorizing execution."""
@@ -169,15 +202,87 @@ class ProgramStore:
             if self.database is None:
                 return self._runs.get(run_id)
             with self._connection() as connection:
-                row = connection.execute(
-                    "SELECT run_id,rule_edn,input_edn,completed,error FROM runs WHERE run_id=?",
-                    (run_id,),
-                ).fetchone()
-                return (
-                    ProgramRun(str(row[0]), str(row[1]), str(row[2]), bool(row[3]), row[4])
-                    if row
-                    else None
-                )
+                return self._read_run(connection, run_id)
+
+    def complete_entry(
+        self, run_id: str, result: Any, scheduling: dict[str, Any] | None = None
+    ) -> ProgramRun:
+        """Commit result, completion and scheduling intent atomically, once."""
+        result_edn = dumps(edn_value(json_value(result, edn_keys=True)))
+        scheduling_edn = (
+            dumps(edn_value(json_value(scheduling, edn_keys=True)))
+            if scheduling is not None
+            else None
+        )
+        with self._lock:
+            if self.database is None:
+                run = self._runs[run_id]
+                if run.package_edn is None or run.error is not None:
+                    raise RecoveryMismatchError("Entry cannot be completed")
+                if not run.completed:
+                    run = replace(
+                        run, completed=True, result_edn=result_edn, scheduling_edn=scheduling_edn
+                    )
+                    self._runs[run_id] = run
+                return run
+            with self._connection() as connection:
+                stored_run = self._read_run(connection, run_id)
+                if (
+                    stored_run is None
+                    or stored_run.package_edn is None
+                    or stored_run.error is not None
+                ):
+                    raise RecoveryMismatchError("Entry cannot be completed")
+                if not stored_run.completed:
+                    connection.execute("UPDATE runs SET completed=1 WHERE run_id=?", (run_id,))
+                    connection.execute(
+                        "UPDATE entry_programs SET result_edn=?,scheduling_edn=? WHERE run_id=?",
+                        (result_edn, scheduling_edn, run_id),
+                    )
+                    stored_run = replace(
+                        stored_run,
+                        completed=True,
+                        result_edn=result_edn,
+                        scheduling_edn=scheduling_edn,
+                    )
+                return stored_run
+
+    def pending_scheduling(self) -> list[ProgramRun]:
+        """Committed entry intents awaiting idempotent scheduler application."""
+        with self._lock:
+            if self.database is None:
+                return [
+                    r
+                    for r in self._runs.values()
+                    if r.completed and r.scheduling_edn is not None and not r.scheduling_applied
+                ]
+            with self._connection() as connection:
+                ids = connection.execute(
+                    "SELECT r.run_id FROM runs r JOIN entry_programs e ON r.run_id=e.run_id "
+                    "WHERE r.completed=1 AND e.scheduling_edn IS NOT NULL "
+                    "AND e.scheduling_applied=0 ORDER BY r.rowid"
+                ).fetchall()
+                return [r for (key,) in ids if (r := self._read_run(connection, key)) is not None]
+
+    def mark_scheduling_applied(self, run_id: str) -> None:
+        with self._lock:
+            if self.database is None:
+                run = self._runs[run_id]
+                if not run.completed or run.scheduling_edn is None:
+                    raise RecoveryMismatchError("Scheduling intent is not committed")
+                self._runs[run_id] = replace(run, scheduling_applied=True)
+            else:
+                with self._connection() as connection:
+                    stored_run = self._read_run(connection, run_id)
+                    if (
+                        stored_run is None
+                        or not stored_run.completed
+                        or stored_run.scheduling_edn is None
+                    ):
+                        raise RecoveryMismatchError("Scheduling intent is not committed")
+                    connection.execute(
+                        "UPDATE entry_programs SET scheduling_applied=1 WHERE run_id=?", (run_id,)
+                    )
 
     @staticmethod
     def _check(
@@ -713,7 +818,7 @@ class ProgramStore:
             if self.database is None:
                 run = self._runs[run_id]
                 if run.error is None:
-                    self._runs[run_id] = ProgramRun(run.run_id, run.rule_edn, run.input_edn, True)
+                    self._runs[run_id] = replace(run, completed=True)
             else:
                 with self._connection() as connection:
                     connection.execute(
@@ -726,9 +831,7 @@ class ProgramStore:
             if self.database is None:
                 run = self._runs[run_id]
                 if not run.completed and run.error is None:
-                    self._runs[run_id] = ProgramRun(
-                        run.run_id, run.rule_edn, run.input_edn, False, error
-                    )
+                    self._runs[run_id] = replace(run, error=error)
             else:
                 with self._connection() as connection:
                     connection.execute(
