@@ -34,4 +34,4 @@ run-loop 的程序调用位置对应稳定 session ID。同进程重入和进程
 
 pure 仅表示确定性计算；外部查询直接声明非 pure 并正常挂起、采样与重放，不再由 ProgramDriver 按名字改写。P6 统一 when、until、stage-if 的纯函数准入，删除 Builtin.read_only 字段，外部查询不进入条件；先在 actions 取得已记录数据，再用于纯计算。
 
-运行时装配容器与函数改名 MemberServices / assemble_member_services，准确表达服务集合；Capability artifact 与管理 API facade 的概念保留。旧容器名、局部预算计数和 _HOST_QUERIES 重写直接删除，无兼容别名或存储迁移。
+运行时装配容器与函数改名 MemberServices / assemble_member_services，准确表达服务集合；Capability artifact 与管理 API 已删除。旧容器名、局部预算计数和 _HOST_QUERIES 重写直接删除，无兼容别名或存储迁移。

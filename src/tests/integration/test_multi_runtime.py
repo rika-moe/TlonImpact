@@ -13,7 +13,6 @@ from pathlib import Path
 
 from tlon.api.arena import ArenaFacade
 from tlon.api.bootstrap import build_runtime
-from tlon.api.capabilities import CapabilitiesFacade
 from tlon.base.paths import TlonPaths
 from tlon.base.settings import Settings
 from tlon.organization.mail.store import MailStore
@@ -31,9 +30,6 @@ async def test_two_runtimes_coexist_in_one_process(tmp_path: Path) -> None:
         # Arena facade is wired into every runtime (issue #29 切片 3/3).
         assert isinstance(runtime_a.arena, ArenaFacade)
         assert isinstance(runtime_b.arena, ArenaFacade)
-        # Capabilities facade is wired into every runtime (issue #45 切片 3/3).
-        assert isinstance(runtime_a.capabilities, CapabilitiesFacade)
-        assert isinstance(runtime_b.capabilities, CapabilitiesFacade)
         # Bob is registered in A only; a legacy directory does not register a human.
         MailStore(paths_a.mail_database_file()).register_member("human:bob")
 

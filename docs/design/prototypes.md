@@ -171,7 +171,7 @@ agent 侧入口是 `LifecycleService`（[lifecycle/service.py](../../src/tlon/li
 
 装配层（`assemble_member_services`，[agents/assembly.py](../../src/tlon/agents/assembly.py)）将成员身份、注册表和 callable 绑定到 LifecycleService 与演化领域服务，Operation handler 负责共享契约投影。依赖方向由 `uv run lint-imports` 检查。异常类型放在领域端口中，使调用方与实现方共享同一个错误身份，无需反向导入实现模块。
 
-`behavior-propose`、`capability-propose` 和 `prototype-review` 中的模型请求使用当前 ExecutionScope。额度不足与已知截止错误保持原错误类型；provider 明确拒绝（包括上下文长度拒绝）投影为 RejectedError；已派发但未取得可靠回执仍为 unknown。同一调用恢复不重发未知模型请求，未通过模型步骤不会写入提案或评审。
+`behavior-propose` 和 `prototype-review` 中的模型请求使用当前 ExecutionScope。额度不足与已知截止错误保持原错误类型；provider 明确拒绝（包括上下文长度拒绝）投影为 RejectedError；已派发但未取得可靠回执仍为 unknown。同一调用恢复不重发未知模型请求，未通过模型步骤不会写入提案或评审。
 
 ## 未实施方向
 

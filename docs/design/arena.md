@@ -6,7 +6,7 @@
 
 staging 通道的现状信任闸（[prototypes.md](./prototypes.md)）：加载期静态校验 + 人类读 spec 审批 + 异质评审（prototype-review 工具，advisory）。spec 是受限 DSL、全文可读，但成员行为是 **spec × 模型 × 输入语料**的联合产物——一份读起来无害的 spec，喂进真实邮件后可能调错工具、回错信、陷入错误循环。静态审查覆盖不了这一维。
 
-当前机制：把 staging 原型实例化成**临时成员**，放进隔离宇宙，喂一批合成邮件跑真实会话循环，把完整 journal 轨迹蒸馏成评审报告。信任闸因此从「读基因型」扩展到「看表型」。复合能力直接起草与准入见 [capabilities](capabilities.md)。
+当前机制：把 staging 原型实例化成**临时成员**，放进隔离宇宙，喂一批合成邮件跑真实会话循环，把完整 journal 轨迹蒸馏成评审报告。信任闸因此从「读基因型」扩展到「看表型」。Capability 起草与准入机制已删除，见 [ADR 0045](../decisions/0045-remove-capabilities.md)。
 
 ## 领域约束
 

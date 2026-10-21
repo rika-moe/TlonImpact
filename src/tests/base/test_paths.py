@@ -38,8 +38,6 @@ def _call_every_accessor(paths: TlonPaths, agent_id: str = "dev-001") -> None:
     paths.agent_workspace_skills_dir(agent_id)
     paths.prototypes_dir()
     paths.prototypes_staging_dir()
-    paths.capabilities_dir()
-    paths.capabilities_staging_dir()
     paths.memory_config_file(agent_id)
     paths.memory_lessons_file(agent_id)
     paths.traces_dir()

@@ -1,6 +1,6 @@
 # DSL 设计：行为即数据
 
-> 当前状态（EPIC A、P5 #193 与 P6 #194 已合并；P7 暂停，P8a 独立收口文档与审计）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
+> 当前状态：[ADR 0045](../decisions/0045-remove-capabilities.md) 已删除 Capability 与复合 Operation；保留宿主 Operation 和现有 Behavior。
 
 > 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种。模型总览见 [docs/design/unified-member-model.md](./unified-member-model.md)。
 
@@ -34,9 +34,9 @@ spec 的作者是 LLM，这意味着 DSL 面对的是不可信输入。把"不�
 
 ### 纯函数准入统一，数据作用域明确
 
-when、until、stage-if 共用纯函数准入：核心与算术函数、显式参数领域函数，以及统一目录中 effects 为空且 control=false 的 Operation。纯条件不调用外部查询，即使只读也必须先在 actions 中采样并记录；局部 fn 与复合依赖不会扩大可调用集合。旧的 TRIGGER/LOOP/STAGE_COND 三套白名单及读取隐式 env 的谓词已经删除。
+when、until、stage-if 共用纯函数准入：核心与算术函数、显式参数领域函数，以及统一目录中 effects 为空且 control=false 的 Operation。纯条件不调用外部查询，即使只读也必须先在 actions 中采样并记录；局部 fn 不会扩大可调用集合。旧的 TRIGGER/LOOP/STAGE_COND 三套白名单及读取隐式 env 的谓词已经删除。
 
-函数相同不等于作用域相同：when 提供 msg/event/self，until 提供 self/state/limits，stage-if 提供 state/scratch/round。调用方用 get 与普通比较构造条件，或把数据组装成纯复合操作的单对象输入；复合实现不继承这些绑定。加载期拒绝引用其他位置的符号，执行时遗漏必需上下文必须报错。业务数据缺少可选键仍遵循 get 返回 nil/默认值的语言语义。
+函数相同不等于作用域相同：when 提供 msg/event/self，until 提供 self/state/limits，stage-if 提供 state/scratch/round。调用方用 get 与普通比较构造条件；函数使用显式参数。加载期拒绝引用其他位置的符号，执行时遗漏必需上下文必须报错。业务数据缺少可选键仍遵循 get 返回 nil/默认值的语言语义。
 
 规则的门控与动作都使用 `{msg, event, self}`。非邮件事件的 `msg` 为 `nil`，邮件谓词对此安全返回；动作不再有另一套完成环境或隐式 `result`。`model-call`、状态和邮件效果的实际返回值可以作为普通表达式值继续求值（[ADR 0043](../decisions/0043-newspaper-member-workflow.md)）。
 
@@ -70,7 +70,7 @@ when、until、stage-if 共用纯函数准入：核心与算术函数、显式�
 
 map 字面量的键保持字面，值可以内嵌表达式，例如 `(member-stop {:agent_id (get event :agent_id) :reason "drain"})`。语言没有 `eval` 或宏，不能把运行中生成的表达式再当程序执行。失败保留日志和未完成记录；已读状态不决定程序是否完成，未知外部提交不制造成功回执。
 
-会话工具目录在执行前确定并冻结复合定义；tools 尽量固定，以保留模型请求前缀的缓存机会。P7 已暂停，当前没有统一操作 allowlist、逐请求 ToolView 或受控授权阶段。现有领域权限检查继续生效；未来执行授权需求与工具展示稳定性分开设计。
+会话工具目录来自成员装配的宿主操作；tools 尽量固定，以保留模型请求前缀的缓存机会。P7 已暂停，当前没有统一操作 allowlist、逐请求 ToolView 或受控授权阶段。现有领域权限检查继续生效；未来执行授权需求与工具展示稳定性分开设计。
 
 ### 信任闸：staging + 人工批准
 
@@ -87,7 +87,7 @@ DSL 的设计前提是看清哪一半在语言内、哪一半在语言外：
 - **机制是 Python 固定实现**：工具（发邮件、读写文件、Shell、记忆、spawn）、stage（think / act / plan / critique / revise）、section（persona / protocol / knowledge / skills / current-task / thread-recap / mail-history）、求值器本身、事件总线。这些由引擎提供，有单元测试，不随 spec 变化。
 - **策略是 spec 数据**：`:on` 和 `:when` 决定触发，`:actions` 组合普通计算与效果；`run-loop` 配方声明上下文、阶段和终止条件。Adam 同样用内置规则表达启动、空闲卸载和噪声治理，权限来自注入的宿主端口。
 
-由此得到 DSL 表达能力的天花板：**组合已有机制**。spec 可以决定 act 之前先 plan、critique 失败才 revise、只对 To 里点了自己的邮件启动会话；但 spec 不能创造新的 stage、section 或宿主效果原语。受信复合能力可以新增 DSL 词，但只能组合已有原语，见 [capabilities](capabilities.md)。这个天花板是特性而非缺陷：机制是可信的（人类写的、有测试的），策略是可进化的（LLM 写的、受限的），边界正好落在信任边界上。
+由此得到 DSL 表达能力的天花板：**组合已有机制**。spec 可以决定 act 之前先 plan、critique 失败才 revise、只对 To 里点了自己的邮件启动会话；但 spec 不能创造新的 stage、section 或宿主效果原语。Capability 扩展机制已删除。这个天花板是特性而非缺陷：机制是可信的（人类写的、有测试的），策略是可进化的（LLM 写的、受限的），边界正好落在信任边界上。
 
 机制/策略的界线在会话循环内部同样清晰。`:stages` 向量决定跑哪些 stage、以什么顺序、各自带什么条件（`:if`），但每个 stage 的语义——`think` 是一次 LLM 调用、`act` 是执行本轮全部工具调用、`critique` 失败如何软降级——是 [agents/stages/](../../src/tlon/agents/stages) 下的 Python 实现。spec 里的 `act` 只声明"执行这轮的工具分发列表"，每个工具一个后台 task 的并发执行是引擎的事。更关键的是引擎保留了 spec 无法覆盖的否决权：`:max-iterations` 与 `:max-tokens` 是双停机线（ADR 0023），任一到顶、在任何 `:until` 求值之前无条件生效——spec 可以声明终止条件，但声明不出"永不终止"。策略可以自由，自由有边。
 
@@ -153,10 +153,8 @@ L1 内部还有一个刻意的紧邻：运行时求值（`eval_form`）与加载
 
 loader 是运行时加载成员 behavior 的统一读盘入口，这点也有设计意图：热重载、首次启动、测试中的临时 spec，走的都是同一条"解析 → 模型 → 校验 → 挂 provenance"的链，不存在第二条绕过校验的加载方式。链条唯一意味着校验策略的改动（比如新增一条结构约束）自动对所有加载场景生效，不需要逐个调用点追缴。
 
-## 复合能力与历史来源
+## 扩展与历史来源
 
-当前已有两条机器提案通道：新成员行为经原型 staging 与批准后实例化；复合能力经能力 staging 与批准后成为受信词。两者都只能组合已有宿主机制。新原语（LLM 调用、新 IO、Docker、异步）仍由人类修改 Python 并发版，因为 fuel 限制的是语言求值步数，不能替代外部调用的成本和权限控制。
+新成员行为经原型 staging 与批准后实例化。Capability 提案、审批与复合操作目录已删除。新宿主原语仍由 Python 实现，fuel 不能替代外部调用的成本和权限控制。函数可以在当前行为程序中组合既有操作；module 尚未实现。
 
-复合能力的 artifact、零注入环境、纯度准入与调用方预算见 [capabilities](capabilities.md)。桥的查询、效果和环境契约见 [bridge-api](bridge-api.md)。
-
-历史取舍见 [EDN 语法](../decisions/0001-edn-as-dsl.md)、[SCI 兼容子集方向](../decisions/0011-sci-compatible-subset.md)、[tlosure 独立](../decisions/0018-dsl-extraction-tlosure.md) 与 [完整函数能力](../decisions/0021-tlosure-full-functions.md)。SCI 是语言演进方向，不代表系统已经迁移到 JVM。
+历史取舍见 [EDN 语法](../decisions/0001-edn-as-dsl.md)、[tlosure 独立](../decisions/0018-dsl-extraction-tlosure.md) 与 [完整函数能力](../decisions/0021-tlosure-full-functions.md)。

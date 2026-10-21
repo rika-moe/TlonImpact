@@ -1,6 +1,6 @@
 # Execution Device：成员执行权限与容器机制
 
-执行装置隔离成员的文件访问和代码执行。tlosure 求值、文件操作、Linux 命令执行分成 L0/L1/L2 三层，按最低够用原则授权。复合能力的进化通道见 [capabilities](capabilities.md)，行为评估见 [arena](arena.md)。
+执行装置隔离成员的文件访问和代码执行。tlosure 求值、文件操作、Linux 命令执行分成 L0/L1/L2 三层，按最低够用原则授权。Capability 已删除，见 [ADR 0045](../decisions/0045-remove-capabilities.md)；行为评估见 [arena](arena.md)。
 
 ## 领域约束
 

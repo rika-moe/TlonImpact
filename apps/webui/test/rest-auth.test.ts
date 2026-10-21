@@ -12,7 +12,6 @@ test("REST reads and each write family use the browser boundary without bearer c
   await rest.listPrototypes();
   await rest.deleteAgent("alice");
   await rest.createPrototype({ display_name: "测试行为", behavior: "test" });
-  await rest.approveCapability("test");
   for (const call of calls) {
     const headers = new Headers(call.headers);
     assert.equal(headers.get("X-Tlon-WebUI"), "1");

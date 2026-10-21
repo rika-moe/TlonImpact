@@ -26,7 +26,6 @@ from tlon.agents.lessons import LessonsDistiller
 from tlon.agents.member_runtime import MemberRuntime
 from tlon.agents.retirement import RetirementCeremony
 from tlon.api.arena import ArenaFacade
-from tlon.api.capabilities import CapabilitiesFacade
 from tlon.api.config import ConfigFacade
 from tlon.api.events import EventsFacade
 from tlon.api.mail import MailFacade
@@ -84,8 +83,6 @@ class Runtime:
     # 演武场 facade 不进 shutdown：无自持资源，后台 run task 随进程退出
     # （v1 语义：进程重启丢失进行中的 run 记录，磁盘证据不受影响）
     arena: ArenaFacade
-    # 能力 facade 同 arena：纯 TlonPaths 透传，无自持资源
-    capabilities: CapabilitiesFacade
 
     async def shutdown(self) -> None:
         """Shut down all runtime components in reverse order of creation.
@@ -293,5 +290,4 @@ async def build_runtime(runtime_paths: TlonPaths, settings: Settings) -> Runtime
             github_adapter=github_adapter,
         ),
         arena=ArenaFacade(tlon_paths=runtime_paths, settings=settings),
-        capabilities=CapabilitiesFacade(tlon_paths=runtime_paths),
     )

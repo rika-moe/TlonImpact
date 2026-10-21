@@ -77,7 +77,7 @@ TO 与 CC 使用“已选标签 + 独立搜索输入”，候选选择保存稳�
 | LOGS | level/agent/trace 过滤与日志读取 |
 | SETTINGS | 服务端配置与成员配置只读展示 |
 
-原型写入/审批契约归 [prototypes.md](./prototypes.md)，能力审批归 [capabilities.md](./capabilities.md)，演武场报告是证据而非自动批准信号，见 [arena.md](./arena.md)。这里不复制端点表或服务端校验规则。
+原型写入/审批契约归 [prototypes.md](./prototypes.md)；Capability 管理界面与审批已删除，演武场报告是证据而非自动批准信号，见 [arena.md](./arena.md)。这里不复制端点表或服务端校验规则。
 
 ## 视觉规范
 

@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock
 import pytest
 from litellm import BadRequestError
 
-from tlon.agents.capabilities.staging import write_staging_capability
 from tlon.agents.program_store import ProgramStore
 from tlon.agents.prototypes.catalog import get_prototype_detail
 from tlon.agents.prototypes.staging import append_staging_review, write_staging_prototype
@@ -23,7 +22,6 @@ from tlon.base.execution import (
 from tlon.base.llm_client import LLMClient
 from tlon.base.paths import TlonPaths
 from tlon.evolution.propose_behavior import BehaviorProposer
-from tlon.evolution.propose_capability import CapabilityProposer
 from tlon.evolution.review_prototype import PrototypeReviewer
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
@@ -40,7 +38,7 @@ _SPEC = '{:version 1 :rules [{:name "boot" :on :boot :actions []}]}'
 def staging_snapshot(paths: TlonPaths) -> dict[str, bytes]:
     return {
         str(p.relative_to(paths.tlon_home())): p.read_bytes()
-        for root in (paths.prototypes_staging_dir(), paths.capabilities_staging_dir())
+        for root in (paths.prototypes_staging_dir(),)
         if root.exists()
         for p in root.rglob("*")
         if p.is_file()
@@ -69,16 +67,6 @@ def executor(
             partial(write_staging_prototype, tlon_paths=paths),
             paths,
         ),
-        capability_proposer=CapabilityProposer(
-            "alice",
-            None,
-            "alice",
-            client,
-            memory,
-            logs,
-            partial(write_staging_capability, tlon_paths=paths),
-            paths,
-        ),
         reviewer=PrototypeReviewer(
             "alice",
             client,
@@ -91,12 +79,11 @@ def executor(
         OperationRegistry(services), CallContext("alice", "root", "call"), store
     ), {
         "behavior-propose": {"intent": "improve", "display_name": "next"},
-        "capability-propose": {"intent": "identity", "name": "echo-word"},
         "prototype-review": {"name": info.name},
     }
 
 
-@pytest.mark.parametrize("name", ["behavior-propose", "capability-propose", "prototype-review"])
+@pytest.mark.parametrize("name", ["behavior-propose", "prototype-review"])
 @pytest.mark.parametrize("fault", ["budget", "rejected", "context-rejected", "unknown"])
 async def test_real_evolution_model_failure_is_identical_in_dsl_tool_and_replay(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, fault: str
@@ -147,7 +134,6 @@ async def test_real_evolution_model_failure_is_identical_in_dsl_tool_and_replay(
     "name,slot,args",
     [
         ("behavior-propose", "behavior_proposer", {"intent": "x", "display_name": "x"}),
-        ("capability-propose", "capability_proposer", {"intent": "x", "name": "word"}),
         ("prototype-review", "reviewer", {"name": "proposal"}),
     ],
 )

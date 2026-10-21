@@ -138,7 +138,7 @@ boot/lazy 与邮件订阅资格来自 spec，不是当前调度状态。注册�
 
 ## 当前演化接口与未实施方向
 
-行为原型、复合能力和受信工具的边界分别见 [prototypes](prototypes.md)、[capabilities](capabilities.md)、[Bridge API](bridge-api.md)。成员自主调整 context 仍是远期方向。
+行为原型与宿主工具的边界见 [prototypes](prototypes.md) 和 [Bridge API](bridge-api.md)。Capability 已由 [ADR 0045](../decisions/0045-remove-capabilities.md) 删除。成员自主调整 context 仍是远期方向。
 
 随包 [报社示例](../../src/tlon/resources/examples/newspaper/README.md) 用普通 DSL 实现订阅、退订、按真实邮件 ID 收稿、明确期号出版、冻结内容及订阅者快照、逐人幂等投递。冻结版本在投递前持久化，同期号重试不重新编辑；新稿与新订阅进入后续期刊。来源编号来自真实 `Mail`，模型不负责生成来源附录。示例不会在首装或升级时新增默认成员，也不改现有 `~/.tlon`。
 

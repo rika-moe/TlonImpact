@@ -1,5 +1,7 @@
 # Operation 统一与旧机制审计
 
+> Capability 及复合 Operation 已由 [ADR 0045](../decisions/0045-remove-capabilities.md) 删除。本文保留历史实施记录，不再描述现行能力；宿主 Operation、Tool 与 Behavior 继续保留。
+
 状态：P8a 的独立审计，基线为 main `f5a8faf`（#194）。P1–P6 已合并；P7 暂停，原 P8 未整体完成。本文件记录源码证据与已知边界，不把符号搜索当成功能验证。本次完整质量门及真实邮件冒烟结果在实施计划和 PR 记录。
 
 ## 决策与范围

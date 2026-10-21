@@ -68,7 +68,6 @@ _PROPOSAL = {
 _OUTPUTS = {
     "prototype-write": _object({**_PROPOSAL, "display_name": _STRING}),
     "behavior-propose": _object(_PROPOSAL),
-    "capability-propose": _object({key: _PROPOSAL[key] for key in ("name", "trusted", "status")}),
     "prototype-list": {"type": "array", "items": _SUMMARY},
     "prototype-staging-list": {"type": "array", "items": _STAGING},
     "prototype-lineage": _object({"lineage": {"type": "array", "items": _LINEAGE}}),
@@ -131,23 +130,6 @@ _CONTRACTS: dict[str, tuple[str, dict[str, Any]]] = {
             "required": ["intent", "display_name"],
         },
     ),
-    "capability-propose": (
-        "基于自己的个体经验提出一个新能力词（capability，突变晋升通道的经验入口）。只需给出能力意图与词名：工具内部读你的记忆（claims 与蒸馏教训），由一次独立的起草调用产出完整的 capability artifact（tlosure (fn [...] ...) 实现），经 staging 闸写入（proposal_note 记意图）。同名即拒——想改进既有词请换个新名字。提案不可信：需人类批准（ops/WebUI）批准后，全社会成员下次 wake 才能在自己的 spec 里组合它。",
-        {
-            "type": "object",
-            "properties": {
-                "intent": {
-                    "type": "string",
-                    "description": "能力意图：想造一个什么词、解决什么问题（自然语言，记为 proposal_note）",
-                },
-                "name": {
-                    "type": "string",
-                    "description": "词名（字母起头，后接字母/数字/'-'/'_'；同名即拒，改进既有词请换新名）",
-                },
-            },
-            "required": ["intent", "name"],
-        },
-    ),
     "prototype-list": (
         "列出可用的 behavior prototype（行为原型）。每个 prototype 是一套预制的行为规约，可作为创建新成员的行为模板；不携带人格，也不赋予职业或职位。返回系统生成的 ID、行为显示名与描述。",
         {"type": "object", "properties": {}, "required": []},
@@ -191,7 +173,6 @@ def make_evolution_operations(
     *,
     writer: EvolutionService | None = None,
     behavior_proposer: EvolutionService | None = None,
-    capability_proposer: EvolutionService | None = None,
     catalog: EvolutionService | None = None,
     staging: EvolutionService | None = None,
     lineage: EvolutionService | None = None,
@@ -201,13 +182,12 @@ def make_evolution_operations(
     services = {
         "prototype-write": writer,
         "behavior-propose": behavior_proposer,
-        "capability-propose": capability_proposer,
         "prototype-list": catalog,
         "prototype-staging-list": staging,
         "prototype-lineage": lineage,
         "prototype-review": reviewer,
     }
-    writes = {"prototype-write", "behavior-propose", "capability-propose", "prototype-review"}
+    writes = {"prototype-write", "behavior-propose", "prototype-review"}
 
     def handler(name: str) -> AsyncHandler:
         async def execute(context: CallContext, args: dict[str, Any]) -> Any:
@@ -216,7 +196,6 @@ def make_evolution_operations(
             if not is_full and name in {
                 "prototype-write",
                 "behavior-propose",
-                "capability-propose",
             }:
                 raise RejectedError("evolution operations require a full member", {})
             service = services[name]

@@ -633,32 +633,6 @@ async def test_resumed_second_session_keeps_remaining_effects(tmp_path: Path) ->
     assert member._program_store.pending() == []
 
 
-async def test_shared_composite_keeps_nested_effects_once(tmp_path: Path) -> None:
-    from tlon.agents.capabilities.staging import approve_capability, write_staging_capability
-
-    paths = TlonPaths(home=tmp_path)
-    source = """{:version 2 :name "publish-pair" :description "publish a pair"
-      :input-schema {:type "object" :properties {:text {:type "string"}}
-                     :required ["text"] :additionalProperties false}
-      :output-schema true
-      :impl (fn [input]
-        (mail-send {:to ["sink@tlon.internal"] :content (get input :text)})
-        (mail-send {:to ["sink@tlon.internal"] :content (str (get input :text) "!")}))}"""
-    write_staging_capability(source, tlon_paths=paths)
-    approve_capability("publish-pair", paths)
-    member = _member(
-        tmp_path, _spec("(while [i 0] (< i 2) (publish-pair {:text (str i)}) (recur (inc i)))")
-    )
-    member._post_office.send = AsyncMock(wraps=member._post_office.send)
-    assert await member._run_rule_body(member.spec.rules[0], _event(_mail()))
-    assert [call.kwargs["content"] for call in member._post_office.send.await_args_list] == [
-        "0",
-        "0!",
-        "1",
-        "1!",
-    ]
-
-
 async def test_recovery_executes_frozen_program_after_behavior_update(tmp_path: Path) -> None:
     original = _member(
         tmp_path,

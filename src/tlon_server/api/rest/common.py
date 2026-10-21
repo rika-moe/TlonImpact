@@ -16,7 +16,6 @@ from typing import Any
 from aiohttp import web
 
 from tlon.api.arena import ArenaFacade
-from tlon.api.capabilities import CapabilitiesFacade
 from tlon.api.config import ConfigFacade
 from tlon.api.events import EventsFacade
 from tlon.api.mail import MailFacade
@@ -42,7 +41,6 @@ class RestHandlerBase:
     configs: ConfigFacade | None
     events: EventsFacade | None
     arena: ArenaFacade | None
-    capabilities: CapabilitiesFacade | None
     debug: bool
     identity: LocalIdentity
     github_ingress: bool

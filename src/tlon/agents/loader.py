@@ -49,8 +49,7 @@ def load_member_spec(
     to boot (the registry logs and isolates the failure; the server and
     other members are unaffected).
 
-    ``builtins`` is the registry validated against — host words and approved
-    composites by default.
+    ``builtins`` is the registry validated against — host words by default.
     Host query words are available only when explicitly injected by the
     caller. Adam passes its registry query builtins explicitly.
 
@@ -63,10 +62,6 @@ def load_member_spec(
         EDNParseError: file is not valid EDN
         MemberSpecValidationError: the spec fails the single validator
     """
-    if builtins is None:
-        from tlon.agents.capabilities.bridge import capability_validation_builtins
-
-        builtins = capability_validation_builtins(tlon_paths)
     return validate_member_spec(
         read_member_spec(agent_id, tlon_paths=tlon_paths), builtins=builtins
     )

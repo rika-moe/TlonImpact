@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any
 
 from structlog.contextvars import bound_contextvars
 
-from tlon.agents.capabilities.bridge import load_capability_catalog
 from tlon.agents.context_builder import ContextBuilder
 from tlon.agents.context_pressure import ContextPressure
 from tlon.agents.executor import EffectExecutor
@@ -201,13 +200,6 @@ class MemberRuntime(Member):
         self._host_builtins = {
             name: builtin for name, builtin in builtins.items() if name not in host_names
         }
-        composition_errors: dict[str, str] = {}
-        if self._paths is not None:
-            catalog = load_capability_catalog(
-                self._paths, hosts=operations, reserved=self._host_builtins
-            )
-            operations.extend(catalog.operations)
-            composition_errors = catalog.errors
         operation_executor = OperationExecutor(
             OperationRegistry(operations),
             CallContext(member_id, "member", "member"),
@@ -226,14 +218,9 @@ class MemberRuntime(Member):
                 [item for rule in spec.rules for item in [rule.when, *rule.actions]]
             )
             unavailable = sorted(referenced & (host_names - set(self._operations.builtins())))
-            reasons = {
-                name: reason for name, reason in composition_errors.items() if name in referenced
-            }
             message = f"member {member_id}: required operation admission failed: {error}"
             if unavailable:
                 message += f"; service not assembled for {unavailable}"
-            if reasons:
-                message += f"; rejected composite definitions: {reasons}"
             if self._paths is None or not has_frozen_work(member_id, self._paths):
                 raise ValueError(message) from error
             self._behavior_error = message
@@ -330,7 +317,7 @@ class MemberRuntime(Member):
         events = await self._journal.read_events(session_id)
         start = next(event for event in events if event["type"] == "session/start")
         recipe = SessionRecipe.from_edn(loads(start["recipe"]))
-        driver = self._assemble_session(self._services, recipe, root_id=session_id)
+        driver = self._assemble_session(self._services, recipe)
         scope = await self._session_execution(session_id, recipe)
         with bind_execution(scope):
             return await driver.resolve_dispatch(session_id, tool_call, metadata)
@@ -555,12 +542,6 @@ class MemberRuntime(Member):
         records = await asyncio.to_thread(
             self._program_store.ensure_many,
             items,
-            definitions={
-                item[0]: self._operation_executor.definition_snapshot(
-                    self._referenced_names([rule.when, *rule.actions])
-                )
-                for item, rule in zip(items, rules, strict=True)
-            },
         )
         for record in records:
             rule, source, payload = self._program_input(record)
@@ -745,9 +726,6 @@ class MemberRuntime(Member):
         record = await asyncio.to_thread(
             self._program_store.ensure,
             *self._program_record_data(rule, trigger_event, payload, run_id),
-            definitions=self._operation_executor.definition_snapshot(
-                self._referenced_names([rule.when, *rule.actions])
-            ),
         )
         run_id = record.run_id
         if record.completed or record.error is not None:
@@ -775,11 +753,7 @@ class MemberRuntime(Member):
                 return None
             raise EvalError(f"unknown orchestration request: {request.kind}")
 
-        root_executor = await asyncio.to_thread(
-            self._operation_executor.for_root,
-            run_id,
-            self._referenced_names([rule.when, *rule.actions]),
-        )
+        root_executor = self._operation_executor
         root_operations = DSLAdapter(root_executor)
         driver = ProgramDriver(
             self._program_store,
@@ -1044,26 +1018,13 @@ class MemberRuntime(Member):
             dumps(None),
         )
 
-    def _assemble_session(
-        self, caps: MemberServices, recipe: SessionRecipe, *, root_id: str | None = None
-    ) -> LoopDriver:
+    def _assemble_session(self, caps: MemberServices, recipe: SessionRecipe) -> LoopDriver:
         """Assemble the session engine from services — the injected
         services, plain data, and closures over the event bus — never a
         back-reference to this runtime."""
         registry = caps.registry
-        scope = current_execution()
-        root_id = root_id or (scope.root_id if scope is not None else None)
         tool_executor = caps.tool_executor
         root_executor = self._operation_executor
-        if root_id is not None:
-            root_executor = self._operation_executor.for_root(root_id)
-            tool_executor = ToolExecutor()
-            from tlon.agents.assembly import REPRODUCTION_TOOLS
-
-            for operation in root_executor.registry.definitions():
-                if not caps.is_full and operation.name in REPRODUCTION_TOOLS:
-                    continue
-                tool_executor.register_tool(OperationTool(root_executor, operation.name))
 
         self._logger = logger.bind(agent_id=self._member_id)
 

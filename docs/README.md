@@ -32,7 +32,6 @@ architecture 区分规范与当前实现；design 负责当前领域模型和机
 | 通信与知识 | [邮件](design/mail.md) | 地址、邮局事务、邮箱、线程与已读语义 |
 | 通信与知识 | [记忆](design/memory.md) | Claim、蒸馏、反思、检索和代际出口 |
 | 治理与扩展 | [社会政策](design/society-policy.md) | 社会事实物化、政策 hook 与失败处理 |
-| 治理与扩展 | [能力](design/capabilities.md) | 函数 artifact、准入、权限与退役 |
 | 治理与扩展 | [演武场](design/arena.md) | 隔离评估、语料、报告与审批边界 |
 | 治理与扩展 | [Skills](design/skills.md) | SKILL.md 发现、索引、正文读取与信任边界 |
 | 人类接入 | [服务端协议](design/server-protocol.md) | REST/SSE、客户端会话、通知与同步契约 |
@@ -41,7 +40,7 @@ architecture 区分规范与当前实现；design 负责当前领域模型和机
 
 ## 共享操作的当前机制与后续范围
 
-- [统一操作与可组合行为](design/operations.md)：能力定义与 DSL/LLM 入口分离、共享执行、已落地复合依赖与统一纯条件；P7 暂停，tools 尽量固定。
+- [统一宿主操作](design/operations.md)：宿主契约与 DSL/LLM 入口；Capability 已删除。
 - [分阶段实施计划](design/operations-plan.md)：两个串行 EPIC、分阶段独立 PR 任务及验收标准；P1–P6 已合并；P8a 独立收口文档与审计，其余范围单列。
 - [执行作用域与共享额度](design/execution-scope.md)：已落地的 P4b 预算预留、取消/截止、声明顺序与可重入写边界。
 - [调用记录与恢复](design/invocation-recovery.md)：已落地的 P4a 唯一叶子回执、冻结身份、unknown 与会话重放边界。

@@ -401,7 +401,7 @@ _EFFECT_COLLECTOR: ContextVar[list[ActionRequest] | None] = ContextVar(
 
 @contextmanager
 def collect_member_effects() -> Iterator[list[ActionRequest]]:
-    """Collect one synchronous evaluation, including isolated capability closures."""
+    """Collect one synchronous evaluation."""
     requests: list[ActionRequest] = []
     token = _EFFECT_COLLECTOR.set(requests)
     try:

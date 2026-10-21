@@ -12,8 +12,6 @@ ports live in ``tlon.lifecycle.ports`` / ``tlon.evolution.ports``).
 from functools import partial
 from typing import TYPE_CHECKING
 
-from tlon.agents.capabilities.catalog import list_trusted_capabilities
-from tlon.agents.capabilities.staging import write_staging_capability
 from tlon.agents.health import orphan_mail_provider
 from tlon.agents.mail_stats import mail_stats_provider
 from tlon.agents.member_runtime import MemberServices
@@ -43,7 +41,6 @@ from tlon.evolution.get_lineage import PrototypeLineage
 from tlon.evolution.list_prototypes import PrototypeCatalog
 from tlon.evolution.list_staging import StagingCatalog
 from tlon.evolution.propose_behavior import BehaviorProposer
-from tlon.evolution.propose_capability import CapabilityProposer
 from tlon.evolution.review_prototype import PrototypeReviewer
 from tlon.evolution.write_prototype import PrototypeWriter
 from tlon.memory.manager import MemoryManager
@@ -78,22 +75,8 @@ logger = get_logger(__name__)
 #: deliberately absent: reviewing a staging proposal is advisory (approve
 #: stays human).
 REPRODUCTION_TOOLS: frozenset[str] = frozenset(
-    {"member-spawn", "prototype-write", "behavior-propose", "capability-propose"}
+    {"member-spawn", "prototype-write", "behavior-propose"}
 )
-
-
-def _render_trusted_capability_words(tlon_paths: TlonPaths) -> str:
-    """Render the trusted capability library as prompt text for the
-    ``capability-propose`` drafting call (anti-duplication + style sample).
-    An empty library renders as ``""`` (the tool then omits the section)."""
-    lines = []
-    for cap in list_trusted_capabilities(tlon_paths):
-        if cap.error:
-            purity = f"不可用：{cap.error}"
-        else:
-            purity = "纯" if not cap.effects else "+".join(cap.effects)
-        lines.append(f"- {cap.name}（{purity}）：{cap.description}")
-    return "\n".join(lines)
 
 
 def _resolve_context_window(file_config: LLMConfig, model_name: str) -> int:
@@ -300,18 +283,6 @@ async def assemble_member_services(
                 tlon_paths=tlon_paths,
                 solvency=proposal_solvency,
                 near_kin=near_kin_check,
-            ),
-            capability_proposer=CapabilityProposer(
-                agent_id=config.id,
-                prototype=config.prototype,
-                author_id=config.id,
-                llm_client=llm_client,
-                memory=memory,
-                logs=SessionJournal(config.id, tlon_paths),
-                writer=partial(write_staging_capability, tlon_paths=tlon_paths),
-                tlon_paths=tlon_paths,
-                solvency=proposal_solvency,
-                trusted_words=partial(_render_trusted_capability_words, tlon_paths),
             ),
         )
     )

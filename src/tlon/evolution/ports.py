@@ -41,25 +41,3 @@ class PrototypeSummary(Protocol):
 
     @property
     def proposal_note(self) -> str | None: ...
-
-
-class CapabilityProposalError(ValueError):
-    """Capability staging-write rejection (parse / validation / name conflict).
-
-    Runtime capability validation raises a subtype; member proposal services
-    project it as a known rejection before any package is published.
-    """
-
-
-class CapabilitySummary(Protocol):
-    """Read-only view of a staged capability's metadata used by the tools.
-
-    ``agents.capabilities.info.CapabilityInfo`` satisfies it structurally;
-    the assembler injects ``write_staging_capability`` as a plain callable.
-    """
-
-    @property
-    def name(self) -> str: ...
-
-    @property
-    def trusted(self) -> bool: ...
