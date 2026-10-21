@@ -1,6 +1,6 @@
 # Bridge API：宿主机制与 tlosure 策略的接口
 
-> 当前施工（EPIC A 与 P5 已合并；P6 已在本分支完成验收、待合并，P7/P8 尚未实施）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
+> 当前状态（EPIC A、P5 #193 与 P6 #194 已合并；P7 暂停，P8a 独立收口文档与审计）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
 
 Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值语境能使用哪些词汇。它由 Python 协议、builtin 注册表、环境契约和 `ActionRequest` 组成；不是通用 FFI。语言及行为模型见 [DSL 设计](dsl.md)，字段与词汇见 [DSL reference](../reference/dsl-reference.md)。
 
@@ -34,7 +34,7 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 | `(model-call {:prompt "任务数据" :max_tokens 256})` | `{:content "..." :usage {...}}`；不附工具，保留人格、RULES 与协议，额度受成员与规则预算约束 |
 | `(mail-send {:to ["地址"] :content "正文" :request_id "稳定键"})` | 真实邮局回执；拒收抛 RejectedError，未知抛 UnknownOutcomeError，均带结构化 data |
 
-`mail-send` 可选 `:subject` 和 `:request_id`；邮件参数/结果键保留 snake_case，如 `:mail_id`、`:request_id`、`:local_recipients`。`model-call` 的 usage 保留 provider 的 snake_case 键，如 `:completion_tokens`。`mail-field` 是纯的字段适配器，从真实触发邮件读取 ID、发件地址、主题、正文等白名单字段；不开放对象属性访问。
+`mail-send` 可选 `:subject` 和 `:request_id`；邮件参数/结果键保留 snake_case，如 `:mail_id`、`:request_id`、`:local_recipients`。`model-call` 的 usage 保留 provider 的 snake_case 键，如 `:completion_tokens`。`mail-field` 是纯的字段适配器，从宿主物化的触发邮件 record 读取 ID、发件地址、主题、正文等白名单字段；不读取 Mail 对象属性。
 
 ### 环境
 
@@ -81,4 +81,4 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 
 桥的形式化见 [ADR 0020](../decisions/0020-bridge-api.md)，完整函数能力见 [ADR 0021](../decisions/0021-tlosure-full-functions.md)，社会政策语境见 [ADR 0022](../decisions/0022-society-policy-context.md)。完整函数和复合能力均已实现，不再列为远期阶段。
 
-当前不提供通用 FFI、宏、`eval`、可变全局状态或 DSL 并发。更换语言宿主以及能力进入 LLM 工具面的方案尚未实施，不能从 SCI 兼容方向推导出当前存在这些能力。
+当前不提供通用 FFI、宏、`eval`、可变全局状态或 DSL 并发。更换语言宿主尚未实施，不能从 SCI 兼容方向推导出当前存在该能力。复合 Operation 已可投影为 LLM Tool。当前会话目录保持稳定；P7 已暂停，不新增统一 allowlist、逐请求 ToolView 或受控授权阶段。tools 尽量固定以保留请求前缀缓存机会；宿主现有领域检查继续生效，未来执行授权与工具展示分开讨论。

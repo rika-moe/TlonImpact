@@ -266,7 +266,7 @@
 
 `model-call` 不附工具，保留人格、RULES 和协议。输出上限不超过请求值、规则剩余额度和成员 `llm.max_tokens`；程序直接调用按获准输出上限持久预留且不退款，重放还原既有占用、不再次扣额。已记录结果直接复用；模型调用属于非幂等写入，已分发但未记录结果时保留 unknown，不自动重发。
 
-`mail-field` 读取真实 `Mail` 的 `:id`、`:from`、`:to`、`:cc`、`:subject`、`:content`、`:timestamp`、`:thread-id`、`:in-reply-to`、`:forward-of`、`:endorsing`；非邮件值返回 `nil`，未知字段报错。随包 [报社示例](../../src/tlon/resources/examples/newspaper/README.md) 演示先冻结期刊再逐人幂等投递，不自动创建默认成员。
+`mail-field` 读取宿主物化邮件 record 的 `:id`、`:from`、`:to`、`:cc`、`:subject`、`:content`、`:timestamp`、`:thread-id`、`:in-reply-to`、`:forward-of`、`:endorsing`；`nil` 输入返回 `nil`，非 record 输入及未知字段报错。随包 [报社示例](../../src/tlon/resources/examples/newspaper/README.md) 演示先冻结期刊再逐人幂等投递，不自动创建默认成员。
 
 宿主操作由成员 OperationRegistry 统一追加，均接收一个命名参数 map；完整清单与 schema 见[工具手册](tools-reference.md)。`member-spawn`、`member-start`、`member-stop`、`member-start-all` 替代旧位置参数动作入口。普通操作可在函数、条件和循环中组合；控制操作 `finish-turn`、`sleep-until`、`exit-agent` 必须独立位于规则根动作，不能嵌入组合表达式。
 
@@ -357,7 +357,7 @@
 | `(protocol)` | 无 | 协作协议文本进 system prompt |
 | `(knowledge)` | 无 | 记忆块拼成 `[已知信息]` 用户消息；**固定注入为 context 最后一条**（触发语之后、anchor 之外，ADR 0017 阶段 4）——声明位置不决定注入位置，只决定是否注入；JIT 检索的查询是责任集各邮件的 subject+正文拼接（ADR 0028） |
 | `(lessons)` | 无 | 成员继承的 `config/LESSONS.md`（退休成员蒸馏、随原型包传递，见 [design/memory.md](../design/memory.md)「退休蒸馏」）拼成 `[传承教训]` 用户消息；无该文件则跳过该 section（空态惯例同 knowledge/skills） |
-| `(skills)` | 无 | 三层 skill 目录的索引（name + description + SKILL.md 路径）拼成 `[可用技能]` 用户消息；模型用 read_file 自读正文（ADR 0010，[design/skills.md](../design/skills.md)） |
+| `(skills)` | 无 | 三层 skill 目录的索引（name + description + SKILL.md 路径）拼成 `[可用技能]` 用户消息；模型用 file-read 自读正文（ADR 0010，[design/skills.md](../design/skills.md)） |
 | `(current-task)` | 无 | 当前 doing 任务（至多一条：id + 标题 + 状态 + 描述）拼成 `[当前任务]` 用户消息；无 doing 任务则跳过该 section（空态惯例同 knowledge/skills），无 paused 回退。上下文在 session 首步构建一次（anchor），任务中途变化下个 session 才反映 |
 | `(thread-recap)` | 无 | 最近一个已完成 session 的简报（触发语、工具调用摘要、结论）拼成 `[最近会话摘要]` 用户消息：确定性重建自 session journal（ADR 0007），不调 LLM、不等批触发摘要；与 `mail-history` 互补——原文看邮件，简报看「我上一轮做了什么」。只覆盖最近一轮，成本不随历史膨胀；上一轮未完成（无 `session/end`）或从未跑过 session 时跳过该 section。ADR 0028 起与线程无关——session 身份不再由邮件派生，简报对象是本成员最近完成的那个 session |
 | `(mail-history n)` | 一个非负 int | 滑动窗口：取邮箱（inbox+sent 按时间正序合并）最近 n 封邮件进对话上下文 |
@@ -375,7 +375,7 @@ stage form：`(name)` 或 `(name {opts})`。所有 stage 支持 `:if <表达式>
 | `critique` | 额外一次 LLM 评审：评审输入 = 会话 context + 本轮待审输出（完整调用参数、调用编号及运行时执行状态，以普通文本渲染为 assistant 消息；草稿不是执行回执）+ 评审指令；首行去空白后必须恰好是 `PASS`/`FAIL`，结论写入 `scratch.critique = {:passed bool :feedback str}`；首行无法解析时跳过本次评审（记 warning、清除旧 verdict——显式 passed=true 与 passed=false 比较均不成立，revise 不触发），不记录为 PASS。异常同样清除旧 verdict；完成动作是否要求明确 PASS 由后续 stage 的 `:if` 决定。失败软降级 |
 | `revise` | 不调 LLM；仅在 FAIL 时把评审意见、完整待审输出及真实执行状态以普通用户消息喂回上下文，供下一轮 `think` 修正；空意见也保留草稿和未执行说明，不伪造工具调用/回执。消费过的 verdict 随之清除（`scratch.critique` 置 nil），避免陈旧 FAIL 在 critique 被条件跳过的后续轮次重复触发 |
 
-stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/tlon/agents/stages/outcome.py](../../src/tlon/agents/stages/outcome.py)），由 `LoopDriver._apply_outcome` 统一落地——应用顺序为：上下文追加 → scratch → 计数器/状态 → 工具结果 → 响应链 → 工具派发 → 邮件 → on-complete 动作 → 完成标记。
+stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/tlon/agents/stages/outcome.py](../../src/tlon/agents/stages/outcome.py)），由 `LoopDriver._apply_outcome` 统一落地——应用顺序为：上下文追加 → scratch → 计数器/状态 → 工具结果 → 响应链 → 工具派发 → 完成标记。
 
 ### 5.3 循环推进与终止（`LoopDriver.step_session`）
 
