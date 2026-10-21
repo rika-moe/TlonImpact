@@ -3,6 +3,7 @@
 import hashlib
 import json
 from dataclasses import replace
+from importlib.resources import files
 from pathlib import Path
 
 from tlon.agents.member_spec import MemberSpec, MemberSpecValidationError, validate_member_spec
@@ -21,6 +22,14 @@ def program_builtins(builtins: dict[str, Builtin] | None = None) -> dict[str, Bu
     return {name: value for name, value in registry.items() if name not in excluded}
 
 
+def program_module_sources(sources: dict[str, str]) -> dict[str, str]:
+    """Link host libraries explicitly; authors cannot replace the tlon namespace."""
+    if any(path == "tlon.tlon" or path.startswith("tlon/") for path in sources):
+        raise MemberSpecValidationError("module namespace tlon is reserved for host libraries")
+    library = files("tlon").joinpath("resources", "stdlib", "messages.tlon")
+    return {**sources, "tlon/messages.tlon": library.read_text(encoding="utf-8")}
+
+
 def validate_program_sources(
     behavior: str, modules: dict[str, str], builtins: dict[str, Builtin] | None = None
 ) -> MemberSpec:
@@ -31,10 +40,12 @@ def validate_program_sources(
             if modules:
                 raise MemberSpecValidationError("version 1 does not accept module sources")
             return validate_member_spec(spec, builtins=builtins)
-        package = ModulePackage.from_sources(modules, program_builtins(builtins))
+        package = ModulePackage.from_sources(
+            program_module_sources(modules), program_builtins(builtins)
+        )
         for _, entry in spec.handlers:
             package.entry(entry)
-        return replace(spec, module_sources=dict(package.sources))
+        return replace(spec, module_sources=dict(modules))
     except (ModuleError, EDNParseError) as error:
         raise MemberSpecValidationError(str(error)) from error
 

@@ -1266,19 +1266,24 @@ Operation 单一契约；输入与输出字段保留 snake_case。（本区块�
 
 ### model-call
 
-使用自己的模型与系统提示词生成文本，费用计入自己；不执行工具调用。
+使用自己的模型与系统提示词生成结构化响应；不执行工具调用。
 
 输入：
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `prompt` | string | 是 | — |
+| `messages` | array[object] | 是 | minItems=1 |
+| `tools` | array[string] | 否 | uniqueItems=True |
 | `max_tokens` | integer | 是 | minimum=1 |
+| `cache_prefix_len` | integer | 否 | minimum=0 |
 
 输出：
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `content` | string | 是 | — |
+| `content` | string / null | 是 | — |
+| `tool_calls` | array[object] | 是 | — |
+| `finish_reason` | string | 是 | — |
 | `usage` | object | 是 | — |
+| `reasoning_content` | string / null | 是 | — |
 <!-- END GENERATED: model-operations -->

@@ -32,7 +32,7 @@ CONTEXTS = [
         '(running? "someone")',
         '(lazy? "someone")',
         "(member-roster)",
-        '(model-call {:prompt "hello"})',
+        '(model-call {:messages [{:role "user" :content "hello"}]})',
         '(mail-send {:to ["someone@tlon.internal"] :content "hello"})',
         '(state-put {:key "key" :value true})',
         "(clock-read)",

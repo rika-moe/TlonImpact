@@ -102,11 +102,17 @@ async def test_state_read_freezes_branch_when_current_state_changes(store: Progr
         attempts += 1
         if attempts == 1:
             raise asyncio.CancelledError()
-        output.append(args["prompt"])
-        return {"content": "ok", "usage": {}}
+        output.append(args["messages"][0]["content"])
+        return {
+            "content": "ok",
+            "tool_calls": [],
+            "finish_reason": "stop",
+            "reasoning_content": None,
+            "usage": {},
+        }
 
     program = rule(
-        '(if (state-get {:key "enabled"}) (model-call {:prompt "original" :max_tokens 1}) (model-call {:prompt "changed" :max_tokens 1}))'
+        '(if (state-get {:key "enabled"}) (model-call {:messages [{:role "user" :content "original"}] :max_tokens 1}) (model-call {:messages [{:role "user" :content "changed"}] :max_tokens 1}))'
     )
     # Simulate a crash after the read was committed but before model dispatch.
     adapter = driver(store, AsyncMock()).operations
@@ -131,11 +137,22 @@ async def test_token_budget_counts_recorded_calls_after_restart(store: ProgramSt
 
         async def complete(allowance: int) -> dict[str, Any]:
             allowances.append(allowance)
-            return {"content": "answer", "usage": {}}
+            return {
+                "content": "answer",
+                "tool_calls": [],
+                "finish_reason": "stop",
+                "reasoning_content": None,
+                "usage": {},
+            }
 
         return await scope.model_call(args, args["max_tokens"], complete)
 
-    program = rule(" ".join('(model-call {:prompt "question" :max_tokens 4})' for _ in range(3)))
+    program = rule(
+        " ".join(
+            '(model-call {:messages [{:role "user" :content "question"}] :max_tokens 4})'
+            for _ in range(3)
+        )
+    )
     for _ in range(2):
         with pytest.raises(EvalError, match="allowance exhausted"):
             await driver(store, AsyncMock(), model=execute, token_budget=5).run(program, {})
@@ -150,7 +167,7 @@ async def test_unrecorded_model_dispatch_is_not_repeated(store: ProgramStore) ->
         attempts.append(context.call_id)
         raise RuntimeError("submission status unknown")
 
-    program = rule('(model-call {:prompt "paper" :max_tokens 1})')
+    program = rule('(model-call {:messages [{:role "user" :content "paper"}] :max_tokens 1})')
     from tlon.operations.schema import UnknownOutcomeError
 
     with pytest.raises(UnknownOutcomeError, match="submission status unknown"):

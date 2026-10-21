@@ -1,6 +1,6 @@
 # 可编程工作流程：目标设计
 
-状态：已接受；P1 在本阶段实现，P2–P5 尚未实施，2026-10-21。决策见 [ADR 0046](../decisions/0046-programmable-workflows.md)，施工与证据见 [实施计划](programmable-workflows-plan.md)。当前机制仍见 [DSL](dsl.md)、[runtime](runtime.md) 和 [调用恢复](invocation-recovery.md)。目标与实现边界以分阶段计划为准；P1 当前语法/API 见[模块程序指南](../guides/writing-a-module-program.md)。
+状态：已接受；P1 已合并（#208），P2 本阶段实现，P3–P5 尚未实施，2026-10-21。决策见 [ADR 0046](../decisions/0046-programmable-workflows.md)，施工与证据见 [实施计划](programmable-workflows-plan.md)。当前机制仍见 [DSL](dsl.md)、[runtime](runtime.md) 和 [调用恢复](invocation-recovery.md)。目标与实现边界以分阶段计划为准；当前语法/API 见[模块程序指南](../guides/writing-a-module-program.md)。
 
 ## 1. 执行与分层
 
@@ -51,6 +51,14 @@ Behavior 目标示意为 `{:handlers {:mail-delivered work.reply/handle-mail}}`�
 邮件、知识、skills、教训、时钟等外部信息经受控读取取得并记录；选择和组织上下文由库函数表达。上下文窗口校验、provider 协议归模型适配层；压缩、重试与错误反馈策略归工作程序，模型压缩也经同一操作计费和恢复。缓存前缀处理复用现有 provider 能力，不能为了工具选择频繁改写 schema。
 
 模型结果、预算结算与调用结果必须协调原子提交，保留现有 ProgramStore model_allocations/invocations 权威。不得复制一份账本或由包装父请求重复扣费。现有 output/total 的预留和结算语义保持；不能将 output 的预留额度记账写成已按实际 completion usage 计费。已派发但结果不确定的请求保持 unknown，不伪装普通失败并重新请求。
+
+### P2 当前实现
+
+`model-call` 必填 `messages`、`max_tokens`，可选 `tools`（工具名列表，默认空）与 `cache_prefix_len`。返回 content（可为 null）、规范化的 `{id,name,arguments}` tool_calls、finish_reason、usage 和 reasoning_content。输入拒绝旧 prompt 字段、system 消息及任意工具 schema。普通程序与旧 StageServices 共同使用 ModelService；旧 stage 引擎保留至 P5。
+
+宿主提供纯模块 `tlon.messages`（user/assistant/append），保留 tlon 命名空间；链接时合并标准源码，运行快照包含完整标准源码，作者模块与审批 API 保持原作者内容。v2 受理事务同时冻结 host（系统词、工具定义）与 config（有效非秘密模型配置，包括运行时重试/超时参数）；同一根运行复用它们。模型的工具选择只影响本次声明，不执行工具。
+
+Operation 的恢复 hook 只读取同根、同稳定调用路径的已提交模型结果，核对有效消息/系统词/工具/max_tokens/缓存前缀，再补外层回执。未知模型请求保持阻塞。新请求还校验当前工具契约；历史已提交结果不要求工具仍可执行。output 按获准输出额度计量，total 沿用现有结算，不另设账本。
 
 ## 4. 工具分派和错误
 

@@ -61,6 +61,11 @@ class ModelRequestRejectedError(RuntimeError):
 
 
 class ExecutionStore(Protocol):
+    def freeze_model_context(
+        self, root_id: str, slot: str, value: dict[str, Any]
+    ) -> dict[str, Any]: ...
+    def load_model_context(self, root_id: str, slot: str) -> dict[str, Any] | None: ...
+    def lookup_model_path(self, root_id: str, path: tuple[str, ...]) -> dict[str, Any] | None: ...
     def ensure_budget(
         self, root_id: str, token_limit: int, measure: str, deadline: float | None = None
     ) -> dict[str, Any]: ...
@@ -111,6 +116,10 @@ class ExecutionScope:
     cancelled: asyncio.Event = field(default_factory=asyncio.Event)
     parent: "ExecutionScope | None" = None
     _model_ordinal: int = field(default=0, init=False, repr=False)
+
+    def next_model_path(self) -> tuple[str, ...]:
+        """Inspect the next model identity without reserving or advancing it."""
+        return (*self.path, f"model:{self._model_ordinal}")
 
     def child(self, segment: str, *, deadline: float | None = None) -> "ExecutionScope":
         return ExecutionScope(

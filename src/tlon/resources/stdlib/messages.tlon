@@ -1,0 +1,6 @@
+(ns tlon.messages (:export user assistant append))
+
+;; Message helpers are pure data constructors. They never call the host.
+(defn user [content] {:role "user" :content content})
+(defn assistant [content] {:role "assistant" :content content})
+(defn append [messages message] (conj messages message))

@@ -31,7 +31,7 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 | --- | --- |
 | `(state-get {:key "key"})` | 成员私有状态值，缺失为 `nil`；读取结果参与重放 |
 | `(state-put {:key "key" :value value})` | 返回写入值；状态与该效果结果同事务提交 |
-| `(model-call {:prompt "任务数据" :max_tokens 256})` | `{:content "..." :usage {...}}`；不附工具，保留人格、RULES 与协议，额度受成员与规则预算约束 |
+| `(model-call {:messages [{:role "user" :content "任务数据"}] :tools [] :max_tokens 256})` | `{:content "..." :tool_calls [] :finish_reason "stop" :usage {...} :reasoning_content nil}`；工具名由宿主解析，保留人格、RULES 与协议，额度受根运行预算约束 |
 | `(mail-send {:to ["地址"] :content "正文" :request_id "稳定键"})` | 真实邮局回执；拒收抛 RejectedError，未知抛 UnknownOutcomeError，均带结构化 data |
 
 `mail-send` 可选 `:subject` 和 `:request_id`；邮件参数/结果键保留 snake_case，如 `:mail_id`、`:request_id`、`:local_recipients`。`model-call` 的 usage 保留 provider 的 snake_case 键，如 `:completion_tokens`。`mail-field` 是纯的字段适配器，从宿主物化的触发邮件 record 读取 ID、发件地址、主题、正文等白名单字段；不读取 Mail 对象属性。
@@ -81,3 +81,11 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 桥的形式化见 [ADR 0020](../decisions/0020-bridge-api.md)，完整函数能力见 [ADR 0021](../decisions/0021-tlosure-full-functions.md)，社会政策语境见 [ADR 0022](../decisions/0022-society-policy-context.md)。完整函数已实现；Capability 与复合 Operation 已删除。
 
 当前不提供通用 FFI、宏、`eval`、可变全局状态或 DSL 并发。更换语言宿主尚未实施，不能从 SCI 兼容方向推导出当前存在该能力。宿主 Operation 可以投影为 LLM Tool。当前会话目录保持稳定；P7 已暂停，不新增统一 allowlist、逐请求 ToolView 或受控授权阶段。tools 尽量固定以保留请求前缀缓存机会；宿主现有领域检查继续生效，未来执行授权与工具展示分开讨论。
+
+## P2 模型边界
+
+`model-call` 使用 `messages`、正整数 `max_tokens`，可选 `tools`（工具名称列表，省略为空）与 `cache_prefix_len`。不接受 prompt、system 消息或工具 schema。宿主将工具名解析到成员目录；只返回建议，不执行工具。工具执行与结果消息配对待 P3。
+
+响应固定包含 `content`（可为 nil）、`tool_calls`（`{:id ... :name ... :arguments {...}}` 列表）、`finish_reason`、`usage`、`reasoning_content`。程序可在调用后决定是否接受建议。纯 `tlon.messages` 仅构造消息；其源码由宿主显式提供并随运行冻结，作者不能覆盖 tlon 命名空间。
+
+v2 受理时原子冻结有效系统输入、工具定义和模型配置。恢复读取冻结值；新请求还校验当前工具目录。模型内层响应和预算已提交、外层 Operation 回执缺失时，从同一权威记录核对有效请求后补回执，不访问 provider 或再次扣额；未提交结果的已派发请求仍阻塞为 unknown。旧 stage 共同使用 ModelService，但 stage 执行、SessionJournal 恢复与工具循环仍按现行 v1 机制保留至后续阶段。

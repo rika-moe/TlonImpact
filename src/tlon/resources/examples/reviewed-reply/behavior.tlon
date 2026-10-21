@@ -1,0 +1,3 @@
+{:version 2
+ :handlers {:mail-delivered work.reply/handle}
+ :fuel 10000}

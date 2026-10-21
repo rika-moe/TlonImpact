@@ -73,7 +73,7 @@ async def test_mismatched_program_quarantined_across_restart_and_new_mail_runs(
 
 async def test_program_model_unknown_is_not_retried_or_allowed_to_continue(tmp_path: Path) -> None:
     spec = _spec(
-        '(model-call {:prompt "work" :max_tokens 10}) (state-put {:key "old" :value true})'
+        '(model-call {:messages [{:role "user" :content "work"}] :max_tokens 10}) (state-put {:key "old" :value true})'
     )
     # This fixture injects its model service after constructing the bare host.
     member = _member(tmp_path, _spec('(state-get {:key "fixture"})'))

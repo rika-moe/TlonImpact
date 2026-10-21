@@ -4,6 +4,7 @@ Supports multiple model providers with retry logic.
 """
 
 import asyncio
+import copy
 import json
 import os
 import time
@@ -275,6 +276,10 @@ class LLMClient:
                 raise ValueError("tlon_paths is required when agent_id is set")
             self._ledger = LedgerWriter(tlon_paths.agent_ledger_file(agent_id))
 
+    def configuration_snapshot(self) -> dict[str, Any]:
+        """Effective non-secret configuration, including runtime-only retry settings."""
+        return {name: getattr(self.config, name) for name in LLMConfig.model_fields}
+
     async def chat(
         self,
         system_prompt: str,
@@ -298,25 +303,35 @@ class LLMClient:
                 cache_prefix_len,
                 max_tokens,
             )
+        frozen = await asyncio.to_thread(
+            scope.store.freeze_model_context,
+            scope.root_id,
+            "config",
+            self.configuration_snapshot(),
+        )
+        client = copy.copy(self)
+        client.config = LLMConfig.model_validate(frozen)
+        client.max_retries = client.config.max_retries
+        client.base_delay = client.config.base_delay
         requested = (
-            min(self.config.max_tokens, max_tokens)
+            min(client.config.max_tokens, max_tokens)
             if max_tokens is not None
-            else self.config.max_tokens
+            else client.config.max_tokens
         )
         request = {
-            "model": self.config.model_name,
-            "api_base": self.config.api_base,
+            "model": client.config.model_name,
+            "api_base": client.config.api_base,
             "messages": [{"role": "system", "content": system_prompt}, *messages],
             "tools": tools,
-            "timeout": timeout if timeout is not None else self.config.request_timeout,
+            "timeout": timeout if timeout is not None else client.config.request_timeout,
             "purpose": purpose,
             "cache_prefix_len": cache_prefix_len,
             "max_tokens": max_tokens,
-            "member_max_tokens": self.config.max_tokens,
+            "member_max_tokens": client.config.max_tokens,
         }
 
         async def execute(allowance: int) -> dict[str, Any]:
-            response = await self._chat_accounted(
+            response = await client._chat_accounted(
                 system_prompt,
                 messages,
                 tools,
@@ -331,12 +346,12 @@ class LLMClient:
         try:
             estimated_input = (
                 litellm.token_counter(
-                    model=self.config.model_name or "",
+                    model=client.config.model_name or "",
                     messages=request["messages"],
                 )
                 + (
                     litellm.token_counter(
-                        model=self.config.model_name or "",
+                        model=client.config.model_name or "",
                         text=json.dumps(tools, ensure_ascii=False, separators=(",", ":")),
                     )
                     if tools

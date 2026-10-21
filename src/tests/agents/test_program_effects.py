@@ -71,7 +71,11 @@ async def test_llm_effect_keeps_system_prompt_and_disables_tools() -> None:
     client = SimpleNamespace(
         chat=AsyncMock(
             return_value=SimpleNamespace(
-                content="edition", usage={"completion_tokens": 4}, tool_calls=[]
+                content="edition",
+                usage={"completion_tokens": 4},
+                tool_calls=[],
+                finish_reason="stop",
+                reasoning_content=None,
             )
         )
     )
@@ -80,7 +84,9 @@ async def test_llm_effect_keeps_system_prompt_and_disables_tools() -> None:
         OperationRegistry(make_model_operations(client, system)),
         CallContext("a", "run", "call"),
     )
-    result = await executor.call("model-call", {"prompt": "source data", "max_tokens": 12})
+    result = await executor.call(
+        "model-call", {"messages": [{"role": "user", "content": "source data"}], "max_tokens": 12}
+    )
     assert result["usage"]["completion_tokens"] == 4
     kwargs = client.chat.await_args.kwargs
     assert kwargs["system_prompt"] == "identity + rules + protocol"

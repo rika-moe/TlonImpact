@@ -1,7 +1,7 @@
 """Member-bound model completion, shared by programs and model tools."""
 
 from collections.abc import Awaitable, Callable
-from typing import Any, Protocol
+from typing import Any
 
 from tlon.base.execution import (
     BudgetExceededError,
@@ -10,41 +10,38 @@ from tlon.base.execution import (
     UnknownModelOutcomeError,
 )
 from tlon.operations.core import CallContext, Operation
+from tlon.operations.invocation import InvocationOutcome
+from tlon.operations.model_service import ModelClient, ModelService, response_data
 from tlon.operations.schema import OperationError, RejectedError, UnknownOutcomeError
-
-
-class ModelClient(Protocol):
-    async def chat(
-        self,
-        system_prompt: str,
-        messages: list[dict[str, Any]],
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        max_tokens: int | None = None,
-        purpose: str | None = None,
-        session_id: str | None = None,
-    ) -> Any: ...
 
 
 def make_model_operations(
     client: ModelClient | None,
     system_prompt: Callable[[], Awaitable[str]] | None,
+    tool_definitions: Callable[[], list[dict[str, Any]]] = lambda: [],
 ) -> tuple[Operation, ...]:
+    service = (
+        ModelService(client, system_prompt, tool_definitions) if client and system_prompt else None
+    )
+
+    async def recover(context: CallContext, arguments: dict[str, Any]) -> InvocationOutcome | None:
+        if service is None or context.execution is None:
+            return None
+        return await service.recover(context.execution, arguments, context.call_id)
+
     async def complete(context: CallContext, arguments: dict[str, Any]) -> dict[str, Any]:
-        if client is None or system_prompt is None:
+        if service is None:
             raise OperationError("model-call requires member model services")
         try:
-            response = await client.chat(
-                system_prompt=await system_prompt(),
-                messages=[{"role": "user", "content": arguments["prompt"]}],
-                tools=None,
+            response = await service.request(
+                messages=arguments["messages"],
+                tools=arguments.get("tools", []),
                 max_tokens=arguments["max_tokens"],
+                cache_prefix_len=arguments.get("cache_prefix_len"),
                 purpose="program" if context.origin == "program" else "tool",
                 session_id=context.run_id,
             )
-            if response.tool_calls:
-                raise OperationError("model-call returned unrequested tool calls")
-            return {"content": response.content or "", "usage": response.usage or {}}
+            return response_data(response)
         except (OperationError, BudgetExceededError, ExecutionDeadlineError):
             raise
         except ModelRequestRejectedError as error:
@@ -75,32 +72,96 @@ def make_model_operations(
     return (
         Operation(
             "model-call",
-            "使用自己的模型与系统提示词生成文本，费用计入自己；不执行工具调用。",
+            "使用自己的模型与系统提示词生成结构化响应；不执行工具调用。",
             {
                 "type": "object",
                 "properties": {
-                    "prompt": {"type": "string"},
+                    "messages": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "role": {"type": "string", "enum": ["user", "assistant", "tool"]},
+                                "content": {"type": ["string", "null"]},
+                                "tool_calls": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "id": {"type": "string"},
+                                            "type": {"type": "string", "enum": ["function"]},
+                                            "function": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "name": {"type": "string"},
+                                                    "arguments": {"type": "string"},
+                                                },
+                                                "required": ["name", "arguments"],
+                                                "additionalProperties": False,
+                                            },
+                                        },
+                                        "required": ["id", "type", "function"],
+                                        "additionalProperties": False,
+                                    },
+                                },
+                                "tool_call_id": {"type": "string"},
+                                "reasoning_content": {"type": ["string", "null"]},
+                            },
+                            "required": ["role", "content"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "tools": {"type": "array", "items": {"type": "string"}, "uniqueItems": True},
                     "max_tokens": {"type": "integer", "minimum": 1},
+                    "cache_prefix_len": {"type": "integer", "minimum": 0},
                 },
-                "required": ["prompt", "max_tokens"],
+                "required": ["messages", "max_tokens"],
                 "additionalProperties": False,
             },
             {
                 "type": "object",
                 "properties": {
-                    "content": {"type": "string"},
+                    "content": {"type": ["string", "null"]},
+                    "tool_calls": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "name": {"type": "string"},
+                                "arguments": {
+                                    "type": "object",
+                                    "properties": {},
+                                    "required": [],
+                                    "additionalProperties": True,
+                                },
+                            },
+                            "required": ["id", "name", "arguments"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "finish_reason": {"type": "string"},
                     "usage": {
                         "type": "object",
                         "properties": {},
                         "required": [],
                         "additionalProperties": True,
                     },
+                    "reasoning_content": {"type": ["string", "null"]},
                 },
-                "required": ["content", "usage"],
+                "required": [
+                    "content",
+                    "tool_calls",
+                    "finish_reason",
+                    "usage",
+                    "reasoning_content",
+                ],
                 "additionalProperties": False,
             },
             complete,
             effects=frozenset({"write"}),
+            recover=recover,
         ),
     )
 
