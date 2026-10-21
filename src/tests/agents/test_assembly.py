@@ -185,6 +185,7 @@ class TestExecutionLevelAssembly:
 
         runtime_ctor.assert_not_called()
         assert caps.docker_runtime is None
+        assert caps.memory.write_gate is caps.write_gate
         names = set(caps.tool_executor.list_tools()) | {op.name for op in caps.operations}
         assert names.isdisjoint(DEVICE_TOOLS)
         # 其余工具照常装配

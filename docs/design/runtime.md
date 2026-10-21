@@ -141,3 +141,6 @@ boot/lazy 与邮件订阅资格来自 spec，不是当前调度状态。注册�
 行为原型、复合能力和受信工具的边界分别见 [prototypes](prototypes.md)、[capabilities](capabilities.md)、[Bridge API](bridge-api.md)。成员自主调整 context 仍是远期方向。
 
 随包 [报社示例](../../src/tlon/resources/examples/newspaper/README.md) 用普通 DSL 实现订阅、退订、按真实邮件 ID 收稿、明确期号出版、冻结内容及订阅者快照、逐人幂等投递。冻结版本在投递前持久化，同期号重试不重新编辑；新稿与新订阅进入后续期刊。来源编号来自真实 `Mail`，模型不负责生成来源附录。示例不会在首装或升级时新增默认成员，也不改现有 `~/.tlon`。
+
+
+EPIC A 审计收尾将两入口超时统一到 OperationExecutor，并由同一成员 write gate 保护 Operation 与 MemoryManager 的写入（含反思/蒸馏）。spawn 配额由冻结调用根决定，恢复不依赖日志会话绑定。预算和期限的确定拒绝跨领域包装保持原语义；超时后以真实调用回执为准，只有可能已执行且无回执的调用才为 unknown。

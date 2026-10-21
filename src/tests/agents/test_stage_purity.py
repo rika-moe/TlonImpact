@@ -44,7 +44,6 @@ def _make_driver(executor: MagicMock, tmp_path: Path) -> LoopDriver:
         services=_make_services(),
         executor=executor,
         tool_executor=MagicMock(),
-        per_tool_timeout=1.0,
         journal=journal,
         spill=ToolSpill(TlonPaths(home=tmp_path), "agent1"),
         # Default context window: the threshold is never crossed here.

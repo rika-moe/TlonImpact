@@ -303,3 +303,60 @@ async def test_domain_error_subclass_normalizes_identically_on_replay(store: Pro
     assert first.error == "OperationError: device exited unsuccessfully"
     assert first.data == {"exit_code": 7, "stdout": "partial"}
     assert calls == 1
+
+
+async def test_explicit_gate_is_shared_by_later_executor_for_same_store(
+    store: ProgramStore,
+) -> None:
+    from tlon.base.execution import MemberWriteGate
+
+    first_entered, second_entered, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    writes: list[str] = []
+
+    async def handler(context: CallContext, args: dict[str, Any]) -> int:
+        writes.append(context.call_id)
+        if context.call_id == "first":
+            first_entered.set()
+            await release.wait()
+        else:
+            second_entered.set()
+        return len(writes)
+
+    operation = Operation(
+        "sample",
+        "sample",
+        {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+        {"type": "integer"},
+        handler,
+        effects=frozenset({"write"}),
+    )
+    registry = OperationRegistry([operation])
+    first = OperationExecutor(
+        registry, CallContext("a", "root", "first"), store, write_gate=MemberWriteGate()
+    )
+    second = OperationExecutor(registry, CallContext("a", "root", "second"), store)
+    a = asyncio.create_task(first.call("sample", {}))
+    await first_entered.wait()
+    b = asyncio.create_task(second.call("sample", {}))
+    try:
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(second_entered.wait(), timeout=0.03)
+        assert writes == ["first"]
+    finally:
+        release.set()
+        await asyncio.gather(a, b)
+    assert writes == ["first", "second"]
+
+
+def test_store_cannot_silently_split_across_different_explicit_gates(store: ProgramStore) -> None:
+    from tlon.base.execution import MemberWriteGate
+    from tlon.operations.schema import DefinitionError
+
+    registry = OperationRegistry([])
+    gate = MemberWriteGate()
+    OperationExecutor(registry, CallContext("a", "root", "one"), store, write_gate=gate)
+    OperationExecutor(registry, CallContext("a", "root", "two"), store, write_gate=gate)
+    with pytest.raises(DefinitionError, match="different member write gate"):
+        OperationExecutor(
+            registry, CallContext("a", "root", "three"), store, write_gate=MemberWriteGate()
+        )

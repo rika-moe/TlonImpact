@@ -13,8 +13,8 @@ model or on any index failure it degrades to recency order. Writes on
 both paths (batch distillation, ``remember_fact``) pass conflict
 judgment first: similar active old claims are LLM-judged, and
 contradicted ones are superseded in place — invalidated, never deleted
-(ADR 0017 stage 3); every failure mode of the judgment degrades to pure
-append. The manager
+(ADR 0017 stage 3). Ordinary judgment failures degrade to pure append;
+execution control and recovery identity failures propagate without writing. The manager
 keeps the claim store, the index, the context-block assembly for the
 ``(knowledge)`` section, and the batch distillation trigger the
 scheduler calls at its session reap point.
@@ -32,8 +32,15 @@ import aiofiles
 
 from tlon.base.config import LLMConfig
 from tlon.base.embedding_client import EmbeddingClient
+from tlon.base.execution import (
+    BudgetExceededError,
+    ExecutionDeadlineError,
+    MemberWriteGate,
+    UnknownModelOutcomeError,
+)
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
+from tlon.operations.schema import RecoveryMismatchError
 
 from .claim_store import ClaimStore
 from .distiller import Distiller
@@ -108,7 +115,8 @@ class MemoryManager:
         llm_config: LLMConfig | None = None,
         tlon_paths: TlonPaths | None = None,
         embedder: Embedder | None = None,
-    ):
+        write_gate: MemberWriteGate | None = None,
+    ) -> None:
         """Initialize Memory Manager.
 
         Args:
@@ -127,8 +135,11 @@ class MemoryManager:
             embedder: Embedding client override (tests inject a fake);
                 None = build from ``llm_config.embedding_model_name``,
                 and when that is unset too, no vector retrieval at all
+            write_gate: Shared member mutation gate; standalone instances
+                create their own gate when omitted.
         """
         self.agent_id = agent_id
+        self.write_gate = write_gate if write_gate is not None else MemberWriteGate()
         self.config = config
 
         self.storage_path = data_dir / "memory"
@@ -177,36 +188,44 @@ class MemoryManager:
         A missing file is created with the current defaults; a corrupt
         one is logged and re-initialized with defaults.
         """
-        if self._loaded:
-            return
+        async with self.write_gate.hold():
+            if self._loaded:
+                return
 
-        logger.info("memory_loading", agent_id=self.agent_id)
+            logger.info("memory_loading", agent_id=self.agent_id)
 
-        # Load or create config
-        if self.config_file.exists():
-            try:
-                async with aiofiles.open(self.config_file, encoding="utf-8") as f:
-                    content = await f.read()
-                    data = json.loads(content)
-                    loaded_config = MemoryConfig.from_dict(data)
-                    loaded_config.agent_id = self.agent_id
-                    self.config = loaded_config
-                    logger.info("memory_config_loaded", agent_id=self.agent_id)
-            except Exception as e:
-                logger.error("memory_config_load_failed", error=str(e), exc_info=True)
+            # Load or create config
+            if self.config_file.exists():
+                try:
+                    async with aiofiles.open(self.config_file, encoding="utf-8") as f:
+                        content = await f.read()
+                        data = json.loads(content)
+                        loaded_config = MemoryConfig.from_dict(data)
+                        loaded_config.agent_id = self.agent_id
+                        self.config = loaded_config
+                        logger.info("memory_config_loaded", agent_id=self.agent_id)
+                except (
+                    BudgetExceededError,
+                    ExecutionDeadlineError,
+                    UnknownModelOutcomeError,
+                    RecoveryMismatchError,
+                ):
+                    raise
+                except Exception as e:
+                    logger.error("memory_config_load_failed", error=str(e), exc_info=True)
+                    self.config.agent_id = self.agent_id
+                    await self._save_config()
+            else:
+                # Save initial config
                 self.config.agent_id = self.agent_id
                 await self._save_config()
-        else:
-            # Save initial config
-            self.config.agent_id = self.agent_id
-            await self._save_config()
 
-        self._watermark = self._load_watermark()
-        await self.claims.load()
-        await self._init_vector_index()
+            self._watermark = self._load_watermark()
+            await self.claims.load()
+            await self._init_vector_index()
 
-        self._loaded = True
-        logger.info("memory_loaded", agent_id=self.agent_id)
+            self._loaded = True
+            logger.info("memory_loaded", agent_id=self.agent_id)
 
     # ===== Vector index (derived view of claims.jsonl, ADR 0017 stage 2) =====
 
@@ -221,37 +240,52 @@ class MemoryManager:
         key) degrades to no index: retrieval falls back to recency order
         and the next startup retries.
         """
-        self._index = None
-        if self._embedder is None:
-            return
-        try:
-            index = VectorIndex(self.storage_path / "claims_vec.db")
-        except Exception as e:
-            logger.warning("vector_index_open_failed", error=str(e))
-            return
-        self._index = index
-
-        embedder = self._embedder
-        active = await self.claims.get_all_claims()
-        meta = index.model_meta()
-        if meta is not None and meta[0] == embedder.model_name:
-            await self._backfill_index(index, embedder, active)
-            return
-        if meta is not None:
-            logger.info(
-                "vector_index_model_changed", old_model=meta[0], new_model=embedder.model_name
-            )
-        try:
-            vectors = await embedder.embed([str(c.get("text", "")) for c in active])
-            index.rebuild(
-                embedder.model_name,
-                [(str(c["id"]), vector) for c, vector in zip(active, vectors, strict=True)],
-            )
-            logger.info("vector_index_rebuilt", claim_count=len(active))
-        except Exception as e:
-            logger.warning("vector_index_rebuild_failed", error=str(e))
-            index.close()
+        async with self.write_gate.hold():
             self._index = None
+            if self._embedder is None:
+                return
+            try:
+                index = VectorIndex(self.storage_path / "claims_vec.db")
+            except (
+                BudgetExceededError,
+                ExecutionDeadlineError,
+                UnknownModelOutcomeError,
+                RecoveryMismatchError,
+            ):
+                raise
+            except Exception as e:
+                logger.warning("vector_index_open_failed", error=str(e))
+                return
+            self._index = index
+
+            embedder = self._embedder
+            active = await self.claims.get_all_claims()
+            meta = index.model_meta()
+            if meta is not None and meta[0] == embedder.model_name:
+                await self._backfill_index(index, embedder, active)
+                return
+            if meta is not None:
+                logger.info(
+                    "vector_index_model_changed", old_model=meta[0], new_model=embedder.model_name
+                )
+            try:
+                vectors = await embedder.embed([str(c.get("text", "")) for c in active])
+                index.rebuild(
+                    embedder.model_name,
+                    [(str(c["id"]), vector) for c, vector in zip(active, vectors, strict=True)],
+                )
+                logger.info("vector_index_rebuilt", claim_count=len(active))
+            except (
+                BudgetExceededError,
+                ExecutionDeadlineError,
+                UnknownModelOutcomeError,
+                RecoveryMismatchError,
+            ):
+                raise
+            except Exception as e:
+                logger.warning("vector_index_rebuild_failed", error=str(e))
+                index.close()
+                self._index = None
 
     async def _backfill_index(
         self, index: VectorIndex, embedder: Embedder, active: list[dict[str, Any]]
@@ -262,20 +296,28 @@ class MemoryManager:
         outage) and rows orphaned by out-of-band claim edits — both
         directions of drift between the store and its derived view.
         """
-        active_ids = {str(c.get("id")) for c in active}
-        indexed = index.indexed_ids()
-        for orphan in indexed - active_ids:
-            index.delete(orphan)
-        missing = [c for c in active if str(c.get("id")) not in indexed]
-        if not missing:
-            return
-        try:
-            vectors = await embedder.embed([str(c.get("text", "")) for c in missing])
-            for c, vector in zip(missing, vectors, strict=True):
-                index.upsert(str(c["id"]), vector)
-            logger.info("vector_index_backfilled", claim_count=len(missing))
-        except Exception as e:
-            logger.warning("vector_index_backfill_failed", error=str(e))
+        async with self.write_gate.hold():
+            active_ids = {str(c.get("id")) for c in active}
+            indexed = index.indexed_ids()
+            for orphan in indexed - active_ids:
+                index.delete(orphan)
+            missing = [c for c in active if str(c.get("id")) not in indexed]
+            if not missing:
+                return
+            try:
+                vectors = await embedder.embed([str(c.get("text", "")) for c in missing])
+                for c, vector in zip(missing, vectors, strict=True):
+                    index.upsert(str(c["id"]), vector)
+                logger.info("vector_index_backfilled", claim_count=len(missing))
+            except (
+                BudgetExceededError,
+                ExecutionDeadlineError,
+                UnknownModelOutcomeError,
+                RecoveryMismatchError,
+            ):
+                raise
+            except Exception as e:
+                logger.warning("vector_index_backfill_failed", error=str(e))
 
     async def _index_claims(self, claims: list[dict[str, Any]]) -> None:
         """Best-effort: embed freshly written claims into the index.
@@ -283,33 +325,49 @@ class MemoryManager:
         Failures only log — an unindexed claim stays reachable via the
         recency fallback, and the next startup's backfill retries it.
         """
-        if self._index is None or self._embedder is None or not claims:
-            return
-        async with self._index_lock:
-            try:
-                vectors = await self._embedder.embed([str(c.get("text", "")) for c in claims])
-                entries = [
-                    (str(c["id"]), vector)
-                    for c, vector in zip(claims, vectors, strict=True)
-                    if c.get("id") is not None
-                ]
-                if self._index.model_meta() is None:
-                    # Empty memory: the first write bootstraps the table
-                    # (dimension is only known once vectors exist).
-                    self._index.rebuild(self._embedder.model_name, entries)
-                else:
-                    for claim_id, vector in entries:
-                        self._index.upsert(claim_id, vector)
-            except Exception as e:
-                logger.warning("vector_index_upsert_failed", error=str(e))
+        async with self.write_gate.hold():
+            if self._index is None or self._embedder is None or not claims:
+                return
+            async with self._index_lock:
+                try:
+                    vectors = await self._embedder.embed([str(c.get("text", "")) for c in claims])
+                    entries = [
+                        (str(c["id"]), vector)
+                        for c, vector in zip(claims, vectors, strict=True)
+                        if c.get("id") is not None
+                    ]
+                    if self._index.model_meta() is None:
+                        # Empty memory: the first write bootstraps the table
+                        # (dimension is only known once vectors exist).
+                        self._index.rebuild(self._embedder.model_name, entries)
+                    else:
+                        for claim_id, vector in entries:
+                            self._index.upsert(claim_id, vector)
+                except (
+                    BudgetExceededError,
+                    ExecutionDeadlineError,
+                    UnknownModelOutcomeError,
+                    RecoveryMismatchError,
+                ):
+                    raise
+                except Exception as e:
+                    logger.warning("vector_index_upsert_failed", error=str(e))
 
     async def _save_config(self) -> None:
         """Save memory config to disk."""
-        try:
-            async with aiofiles.open(self.config_file, "w", encoding="utf-8") as f:
-                await f.write(json.dumps(self.config.to_dict(), indent=2, ensure_ascii=False))
-        except Exception as e:
-            logger.error("memory_config_save_failed", error=str(e), exc_info=True)
+        async with self.write_gate.hold():
+            try:
+                async with aiofiles.open(self.config_file, "w", encoding="utf-8") as f:
+                    await f.write(json.dumps(self.config.to_dict(), indent=2, ensure_ascii=False))
+            except (
+                BudgetExceededError,
+                ExecutionDeadlineError,
+                UnknownModelOutcomeError,
+                RecoveryMismatchError,
+            ):
+                raise
+            except Exception as e:
+                logger.error("memory_config_save_failed", error=str(e), exc_info=True)
 
     # ===== Distillation watermark =====
 
@@ -322,22 +380,37 @@ class MemoryManager:
             data = json.loads(self.distillation_file.read_text(encoding="utf-8"))
             watermark = data.get("last_distilled_at")
             return str(watermark) if watermark else None
+        except (
+            BudgetExceededError,
+            ExecutionDeadlineError,
+            UnknownModelOutcomeError,
+            RecoveryMismatchError,
+        ):
+            raise
         except Exception as e:
             logger.warning("distillation_watermark_load_failed", error=str(e))
             return None
 
     async def _save_watermark(self, watermark: str) -> None:
         """Persist the watermark atomically (temp file + os.replace)."""
-        tmp_file = self.distillation_file.with_name(self.distillation_file.name + ".tmp")
-        try:
-            async with aiofiles.open(tmp_file, "w", encoding="utf-8") as f:
-                await f.write(json.dumps({"last_distilled_at": watermark}, ensure_ascii=False))
-            await asyncio.to_thread(os.replace, tmp_file, self.distillation_file)
-            self._watermark = watermark
-        except Exception as e:
-            logger.error("distillation_watermark_save_failed", error=str(e), exc_info=True)
-            with contextlib.suppress(OSError):
-                tmp_file.unlink(missing_ok=True)
+        async with self.write_gate.hold():
+            tmp_file = self.distillation_file.with_name(self.distillation_file.name + ".tmp")
+            try:
+                async with aiofiles.open(tmp_file, "w", encoding="utf-8") as f:
+                    await f.write(json.dumps({"last_distilled_at": watermark}, ensure_ascii=False))
+                await asyncio.to_thread(os.replace, tmp_file, self.distillation_file)
+                self._watermark = watermark
+            except (
+                BudgetExceededError,
+                ExecutionDeadlineError,
+                UnknownModelOutcomeError,
+                RecoveryMismatchError,
+            ):
+                raise
+            except Exception as e:
+                logger.error("distillation_watermark_save_failed", error=str(e), exc_info=True)
+                with contextlib.suppress(OSError):
+                    tmp_file.unlink(missing_ok=True)
 
     def _parsed_watermark(self) -> datetime | None:
         """Parse the persisted timestamp; invalid values mean no progress."""
@@ -396,25 +469,26 @@ class MemoryManager:
             The number of claims persisted if a batch was distilled,
             None otherwise
         """
-        if not self._loaded:
-            await self.load()
+        async with self.write_gate.hold():
+            if not self._loaded:
+                await self.load()
 
-        pending = await self._collect_pending(logs)
-        if len(pending) < self.config.distillation_window:
-            logger.debug(
-                "distillation_window_not_reached",
-                pending_count=len(pending),
-                window=self.config.distillation_window,
+            pending = await self._collect_pending(logs)
+            if len(pending) < self.config.distillation_window:
+                logger.debug(
+                    "distillation_window_not_reached",
+                    pending_count=len(pending),
+                    window=self.config.distillation_window,
+                )
+                return None
+
+            projections = [
+                build_session_projection(events, session_id)
+                for session_id, _started_at, events in pending
+            ]
+            return await self._distill_sessions(
+                projections, [started_at for _sid, started_at, _events in pending]
             )
-            return None
-
-        projections = [
-            build_session_projection(events, session_id)
-            for session_id, _started_at, events in pending
-        ]
-        return await self._distill_sessions(
-            projections, [started_at for _sid, started_at, _events in pending]
-        )
 
     async def _distill_sessions(
         self,
@@ -422,61 +496,76 @@ class MemoryManager:
         started_ats: list[datetime | None],
     ) -> int | None:
         """Distill a batch of session projections into claims."""
-        source_session_ids = [p.session_id for p in projections]
-        logger.info("distillation_started", session_count=len(projections))
+        async with self.write_gate.hold():
+            source_session_ids = [p.session_id for p in projections]
+            logger.info("distillation_started", session_count=len(projections))
 
-        claim_dicts: list[dict[str, Any]] = []
-        if self.distiller:
+            claim_dicts: list[dict[str, Any]] = []
+            if self.distiller:
+                try:
+                    claim_dicts = await self.distiller.distill(projections)
+                except (
+                    BudgetExceededError,
+                    ExecutionDeadlineError,
+                    UnknownModelOutcomeError,
+                    RecoveryMismatchError,
+                ):
+                    raise
+                except Exception as e:
+                    logger.error("llm_distillation_failed", error=str(e), exc_info=True)
+            if not claim_dicts:
+                # No LLM, LLM failure, or nothing usable: mechanical claims —
+                # distillation must never lose a batch to provider flakiness.
+                claim_dicts = Distiller.fallback_claims(projections)
+
+            if not claim_dicts:
+                logger.warning("distillation_no_claims", session_count=len(projections))
+                return None
+
+            now = datetime.now(UTC).isoformat()
+            new_claims = [
+                Claim(
+                    text=claim_dict["text"],
+                    timestamp=now,
+                    valid_from=now,
+                    source_session_ids=source_session_ids,
+                    importance=claim_dict.get("importance", 0.5),
+                )
+                for claim_dict in claim_dicts
+            ]
+            await self._resolve_conflicts(new_claims)
+
+            persisted: list[dict[str, Any]] = []
             try:
-                claim_dicts = await self.distiller.distill(projections)
+                for claim in new_claims:
+                    claim_data = claim.to_dict()
+                    await self.claims.add_claim(claim_data)
+                    persisted.append(claim_data)
+            except (
+                BudgetExceededError,
+                ExecutionDeadlineError,
+                UnknownModelOutcomeError,
+                RecoveryMismatchError,
+            ):
+                raise
             except Exception as e:
-                logger.error("llm_distillation_failed", error=str(e), exc_info=True)
-        if not claim_dicts:
-            # No LLM, LLM failure, or nothing usable: mechanical claims —
-            # distillation must never lose a batch to provider flakiness.
-            claim_dicts = Distiller.fallback_claims(projections)
+                # Persistence failure: the watermark stays, the next reap
+                # retries the same batch.
+                logger.error("distillation_persist_failed", error=str(e), exc_info=True)
+                return None
 
-        if not claim_dicts:
-            logger.warning("distillation_no_claims", session_count=len(projections))
-            return None
+            await self._index_claims(persisted)
 
-        now = datetime.now(UTC).isoformat()
-        new_claims = [
-            Claim(
-                text=claim_dict["text"],
-                timestamp=now,
-                valid_from=now,
-                source_session_ids=source_session_ids,
-                importance=claim_dict.get("importance", 0.5),
+            known_starts = [ts for ts in started_ats if ts is not None]
+            if known_starts:
+                await self._save_watermark(max(known_starts).isoformat())
+
+            logger.info(
+                "distillation_completed",
+                session_count=len(projections),
+                claim_count=len(claim_dicts),
             )
-            for claim_dict in claim_dicts
-        ]
-        await self._resolve_conflicts(new_claims)
-
-        persisted: list[dict[str, Any]] = []
-        try:
-            for claim in new_claims:
-                claim_data = claim.to_dict()
-                await self.claims.add_claim(claim_data)
-                persisted.append(claim_data)
-        except Exception as e:
-            # Persistence failure: the watermark stays, the next reap
-            # retries the same batch.
-            logger.error("distillation_persist_failed", error=str(e), exc_info=True)
-            return None
-
-        await self._index_claims(persisted)
-
-        known_starts = [ts for ts in started_ats if ts is not None]
-        if known_starts:
-            await self._save_watermark(max(known_starts).isoformat())
-
-        logger.info(
-            "distillation_completed",
-            session_count=len(projections),
-            claim_count=len(claim_dicts),
-        )
-        return len(claim_dicts)
+            return len(claim_dicts)
 
     # ===== Conflict judgment (ADR 0017 stage 3) =====
 
@@ -492,65 +581,89 @@ class MemoryManager:
         (``status``/``superseded_by``/``valid_to`` — never deleted); the
         new claims themselves are appended by the caller.
 
-        Every failure mode — no distiller (mechanical fallback claims
+        Ordinary failures — no distiller (mechanical fallback claims
         imply the LLM is down anyway), no index/embedder, embedding or
         search failure, judgment failure — degrades to pure append:
-        conflict judgment is an enhancement, never a write blocker.
+        conflict judgment is an enhancement. Execution control and recovery
+        identity errors propagate so a rejected or unknown model call cannot
+        silently become a successful memory write.
         """
-        if self.distiller is None or self._index is None or self._embedder is None:
-            return
-        if not new_claims:
-            return
+        async with self.write_gate.hold():
+            if self.distiller is None or self._index is None or self._embedder is None:
+                return
+            if not new_claims:
+                return
 
-        texts = [claim.text for claim in new_claims]
-        try:
-            vectors = await self._embedder.embed(texts)
-        except Exception as e:
-            logger.warning("conflict_candidate_embed_failed", error=str(e))
-            return
+            texts = [claim.text for claim in new_claims]
+            try:
+                vectors = await self._embedder.embed(texts)
+            except (
+                BudgetExceededError,
+                ExecutionDeadlineError,
+                UnknownModelOutcomeError,
+                RecoveryMismatchError,
+            ):
+                raise
+            except Exception as e:
+                logger.warning("conflict_candidate_embed_failed", error=str(e))
+                return
 
-        active = {str(c.get("id")): c for c in await self.claims.get_all_claims()}
-        candidates: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        try:
-            for vector in vectors:
-                for claim_id, similarity in self._index.search(
-                    vector, self.config.conflict_candidate_limit
-                ):
-                    if similarity < self.config.conflict_similarity_threshold:
-                        continue
-                    if claim_id in seen or claim_id not in active:
-                        continue
-                    seen.add(claim_id)
-                    candidates.append(active[claim_id])
-        except Exception as e:
-            logger.warning("conflict_candidate_search_failed", error=str(e))
-            return
-        if not candidates:
-            return
+            active = {str(c.get("id")): c for c in await self.claims.get_all_claims()}
+            candidates: list[dict[str, Any]] = []
+            seen: set[str] = set()
+            try:
+                for vector in vectors:
+                    for claim_id, similarity in self._index.search(
+                        vector, self.config.conflict_candidate_limit
+                    ):
+                        if similarity < self.config.conflict_similarity_threshold:
+                            continue
+                        if claim_id in seen or claim_id not in active:
+                            continue
+                        seen.add(claim_id)
+                        candidates.append(active[claim_id])
+            except (
+                BudgetExceededError,
+                ExecutionDeadlineError,
+                UnknownModelOutcomeError,
+                RecoveryMismatchError,
+            ):
+                raise
+            except Exception as e:
+                logger.warning("conflict_candidate_search_failed", error=str(e))
+                return
+            if not candidates:
+                return
 
-        try:
-            verdicts = await self.distiller.judge_conflicts(texts, candidates)
-        except Exception as e:
-            logger.warning("conflict_judgment_failed", error=str(e))
-            return
-        if verdicts is None:
-            return
+            try:
+                verdicts = await self.distiller.judge_conflicts(texts, candidates)
+            except (
+                BudgetExceededError,
+                ExecutionDeadlineError,
+                UnknownModelOutcomeError,
+                RecoveryMismatchError,
+            ):
+                raise
+            except Exception as e:
+                logger.warning("conflict_judgment_failed", error=str(e))
+                return
+            if verdicts is None:
+                return
 
-        now = datetime.now(UTC).isoformat()
-        for claim, verdict in zip(new_claims, verdicts, strict=True):
-            if verdict.action != "supersede":
-                continue
-            for old_id in verdict.superseded_ids:
-                if old_id == claim.id:
-                    continue  # never self-supersede
-                if await self.claims.supersede_claim(old_id, claim.id, now):
-                    logger.info(
-                        "claim_superseded",
-                        agent_id=self.agent_id,
-                        old_claim_id=old_id,
-                        new_claim_id=claim.id,
-                    )
+            now = datetime.now(UTC).isoformat()
+            for claim, verdict in zip(new_claims, verdicts, strict=True):
+                if verdict.action != "supersede":
+                    continue
+                for old_id in verdict.superseded_ids:
+                    if old_id == claim.id:
+                        continue  # never self-supersede
+                    if await self.claims.supersede_claim(old_id, claim.id, now):
+                        logger.info(
+                            "claim_superseded",
+                            agent_id=self.agent_id,
+                            old_claim_id=old_id,
+                            new_claim_id=claim.id,
+                        )
 
     async def build_context_blocks(
         self,
@@ -621,6 +734,13 @@ class MemoryManager:
             return None
         try:
             (query_vector,) = await self._embedder.embed([query])
+        except (
+            BudgetExceededError,
+            ExecutionDeadlineError,
+            UnknownModelOutcomeError,
+            RecoveryMismatchError,
+        ):
+            raise
         except Exception as e:
             logger.warning("jit_query_embed_failed", error=str(e))
             return None
@@ -640,6 +760,13 @@ class MemoryManager:
                     + self.config.retrieval_gamma_importance * self._importance_score(claim)
                 )
                 scored.append((score, claim))
+        except (
+            BudgetExceededError,
+            ExecutionDeadlineError,
+            UnknownModelOutcomeError,
+            RecoveryMismatchError,
+        ):
+            raise
         except Exception as e:
             logger.warning("jit_retrieval_failed", error=str(e))
             return None
@@ -689,26 +816,27 @@ class MemoryManager:
         Returns:
             The claim ID
         """
-        if not self._loaded:
-            await self.load()
+        async with self.write_gate.hold():
+            if not self._loaded:
+                await self.load()
 
-        now = datetime.now(UTC).isoformat()
-        claim = Claim(
-            text=fact,
-            timestamp=now,
-            valid_from=now,
-            source_session_ids=[],
-            importance=importance,
-        )
+            now = datetime.now(UTC).isoformat()
+            claim = Claim(
+                text=fact,
+                timestamp=now,
+                valid_from=now,
+                source_session_ids=[],
+                importance=importance,
+            )
 
-        await self._resolve_conflicts([claim])
+            await self._resolve_conflicts([claim])
 
-        claim_data = claim.to_dict()
-        claim_id = await self.claims.add_claim(claim_data)
-        await self._index_claims([claim_data])
-        logger.info("claim_recorded", claim_id=claim_id, content=fact)
+            claim_data = claim.to_dict()
+            claim_id = await self.claims.add_claim(claim_data)
+            await self._index_claims([claim_data])
+            logger.info("claim_recorded", claim_id=claim_id, content=fact)
 
-        return claim_id
+            return claim_id
 
     async def search_memories(
         self,
@@ -764,6 +892,13 @@ class MemoryManager:
             return None
         try:
             (query_vector,) = await self._embedder.embed([query])
+        except (
+            BudgetExceededError,
+            ExecutionDeadlineError,
+            UnknownModelOutcomeError,
+            RecoveryMismatchError,
+        ):
+            raise
         except Exception as e:
             logger.warning("memory_search_embed_failed", error=str(e))
             return None
@@ -788,36 +923,37 @@ class MemoryManager:
         Returns:
             Result message
         """
-        if not self._loaded:
-            await self.load()
+        async with self.write_gate.hold():
+            if not self._loaded:
+                await self.load()
 
-        keywords = [kw.strip() for kw in query.split() if len(kw.strip()) > 1]
-        if not keywords:
-            keywords = [query]
+            keywords = [kw.strip() for kw in query.split() if len(kw.strip()) > 1]
+            if not keywords:
+                keywords = [query]
 
-        matches = await self.claims.search_claims_by_keyword(keywords, 100)
+            matches = await self.claims.search_claims_by_keyword(keywords, 100)
 
-        if not matches:
-            return f"未找到匹配 '{query}' 的记忆。"
+            if not matches:
+                return f"未找到匹配 '{query}' 的记忆。"
 
-        if not confirm:
-            # Preview mode
-            lines = [f"找到 {len(matches)} 条匹配记忆:", ""]
-            for c in matches[:5]:
-                lines.append(f"- {c.get('text', '')}")
-            if len(matches) > 5:
-                lines.append(f"- … 等共 {len(matches)} 条")
-            lines.append("")
-            lines.append("调用 memory-forget，参数 query 为检索词、confirm 为 true，确认删除。")
-            return "\n".join(lines)
+            if not confirm:
+                # Preview mode
+                lines = [f"找到 {len(matches)} 条匹配记忆:", ""]
+                for c in matches[:5]:
+                    lines.append(f"- {c.get('text', '')}")
+                if len(matches) > 5:
+                    lines.append(f"- … 等共 {len(matches)} 条")
+                lines.append("")
+                lines.append("调用 memory-forget，参数 query 为检索词、confirm 为 true，确认删除。")
+                return "\n".join(lines)
 
-        # Delete mode
-        deleted_count = 0
-        for c in matches:
-            if (cid := c.get("id")) is not None and await self.claims.delete_claim(str(cid)):
-                deleted_count += 1
+            # Delete mode
+            deleted_count = 0
+            for c in matches:
+                if (cid := c.get("id")) is not None and await self.claims.delete_claim(str(cid)):
+                    deleted_count += 1
 
-        return f"已删除 {deleted_count} 条记忆。"
+            return f"已删除 {deleted_count} 条记忆。"
 
     async def delete_claim(self, claim_id: str) -> bool:
         """Delete one claim by ID (called by the reflection engine).
@@ -832,38 +968,39 @@ class MemoryManager:
         Returns:
             True if exactly one claim was deleted
         """
-        if not self._loaded:
-            await self.load()
+        async with self.write_gate.hold():
+            if not self._loaded:
+                await self.load()
 
-        if await self.claims.delete_claim(claim_id):
-            self._remove_from_index(claim_id)
-            logger.info("claim_deleted", agent_id=self.agent_id, claim_id=claim_id)
-            return True
+            if await self.claims.delete_claim(claim_id):
+                self._remove_from_index(claim_id)
+                logger.info("claim_deleted", agent_id=self.agent_id, claim_id=claim_id)
+                return True
 
-        all_claims = await self.claims.get_all_claims(include_superseded=True)
-        matches = [c for c in all_claims if str(c.get("id", "")).startswith(claim_id)]
-        if len(matches) == 1:
-            resolved_id = str(matches[0]["id"])
-            await self.claims.delete_claim(resolved_id)
-            self._remove_from_index(resolved_id)
-            logger.info(
-                "claim_deleted",
-                agent_id=self.agent_id,
-                claim_id=resolved_id,
-                requested_id=claim_id,
-            )
-            return True
+            all_claims = await self.claims.get_all_claims(include_superseded=True)
+            matches = [c for c in all_claims if str(c.get("id", "")).startswith(claim_id)]
+            if len(matches) == 1:
+                resolved_id = str(matches[0]["id"])
+                await self.claims.delete_claim(resolved_id)
+                self._remove_from_index(resolved_id)
+                logger.info(
+                    "claim_deleted",
+                    agent_id=self.agent_id,
+                    claim_id=resolved_id,
+                    requested_id=claim_id,
+                )
+                return True
 
-        if matches:
-            logger.warning(
-                "claim_delete_ambiguous",
-                agent_id=self.agent_id,
-                claim_id=claim_id,
-                match_count=len(matches),
-            )
-        else:
-            logger.warning("claim_delete_not_found", agent_id=self.agent_id, claim_id=claim_id)
-        return False
+            if matches:
+                logger.warning(
+                    "claim_delete_ambiguous",
+                    agent_id=self.agent_id,
+                    claim_id=claim_id,
+                    match_count=len(matches),
+                )
+            else:
+                logger.warning("claim_delete_not_found", agent_id=self.agent_id, claim_id=claim_id)
+            return False
 
     def _remove_from_index(self, claim_id: str) -> None:
         """Drop a deleted claim's vector (best-effort; a stale row is
@@ -871,6 +1008,13 @@ class MemoryManager:
         if self._index is not None:
             try:
                 self._index.delete(claim_id)
+            except (
+                BudgetExceededError,
+                ExecutionDeadlineError,
+                UnknownModelOutcomeError,
+                RecoveryMismatchError,
+            ):
+                raise
             except Exception as e:
                 logger.warning("vector_index_delete_failed", claim_id=claim_id, error=str(e))
 

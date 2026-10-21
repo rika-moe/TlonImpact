@@ -3,11 +3,41 @@
 import asyncio
 import json
 import time
-from collections.abc import Awaitable, Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, cast
+
+
+class MemberWriteGate:
+    """One member's writer boundary, reentrant only within its owning task."""
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._owner: asyncio.Task[Any] | None = None
+
+    @asynccontextmanager
+    async def hold(self, write: bool = True) -> AsyncIterator[None]:
+        task = asyncio.current_task()
+        if not write:
+            yield
+            return
+        if task is not None and self._owner is task:
+            scope = current_execution()
+            if scope is not None:
+                scope.check()
+            yield
+            return
+        async with self._lock:
+            scope = current_execution()
+            if scope is not None:
+                scope.check()
+            self._owner = task
+            try:
+                yield
+            finally:
+                self._owner = None
 
 
 class BudgetExceededError(RuntimeError):
@@ -82,14 +112,14 @@ class ExecutionScope:
     parent: "ExecutionScope | None" = None
     _model_ordinal: int = field(default=0, init=False, repr=False)
 
-    def child(self, segment: str) -> "ExecutionScope":
+    def child(self, segment: str, *, deadline: float | None = None) -> "ExecutionScope":
         return ExecutionScope(
             self.store,
             self.root_id,
             self.token_limit,
             self.measure,
             (*self.path, segment),
-            self.deadline,
+            self.deadline if deadline is None else deadline,
             asyncio.Event(),
             self,
         )
@@ -108,6 +138,17 @@ class ExecutionScope:
         return deadline - time.time() if deadline is not None else None
 
     async def initialize(self) -> None:
+        # Per-call deadlines narrow execution, not the frozen budget contract.
+        # A child sharing its parent's budget initializes that owner only.
+        if (
+            self.parent is not None
+            and self.store is self.parent.store
+            and self.root_id == self.parent.root_id
+        ):
+            if self.token_limit != self.parent.token_limit or self.measure != self.parent.measure:
+                raise ValueError("A child cannot change its inherited budget")
+            await self.parent.initialize()
+            return
         budget = await asyncio.to_thread(
             self.store.ensure_budget,
             self.root_id,

@@ -513,7 +513,6 @@ class TestDriverEmergency:
             services=services,
             executor=executor,
             tool_executor=MagicMock(),
-            per_tool_timeout=5.0,
             journal=journal,
             spill=ToolSpill(TlonPaths(home=tmp_path), "agent1"),
             pressure=_make_pressure(journal, context_window=TEST_WINDOW),

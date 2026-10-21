@@ -5,9 +5,15 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 from tlon.base.config import LLMConfig
+from tlon.base.execution import (
+    BudgetExceededError,
+    ExecutionDeadlineError,
+    UnknownModelOutcomeError,
+)
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
+from tlon.operations.schema import RecoveryMismatchError
 
 from .models import SessionProjection
 
@@ -131,6 +137,13 @@ class Distiller:
                 logger.warning("distill_json_parse_failed", error=str(e))
                 return []
 
+        except (
+            BudgetExceededError,
+            ExecutionDeadlineError,
+            UnknownModelOutcomeError,
+            RecoveryMismatchError,
+        ):
+            raise
         except Exception as e:
             logger.error("distill_failed", error=str(e), exc_info=True)
             return []
@@ -240,6 +253,13 @@ class Distiller:
                 logger.warning("conflict_judge_response_empty")
                 return None
             result = self._extract_json(response.content)
+        except (
+            BudgetExceededError,
+            ExecutionDeadlineError,
+            UnknownModelOutcomeError,
+            RecoveryMismatchError,
+        ):
+            raise
         except Exception as e:
             logger.warning("conflict_judge_failed", error=str(e))
             return None

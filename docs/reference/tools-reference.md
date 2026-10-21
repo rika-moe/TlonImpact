@@ -19,7 +19,7 @@ agent 通过 OpenAI function calling 调用的全部工具。所有参数与结�
 会话循环里的并发分发不在 ToolExecutor，而在引擎侧：
 
 - act stage（[agents/stages/act.py](../../src/tlon/agents/stages/act.py) 的 `act_stage_step`）是纯变换，只把本轮 LLM 的 tool calls 声明进 `StageOutcome.tool_dispatches`，自己不执行。
-- [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的 `LoopDriver.execute_one_tool` 为每个 tool call 登记后台 asyncio task：读取可并发，写入按模型声明顺序进入成员写 gate；同一 task 的嵌套 await 可重入，不同 task 不可借相同 root ID 重入。外层套 `asyncio.wait_for`，等待还受根剩余截止时间限制。等待预算按「模型可见的 schema 必须可兑现」解析：工具自己在 schema 里声明了 `timeout` 参数（如 `shell-run`）时，未显式传 timeout 时读取操作的 default_timeout（shell-run 为 60 秒）；引擎等「声明值 + `_TOOL_TIMEOUT_GRACE`（10 秒）宽限」——工具自身是限时权威，wait_for 只兜底工具挂死；未声明 `timeout` 的工具用引擎兜底 `per_tool_timeout`（来自 agent 配置的 `tool.per_timeout`，[base/config.py](../../src/tlon/base/config.py) 的 `ToolConfig`，默认 30 秒）。超时返回 `success=False`，error 指明真正生效的限制来自哪层（工具声明值 + 引擎宽限，或引擎 per-tool 兜底）。
+- [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 登记工具任务：读取可并发，同批写入按声明顺序进入成员写 gate。同一 task 的嵌套 await 可重入，不同 task 不可借相同 root ID 重入。执行和超时均交给 [OperationExecutor](../../src/tlon/operations/core.py)，LoopDriver 不再独立 wait_for 或合成 unknown。共享默认来自成员配置 tool.per_timeout（30 秒），Operation.default_timeout 优先，schema 声明的显式 timeout 参数再优先；Shell 以 timeout_grace 声明 10 秒清理宽限，最后与根剩余期限取小。DSL 与 Tool 使用同一规则。超时先查真实回执：已提交成功仍成功；本次未派发是确定拒绝；真正派发后无回执才是 unknown。
 - 超大输出 spill：结果在收割前先过 [tools/spill.py](../../src/tlon/tools/spill.py) 的 `ToolSpill`——`data` 序列化超过 16k 字符即整个落盘到 `workspace/spills/{session_id}/{sha256(call_id)}.json`（缩进 JSON，可分页），模型与 session 日志只见到 locator（路径/大小/preview/检索提示），可用 `file-read` 的 offset/limit 读回（workspace 即容器工作目录的 bind mount）。写盘失败回退原始结果。
 - 收割：`collect_session_results` 把已完成 task 的结果交给 `act_stage_collect`，结果以 `{"role": "tool", ...}` 消息追加回 LLM 上下文（`ToolResult.to_dict()` 的 JSON 序列化）。
 - 结束工具 `finish-turn`、`sleep-until`、`exit-agent` 必须各自单独占一轮，混用其他工具整轮拒绝。邮件工具不负责结束工作，发信后检查结果，再单独请求结束或睡眠。
@@ -38,7 +38,7 @@ session 的 total 根由 recipe.max_tokens 建立，stage、压缩、model-call 
 
 ### 工具装配
 
-每个成员经 [assembly.py](../../src/tlon/agents/assembly.py) 绑定私有领域服务并构造 OperationRegistry，再为所有注册操作建立 OperationTool。L0 无装置操作，L1 提供文件操作，L2 增加 Shell；时间与成员领域操作不依赖装置。见习成员不装配 `member-spawn`、`prototype-write`、`behavior-propose`、`capability-propose`；其他操作仍按成员身份绑定。
+每个成员经 [assembly.py](../../src/tlon/agents/assembly.py) 绑定私有领域服务并产出操作定义；[MemberRuntime](../../src/tlon/agents/member_runtime.py) 构造共享 OperationRegistry，再为所有注册操作建立 OperationTool。L0 无装置操作，L1 提供文件操作，L2 增加 Shell；时间与成员领域操作不依赖装置。见习成员不装配 `member-spawn`、`prototype-write`、`behavior-propose`、`capability-propose`；其他操作仍按成员身份绑定。
 
 模型调用、原型创作/评审、成员生命周期也使用同一注册表。`finish-turn`、`sleep-until`、`exit-agent` 的调度声明由控制元数据标识；会话引擎负责完成/睡眠/退出的应用，处理器本身不直接操作 session。
 

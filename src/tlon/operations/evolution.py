@@ -2,6 +2,11 @@
 
 from typing import Any, Protocol
 
+from tlon.base.execution import (
+    BudgetExceededError,
+    ExecutionDeadlineError,
+    ModelRequestRejectedError,
+)
 from tlon.operations.core import AsyncHandler, CallContext, Operation
 from tlon.operations.schema import InputError, OperationError, RejectedError, UnknownOutcomeError
 
@@ -219,8 +224,12 @@ def make_evolution_operations(
                 raise OperationError("evolution service is not bound")
             try:
                 return await service.execute(**args)
-            except OperationError:
+            except (OperationError, BudgetExceededError, ExecutionDeadlineError):
                 raise
+            except ModelRequestRejectedError as error:
+                raise RejectedError(
+                    str(error), {"call_id": context.call_id, "outcome": "rejected"}
+                ) from error
             except Exception as error:
                 if name not in writes:
                     raise

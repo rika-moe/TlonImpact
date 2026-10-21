@@ -13,6 +13,7 @@ from tlon.agents.member_spec import MemberSpec
 from tlon.agents.vocabulary import make_member_builtins
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
+from tlon.base.execution import MemberWriteGate
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
@@ -57,8 +58,8 @@ def _event(mail: Mail) -> Event:
     )
 
 
-async def _drain(member: MemberRuntime) -> None:
-    await asyncio.wait_for(member._queue.join(), 2)
+async def _drain(member: MemberRuntime, timeout: float = 2) -> None:
+    await asyncio.wait_for(member._queue.join(), timeout)
 
 
 async def test_plain_loop_uses_no_session(tmp_path: Path) -> None:
@@ -409,6 +410,7 @@ async def test_real_session_then_forward_uses_same_trigger(tmp_path: Path) -> No
     memory.maybe_distill_completed_sessions = AsyncMock(return_value=0)
     tools = ToolExecutor()
     caps = MemberServices(
+        write_gate=MemberWriteGate(),
         config=AgentConfig(id="member", name="Member"),
         llm_client=llm,
         memory=memory,
@@ -750,7 +752,9 @@ async def test_pending_failure_blocks_new_state_updates_until_recovery(tmp_path:
         assert delivered == []
         assert member._queue.qsize() == 1
         blocked = False
-        await _drain(member)
+        # Recovery polls once per second and persists receipts in worker threads.
+        # Bound completion without requiring two polls plus CI I/O to fit in 2s.
+        await _drain(member, timeout=10)
         assert delivered == ["blocked"]
         assert member._program_store.state_get("new") is True
     finally:

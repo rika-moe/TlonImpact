@@ -4,7 +4,7 @@
 
 > 本文定义原型目录、实例化、提案审批、spawn 预算和谱系。成员模型、信任阶梯与默认生命周期政策见 [unified-member-model.md](unified-member-model.md)。当前 stop 为永久退休，idle drain 为可唤醒休眠；二者均不隐式删除历史。历史来源：[ADR 0006](../decisions/0006-unified-member-model.md)、[ADR 0030](../decisions/0030-sqlite-post-office.md)。
 
-Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型是一份纯数据的行为模板，spawn 是把它拷贝成一个真实 agent 的动作。这套体系是「新成员由社会内部产生」的当前形态。本文解释它为什么长现在这样，以当前实现为准（原型库在 [src/tlon/agents/prototypes/](../../src/tlon/agents/prototypes) 包，内置原型在 [src/tlon/prototypes/](../../src/tlon/prototypes)，spawn 工具在 [src/tlon/lifecycle/](../../src/tlon/tools/agents)）。
+Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型是一份纯数据的行为模板，spawn 是把它拷贝成一个真实 agent 的动作。这套体系是「新成员由社会内部产生」的当前形态。本文解释它为什么长现在这样，以当前实现为准（原型库在 [src/tlon/agents/prototypes/](../../src/tlon/agents/prototypes) 包，内置原型在 [src/tlon/prototypes/](../../src/tlon/prototypes)，spawn 工具在 [src/tlon/lifecycle/](../../src/tlon/lifecycle)）。
 
 ## 原型是什么
 
@@ -164,14 +164,14 @@ agent 侧入口是 `LifecycleService`（[lifecycle/service.py](../../src/tlon/li
 
 ## 依赖倒置
 
-spawn/stop/list/write 这些工具天然要触碰 agents 层（注册表）和 prototypes 层（原型库），但 import-linter 契约禁止 `tlon.tools` 反向依赖 `tlon.agents`。解法是端口声明在 tools 侧：
+生命周期与演化操作通过领域服务访问注册表和原型库。端口声明在领域侧，装配层注入实际 provider；领域服务不导入 agents 实现：
 
-- [lifecycle/ports.py](../../src/tlon/lifecycle/ports.py)——`AgentLifecycle` Protocol（`spawn_member` / `stop_member` / `get_all_agent_status` 的切片）加共享异常 `SpawnRejectedError` / `StopRejectedError`。
-- [evolution/ports.py](../../src/tlon/evolution/ports.py)——`PrototypeError`（原型库抛、工具捕）与 `PrototypeSummary`（只读元数据视图，`PrototypeInfo` 结构化满足）。
+- [lifecycle/ports.py](../../src/tlon/lifecycle/ports.py) 定义生命周期、成员目录及状态查询端口与共享拒绝异常。
+- [evolution/ports.py](../../src/tlon/evolution/ports.py) 定义 `PrototypeError` 与只读 `PrototypeSummary`；原型库的 `PrototypeInfo` 结构化满足该协议。旧 tools 目录下的重复端口已删除。
 
-装配层（`assemble_member_services`，[agents/assembly.py](../../src/tlon/agents/assembly.py)）将成员身份、注册表和 callable 绑定到 LifecycleService 与演化领域服务，Operation handler 只负责契约投影。生命周期端口在 `tlon.lifecycle.ports`，演化端口在 `tlon.evolution.ports`；领域服务不反向依赖 agents。依赖方向由 `uv run lint-imports` 检查。
+装配层（`assemble_member_services`，[agents/assembly.py](../../src/tlon/agents/assembly.py)）将成员身份、注册表和 callable 绑定到 LifecycleService 与演化领域服务，Operation handler 负责共享契约投影。依赖方向由 `uv run lint-imports` 检查。异常类型放在领域端口中，使调用方与实现方共享同一个错误身份，无需反向导入实现模块。
 
-为什么不用直接 import 加契约豁免：反向依赖一旦开一个口子，tools 层就会逐渐长出对 agents 内部的随意引用，分层检查从「方向强制」退化为「逐个评审」。Protocol + 注入的额外收益是工具可独立测试——测试注入一个假的 `AgentLifecycle` 实现即可，不必拉起整个注册表。异常类型放 ports 而不是抛方模块，是因为 catch 发生在 tools 侧：异常是接口的一部分，不是实现的细节。
+`behavior-propose`、`capability-propose` 和 `prototype-review` 中的模型请求使用当前 ExecutionScope。额度不足与已知截止错误保持原错误类型；provider 明确拒绝（包括上下文长度拒绝）投影为 RejectedError；已派发但未取得可靠回执仍为 unknown。同一调用恢复不重发未知模型请求，未通过模型步骤不会写入提案或评审。
 
 ## 未实施方向
 

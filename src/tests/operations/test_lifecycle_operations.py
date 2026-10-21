@@ -1,5 +1,7 @@
 """Lifecycle contracts preserve authority, registry budgets and deferred controls."""
 
+from pathlib import Path
+from typing import Literal
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -69,7 +71,7 @@ async def test_spawn_binds_owner_session_params_and_preserves_budget_rejection()
         prototype="source",
         name="Child",
         spawner_id="worker",
-        session_id="session-a",
+        session_id="run",
         params={"topics": ["a", "b"]},
     )
     registry.spawn_member.side_effect = SpawnRejectedError("session_quota", "quota reached")
@@ -137,3 +139,73 @@ async def test_lifecycle_lost_commit_receipt_keeps_unknown_identity() -> None:
         "retry_safe": False,
     }
     publish.assert_awaited_once()
+
+
+@pytest.mark.parametrize("origin", ["tool", "program", "direct"])
+async def test_real_spawn_quota_uses_frozen_root_for_normal_and_recovered_calls(
+    tmp_path: Path, origin: Literal["tool", "program", "direct"]
+) -> None:
+    from types import SimpleNamespace
+
+    from tests.agents.test_session_journal import _make_driver, _tc
+    from tests.agents.test_spawn import _FakeRegistry, _write_prototype
+    from tlon.agents.spawn import SpawnManager
+    from tlon.base.paths import TlonPaths
+    from tlon.operations.adapters import DSLAdapter, OperationTool
+    from tlosure.builtins import BuiltinCall
+    from tlosure.edn import Keyword
+
+    paths = TlonPaths(home=tmp_path)
+    _write_prototype(paths, "worker")
+    manager = SpawnManager(_FakeRegistry(paths), 8, 3, 2)
+    driver, _, _, _ = _make_driver(tmp_path, [])
+    store = driver._tool_executor.get_tool("someTool")._executor.store
+    executor = OperationExecutor(
+        OperationRegistry(
+            make_lifecycle_operations(
+                LifecycleService(
+                    "agent1", registry=SimpleNamespace(spawn_member=manager.spawn_member)
+                )
+            )
+        ),
+        CallContext("agent1", "frozen-root", "unused"),
+        store,
+    )
+    tool = OperationTool(executor, "member-spawn")
+    driver._tool_executor.register_tool(tool)
+    for index in range(2):
+        context = CallContext("agent1", "frozen-root", f"spawn:{index}", origin=origin)
+        with bound_contextvars(session_id=f"untrusted-log-{index}"):
+            result = await tool.execute_context(
+                {"prototype": "worker", "name": f"Child {index}"}, context
+            )
+        assert result.success
+    assert manager._quota == {("agent1", "frozen-root"): 2}
+    args = {"prototype": "worker", "name": "Must be rejected"}
+    if origin == "tool":
+        normal = _tc("normal-third", "member-spawn", args)
+        with bound_contextvars(session_id="another-log-id"):
+            result = (await driver.execute_one_tool("frozen-root", normal))[1]
+        assert not result.success and "session_quota" in result.error
+        recovered = _tc("unsubmitted-crash", "member-spawn", args)
+        metadata = driver._operation_recovery("frozen-root", recovered, 0, None)
+        result = await driver.resolve_dispatch("frozen-root", recovered, metadata)
+        assert not result.success and "session_quota" in result.error
+    elif origin == "program":
+        adapter = DSLAdapter(executor)
+        call = BuiltinCall(
+            "member-spawn",
+            adapter.builtins()["member-spawn"],
+            [{Keyword(key): value for key, value in args.items()}],
+            {},
+        )
+        with pytest.raises(RejectedError, match="session_quota"):
+            await adapter.handle(
+                call, CallContext("agent1", "frozen-root", "dsl-third", origin="program")
+            )
+    else:
+        with pytest.raises(RejectedError, match="session_quota"):
+            await executor.call(
+                "member-spawn", args, CallContext("agent1", "frozen-root", "direct-third")
+            )
+    assert manager._quota == {("agent1", "frozen-root"): 2}

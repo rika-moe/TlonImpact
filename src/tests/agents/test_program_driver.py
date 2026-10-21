@@ -12,7 +12,7 @@ from tlon.agents.member_spec import MemberRule, MemberSpec
 from tlon.agents.program_driver import ProgramDriver
 from tlon.agents.program_store import ProgramStore
 from tlon.agents.vocabulary import make_member_builtins
-from tlon.base.execution import ExecutionScope, current_execution
+from tlon.base.execution import ExecutionDeadlineError, ExecutionScope, current_execution
 from tlon.operations.adapters import DSLAdapter
 from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
 from tlon.operations.model import model_operation_definitions
@@ -182,6 +182,7 @@ async def test_expired_program_scope_stops_before_new_state_write(store: Program
     program = rule('(state-put {:key "after-deadline" :value true})')
     running = driver(store, AsyncMock())
     running.execution_scope = ExecutionScope(store, "run", 4096, "output", deadline=time.time() - 1)
-    with pytest.raises(EvalError, match="deadline exhausted"):
+    with pytest.raises(EvalError) as failure:
         await running.run(program, {})
+    assert isinstance(failure.value.__cause__, ExecutionDeadlineError)
     assert store.state_get("after-deadline") is None
