@@ -1,0 +1,51 @@
+(ns tlon.workflows
+  (:require [tlon.messages :as messages] [tlon.conversation :as conversation] [tlon.context :as context])
+  (:export short-turn plan-then-act evidence-check reviewed route forward))
+
+(defn short-turn [options] (conversation/run (assoc options :max_rounds 1)))
+(defn plan-then-act [options]
+  (let [plan (context/complete {:messages (messages/append (get options :messages)
+                                      (messages/user "Plan the work. Do not claim execution. Return a concise plan."))
+                         :tools [] :max_tokens (get options :max_tokens)
+                         :cache_prefix_len (get options :cache_prefix_len 0)})]
+    (conversation/run (assoc options :messages
+      (messages/append (messages/append (get options :messages) (messages/response plan))
+                       (messages/user "Execute this plan using available tools; distinguish evidence from assumptions."))))))
+
+;; Run two independent ordinary methods; both return before comparison starts.
+(defn evidence-check [options]
+  (let [first (conversation/run options)
+        second (conversation/run (assoc options :messages
+                   (messages/append (get options :messages)
+                     (messages/user "Independently retrieve and cross-check the claim. Seek contrary evidence and cite sources."))))
+        result (context/complete {:messages [(messages/user
+                            (str "Compare these independently gathered reports. Separate committed tool evidence, proposals and uncertainty. Report disagreements rather than inventing consensus. "
+                                 (json-encode {:first (get first :messages) :second (get second :messages)})))]
+                            :tools [] :max_tokens (get options :max_tokens)})]
+    {:content (get result :content) :messages (messages/append (get second :messages) (messages/response result))
+     :reason "cross-checked"}))
+
+(defn reviewed [options]
+  (let [draft (conversation/run options)
+        review (context/complete {:messages (messages/append (get draft :messages)
+                            (messages/user "Review unsupported claims, tool failures, and missing evidence. Suggestions are not execution."))
+                            :tools [] :max_tokens (get options :max_tokens)
+                            :cache_prefix_len (get options :cache_prefix_len 0)})
+        revised (context/complete {:messages (messages/append
+                              (messages/append (get draft :messages) (messages/response review))
+                              (messages/user "Revise the answer using the review; preserve uncertainty."))
+                             :tools [] :max_tokens (get options :max_tokens)
+                            :cache_prefix_len (get options :cache_prefix_len 0)})]
+    {:content (get revised :content)
+     :messages (messages/append (messages/append (get draft :messages) (messages/response review))
+                               (messages/response revised)) :reason "reviewed"}))
+
+;; Routing remains a local policy choice; the selected method is an ordinary function.
+(defn route [options]
+  (let [method (get options :method "short-turn")]
+    (if (= method "short-turn") (short-turn options)
+      (if (= method "plan-then-act") (plan-then-act options)
+        (if (= method "evidence-check") (evidence-check options)
+          (if (= method "reviewed") (reviewed options)
+            (assert false "unknown work method")))))))
+(defn forward [recipient mail-id] (mail-forward {:to [recipient] :mail_id mail-id}))

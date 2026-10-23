@@ -83,13 +83,20 @@ _OUTPUTS = {
 
 _CONTRACTS: dict[str, tuple[str, dict[str, Any]]] = {
     "prototype-write": (
-        "创作一个新的 behavior prototype（纯行为规约，无人格），写入 staging 区。规则统一使用 on、when、actions；会话通过 run-loop 动作调用。新 prototype 默认不可信：需人类批准（ops/WebUI）后才能被 member-spawn 使用。behavior 是 v1 schema 的纯数据 EDN（只描述行为，无法授予工具）。可声明 :parameters 以支持 spawn 时参数化。可选 parent 记录谱系（从哪个既有原型派生），generation 由服务端推导。",
+        "创作一个新的 behavior prototype（纯行为规约，无人格），写入 staging 区。完整 v2 Behavior+模块包；工作流程使用普通函数组合。新 prototype 默认不可信：需人类批准（ops/WebUI）后才能被 member-spawn 使用。behavior 是 v2 EDN handlers 入口，modules 是完整相对路径到源码映射（只描述程序，无法授予工具）。v2 完整模块包不接受参数模板。可选 parent 记录谱系（从哪个既有原型派生），generation 由服务端推导。",
         {
             "type": "object",
             "properties": {
                 "behavior": {
                     "type": "string",
-                    "description": "行为规约（EDN 字符串）。统一 on/when/actions；会话使用 run-loop 动作。可选 :parameters，引用变量用 ${name}。",
+                    "description": "完整 v2 EDN，handlers 指向导出模块函数。",
+                },
+                "modules": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                    "additionalProperties": True,
+                    "description": "完整模块包：相对 .tlon 路径到源码字符串",
                 },
                 "display_name": {
                     "type": "string",
@@ -109,7 +116,7 @@ _CONTRACTS: dict[str, tuple[str, dict[str, Any]]] = {
                     "description": "随包教训：退休成员蒸馏出的经验，落盘为原型的 LESSONS.md；实例化时拷贝给新成员，由 spec 的 (lessons) context section 注入对话",
                 },
             },
-            "required": ["behavior", "display_name"],
+            "required": ["behavior", "modules", "display_name"],
         },
     ),
     "behavior-propose": (

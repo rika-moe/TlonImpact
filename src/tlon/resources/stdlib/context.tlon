@@ -1,0 +1,101 @@
+(ns tlon.context
+  (:require [tlon.messages :as messages])
+  (:export assemble groups compact fit complete))
+
+(defn append-all [left right] (reduce result item (conj result item) left right))
+(defn nth [items index]
+  (get (reduce state item
+         {:index (+ (get state :index) 1)
+          :value (if (= (get state :index) index) item (get state :value))}
+         {:index 0 :value nil} items) :value))
+(defn slice [items start end]
+  (get (reduce state item
+         {:index (+ (get state :index) 1)
+          :items (if (and (>= (get state :index) start) (< (get state :index) end))
+                   (conj (get state :items) item) (get state :items))}
+         {:index 0 :items []} items) :items))
+
+;; Consume each message once, and emit only complete assistant/tool groups.
+(defn groups [history]
+  (let [state (reduce state message
+          (let [pending (get state :pending) index (get state :index)
+                result (get state :groups) current (get state :current)]
+            (if (< index (count pending))
+              (let [id (nth pending index) next (+ index 1)
+                    group (conj current message)]
+                (assert (and (= (get message :role) "tool") (= (get message :tool_call_id) id))
+                        "tool results must match declared order")
+                (if (= next (count pending))
+                  {:pending [] :index 0 :groups (conj result group) :current []}
+                  {:pending pending :index next :groups result :current group}))
+              (let [calls (get message :tool_calls [])
+                    ids (reduce ids call
+                          (let [id (get call :id)]
+                            (assert (and (= id (str id)) (not (= id ""))) "tool call requires nonempty id")
+                            (assert (not (contains? ids id)) "duplicate tool call id")
+                            (conj ids id)) [] calls)]
+                (assert (not (= (get message :role) "tool")) "orphan tool result")
+                (if (> (count ids) 0)
+                  (let [role (assert (= (get message :role) "assistant") "tool calls require assistant")]
+                    {:pending ids :index 0 :groups result :current [message]})
+                  {:pending [] :index 0 :groups (conj result [message]) :current []}))))
+          {:pending [] :index 0 :groups [] :current []} history)]
+    (assert (= (count (get state :pending)) 0) "incomplete tool exchange")
+    (get state :groups)))
+
+(defn flatten [items] (reduce result group (append-all result group) [] items))
+(defn assemble [options]
+  (append-all (get options :prefix [])
+    (append-all (get options :history []) [(messages/user (get options :task))])))
+
+(defn compact [options]
+  (let [history (get options :messages)
+        all (groups history)
+        prefix-count (get options :prefix_count (get options :cache_prefix_len 0))
+        recent (get options :recent_groups 1)
+        valid (assert (and (integer? prefix-count) (>= prefix-count 0)
+                           (integer? recent) (>= recent 1)) "invalid compaction bounds")]
+    (let [prefix-index (reduce state group
+                         (if (< (get state :size) prefix-count)
+                           {:index (+ (get state :index) 1) :size (+ (get state :size) (count group))}
+                           state)
+                         {:index 0 :size 0} all)
+          start (get prefix-index :index)
+          tail-start (- (count all) recent)]
+      (assert (and (integer? prefix-count) (>= prefix-count 0)
+                   (integer? recent) (>= recent 1)) "invalid compaction bounds")
+      (assert (>= prefix-count (get options :cache_prefix_len 0)) "compaction must retain cached prefix")
+      (assert (= (get prefix-index :size) prefix-count) "prefix splits a tool exchange")
+      (if (<= tail-start start) options
+        (let [text (reduce previous group
+                     (let [request {:messages [(messages/user
+                              (str "Summarize this history as evidence with source attribution. Assistant drafts and tool-call suggestions are UNEXECUTED proposals. Only tool results record committed execution; preserve failures and uncertainty. Previous historical summary (not a receipt): " previous
+                                   " Next complete exchange: " (json-encode group)))]
+                                    :tools [] :max_tokens (get options :summary_tokens (get options :max_tokens))}
+                           pressure (model-context request)]
+                       (assert (get pressure :fits) "single exchange cannot fit compaction window")
+                       (let [result (model-call request) text (get result :content)]
+                         (assert (and (= text (str text)) (not (= text ""))) "compaction requires textual summary")
+                         text)) "" (slice all start tail-start))]
+          (assert (and (= text (str text)) (not (= text ""))) "compaction requires textual summary")
+          (assoc options :messages
+            (append-all (flatten (slice all 0 start))
+              (append-all [(messages/user (str "Historical summary (not a new execution receipt): " text))]
+                          (flatten (slice all tail-start (count all)))))))))))
+
+(defn fit [options]
+  (let [pressure (model-context {:messages (get options :messages) :tools (get options :tools [])
+                                 :max_tokens (get options :max_tokens)})]
+    (if (get pressure :fits) options
+      (let [smaller (compact options)
+            checked (model-context {:messages (get smaller :messages) :tools (get smaller :tools [])
+                                    :max_tokens (get smaller :max_tokens)})]
+        (assert (get checked :fits) "context remains over window after compaction")
+        smaller))))
+
+;; All generated workflow requests use the same ordinary pressure policy.
+(defn complete [options]
+  (let [prepared (fit options)]
+    (model-call {:messages (get prepared :messages) :tools (get prepared :tools [])
+                 :max_tokens (get prepared :max_tokens)
+                 :cache_prefix_len (get prepared :cache_prefix_len 0)})))

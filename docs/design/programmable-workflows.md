@@ -1,6 +1,6 @@
 # 可编程工作流程：目标设计
 
-状态：已接受；P1/P2 已合并（#208/#209），P3 本阶段实现，P4–P5 尚未实施，2026-10-23。决策见 [ADR 0046](../decisions/0046-programmable-workflows.md)，施工与证据见 [实施计划](programmable-workflows-plan.md)。当前机制仍见 [DSL](dsl.md)、[runtime](runtime.md) 和 [调用恢复](invocation-recovery.md)。目标与实现边界以分阶段计划为准；当前语法/API 见[模块程序指南](../guides/writing-a-module-program.md)。
+状态：已接受；P1–P3 已合并（#208/#209/#210），P4a 本阶段实现，P4b/P5 尚未实施，2026-10-23。决策见 [ADR 0046](../decisions/0046-programmable-workflows.md)，施工与证据见 [实施计划](programmable-workflows-plan.md)。当前机制仍见 [DSL](dsl.md)、[runtime](runtime.md) 和 [调用恢复](invocation-recovery.md)。目标与实现边界以分阶段计划为准；当前语法/API 见[模块程序指南](../guides/writing-a-module-program.md)。
 
 ## 1. 执行与分层
 
@@ -75,6 +75,14 @@ Operation 的恢复 hook 只读取同根、同稳定调用路径的已提交模�
 `tool-execute` 是 DSLAdapter 的编排端口，接受 tools 名称列表和规范化 tool_calls，返回按输入顺序排列的 `{id,name,success,data,error}`。批次不写父 intent；每个叶子都经 OperationExecutor 独立持久化，身份绑定完整批次与位置。先还原历史，再检查新效果的当前目录；撤权/定义变化阻塞，未知结果不能作为模型重试建议。
 
 `tlon.conversation/run` 是普通模块函数，参数含 messages/tools/max_tokens/max_rounds。max_rounds 为正整数，局部返回 reason 为 complete、finish-turn 或 round-limit。`tlon.messages/response` 与 exchange 转换和校验完整消息协议。仅显式依赖时装配 conversation；无需模型的模块继续独立运行。模型工具执行只接受宿主叶子，模块函数不注册为 Tool。
+
+### P4a 当前实现
+
+机器 prototype-write/propose 提交完整 v2 作者包；propose 严格 JSON 产出至少两个模块并带入已有源码及经验。同伴审阅和 WebUI 展示全部源码与逐文件谱系 diff，近亲比较覆盖作者包，批准继续绑定原 digest。没有自动批准或热更新成员。
+
+普通 tlon.workflows 实现短回合、计划执行、独立检索核验、评审修订、路由和原信转发。tlon.context 实现消息组装、窗口适配和逐完整交换的模型摘要；model-context 是宿主只读估算口，包含冻结系统和工具定义。完整组过大时拒绝；缓存前缀、草稿/已执行事实与模型账本保持。
+
+v2 终止保存原始输入/错误/模型回执，并通过普通邮件叶子向核实的人类责任发件人投递幂等通知。通知零模型额度维护根与原根隔离；不重发原未知效果。已失败运行扫描只对账通知，不重新执行程序。新会话投影和内置原型全面切换仍待 P4b/P5。
 
 ## 5. 状态、返回与调度
 

@@ -10,11 +10,12 @@ then lands in the staging area through the same ``write_staging_prototype``
 gate, parented to the member's own prototype, so the trust model is
 unchanged: nothing spawns until a human approves.
 
-No retry inside the tool — validation/extraction failures come back
+No retry inside the tool — validation/JSON parsing failures come back
 verbatim and the outer ReAct loop is the retry mechanism (the
 ``prototype-write`` precedent).
 """
 
+import json
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +27,8 @@ from tlon.evolution.write_prototype import (
     _BEHAVIOR_HINT,
     NearKinCheck,
     _check_near_kin,
+    bundle_text,
+    require_bundle,
 )
 from tlon.operations.schema import RejectedError
 
@@ -35,16 +38,10 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 _DRAFT_SYSTEM_PROMPT = (
-    "你是 behavior prototype 起草器。输入是一个成员的当前行为规约"
-    "（behavior.tlon 底稿）、它的个体经验（记忆、蒸馏教训）"
-    "和一条变更意图；输出是一份**完整的新 behavior.tlon**。\n"
-    "要求：\n"
-    "- 原型只描述怎样行动，不授予职业、职位或社会身份；行为显示名与描述应对应实际 spec。\n"
-    "- 只输出 spec 文本本身——一个 v1 schema 的 EDN map；不要解释、"
-    "不要注释、不要 Markdown 代码围栏。\n"
-    "- 输出必须完整自足（不是 diff）：保留底稿中与意图无关的行为，"
-    "只按意图做最小修改。\n"
-    "- " + _BEHAVIOR_HINT
+    "你是工作程序起草器。根据当前完整源码、记忆、教训与变更意图起草完整新程序。"
+    '只输出严格 JSON 对象 {"behavior":"完整 EDN","modules":{"相对路径":"完整源码"}}，'
+    "不输出解释或 Markdown，不输出 diff。保留无关行为；至少拆分入口和可复用工作函数两个模块。"
+    "原型不授予身份或工具权限。" + _BEHAVIOR_HINT
 )
 
 
@@ -62,33 +59,11 @@ def _render_digest(digest: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def _extract_edn(content: str) -> str | None:
-    """Extract the EDN spec from an LLM response.
-
-    The model may wrap the spec in ``` fences despite the prompt; strip
-    them, then take the first ``{`` through the last ``}``. Returns None
-    when no EDN map is present (caller turns that into a retry-able
-    failure for the outer loop).
-    """
-    text = content.strip()
-    if text.startswith("```"):
-        first_newline = text.find("\n")
-        if first_newline != -1:
-            text = text[first_newline + 1 :]
-        if text.rstrip().endswith("```"):
-            text = text.rstrip()[:-3]
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end <= start:
-        return None
-    return text[start : end + 1]
-
-
 class BehaviorProposer:
     """Service to propose a next-generation behavior from lived experience.
 
     The member supplies only the change intent and a behavior label; the tool reads
-    its own behavior spec and memory, drafts a complete new spec with one
+    its own complete behavior/module sources and memory, drafts a complete new package with one
     LLM call (purpose="propose"), and writes it to the staging area
     parented to the member's own prototype (``AgentConfig.prototype``;
     None = a new root). The proposal is untrusted: a human approves it in
@@ -155,12 +130,28 @@ class BehaviorProposer:
             raise RejectedError(f"member '{self._agent_id}' has no behavior.tlon", {})
         base_spec = behavior_file.read_text(encoding="utf-8")
 
+        module_dir = behavior_file.parent / "modules"
+        modules: dict[str, str] = {}
+        if module_dir.is_symlink():
+            raise RejectedError("当前模块目录不能是符号链接", {})
+        if module_dir.exists():
+            for path in sorted(module_dir.rglob("*")):
+                if path.is_symlink():
+                    raise RejectedError("当前模块包不能含符号链接", {})
+                if path.is_file():
+                    if path.suffix != ".tlon":
+                        raise RejectedError("当前模块包只能包含 .tlon 源文件", {})
+                    modules[path.relative_to(module_dir).as_posix()] = path.read_text(
+                        encoding="utf-8"
+                    )
+
         digest = await self._memory.get_memory_digest(self._logs)
         lessons_file = self._paths.memory_lessons_file(self._agent_id)
         lessons = lessons_file.read_text(encoding="utf-8") if lessons_file.exists() else None
 
         prompt_parts = [
-            "## 当前行为规约（behavior.tlon）\n" + base_spec,
+            "## 当前完整程序包\n"
+            + json.dumps({"behavior": base_spec, "modules": modules}, ensure_ascii=False),
             "## 个体经验\n" + _render_digest(digest),
         ]
         if lessons:
@@ -174,19 +165,26 @@ class BehaviorProposer:
             purpose="propose",
         )
 
-        draft = _extract_edn(response.content or "")
-        if draft is None:
-            raise RejectedError("起草调用未产出 EDN spec（响应中没有 { ... } map）", {})
+        try:
+            package = json.loads(response.content or "")
+        except json.JSONDecodeError as error:
+            raise RejectedError("起草调用必须输出严格 JSON 程序包", {}) from error
+        if not isinstance(package, dict) or set(package) != {"behavior", "modules"}:
+            raise RejectedError("起草程序包必须且只能包含 behavior 和 modules", {})
+        draft, draft_modules = require_bundle(package["behavior"], package["modules"])
+        if len(draft_modules) < 2:
+            raise RejectedError("起草程序必须包含入口及可复用工作函数至少两个模块", {})
 
         hint = _BEHAVIOR_HINT
         # Near-kin rejection () sits after drafting: the draft text is
         # the thing being compared, so the check cannot run earlier. The
         # proposal's parent is always the member's own prototype, which is
         # exempt from the comparison.
-        _check_near_kin(self._near_kin, draft, self._prototype)
+        _check_near_kin(self._near_kin, bundle_text(draft, draft_modules), self._prototype)
         try:
             info = self._writer(
                 draft,
+                modules=draft_modules,
                 display_name=display_name,
                 description=description,
                 author_id=self._author_id,

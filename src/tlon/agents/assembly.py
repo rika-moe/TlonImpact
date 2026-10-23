@@ -18,6 +18,7 @@ from tlon.agents.member_runtime import MemberServices
 from tlon.agents.policy import policy_solvency_provider, policy_trust_provider
 from tlon.agents.prototypes.catalog import (
     get_prototype_detail,
+    get_prototype_modules,
     list_prototypes,
 )
 from tlon.agents.prototypes.lineage import get_prototype_lineage
@@ -262,6 +263,7 @@ async def assemble_member_services(
                 reviewer_id=config.id,
                 llm_client=llm_client,
                 detail=partial(get_prototype_detail, staging=True, tlon_paths=tlon_paths),
+                modules=partial(get_prototype_modules, staging=True, tlon_paths=tlon_paths),
                 lineage=partial(get_prototype_lineage, tlon_paths=tlon_paths),
                 append_review=partial(append_staging_review, tlon_paths=tlon_paths),
             ),

@@ -232,6 +232,7 @@ async def test_real_assembly_evolution_writes_use_injected_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Exercise the assembled writer bindings, not hand-built test partials."""
+    import json
     from unittest.mock import AsyncMock
 
     from tlon.agents.prototypes.staging import list_staging_prototypes
@@ -241,7 +242,11 @@ async def test_real_assembly_evolution_writes_use_injected_paths(
 
     paths = TlonPaths(home=tmp_path / "member-home")
     other_paths = TlonPaths(home=tmp_path / "other-home")
-    spec = '{:version 1 :rules [{:name "boot" :on :boot :actions []}]}'
+    spec = "{:version 2 :handlers {:mail-delivered work.reply/handle} :fuel 1000}"
+    modules = {
+        "work/reply.tlon": "(ns work.reply (:require [work.helpers :as h]) (:export handle)) (defn handle [event] (h/result))",
+        "work/helpers.tlon": '(ns work.helpers (:export result)) (defn result [] {:result "ok"})',
+    }
     config = AgentConfig(
         id="author",
         name="author",
@@ -265,13 +270,19 @@ async def test_real_assembly_evolution_writes_use_injected_paths(
         OperationRegistry(caps.operations), CallContext(config.id, "run", "call")
     )
     written = await OperationTool(executor, "prototype-write").execute_context(
-        {"behavior": spec, "display_name": "direct"}
+        {"behavior": spec, "modules": modules, "display_name": "direct"}
     )
     assert written.success, written.error
     behavior_file = paths.agent_behavior_file(config.id)
     behavior_file.parent.mkdir(parents=True, exist_ok=True)
     behavior_file.write_text(spec)
-    monkeypatch.setattr(caps.llm_client, "chat", AsyncMock(return_value=LLMResponse(content=spec)))
+    monkeypatch.setattr(
+        caps.llm_client,
+        "chat",
+        AsyncMock(
+            return_value=LLMResponse(content=json.dumps({"behavior": spec, "modules": modules}))
+        ),
+    )
     proposed = await OperationTool(executor, "behavior-propose").execute_context(
         {"intent": "keep behavior", "display_name": "draft"}
     )
@@ -282,6 +293,11 @@ async def test_real_assembly_evolution_writes_use_injected_paths(
         proposed.data["name"],
     }
     assert all(proposal.author == config.id and proposal.trusted is False for proposal in proposals)
+    for proposal in proposals:
+        for relative, source in modules.items():
+            assert (
+                paths.prototypes_staging_dir() / proposal.name / "modules" / relative
+            ).read_text() == source
     assert list_staging_prototypes(other_paths) == []
     assert not other_paths.prototypes_staging_dir().exists()
     assert not paths.prototypes_dir().exists()

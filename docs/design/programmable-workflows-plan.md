@@ -1,6 +1,6 @@
 # 可编程工作流程：分阶段实施计划
 
-状态：2026-10-23，设计已接受，P0 为本次文档与 issue 建立；P1 已合并（#208），P2 本阶段实现待 PR 审核合并，P3–P5 未实施。设计基线 `9fe00817bd75944e49a05cfd8e0149fa240dc757`（#198）；P1 施工基线 `0650c9d`（#207），P2 以已合并 #208 为基线。设计权威：[目标设计](programmable-workflows.md)；选择理由：[ADR 0046](../decisions/0046-programmable-workflows.md)。当前能力以各阶段实施记录及 reference 为准。
+状态：2026-10-23，设计已接受；P0 文档与任务已建立，P1–P3 已合并（#208/#209/#210），P4a 本阶段实现待合并，P4b/P5 未实施。设计基线 `9fe00817bd75944e49a05cfd8e0149fa240dc757`（#198），P4a 施工基线 `a65088f`（#210）。设计权威：[目标设计](programmable-workflows.md)；选择理由：[ADR 0046](../decisions/0046-programmable-workflows.md)。当前能力以各阶段实施记录及 reference 为准。
 
 ## 施工与共同完成标准
 
@@ -137,7 +137,7 @@ issue 用于进度、PR 与证据，目标契约仍以本设计为准。阶段�
 - [ ] [EPIC A：可编程工作流程——模块、模型与工具的统一持久执行](https://github.com/rika-moe/TlonImpact/issues/199)
 - [x] [P1 — 模块、入口、冻结程序包与最小发信链路](https://github.com/rika-moe/TlonImpact/issues/201)
 - [x] [P2 — 完整模型 Operation 与函数式核验](https://github.com/rika-moe/TlonImpact/issues/202)
-- [ ] [P3 — 受控工具分派与可复用对话循环](https://github.com/rika-moe/TlonImpact/issues/203)
+- [x] [P3 — 受控工具分派与可复用对话循环](https://github.com/rika-moe/TlonImpact/issues/203)
 - [ ] [EPIC B：可编程工作流程——标准程序、交互投影与 stage 退役](https://github.com/rika-moe/TlonImpact/issues/200)
 - [ ] [P4a — Agent 编写模块与标准工作方式](https://github.com/rika-moe/TlonImpact/issues/204)
 - [ ] [P4b — 单一恢复权威与交互消费者](https://github.com/rika-moe/TlonImpact/issues/205)
@@ -173,3 +173,13 @@ P2 本地最终验证：`scripts/check_all.sh` 15/15 全绿，单元 2754 passed
 共享适配层删除兜底普通失败转换，只有 InputError/RejectedError 可反馈；明确文件/路径/命令非零等领域错误同步分类，设备丢失、IO、unknown、输出违约、预算、截止和恢复失配传播。提交回执失败使用真实业务输入保留 request_id，不将含批次元数据的身份快照误当业务参数。内置 stage/旧收集器保留至 P5，P4 的自动起草和交互投影尚未实现。
 
 P3 最终本地验证：`scripts/check_all.sh` 15/15 全绿；单元 2825 passed / 15 skipped，集成 38 passed。真实 dream + SDK + DeepSeek 工具对话、核验、修订和回信通过：4 次模型调用、1 次 time-now、同根 output 占用 512、一封回信。服务和隔离目录已清理。P3 待人类合并后勾选。
+
+## P4a 实施细化
+
+机器提案改为完整 v2 作者包：原写入入口要求 behavior/modules，经验起草只接受严格 JSON 且至少两个模块；人工旧原型和旧引擎留待 P5。完整模块的审批、复制和冻结沿 P1 机制；近亲比较及逐代 diff 覆盖全部作者文件，WebUI 和同伴评审读取相同内容。
+
+新增普通 context/workflows 标准源码及 standard-work 两模块示例；宿主增加只读 model-context 估算冻结系统、工具和成员窗口，不生成模型结果。对话及方法调用由普通函数窗口适配；摘要逐完整交换累积，并使用原模型预算和恢复回执。单个交换仍过大时明确拒绝，不引入任意 blob/会话对象或新 Python stage。
+
+失败运行保持责任邮件和草稿证据；注册人类发件人的幂等通知复用 mail-send 叶回执和稳定维护根，失败扫描不成为第二份状态权威。安全 unknown 继续 pending 对账，不安全 unknown 保留隔离；取消继续传播。新交互消费者与内置原型全面切换未提前实施。
+
+P4a 最终本地验证：`scripts/check_all.sh` 15/15 全绿；单元 2845 passed / 15 skipped，集成 39 passed。真实 dream + SDK + DeepSeek 完成起草两个模块、完整源码评审、人工批准、派生成员回信（两个事件根，2 次模型调用）；另完成逐组压缩、短回合与核验修订嵌套回信（同根 6 次模型调用、1 次时钟工具，output 占用 768）。两个隔离环境清理完成。P4a 待人类合并后勾选，P4b/P5 未开始。

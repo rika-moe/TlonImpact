@@ -71,6 +71,7 @@ def executor(
             "alice",
             client,
             partial(get_prototype_detail, staging=True, tlon_paths=paths),
+            lambda _name: {},
             lambda _name: [],
             partial(append_staging_review, tlon_paths=paths),
         ),

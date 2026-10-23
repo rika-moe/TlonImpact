@@ -47,7 +47,7 @@ session 的 total 根由 recipe.max_tokens 建立，stage、压缩、model-call 
 ### 注册清单
 
 <!-- BEGIN GENERATED: tool-registry -->
-满配成员注册 51 个工具（由共享 Operation 按域列出；L0 不注册 7 个装置操作，L1 注册 5 个文件操作，L2 再增加 2 个 Shell 操作；时间不依赖装置）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+满配成员注册 52 个工具（由共享 Operation 按域列出；L0 不注册 7 个装置操作，L1 注册 5 个文件操作，L2 再增加 2 个 Shell 操作；时间不依赖装置）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | # | 工具名 | 实现 | 域 |
 |---|---|---|---|
@@ -102,6 +102,7 @@ session 的 total 根由 recipe.max_tokens 建立，stage、压缩、model-call 
 | 49 | `prototype-lineage` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
 | 50 | `prototype-review` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
 | 51 | `model-call` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
+| 52 | `model-context` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
 <!-- END GENERATED: tool-registry -->
 
 上表是正式成员的满配。见习成员不注册 member-spawn、prototype-write、behavior-propose 三个生殖/演化工具；所有成员均可使用绑定自身的四个调度工具。L0 不注册 shell/filesystem 七个装置工具，L1 不注册 shell 两个工具。
@@ -1070,13 +1071,14 @@ Operation 单一契约；输入与输出字段保留 snake_case。（本区块�
 
 ### prototype-write
 
-创作一个新的 behavior prototype（纯行为规约，无人格），写入 staging 区。规则统一使用 on、when、actions；会话通过 run-loop 动作调用。新 prototype 默认不可信：需人类批准（ops/WebUI）后才能被 member-spawn 使用。behavior 是 v1 schema 的纯数据 EDN（只描述行为，无法授予工具）。可声明 :parameters 以支持 spawn 时参数化。可选 parent 记录谱系（从哪个既有原型派生），generation 由服务端推导。
+创作一个新的 behavior prototype（纯行为规约，无人格），写入 staging 区。完整 v2 Behavior+模块包；工作流程使用普通函数组合。新 prototype 默认不可信：需人类批准（ops/WebUI）后才能被 member-spawn 使用。behavior 是 v2 EDN handlers 入口，modules 是完整相对路径到源码映射（只描述程序，无法授予工具）。v2 完整模块包不接受参数模板。可选 parent 记录谱系（从哪个既有原型派生），generation 由服务端推导。
 
 输入：
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `behavior` | string | 是 | 行为规约（EDN 字符串）。统一 on/when/actions；会话使用 run-loop 动作。可选 :parameters，引用变量用 ${name}。 |
+| `behavior` | string | 是 | 完整 v2 EDN，handlers 指向导出模块函数。 |
+| `modules` | object | 是 | 完整模块包：相对 .tlon 路径到源码字符串 |
 | `display_name` | string | 是 | 必填行为标签，描述怎样行动；不赋予职业、职位或社会身份 |
 | `description` | string | 否 | 一句话描述这个原型的行为定位 |
 | `parent` | string | 否 | 父原型系统 ID（本原型从哪个原型派生而来；留空表示新的根原型）。父原型必须已存在（trusted 库或 staging 区皆可），generation 由服务端自动推导为父代 + 1 |
@@ -1286,4 +1288,26 @@ Operation 单一契约；输入与输出字段保留 snake_case。（本区块�
 | `finish_reason` | string | 是 | — |
 | `usage` | object | 是 | — |
 | `reasoning_content` | string / null | 是 | — |
+
+### model-context
+
+Estimate the complete frozen model request size and window; does not call the provider.
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `messages` | array[object] | 是 | minItems=1 |
+| `tools` | array[string] | 否 | uniqueItems=True |
+| `max_tokens` | integer | 是 | minimum=1 |
+| `cache_prefix_len` | integer | 否 | minimum=0 |
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `input_tokens` | integer | 是 | minimum=0 |
+| `context_window` | integer | 是 | minimum=1 |
+| `output_tokens` | integer | 是 | minimum=1 |
+| `fits` | boolean | 是 | — |
 <!-- END GENERATED: model-operations -->

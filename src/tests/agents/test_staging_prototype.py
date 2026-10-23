@@ -42,6 +42,12 @@ class TestWriteStagingValidation:
         assert not p.prototypes_staging_dir().exists()
 
 
+BUNDLE_BEHAVIOR = "{:version 2 :handlers {:mail-delivered work.reply/handle} :fuel 1000}"
+BUNDLE_MODULES = {
+    "work/reply.tlon": "(ns work.reply (:require [work.helper :as h]) (:export handle)) (defn handle [event] (h/result))",
+    "work/helper.tlon": '(ns work.helper (:export result)) (defn result [] {:result "ok"})',
+}
+
 VALID_SPEC = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
 
 
@@ -158,7 +164,12 @@ class TestWritePrototypeToolLessons:
             writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
         )
         result = await tool.execute_context(
-            {"behavior": VALID_SPEC, "lessons": "- 教训\n", "display_name": "定址转发"}
+            {
+                "behavior": BUNDLE_BEHAVIOR,
+                "modules": BUNDLE_MODULES,
+                "lessons": "- 教训\n",
+                "display_name": "定址转发",
+            }
         )
         assert result.success
         lessons_file = p.prototypes_staging_dir() / result.data["name"] / "LESSONS.md"
@@ -170,7 +181,9 @@ class TestWritePrototypeToolLessons:
             author_id="adam",
             writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
         )
-        result = await tool.execute_context({"behavior": VALID_SPEC, "display_name": "定址转发"})
+        result = await tool.execute_context(
+            {"behavior": BUNDLE_BEHAVIOR, "modules": BUNDLE_MODULES, "display_name": "定址转发"}
+        )
         assert result.success
         assert not (p.prototypes_staging_dir() / result.data["name"] / "LESSONS.md").exists()
 
@@ -192,7 +205,9 @@ class TestWritePrototypeSolvency:
             prototype="broke",
             solvency=_insolvent,
         )
-        result = await tool.execute_context({"behavior": VALID_SPEC, "display_name": "定址转发"})
+        result = await tool.execute_context(
+            {"behavior": BUNDLE_BEHAVIOR, "modules": BUNDLE_MODULES, "display_name": "定址转发"}
+        )
         assert not result.success
         assert "insolvent" in result.error
         assert not p.prototypes_staging_dir().exists()
@@ -209,7 +224,9 @@ class TestWritePrototypeSolvency:
             prototype="broke",
             solvency=_boom,
         )
-        result = await tool.execute_context({"behavior": VALID_SPEC, "display_name": "定址转发"})
+        result = await tool.execute_context(
+            {"behavior": BUNDLE_BEHAVIOR, "modules": BUNDLE_MODULES, "display_name": "定址转发"}
+        )
         assert result.success, result.error
 
     async def test_manual_member_never_gated(self, tmp_path):
@@ -226,7 +243,9 @@ class TestWritePrototypeSolvency:
             prototype=None,
             solvency=_insolvent,
         )
-        result = await tool.execute_context({"behavior": VALID_SPEC, "display_name": "定址转发"})
+        result = await tool.execute_context(
+            {"behavior": BUNDLE_BEHAVIOR, "modules": BUNDLE_MODULES, "display_name": "定址转发"}
+        )
         assert result.success, result.error
 
 
@@ -238,11 +257,32 @@ async def test_write_tool_rejects_old_name_and_requires_behavior_label(tmp_path:
     assert "name" not in tool.parameters["properties"]
     assert "display_name" in tool.parameters["required"]
     for args in (
-        {"name": "developer", "display_name": "定址转发", "behavior": VALID_SPEC},
-        {"behavior": VALID_SPEC},
-        {"display_name": "  ", "behavior": VALID_SPEC},
+        {
+            "name": "developer",
+            "display_name": "定址转发",
+            "behavior": BUNDLE_BEHAVIOR,
+            "modules": BUNDLE_MODULES,
+        },
+        {"behavior": BUNDLE_BEHAVIOR, "modules": BUNDLE_MODULES},
+        {"display_name": "  ", "behavior": BUNDLE_BEHAVIOR, "modules": BUNDLE_MODULES},
     ):
         result = await tool.execute_context(args)
         assert not result.success
         assert "name" in result.error
+    writer.assert_not_called()
+
+
+async def test_machine_writer_requires_v2_complete_module_bundle(tmp_path: Path) -> None:
+    from unittest.mock import Mock
+
+    writer = Mock()
+    tool = make_write_tool(author_id="adam", writer=writer)
+    for package in (
+        {"behavior": VALID_SPEC, "modules": BUNDLE_MODULES},
+        {"behavior": BUNDLE_BEHAVIOR},
+        {"behavior": BUNDLE_BEHAVIOR, "modules": {}},
+        {"behavior": BUNDLE_BEHAVIOR, "modules": {"work/reply.tlon": 17}},
+    ):
+        result = await tool.execute_context({**package, "display_name": "完整程序"})
+        assert not result.success
     writer.assert_not_called()

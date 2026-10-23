@@ -1,6 +1,6 @@
-# 编写模块工作程序（P1–P3）
+# 编写模块工作程序（P1–P4a）
 
-P1 已提供人工完整模块包、事件入口和持久执行。P2 已提供完整模型请求与纯消息标准库；P3 提供受控工具分派和普通对话函数，Agent 自动起草模块待 P4a；现有内置原型仍使用 v1 stage 引擎。设计见 [可编程工作流程](../design/programmable-workflows.md)。
+P1 已提供人工完整模块包、事件入口和持久执行。P2 已提供完整模型请求与纯消息标准库；P3 提供受控工具分派和普通对话函数，P4a 已提供 Agent 完整模块提案和标准工作函数；现有内置原型仍使用 v1 stage 引擎。设计见 [可编程工作流程](../design/programmable-workflows.md)。
 
 ## 文件与入口
 
@@ -110,3 +110,19 @@ v2 受理时原子冻结宿主系统提示词、模型配置及工具定义；�
 只有输入/领域拒绝可转换为模型可修正的工具失败。取消、截止、预算、恢复失配、未知效果和基础设施异常传播给运行器。工具结果按原 ID 关联完整 assistant 响应，不能把部分成功拼成缺少 tool 结果的新模型请求。
 
 完整示例见 [工具辅助核验回信](../../src/tlon/resources/examples/tool-reviewed-reply/README.md)：子对话读取时钟后返回，外层继续核验、修订和发信。已有内置 v1 原型与交互消费者保留至后续阶段。
+
+## Agent 起草、审阅和派生（P4a）
+
+`prototype-write` 必须提交完整 v2 behavior 和非空 modules，不能只提交 rules 或模块 diff。`behavior-propose` 接受 intent/display_name，读取成员自己的 behavior、全部作者模块、记忆与教训，用自己的模型起草严格 JSON `{behavior,modules}`；至少包含入口及可复用工作函数两个模块。缺依赖、非法路径、私有访问与坏入口在 staging 发布前拒绝，模型错误不会触发旧 v1 起草回退。
+
+人工审批仍是必要步骤：在 WebUI 或原型详情读取全部源码、谱系每个文件的新增/删除/修改与依赖变更，再批准并创建成员。同伴 prototype-review 也读取完整作者包，评审不代替人类批准。审批 digest 绑定完整作者内容，改源码创建新包；已有实例与旧运行使用各自复制/冻结的源码。宿主标准库随运行冻结，不夹进作者审批内容。
+
+## 标准方法、上下文与压缩（P4a）
+
+`tlon.workflows` 导出 short-turn、plan-then-act、evidence-check、reviewed、route、forward。前四项接收普通 conversation options；route 的 method 选择短回合、计划执行、独立证据核验或评审修订，方法本身仍是可嵌套调用的函数。forward 接收目标地址和原 mail_id，经 mail-forward 转发原信。完整两模块示例见 [standard-work](../../src/tlon/resources/examples/standard-work/README.md)。
+
+`tlon.context/assemble` 组合 prefix/history/task；`fit` 根据宿主 model-context 的完整请求估算决定是否压缩，`complete` 组合 fit 与 model-call。估算包括冻结系统提示与选定工具，返回 input_tokens、context_window、output_tokens、fits，不调用 provider、不消费模型额度；估算不能保证 provider 的最终 token 计数。
+
+`compact` 保留 cache_prefix_len（也作为默认 prefix_count）和最近 recent_groups 个完整交换，逐组累积摘要。每次摘要请求先核查窗口；单个交换无法容纳时明确拒绝，不拆坏工具协议。摘要区分未执行草稿/建议、真实工具结果、失败与不确定性，不冒充新执行回执。所有摘要、计划、核验、修订共享原根预算与持久模型回执；前缀不得切断 assistant/tool 交换或缩短缓存区。
+
+v2 运行的责任邮件、原错误与模型草稿保留。终止或不安全 unknown 隔离时，宿主向已核实的原人类发件人投递稳定、幂等失败通知；通知使用独立零模型额度维护根，不赠送原程序额度，不向其他 Agent 发送自动失败信。通知故障不覆盖原错误，可恢复的安全 unknown 仍按原调用键对账，取消仍传播。新交互历史的消费与投影待 P4b，旧引擎退役待 P5。

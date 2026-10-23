@@ -208,6 +208,18 @@ class ProgramStore:
                 ).fetchall()
                 return [r for (key,) in ids if (r := self._read_run(connection, key)) is not None]
 
+    def failed_entries(self) -> list[ProgramRun]:
+        """Terminal module failures whose courtesy mail may need reconciliation."""
+        with self._lock:
+            if self.database is None:
+                return [r for r in self._runs.values() if r.package_edn is not None and r.error]
+            with self._connection() as connection:
+                ids = connection.execute(
+                    "SELECT r.run_id FROM runs r JOIN entry_programs e ON e.run_id=r.run_id "
+                    "WHERE r.error IS NOT NULL ORDER BY r.rowid"
+                ).fetchall()
+                return [r for (key,) in ids if (r := self._read_run(connection, key)) is not None]
+
     def get_run(self, run_id: str) -> ProgramRun | None:
         """Inspect durable lifecycle status without authorizing execution."""
         with self._lock:

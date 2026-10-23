@@ -18,6 +18,12 @@ from tlon.operations.schema import OperationError, RejectedError, UnknownOutcome
 from tlosure.builtins import BuiltinCall
 from tlosure.edn import Keyword
 
+BUNDLE_BEHAVIOR = "{:version 2 :handlers {:mail-delivered work.reply/handle} :fuel 1000}"
+BUNDLE_MODULES = {
+    "work/reply.tlon": "(ns work.reply (:require [work.helper :as h]) (:export handle)) (defn handle [event] (h/result))",
+    "work/helper.tlon": '(ns work.helper (:export result)) (defn result [] {:result "ok"})',
+}
+
 _SPEC = '{:version 1 :rules [{:name "boot" :on :boot :actions []}]}'
 
 
@@ -41,7 +47,11 @@ async def test_two_entrances_host_author_and_human_trust(tmp_path: Path) -> None
     paths = TlonPaths(home=tmp_path)
     executor = _bound(paths)
     adapter = DSLAdapter(executor)
-    args = {Keyword("behavior"): _SPEC, Keyword("display_name"): "空启动"}
+    args = {
+        Keyword("behavior"): BUNDLE_BEHAVIOR,
+        Keyword("modules"): BUNDLE_MODULES,
+        Keyword("display_name"): "空启动",
+    }
     result = await adapter.handle(
         BuiltinCall("prototype-write", adapter.builtins()["prototype-write"], [args], {})
     )
@@ -64,12 +74,16 @@ async def test_two_entrances_host_author_and_human_trust(tmp_path: Path) -> None
 @pytest.mark.parametrize(
     ("name", "slot", "args"),
     [
-        ("prototype-write", "writer", {"behavior": _SPEC, "display_name": "x"}),
+        (
+            "prototype-write",
+            "writer",
+            {"behavior": BUNDLE_BEHAVIOR, "modules": BUNDLE_MODULES, "display_name": "x"},
+        ),
         ("behavior-propose", "behavior_proposer", {"intent": "x", "display_name": "x"}),
     ],
 )
 async def test_apprentice_denied_in_tool_and_dsl_before_service_call(
-    name: str, slot: str, args: dict[str, str]
+    name: str, slot: str, args: dict[str, object]
 ) -> None:
     service = Mock()
     executor = OperationExecutor(
@@ -119,7 +133,7 @@ async def test_write_io_failure_is_unknown_with_host_call_id(tmp_path: Path) -> 
         pytest.raises(UnknownOutcomeError) as failure,
     ):
         await OperationTool(executor, "prototype-write").execute_context(
-            {"behavior": _SPEC, "display_name": "x"}
+            {"behavior": BUNDLE_BEHAVIOR, "modules": BUNDLE_MODULES, "display_name": "x"}
         )
     assert failure.value.data == {
         "outcome": "unknown",
@@ -146,7 +160,7 @@ async def test_error_after_publication_reports_unknown_and_keeps_committed_propo
         pytest.raises(UnknownOutcomeError) as failure,
     ):
         await OperationTool(executor, "prototype-write").execute_context(
-            {"behavior": _SPEC, "display_name": "x"}
+            {"behavior": BUNDLE_BEHAVIOR, "modules": BUNDLE_MODULES, "display_name": "x"}
         )
     assert failure.value.data == {
         "outcome": "unknown",
@@ -157,7 +171,7 @@ async def test_error_after_publication_reports_unknown_and_keeps_committed_propo
     assert len(proposals) == 1 and proposals[0].trusted is False
     assert (
         paths.prototypes_staging_dir() / proposals[0].name / "behavior.tlon"
-    ).read_text() == _SPEC + "\n"
+    ).read_text() == BUNDLE_BEHAVIOR + "\n"
 
 
 def test_concurrent_same_name_publication_never_overwrites(tmp_path: Path) -> None:
@@ -212,6 +226,7 @@ async def test_probation_can_read_catalogs_lineage_and_review(tmp_path: Path) ->
             "probation",
             llm,
             partial(get_prototype_detail, staging=True, tlon_paths=paths),
+            lambda _name: {},
             partial(get_prototype_lineage, tlon_paths=paths),
             partial(append_staging_review, tlon_paths=paths),
         ),

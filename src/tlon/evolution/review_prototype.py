@@ -36,12 +36,12 @@ must be exactly one of them."""
 
 _REVIEW_SYSTEM_PROMPT = (
     "你是行为原型的同行评审员。输入是一份 staging 区提案的全套材料："
-    "behavior.tlon 全文、随包教训（LESSONS.md，如有）、谱系链"
+    "behavior.tlon 与全部模块全文、随包教训（LESSONS.md，如有）、谱系链"
     "（每一代的变更说明与相邻两代 behavior.tlon 的 diff）。\n"
     "以独立评审者的身份判断这份提案是否值得晋级为 trusted（可被 spawn）。\n"
     "评审角度：\n"
     "- 显示名与描述是否对应 spec 中的实际行为，不以职业或职位代替行为差异；原型不授予社会身份；\n"
-    "- spec 是否完整自足、形态合法（v1 schema 的 rules-form）；\n"
+    "- spec 是否完整自足、形态合法（v2 handlers 及完整模块依赖（历史 v1 按其原规约审阅））；\n"
     "- 相对父代的变更是否有实质意义、与变更说明（proposal_note）一致；\n"
     "- 执行能力声明（:execution :level）是否名副其实——L0/L1 足以满足需求"
     "却声明 L2（Docker 完整 Linux userland）是评审红旗；\n"
@@ -86,12 +86,14 @@ class PrototypeReviewer:
         reviewer_id: str,
         llm_client: LLMClient,
         detail: Callable[..., tuple[PrototypeSummary, str, str | None, str | None]],
+        modules: Callable[[str], dict[str, str]],
         lineage: Callable[[str], list[dict[str, Any]]],
         append_review: Callable[[str, str], None],
     ) -> None:
         self._reviewer_id = reviewer_id
         self._llm_client = llm_client
         self._detail = detail
+        self._modules = modules
         self._lineage = lineage
         self._append_review = append_review
 
@@ -99,6 +101,7 @@ class PrototypeReviewer:
         name: str = kwargs["name"]
         try:
             info, behavior, lessons, _reviews = self._detail(name)
+            modules = self._modules(name)
             chain = self._lineage(name)
         except PrototypeError as e:
             raise RejectedError(str(e), {}) from e
@@ -109,6 +112,8 @@ class PrototypeReviewer:
             + (f"；变更说明：{info.proposal_note}" if info.proposal_note else ""),
             "## 行为规约（behavior.tlon 全文）\n" + behavior,
         ]
+        for path, source in sorted(modules.items()):
+            prompt_parts.append(f"## 模块 modules/{path}\n{source}")
         if lessons:
             prompt_parts.append("## 随包教训（LESSONS.md）\n" + lessons)
         prompt_parts.append("## 谱系链（根在前，含每代 diff）\n" + _render_lineage(chain))

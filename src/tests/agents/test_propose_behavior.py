@@ -7,6 +7,7 @@ then through the same staging write gate as ``prototype-write``. Failures
 for the outer ReAct loop to retry — the tool never retries internally.
 """
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -21,8 +22,24 @@ from tlon.memory.models import MemoryConfig
 from tlon.operations.adapters import OperationTool
 
 _CURRENT_SPEC = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
-_DRAFT_SPEC = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["y@tlon.internal"]})]}]}\n'
-_INVALID_SPEC = '{:version 1\n :rules [{:name "wild"\n          :on :mail-delivered\n          :actions [(jump {:to ["x@tlon.internal"]})]}]}\n'
+
+BUNDLE_BEHAVIOR = "{:version 2 :handlers {:mail-delivered work.reply/handle} :fuel 1000}"
+BUNDLE_MODULES = {
+    "work/reply.tlon": "(ns work.reply (:require [work.helper :as h]) (:export handle)) (defn handle [event] (h/result))",
+    "work/helper.tlon": '(ns work.helper (:export result)) (defn result [] {:result "ok"})',
+}
+
+_DRAFT_SPEC = BUNDLE_BEHAVIOR
+_DRAFT_JSON = json.dumps({"behavior": BUNDLE_BEHAVIOR, "modules": BUNDLE_MODULES})
+_INVALID_SPEC = json.dumps(
+    {
+        "behavior": BUNDLE_BEHAVIOR,
+        "modules": {
+            **BUNDLE_MODULES,
+            "work/helper.tlon": "(ns work.helper (:export result)) (defn result [] (jump {}))",
+        },
+    }
+)
 
 
 class _FakeLLM:
@@ -77,7 +94,7 @@ class TestProposeBehavior:
         lessons_file = p.memory_lessons_file(agent_id)
         lessons_file.parent.mkdir(parents=True, exist_ok=True)
         lessons_file.write_text("- 别在深夜回信\n", encoding="utf-8")
-        llm = _FakeLLM(f"```edn\n{_DRAFT_SPEC}```\n")
+        llm = _FakeLLM(_DRAFT_JSON)
         memory = MemoryManager(agent_id, MemoryConfig(), data_dir=p.agent_dir(agent_id))
         await memory.remember_fact("用户偏好简短回复")
         tool = _make_tool(p, agent_id, llm, memory=memory, prototype=created_1.name)
@@ -93,7 +110,7 @@ class TestProposeBehavior:
             "status": "pending_approval",
         }
         staging = p.prototypes_staging_dir() / result.data["name"]
-        assert (staging / "behavior.tlon").read_text(encoding="utf-8") == _DRAFT_SPEC
+        assert (staging / "behavior.tlon").read_text(encoding="utf-8") == _DRAFT_SPEC + "\n"
         assert (staging / "LESSONS.md").read_text(encoding="utf-8") == "- 别在深夜回信\n"
         metadata = (staging / "prototype.tlon").read_text(encoding="utf-8")
         assert f":parent :{created_1.name}" in metadata
@@ -105,7 +122,10 @@ class TestProposeBehavior:
         assert "temperature" not in call
         assert call["timeout"] == 60.0
         prompt = call["messages"][0]["content"]
-        assert _CURRENT_SPEC in prompt
+        assert (
+            _CURRENT_SPEC
+            in json.loads(prompt.split("## 当前完整程序包\n")[1].split("\n\n")[0])["behavior"]
+        )
         assert "用户偏好简短回复" in prompt
         assert "- 别在深夜回信" in prompt
         assert "把转发目标换成 y" in prompt
@@ -115,7 +135,7 @@ class TestProposeBehavior:
         p = TlonPaths(home=tmp_path)
         agent_id = "c-base-00000001"
         _write_behavior(p, agent_id)
-        llm = _FakeLLM(_DRAFT_SPEC)
+        llm = _FakeLLM(_DRAFT_JSON)
         tool = _make_tool(p, agent_id, llm, prototype=None)
         result = await tool.execute_context({"intent": "起步", "display_name": "定址转发"})
         assert result.success, result.error
@@ -129,7 +149,7 @@ class TestProposeBehavior:
         tool = _make_tool(p, agent_id, _FakeLLM("我觉得应该这样改……"))
         result = await tool.execute_context({"intent": "改", "display_name": "定址转发"})
         assert not result.success
-        assert "EDN" in result.error
+        assert "JSON" in result.error
         assert not p.prototypes_staging_dir().exists()
 
     async def test_invalid_spec_fed_back(self, tmp_path: Path) -> None:
@@ -141,7 +161,7 @@ class TestProposeBehavior:
         tool = _make_tool(p, agent_id, _FakeLLM(_INVALID_SPEC), prototype=None)
         result = await tool.execute_context({"intent": "改", "display_name": "定址转发"})
         assert not result.success
-        assert "unknown function or special form: jump" in result.error
+        assert "jump" in result.error
         assert "hint" in result.data
         assert not p.prototypes_staging_dir().exists()
 
@@ -150,7 +170,7 @@ class TestProposeBehavior:
         p = TlonPaths(home=tmp_path)
         agent_id = "manual-member"
         _write_behavior(p, agent_id)
-        tool = _make_tool(p, agent_id, _FakeLLM(_DRAFT_SPEC), prototype=None)
+        tool = _make_tool(p, agent_id, _FakeLLM(_DRAFT_JSON), prototype=None)
         result = await tool.execute_context({"intent": "起步", "display_name": "定址转发"})
         assert result.success, result.error
         assert result.data["parent"] is None
@@ -165,7 +185,7 @@ class TestProposeBehavior:
         monkeypatch.setattr(
             "tlon.agents.prototypes.staging.new_prototype_id", lambda: created_1.name
         )
-        tool = _make_tool(p, agent_id, _FakeLLM(_DRAFT_SPEC))
+        tool = _make_tool(p, agent_id, _FakeLLM(_DRAFT_JSON))
         result = await tool.execute_context({"intent": "改", "display_name": "定址转发"})
         assert not result.success
         assert "already exists" in result.error
@@ -183,7 +203,7 @@ class TestProposeSolvency:
         async def _insolvent(prototype: str) -> bool:
             return False
 
-        llm = _FakeLLM(_DRAFT_SPEC)
+        llm = _FakeLLM(_DRAFT_JSON)
         tool = _make_tool(p, agent_id, llm, solvency=_insolvent, prototype="broke")
         result = await tool.execute_context({"intent": "改", "display_name": "定址转发"})
         assert not result.success
@@ -202,7 +222,7 @@ class TestProposeSolvency:
             raise OSError("fitness derivation broke")
 
         tool = _make_tool(
-            p, agent_id, _FakeLLM(_DRAFT_SPEC), solvency=_boom, prototype=created_1.name
+            p, agent_id, _FakeLLM(_DRAFT_JSON), solvency=_boom, prototype=created_1.name
         )
         result = await tool.execute_context({"intent": "改", "display_name": "定址转发"})
         assert result.success, result.error
@@ -210,7 +230,7 @@ class TestProposeSolvency:
 
 async def test_propose_rejects_old_name_or_missing_label_before_drafting(tmp_path: Path) -> None:
     p = TlonPaths(home=tmp_path)
-    llm = _FakeLLM(_DRAFT_SPEC)
+    llm = _FakeLLM(_DRAFT_JSON)
     tool = _make_tool(p, "member", llm)
     assert "name" not in tool.parameters["properties"]
     assert "display_name" in tool.parameters["required"]
@@ -224,3 +244,73 @@ async def test_propose_rejects_old_name_or_missing_label_before_drafting(tmp_pat
         assert "name" in result.error
     assert llm.calls == []
     assert not p.prototypes_staging_dir().exists()
+
+
+async def test_proposal_reads_current_modules_and_keeps_complete_copy(tmp_path: Path) -> None:
+    from tlon.agents.prototypes.staging import approve_prototype
+
+    p = TlonPaths(home=tmp_path)
+    _write_behavior(p, "author", BUNDLE_BEHAVIOR)
+    module_root = p.agent_behavior_file("author").parent / "modules"
+    for path, source in BUNDLE_MODULES.items():
+        target = module_root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source)
+    llm = _FakeLLM(_DRAFT_JSON)
+    result = await _make_tool(p, "author", llm).execute_context(
+        {"intent": "保留模块", "display_name": "完整程序"}
+    )
+    assert result.success, result.error
+    supplied = json.loads(
+        llm.calls[0]["messages"][0]["content"].split("## 当前完整程序包\n")[1].split("\n\n")[0]
+    )
+    assert supplied["modules"] == BUNDLE_MODULES
+    name = result.data["name"]
+    approve_prototype(name, p)
+    # The approved author sources do not point back to the live member.
+    (module_root / "work/helper.tlon").write_text("changed")
+    assert (p.prototypes_dir() / name / "modules/work/helper.tlon").read_text() == BUNDLE_MODULES[
+        "work/helper.tlon"
+    ]
+
+
+async def test_draft_requires_complete_strict_v2_bundle(tmp_path: Path) -> None:
+    p = TlonPaths(home=tmp_path)
+    _write_behavior(p, "author")
+    drafts = [
+        "```json\n" + _DRAFT_JSON + "\n```",
+        json.dumps({"behavior": _CURRENT_SPEC, "modules": BUNDLE_MODULES}),
+        json.dumps({"behavior": BUNDLE_BEHAVIOR, "modules": {}}),
+        json.dumps(
+            {
+                "behavior": BUNDLE_BEHAVIOR,
+                "modules": {"work/reply.tlon": BUNDLE_MODULES["work/reply.tlon"]},
+            }
+        ),
+        json.dumps(
+            {
+                "behavior": BUNDLE_BEHAVIOR,
+                "modules": {
+                    **BUNDLE_MODULES,
+                    "../escape.tlon": "(ns escape (:export x)) (defn x [] 1)",
+                },
+            }
+        ),
+        json.dumps(
+            {
+                "behavior": BUNDLE_BEHAVIOR,
+                "modules": {
+                    "work/reply.tlon": BUNDLE_MODULES["work/reply.tlon"],
+                    "other.tlon": "(ns other (:export x)) (defn x [] 1)",
+                },
+            }
+        ),
+    ]
+    for draft in drafts:
+        llm = _FakeLLM(draft)
+        result = await _make_tool(p, "author", llm).execute_context(
+            {"intent": "改进", "display_name": "待审"}
+        )
+        assert not result.success, draft
+        assert len(llm.calls) == 1
+        assert not p.prototypes_staging_dir().exists()

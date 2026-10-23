@@ -17,20 +17,46 @@ from tlon.operations.schema import RejectedError
 logger = get_logger(__name__)
 
 _BEHAVIOR_HINT = (
-    "behavior 必须是 v1 EDN map：{:version 1 :rules [{:name str :on event-keyword-or-:boot "
-    ":when (可选纯谓词) :actions [(动作表达式) ...]} ...]}。"
-    "所有规则使用相同的执行机制，普通 if、while、函数可以组合动作。"
-    "需要运行会话时在动作中使用 (run-loop (quote {:context {:sections [(persona) (protocol) "
-    "(lessons) (skills) (knowledge) (current-task) (mail-history 20) (thread-recap)]} "
-    ":stages [(think) (act)] :until (or (>= (get state :iteration) (get limits :max_iterations)) "
-    "(>= (get state :error_count) (get limits :max_consecutive_errors)) "
-    "(>= (get state :token_usage) (get limits :max_tokens))) "
-    ":max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 "
-    ":reflect {:enabled false :interval-minutes 15}}))。"
-    "会话是普通效果请求，可由任意规则调用；规则顶层没有 :loop。"
-    "mail-forward 用 :mail_id 显式指定自己邮箱的原信；mail-mark-read 用 :mail_ids 显式标读。"
-    "可选 :parameters 声明模板变量（:type :string 或 :string-list），引用时用 ${变量名}。"
+    "输出完整 v2 程序包：behavior 为 EDN {:version 2 :handlers {:mail-delivered work.reply/handle} "
+    ':fuel 10000}；modules 为相对路径到完整源码的对象，例如 "work/reply.tlon"。'
+    "模块首句 (ns work.reply (:require [work.helpers :as h]) (:export handle))，"
+    "导出 (defn handle [event] ...)，入口参数 event 含 :sender 和 :mail（:content 等）。所有依赖必须随包提交；"
+    "宿主 tlon.* 不可重定义。可 require tlon.messages、tlon.conversation、tlon.context、tlon.workflows。"
+    '模型调用 (model-call {:messages [{:role "user" :content "任务"}] :tools [] :max_tokens 128})，'
+    "返回 :content/:tool_calls/:usage；模型不会自动执行工具。"
+    '对话 (conversation/run {:messages messages :tools ["time-now"] :max_tokens 128 :max_rounds 3}) '
+    '返回 :content/:messages/:reason。tlon.workflows 导出 short-turn、plan-then-act、evidence-check、reviewed、route，均接收与 conversation/run 相同的 options map。发信 (mail-send {:to ["human:alice"] :content text})。'
+    "不得使用 run-loop、stage、context section 或 v1 rules。"
 )
+
+
+def bundle_text(behavior: str, modules: dict[str, str]) -> str:
+    """Canonical full author-source text for similarity and review."""
+    return (
+        behavior
+        + "\n"
+        + "\n".join(f"modules/{path}\n{source}" for path, source in sorted(modules.items()))
+    )
+
+
+def require_bundle(behavior: Any, modules: Any) -> tuple[str, dict[str, str]]:
+    """Machine authors submit complete v2 sources; staging validates linking."""
+    from tlosure.edn import loads
+
+    if not isinstance(behavior, str) or not isinstance(modules, dict) or not modules:
+        raise RejectedError(
+            "完整 v2 程序包需要 behavior 字符串及非空 modules 对象", {"hint": _BEHAVIOR_HINT}
+        )
+    if not all(isinstance(k, str) and isinstance(v, str) for k, v in modules.items()):
+        raise RejectedError("modules 必须是路径到源码字符串的对象", {})
+    try:
+        version = loads(behavior).get("version")
+    except (ValueError, AttributeError) as error:
+        raise RejectedError("behavior 必须是 v2 EDN map", {}) from error
+    if version != 2:
+        raise RejectedError("机器提案只接受 v2 程序包", {"hint": _BEHAVIOR_HINT})
+    return behavior, dict(modules)
+
 
 # Signature of the injected near-kin check (): (behavior text,
 # excluded parent name) in, (closest prototype name, similarity ratio)
@@ -64,7 +90,7 @@ def _check_near_kin(near_kin: NearKinCheck | None, behavior: str, parent: str | 
 class PrototypeWriter:
     """Service to author a new behavior prototype (pure-data spec).
 
-    Accepts one unified rules-form behavior.tlon program. Prototypes carry no persona (unified member
+    Accepts a complete v2 behavior.tlon and module source package. Prototypes carry no persona (unified member
     model, ADR 0006). The prototype lands in
     ``~/.tlon/prototypes-staging/`` marked untrusted: it cannot be spawned
     until a human approves it (ops/WebUI — the Gatekeeper model of
@@ -114,7 +140,7 @@ class PrototypeWriter:
         if self._prototype is not None and not await self._solvent(self._prototype):
             raise RejectedError(f"bloodline '{self._prototype}' is insolvent", {})
 
-        behavior: str = kwargs["behavior"]
+        behavior, modules = require_bundle(kwargs.get("behavior"), kwargs.get("modules"))
         display_name: str = kwargs["display_name"]
         description: str = kwargs.get("description", "")
         parent: str | None = kwargs.get("parent") or None
@@ -125,10 +151,11 @@ class PrototypeWriter:
         # Near-kin check (): the exempted parent is the explicit
         # ``parent`` argument when given, else the author's own prototype
         # (explicit parent > own prototype).
-        _check_near_kin(self._near_kin, behavior, parent or self._prototype)
+        _check_near_kin(self._near_kin, bundle_text(behavior, modules), parent or self._prototype)
         try:
             info = self._writer(
                 behavior,
+                modules=modules,
                 display_name=display_name,
                 description=description,
                 author_id=self._author_id,

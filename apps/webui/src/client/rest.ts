@@ -166,6 +166,7 @@ export type PrototypeSummary = {
 export type PrototypeDetail = PrototypeSummary & {
   behavior: string;
   modules: Record<string, string>;
+  lineage: { name: string; generation: number; proposal_note: string | null; diff_from_parent: string | null; broken: boolean }[];
   /** Derived from the spec's :execution section; null when undeclared or unparseable. */
   execution_level: string | null;
   /** Server-derived review red flags (e.g. staging + L2 declaration). */

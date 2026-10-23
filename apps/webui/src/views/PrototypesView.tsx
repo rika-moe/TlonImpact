@@ -338,6 +338,14 @@ export function PrototypesView({ rest }: ViewProps): ReactElement {
                         <pre className="terminal proto-behavior">{source}</pre>
                       </div>
                     ))}
+                    {detail.lineage?.map((entry) => (
+                      <div key={entry.name}>
+                        <span className="tech-label">GENERATION {entry.generation} // {entry.name}</span>
+                        {entry.proposal_note ? <p>{entry.proposal_note}</p> : null}
+                        {entry.broken ? <p>Parent source unavailable; lineage is incomplete.</p> : null}
+                        {entry.diff_from_parent ? <pre className="terminal proto-behavior">{entry.diff_from_parent}</pre> : null}
+                      </div>
+                    ))}
                     {selected.staging ? (
                       <ArenaPanel
                         rest={rest}

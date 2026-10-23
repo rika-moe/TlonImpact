@@ -151,7 +151,10 @@ class TestWritePrototypeToolLineage:
         )
         result = await tool.execute_context(
             {
-                "behavior": SPEC_V2,
+                "behavior": "{:version 2 :handlers {:boot work.main/handle}}",
+                "modules": {
+                    "work/main.tlon": "(ns work.main (:export handle)) (defn handle [event] {:result true})"
+                },
                 "parent": created_1.name,
                 "proposal_note": "换转发目标",
                 "display_name": "定址转发",
@@ -171,7 +174,14 @@ class TestWritePrototypeToolLineage:
             writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
         )
         result = await tool.execute_context(
-            {"behavior": SPEC_V2, "parent": "ghost", "display_name": "定址转发"}
+            {
+                "behavior": "{:version 2 :handlers {:boot work.main/handle}}",
+                "modules": {
+                    "work/main.tlon": "(ns work.main (:export handle)) (defn handle [event] {:result true})"
+                },
+                "parent": "ghost",
+                "display_name": "定址转发",
+            }
         )
         assert not result.success
         assert "ghost" in (result.error or "")

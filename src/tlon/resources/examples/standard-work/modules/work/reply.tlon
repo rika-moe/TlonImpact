@@ -1,0 +1,9 @@
+(ns work.reply
+  (:require [tlon.context :as context] [tlon.workflows :as workflows] [work.methods :as methods])
+  (:export handle))
+(defn handle [event]
+  (let [options {:messages (context/assemble {:task (get (get event :mail) :content)})
+                 :tools ["time-now"] :max_rounds 3 :max_tokens 256}
+        answer (methods/answer options)]
+    (workflows/forward (get event :sender) (get answer :content))
+    {:result answer}))
