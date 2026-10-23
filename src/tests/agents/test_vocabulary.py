@@ -97,34 +97,8 @@ class TestMailPredicates:
         assert eval_form(loads('(content-matches? msg "x")'), self._env(None), _BUILTINS) is False
 
 
-class TestMemberRoster:
-    """Issue : the host-injected social roster query (same injection
-    pattern as ``sleeping?`` — absent from the host-less registry)."""
-
-    class _Host:
-        def is_sleeping(self, agent_id: object) -> bool:
-            return False
-
-        def is_running(self, agent_id: object) -> bool:
-            return True
-
-        def is_lazy(self, agent_id: object) -> bool:
-            return False
-
-        def start_all_candidates(self) -> list[str]:
-            return []
-
-        def member_roster(self) -> str:
-            return "阿白（a-bai-1a2b3c4d） — a-bai-1a2b3c4d@tlon.internal"
-
-    def test_with_host_returns_roster(self):
-        builtins = make_member_builtins(self._Host())
-        assert (
-            eval_form(loads("(member-roster)"), {}, builtins)
-            == "阿白（a-bai-1a2b3c4d） — a-bai-1a2b3c4d@tlon.internal"
-        )
-
-    def test_without_host_is_unregistered(self):
-        assert "member-roster" not in _BUILTINS
-        with pytest.raises(EvalError, match="unknown function: member-roster"):
-            eval_form(loads("(member-roster)"), {}, _BUILTINS)
+def test_registry_reads_are_operation_placeholders() -> None:
+    """Queries have one named input map and require ordinary async dispatch."""
+    assert not _BUILTINS["member-roster"].pure
+    with pytest.raises(EvalError, match="Operation unavailable"):
+        eval_form(loads("(member-roster {})"), {}, _BUILTINS)

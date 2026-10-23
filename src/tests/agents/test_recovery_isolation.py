@@ -50,7 +50,7 @@ async def test_mismatched_module_root_preserves_input_and_allows_new_work(
 
     monkeypatch.setattr(before._program_store, "complete_entry", interrupt)
     with pytest.raises(asyncio.CancelledError):
-        await before._run_rule_body(before.spec.rules[0], _event(), run_id="frozen")
+        await before._run_handler_body(before.spec.handlers[0], _event(), run_id="frozen")
     monkeypatch.setattr(before._program_store, "complete_entry", original)
     frozen = before._program_store.get_run("frozen")
     with before._program_store._connection() as connection:
@@ -62,7 +62,7 @@ async def test_mismatched_module_root_preserves_input_and_allows_new_work(
     assert blocked.error and blocked.error.startswith("recovery_blocked:")
     assert not blocked.completed
     assert (blocked.package_edn, blocked.input_edn) == (frozen.package_edn, frozen.input_edn)
-    assert await restarted._run_rule_body(restarted.spec.rules[0], _event(), run_id="new")
+    assert await restarted._run_handler_body(restarted.spec.handlers[0], _event(), run_id="new")
     assert restarted._program_store.get_run("new").completed
     await restarted._restore_programs()
     assert restarted._program_store.get_run("frozen") == blocked
@@ -80,14 +80,14 @@ async def test_unknown_model_never_replays_provider_or_continuation(tmp_path: Pa
         operations,
     )
     with pytest.raises(UnknownOutcomeError):
-        await member._run_rule_body(member.spec.rules[0], _event(), run_id="unknown-model")
+        await member._run_handler_body(member.spec.handlers[0], _event(), run_id="unknown-model")
     provider.assert_awaited_once()
     blocked = member._program_store.get_run("unknown-model")
     assert blocked is not None and blocked.error and not blocked.completed
     assert blocked.error.startswith("recovery_blocked:")
     assert member._program_store.state_get("after") is None
     await member._restore_programs()
-    await member._run_rule_body(member.spec.rules[0], _event(), run_id="unknown-model")
+    await member._run_handler_body(member.spec.handlers[0], _event(), run_id="unknown-model")
     provider.assert_awaited_once()
     assert member._program_store.get_run("unknown-model") == blocked
 
@@ -108,14 +108,14 @@ async def test_unsafe_non_model_unknown_isolated_before_new_module_work(tmp_path
         tmp_path, '(danger {}) (state-put {:key "after" :value true}) {:result nil}', (operation,)
     )
     with pytest.raises(UnknownOutcomeError):
-        await member._run_rule_body(member.spec.rules[0], _event(), run_id="unsafe")
+        await member._run_handler_body(member.spec.handlers[0], _event(), run_id="unsafe")
     blocked = member._program_store.get_run("unsafe")
     assert blocked is not None and blocked.error and not blocked.completed
     assert member._program_store.state_get("after") is None
     await member._restore_programs()
     unsafe.assert_awaited_once()
     member._spec = _runtime(tmp_path, '(state-put {:key "healthy" :value true}) {:result nil}').spec
-    await member._run_rule_body(member.spec.rules[0], _event(), run_id="healthy")
+    await member._run_handler_body(member.spec.handlers[0], _event(), run_id="healthy")
     assert member._program_store.state_get("healthy") is True
     assert member._program_store.get_run("unsafe") == blocked
     unsafe.assert_awaited_once()

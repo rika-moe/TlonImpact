@@ -79,20 +79,20 @@ class TestShouldSendToSession:
         """Chat mode rejects detailed agent/tool/trace events."""
         session = make_session(mode="chat")
 
-        assert not service._should_send_to_session(session, make_event(EventType.AGENT_THINKING))
+        assert not service._should_send_to_session(session, make_event(EventType.AGENT_IDLE))
         assert not service._should_send_to_session(session, make_event(EventType.AGENT_JOIN))
-        assert not service._should_send_to_session(session, make_event(EventType.TOOL_EXECUTE))
+        assert not service._should_send_to_session(session, make_event(EventType.TOOL_EXECUTE_START))
         assert not service._should_send_to_session(session, make_event(EventType.CONFIG_UPDATED))
 
     def test_agent_mode_allows_only_agent_events(self, service):
         """Agent mode: only agent.* events (including high-frequency ones)."""
         session = make_session(mode="agent")
 
-        assert service._should_send_to_session(session, make_event(EventType.AGENT_THINKING))
+        assert service._should_send_to_session(session, make_event(EventType.AGENT_IDLE))
         assert service._should_send_to_session(session, make_event(EventType.AGENT_LLM_REQUEST))
 
         assert not service._should_send_to_session(session, make_event(EventType.MAIL_NEW))
-        assert not service._should_send_to_session(session, make_event(EventType.TOOL_EXECUTE))
+        assert not service._should_send_to_session(session, make_event(EventType.TOOL_EXECUTE_START))
         assert not service._should_send_to_session(session, make_event(EventType.SYSTEM_STARTUP))
 
     def test_event_mode_allows_everything(self, service):
@@ -155,12 +155,12 @@ class TestShouldSendToSession:
         session = make_session(mode="event", filters={"trace_id": "trace-abc"})
 
         assert service._should_send_to_session(
-            session, make_event(EventType.AGENT_THINKING, trace_id="trace-abc")
+            session, make_event(EventType.AGENT_IDLE, trace_id="trace-abc")
         )
         assert not service._should_send_to_session(
-            session, make_event(EventType.AGENT_THINKING, trace_id="trace-other")
+            session, make_event(EventType.AGENT_IDLE, trace_id="trace-other")
         )
-        assert not service._should_send_to_session(session, make_event(EventType.AGENT_THINKING))
+        assert not service._should_send_to_session(session, make_event(EventType.AGENT_IDLE))
 
     def test_trace_id_filter_falls_back_to_payload(self, service):
         """trace_id filter also matches a trace_id inside a dict payload."""
@@ -177,14 +177,14 @@ class TestShouldSendToSession:
 
         assert service._should_send_to_session(session, make_event(EventType.MAIL_NEW))
         assert service._should_send_to_session(session, make_event(EventType.AGENT_RESPONSE))
-        assert not service._should_send_to_session(session, make_event(EventType.AGENT_THINKING))
-        assert not service._should_send_to_session(session, make_event(EventType.TOOL_EXECUTE))
+        assert not service._should_send_to_session(session, make_event(EventType.AGENT_IDLE))
+        assert not service._should_send_to_session(session, make_event(EventType.TOOL_EXECUTE_START))
 
     def test_event_types_prefix_wildcard(self, service):
         """event_types supports 'prefix.*' wildcards."""
         session = make_session(mode="event", filters={"event_types": ["agent.*"]})
 
-        assert service._should_send_to_session(session, make_event(EventType.AGENT_THINKING))
+        assert service._should_send_to_session(session, make_event(EventType.AGENT_IDLE))
         assert not service._should_send_to_session(session, make_event(EventType.MAIL_NEW))
 
     def test_exclude_event_types(self, service):
@@ -199,7 +199,7 @@ class TestShouldSendToSession:
             session, make_event(EventType.AGENT_LLM_RESPONSE)
         )
         assert service._should_send_to_session(session, make_event(EventType.MAIL_NEW))
-        assert service._should_send_to_session(session, make_event(EventType.AGENT_THINKING))
+        assert service._should_send_to_session(session, make_event(EventType.AGENT_IDLE))
 
     def test_agent_source_filter(self, service):
         """The pre-existing 'agent' source pattern filter still works."""
@@ -214,10 +214,10 @@ class TestShouldSendToSession:
 
     def test_filters_combine_with_mode(self, service):
         """Filters and mode semantics are ANDed."""
-        session = make_session(mode="chat", filters={"event_types": ["agent.thinking"]})
+        session = make_session(mode="chat", filters={"event_types": ["agent.idle"]})
 
-        # agent.thinking passes the event_types filter but not chat mode
-        assert not service._should_send_to_session(session, make_event(EventType.AGENT_THINKING))
+        # agent.idle passes the event_types filter but not chat mode
+        assert not service._should_send_to_session(session, make_event(EventType.AGENT_IDLE))
         # mail.new passes chat mode but not the event_types filter
         assert not service._should_send_to_session(session, make_event(EventType.MAIL_NEW))
 
@@ -228,7 +228,7 @@ class TestShouldSendToSession:
             filters={"event_types": ["agent.*"], "exclude_event_types": ["agent.llm_request"]},
         )
 
-        assert service._should_send_to_session(session, make_event(EventType.AGENT_THINKING))
+        assert service._should_send_to_session(session, make_event(EventType.AGENT_IDLE))
         assert not service._should_send_to_session(session, make_event(EventType.AGENT_LLM_REQUEST))
         assert not service._should_send_to_session(session, make_event(EventType.MAIL_NEW))
 

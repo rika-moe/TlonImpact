@@ -6,7 +6,7 @@ from pathlib import Path
 import aiohttp
 
 from tests.prototype_helpers import builtin_id
-from tlon.agents.agent_registry import RegistryQueries
+from tlon.agents.registry_queries import RegistryQueries
 from tlon.lifecycle.ports import MemberDirectory
 from tlon.lifecycle.service import LifecycleService
 from tlon.operations.adapters import OperationTool

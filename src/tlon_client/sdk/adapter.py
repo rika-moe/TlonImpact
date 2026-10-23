@@ -164,7 +164,6 @@ class TerminalAdapter(ClientAdapter):
     HIGH_FREQUENCY_EVENTS = {
         "agent.llm_request",
         "agent.llm_response",
-        "agent.thinking_chunk",
     }
 
     def __init__(self) -> None:

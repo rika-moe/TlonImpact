@@ -3,6 +3,7 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from tlon.base.events.event_bus import EventBus
 from tlon.base.execution import (
     BudgetExceededError,
     ExecutionDeadlineError,
@@ -67,9 +68,22 @@ def make_model_operations(
     client: ModelClient | None,
     system_prompt: Callable[[], Awaitable[str]] | None,
     tool_definitions: Callable[[], list[dict[str, Any]]] = lambda: [],
+    *,
+    event_bus: EventBus | None = None,
+    member_id: str = "unknown",
+    model_name: str = "unknown",
 ) -> tuple[Operation, ...]:
     service = (
-        ModelService(client, system_prompt, tool_definitions) if client and system_prompt else None
+        ModelService(
+            client,
+            system_prompt,
+            tool_definitions,
+            event_bus=event_bus,
+            member_id=member_id,
+            model_name=model_name,
+        )
+        if client and system_prompt
+        else None
     )
 
     async def recover(context: CallContext, arguments: dict[str, Any]) -> InvocationOutcome | None:

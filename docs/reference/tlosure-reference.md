@@ -178,7 +178,7 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 
 - 求值入口：`eval_form(form, env, builtins, fuel=DEFAULT_FUEL, max_depth=DEFAULT_MAX_DEPTH)`；加载期先跑 `validate_form` 静态拒绝非法表达式。多表达式共享一个总预算时用公开的 `Evaluator`（见 §2.2 预算分摊）。
 - 宿主职责：组装 `builtins`（并入第 3 节通用词汇 + 自有领域词汇）、构造 `env`、按场景给 `fuel`（不得越过 `MAX_FUEL` 硬顶）、执行暂停的 `BuiltinCall` 并返回调用结果。
-- tlon 宿主的领域词汇（谓词、动作族、宿主查询注入）与 MemberSpec schema 见 [dsl-reference.md](./dsl-reference.md)。
+- tlon 宿主的领域词汇（普通 Operation、物化事件输入）与 MemberSpec schema 见 [dsl-reference.md](./dsl-reference.md)。
 
 ## 源码模块（P1）
 

@@ -1,19 +1,15 @@
 /**
  * SSE event -> activity feed entry mapping (pure functions, unit-tested).
  *
- * Payload shapes are verified against the server's publish points
- * (src/tlon/agents/stages/services.py, agents/spawn.py, agents/act.py,
- * agents/loop_driver.py, agents/agent_registry.py, agents/reaper.py,
- * app/server/serverapp.py, organization/mail/delivery.py,
- * base/config.py). Unknown event types degrade to kind "unknown" with
- * the raw type name as the title.
+ * Model and tool events describe ordinary host invocations. Lifecycle and
+ * mail events come from their owning services. Unknown event types retain
+ * the raw type name as their title.
  */
 
 import type { ServerEvent } from "../types";
 
 export type ActivityKind =
   | "mail"
-  | "thinking"
   | "llm"
   | "tool"
   | "lifecycle"
@@ -24,7 +20,7 @@ export type ActivityKind =
 /** One semantic feed row derived from a raw ServerEvent. */
 export interface ActivityEntry {
   kind: ActivityKind;
-  /** Human-readable one-liner, e.g. "林知遥 is thinking (12 context messages)". */
+  /** Human-readable one-liner, e.g. "林知遥 LLM request". */
   title: string;
   /** Secondary fields, rendered dimmed. */
   detail?: string;
@@ -116,18 +112,6 @@ export function toActivity(ev: ServerEvent): ActivityEntry {
     case "mail.new":
     case "mail.delivered":
       return mailEntry(ev, p);
-
-    case "agent.thinking_start": {
-      const contextLength = num(p["context_length"]);
-      const suffix =
-        contextLength !== undefined ? ` (${contextLength} context messages)` : "";
-      return entry("thinking", `${name} is thinking${suffix}`, ev, undefined, agentId);
-    }
-    case "agent.thinking_end": {
-      const ms = num(p["duration_ms"]);
-      const suffix = ms !== undefined ? ` · ${formatDurationMs(ms)}` : "";
-      return entry("thinking", `${name} finished thinking${suffix}`, ev, undefined, agentId);
-    }
 
     case "agent.llm_request": {
       const model = str(p["model"]);

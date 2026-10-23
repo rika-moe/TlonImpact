@@ -1,7 +1,7 @@
 """Ordinary member vocabulary, materialized events, and society policy data."""
 
 import re
-from typing import Any, Protocol, TypedDict
+from typing import Any, TypedDict
 
 from tlon.operations.definitions import host_operation_definitions
 from tlon.organization.mail.mail import Mail, address_for_member
@@ -33,7 +33,7 @@ class SelfEnv(TypedDict):
     address: str
 
 
-def rule_env(payload: Any, *, member_id: str, name: str) -> dict[str, Any]:
+def entry_env(payload: Any, *, member_id: str, name: str) -> dict[str, Any]:
     """Materialize event data before passing it to an ordinary entry."""
     mail = payload.get("mail") if isinstance(payload, dict) else None
     return {
@@ -174,59 +174,15 @@ POLICY_BUILTINS: dict[str, Builtin] = {**CORE_BUILTINS, **ARITHMETIC_BUILTINS}
 POLICY_HOOK_NAMES = frozenset({"tilt", "solvent?", "full-member?"})
 
 
-# ── Query ports (host → DSL, read-only) ──
-
-
-class ScriptHostQueries(Protocol):
-    """Host read-only queries closure-injected into the member registry.
-
-    The implementation lives outside this module — ``RegistryQueries`` in
-    ``tlon.agents/agent_registry.py``, shared by registry-spawned members
-    and Adam — so the module-level registries stay free of host state.
-    Query arguments may be anything an expression yields (including None
-    for a missing payload key), so implementations must tolerate
-    non-string input.
-    """
-
-    def is_sleeping(self, agent_id: Any) -> bool:
-        """Registered (config known) but not running."""
-        ...
-
-    def is_running(self, agent_id: Any) -> bool:
-        """Currently in the run table."""
-        ...
-
-    def is_lazy(self, agent_id: Any) -> bool:
-        """A member that can sleep / be drained: no ``:on :boot`` rule.
-
-        Unified member model (ADR 0006): laziness is spec-derived (a
-        missing or unreadable spec also counts), never a birth marker."""
-        ...
-
-    def start_all_candidates(self) -> list[str]:
-        """The boot set: members whose spec declares ``:on :boot``."""
-        ...
-
-    def member_roster(self) -> str:
-        """The addressing yellow page: one pre-formatted line per member.
-
-        Each line is ``name (id) — id@tlon.internal`` (ADR 0024 决策 3:
-        id / name / address, no identity content). Formatting lives
-        in the implementation, not the DSL: the DSL never iterates,
-        iteration is a builtin. Public routing information, open to every
-        member (the same injected host serves Adam and registry-spawned
-        members); offline members and Adam are included through the delivery
-        directory. The public names and addresses may be quoted and shared;
-        private contact books, persona files and mail remain private."""
-        ...
+# ── Static operation vocabulary ──
 
 
 def _unavailable_operation(_env: dict[str, Any], *args: Any) -> Any:
     raise EvalError("Operation unavailable for this member")
 
 
-def make_member_builtins(host: ScriptHostQueries | None = None) -> dict[str, Builtin]:
-    """Build ordinary operation placeholders and explicit host query closures."""
+def make_member_builtins() -> dict[str, Builtin]:
+    """Build language helpers and ordinary operation placeholders."""
     builtins: dict[str, Builtin] = {
         **{
             operation.name: Builtin(fn=_unavailable_operation, pure=False)
@@ -235,9 +191,4 @@ def make_member_builtins(host: ScriptHostQueries | None = None) -> dict[str, Bui
         **SCRIPT_BUILTINS,
         "tool-execute": Builtin(_unavailable_operation, pure=False),
     }
-    if host is not None:
-        builtins["sleeping?"] = Builtin(lambda env, aid: host.is_sleeping(aid), pure=False)
-        builtins["running?"] = Builtin(lambda env, aid: host.is_running(aid), pure=False)
-        builtins["lazy?"] = Builtin(lambda env, aid: host.is_lazy(aid), pure=False)
-        builtins["member-roster"] = Builtin(lambda env: host.member_roster(), pure=False)
     return builtins

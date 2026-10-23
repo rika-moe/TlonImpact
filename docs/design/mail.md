@@ -77,7 +77,7 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 
 「已知人类」指已在 SQLite 注册的 `human:<username>`，与在线状态及旧邮箱目录无关。首次 attach 或 REST 投信时注册。`PostOffice` 与 `AdapterManager` 共享注入的 resolver；agent 查询来自 `AgentInfoProvider`，网关查询来自注入的认领表。
 
-成员寻址黄页由投递解析层生成，经 `PostOffice.list_members` 提供给 `member-list` 和 `member-roster`：合并可解析的配置成员、Adam、SQLite 已登记的通信成员，按真实投递归属去重、排除退休地址。离线成员仍可发现，输出仅公开 id（地址 local-part）、名字和地址，不披露运行类型、社会身份或私有材料。黄页可向其他成员引用、转告，详见 [ADR 0034](../decisions/0034-member-address-directory.md)。
+成员寻址黄页由投递解析层生成，经 `PostOffice.list_members` 提供给 `member-list` 和 `member-roster` 两个普通只读 Operation（后者调用为 `(member-roster {})`）：合并可解析的配置成员、Adam、SQLite 已登记的通信成员，按真实投递归属去重、排除退休地址。离线成员仍可发现，输出仅公开 id（地址 local-part）、名字和地址，不披露运行类型、社会身份或私有材料。黄页可向其他成员引用、转告，详见 [ADR 0034](../decisions/0034-member-address-directory.md)。
 
 完整地址通过 `resolve_address` 只代表格式可用，仍必须经 `resolve_member` 和退休检查，不能把解析成地址等同于投信有效。
 

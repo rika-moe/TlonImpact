@@ -5,7 +5,7 @@ policy member outside its activation table: boot, drain, noisy circuit
 breaker, newborn welcome and guardian mailbox acknowledgement.
 """
 
-from tlon.agents.agent_registry import AgentRegistry, RegistryQueries
+from tlon.agents.agent_registry import AgentRegistry
 from tlon.agents.member_runtime import MemberRuntime
 from tlon.agents.program_package import validate_program_sources
 from tlon.agents.vocabulary import make_member_builtins
@@ -35,10 +35,9 @@ def make_adam(
     tlon_paths: TlonPaths,
     post_office: PostOffice | None = None,
 ) -> MemberRuntime:
-    """Assemble Adam: the built-in spec plus registry query closures.
+    """Assemble Adam: ordinary handlers with registry-bound operations.
 
-    Adam receives the registry for shared lifecycle operations and query
-    closures. It remains outside the registry's activation table; the
+    Adam receives the registry for shared lifecycle and read operations. It remains outside the registry's activation table; the
     dependency stays one-directional: Adam → registry, never reverse.
 
     Args:
@@ -49,7 +48,7 @@ def make_adam(
             ``~/.tlon/adam/mail/`` (docs/design/mail.md 「守护者信箱」) —
             read-marking and the boot unread replay come from it.
     """
-    builtins = make_member_builtins(RegistryQueries(agent_registry))
+    builtins = make_member_builtins()
     spec = validate_program_sources(
         ADAM_SPEC_EDN, {"adam/policy.tlon": ADAM_MODULE}, builtins=builtins
     )

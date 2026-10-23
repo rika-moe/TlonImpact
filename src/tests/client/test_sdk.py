@@ -308,11 +308,11 @@ class TestBaseClient:
 
         queue = server.app["sse_queues"]["tui-1"]
         queue.put_nowait(": ping\n\n")
-        frame = {"type": "event", "event_type": "agent.thinking", "payload": {}}
+        frame = {"type": "event", "event_type": "agent.idle", "payload": {}}
         queue.put_nowait(f"data: {json.dumps(frame)}\n\n")
 
         await wait_for(lambda: len(events) == 1)
-        assert events[0]["type"] == "agent.thinking"
+        assert events[0]["type"] == "agent.idle"
 
     async def test_update_session(self, client, server):
         """update_session() PATCHes mode/filters and syncs local state."""
@@ -839,7 +839,7 @@ class TestTlonClient:
 
         # Agent events are dispatched too (server already decided to send them)
         agent_event = {
-            "type": "agent.thinking",
+            "type": "agent.idle",
             "payload": {"agent_id": "dev-001"},
         }
         client._on_event(agent_event)

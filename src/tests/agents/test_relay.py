@@ -45,7 +45,9 @@ class TestRelayPrototype:
         assert ":parameters" not in text
         assert "a@tlon.internal" in source and "b@tlon.internal" in source
         spec = validate_program_sources(text, modules)
-        assert dict(spec.handlers)["mail-delivered"] == "work.main/handle"
+        assert {handler.event_name: handler.entry for handler in spec.handlers}[
+            "mail-delivered"
+        ] == "work.main/handle"
         assert "mail-forward" in source and "mail-mark-read" in source
 
     def test_missing_params_refused(self, tmp_path):

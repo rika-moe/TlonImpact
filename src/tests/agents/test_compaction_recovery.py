@@ -2,6 +2,7 @@
 
 import asyncio
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -14,13 +15,15 @@ from tlon.base.llm_client import LLMClient, LLMResponse
 from tlon.base.paths import TlonPaths
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
 from tlon.operations.dsl import DSLAdapter
+from tlon.operations.invocation import Invocation, InvocationOutcome
 from tlon.operations.model import make_model_operations
-from tlosure.builtins import Builtin
 from tlosure.edn import Keyword
 from tlosure.modules import ModulePackage
 
 
-async def test_compaction_recovers_inner_commit_without_new_budget(tmp_path: Path) -> None:
+async def test_compaction_recovers_inner_commit_without_new_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     store = ProgramStore(tmp_path / "run.sqlite", build_id="test")
     client = LLMClient(
         LLMConfig(model_name="openai/test"), agent_id="a", tlon_paths=TlonPaths(home=tmp_path)
@@ -38,8 +41,12 @@ async def test_compaction_recovers_inner_commit_without_new_budget(tmp_path: Pat
     )
     adapter = DSLAdapter(executor)
     builtins = {**program_builtins(), **adapter.builtins()}
-    # Pressure estimation itself is covered by host tests; this isolates the model commit window.
-    builtins["model-context"] = Builtin(lambda env, request: {Keyword("fits"): True}, pure=False)
+    # Token estimation is deterministic; the real model-context operation still
+    # records and replays its result through the same invocation authority.
+    monkeypatch.setattr("tlon.operations.model_context.litellm.token_counter", lambda **kwargs: 2)
+    store.freeze_model_context(
+        "root", "config", {"model_name": "openai/test", "context_window": 4096, "max_tokens": 16}
+    )
     sources = {
         "work.tlon": """(ns work (:require [tlon.context :as context]) (:export handle))
       (defn handle [event]
@@ -50,8 +57,12 @@ async def test_compaction_recovers_inner_commit_without_new_budget(tmp_path: Pat
     package = ModulePackage.from_sources(program_module_sources(sources), builtins)
     commit = executor._commit
 
-    async def interrupt(*args: object) -> None:
-        raise asyncio.CancelledError()
+    async def interrupt(
+        invocation: Invocation, outcome: InvocationOutcome, inputs: dict[str, Any]
+    ) -> None:
+        if invocation.name == "model-call":
+            raise asyncio.CancelledError()
+        await commit(invocation, outcome, inputs)
 
     executor._commit = interrupt
     first = ProgramDriver(

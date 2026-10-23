@@ -12,7 +12,7 @@ ProgramStore 记录逐调用身份、契约、冻结依赖及结果。state-put 
 
 入口接收物化事件数据，域查询通过显式只读操作采样。`member-context` 返回固定结构资料；工作程序决定怎么构造上下文。宿主冻结人格/协议、模型与工具定义，程序不能通过业务输入改写成员身份或扩大授权。
 
-Adam 的少量注册表查询仍由 ScriptHostQueries 注入，明确为非纯且按调用记录读取值；它们不是确定性常量。社会策略保持独立纯求值，输入在宿主调用点物化，不执行工作流程或外部读取。
+注册表查询使用 member-sleeping、member-running、member-lazy 与 member-roster 普通只读 Operation，传入单个具名参数对象，并由共享 invocation 回执记录采样值；不再注入独立的宿主 builtin。社会策略保持独立纯求值，输入在宿主调用点物化，不执行工作流程或外部读取。
 
 ## 已退役
 

@@ -64,7 +64,6 @@
 }
 
 .event-kind--mail,
-.event-kind--thinking,
 .event-kind--llm {
   background: var(--neon-cyan);
   box-shadow: 0 0 6px rgba(0, 240, 255, 0.6);

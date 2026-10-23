@@ -25,7 +25,7 @@
 1. **地址**：`agent_id@tlon.internal`，投递层签发、不可伪造。这是一切信任的锚——B 可以在联系簿里把 A 描述错，但「这封信确实来自 A」是机制事实。
 2. **事实**：ledger、邮件存档、谱系（`spawned_by` / `spawn_depth` / `prototype`）。这些事实与主观叙事分开维护；它们不为某个人格叙述背书。
 
-**统一成员寻址黄页**（[ADR 0034](../decisions/0034-member-address-directory.md)）：`member-list` 与 `member-roster` 使用同一个投递层目录，列出可识别且未退休的成员，包含普通成员、Adam 和 SQLite 已登记的离线通信成员。每项仅 id / name / address，公开 id 是地址 local-part，不输出内部 human: 前缀、人类／agent 标签、职位或可信等级。休眠与离线不影响寻址，已退休、失去投递归属的历史地址、外部来源和 postmaster 系统地址不列出。
+**统一成员寻址黄页**（[ADR 0034](../decisions/0034-member-address-directory.md)）：`member-list` 与 `member-roster` 两个普通只读 Operation 使用同一个投递层目录，列出可识别且未退休的成员，包含普通成员、Adam 和 SQLite 已登记的离线通信成员。每项仅 id / name / address，公开 id 是地址 local-part，不输出内部 human: 前缀、人类／agent 标签、职位或可信等级。休眠与离线不影响寻址，已退休、失去投递归属的历史地址、外部来源和 postmaster 系统地址不列出。
 
 **黄页可以引用和转告**：它是面向所有成员的公开寻址信息，回答「当前可给哪些地址写信」，不认证职务、组织、能力或可信程度。「没有权威社会身份表」不表示没有通讯录，也不构成黄页保密规则；尚不了解来信者不影响其查询公开信息。私人联系簿、人格文件、邮件正文与记忆仍遵守各自私有访问边界，黄页公开不等于可以读取或转交他人的私有材料。
 
@@ -96,7 +96,7 @@ WebUI 创建与编辑成员时统一展示这三个文件及上述定义。编�
 | prompt 注入：「联系簿」段取代「团队成员」段 | [src/tlon/agents/context_builder.py](../../src/tlon/agents/context_builder.py)、`prompt_builder.py`、`prompt_context.py`（只注入自己的 CONTACTS.md，缺省即空；mtime 签名不再含他人 SOUL） |
 | all@ 展开删除、无效地址拒绝 | [src/tlon/organization/mail/post_office.py](../../src/tlon/organization/mail/post_office.py)（无效地址整封拒绝） |
 | 统一成员寻址工具 `member-list` | [src/tlon/lifecycle/service.py](../../src/tlon/lifecycle/service.py)（与 DSL 共用邮局目录，只输出公开 id / name / address） |
-| 名册黄页化：`member-roster` 宿主词瘦身 | [src/tlon/agents/agent_registry.py](../../src/tlon/agents/agent_registry.py)、`vocabulary.py`（从同一邮局目录渲染 `名字（公开 id） — 地址`，不按 agent 注册表另造副本） |
+| 名册黄页化：`member-roster {}` 普通只读操作 | [src/tlon/operations/registry.py](../../src/tlon/operations/registry.py)（从同一邮局目录渲染 `名字（公开 id） — 地址`，由共享 invocation 记录采样值） |
 
 ## 未实施方向：社会观测与纠错
 

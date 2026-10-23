@@ -41,14 +41,14 @@ def runtime_at(tmp_path: Path, recipient: str = "missing@tlon.internal") -> Memb
 async def test_known_rule_rejection_is_terminal_and_aborts_later_actions(tmp_path: Path) -> None:
     member = runtime_at(tmp_path)
     member._logger = MagicMock()
-    assert await member._run_rule(member.spec.rules[0], None, run_id="rejected")
+    assert await member._run_handler(member.spec.handlers[0], None, run_id="rejected")
     inbox = await Mailbox(TlonPaths(home=tmp_path).mail_database_file(), "b").inbox()
     assert inbox == []
     assert member._program_store.pending() == []
     member._logger.warning.assert_called_once()
     assert "missing@tlon.internal" in member._logger.warning.call_args.kwargs["error"]
     # Same rejected run is terminal, rather than continually retried.
-    assert await member._run_rule(member.spec.rules[0], None, run_id="rejected")
+    assert await member._run_handler(member.spec.handlers[0], None, run_id="rejected")
     member._logger.warning.assert_called_once()
 
 
@@ -65,7 +65,7 @@ async def test_unknown_after_real_commit_remains_pending_and_recovery_deduplicat
 
     monkeypatch.setattr(office, "_notify", lose_response)
     with pytest.raises(UnknownOutcomeError) as unknown:
-        await member._run_rule(member.spec.rules[0], None, run_id="recover")
+        await member._run_handler(member.spec.handlers[0], None, run_id="recover")
     assert unknown.value.data["request_id"] == "program:recover:0:mail-send"
     assert len(member._program_store.pending()) == 1
     assert len(office.store.mails("b")) == 1
@@ -83,5 +83,5 @@ async def test_dsl_cancellation_propagates_and_preserves_pending_run(
     assert member._post_office is not None
     monkeypatch.setattr(member._post_office, "send", AsyncMock(side_effect=asyncio.CancelledError))
     with pytest.raises(asyncio.CancelledError):
-        await member._run_rule(member.spec.rules[0], None, run_id="cancelled")
+        await member._run_handler(member.spec.handlers[0], None, run_id="cancelled")
     assert len(member._program_store.pending()) == 1

@@ -40,7 +40,10 @@ def test_complete_builtin_module_package(tmp_path: Path, label: str) -> None:
     modules = read_module_sources(paths.agent_config_dir(config.id) / "modules")
     spec = validate_program_sources(behavior, modules)
     assert spec.version == 2
-    assert dict(spec.handlers) == {"boot": "work.main/boot", "mail-delivered": "work.main/handle"}
+    assert {handler.event_name: handler.entry for handler in spec.handlers} == {
+        "boot": "work.main/boot",
+        "mail-delivered": "work.main/handle",
+    }
     assert spec.execution_level == (
         "L2"
         if label in {"计划后执行", "标准工具迭代", "证据核验"}

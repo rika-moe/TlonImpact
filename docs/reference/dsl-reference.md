@@ -20,17 +20,16 @@
 入口接收物化的事件 map，含 `:mail`、`:self`、`:sender` 等相应数据。普通函数自行判断条件、读取上下文、调用模型、执行工具或投递邮件。子函数返回只结束自身；只有根入口返回的 `:next` 影响成员调度，具体形状见 [工作流程设计](../design/programmable-workflows.md)。
 
 <!-- BEGIN GENERATED: dsl-on-events -->
-合法值共 37 个（`:boot` + 全部 `EventType` 成员，转换逻辑 `member_spec._on_from` / `_on_to_str`）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+合法值共 32 个（`:boot` + 全部 `EventType` 成员，转换逻辑 `member_spec._handler_event` / `MemberHandler.event_name`）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | `:on` 关键字 | 事件值 | 说明 |
 |---|---|---|
-| `:boot` | — | 启动规则：映射 `None`，订阅就绪后运行一次，`msg` / `event` 均为 `nil` |
+| `:boot` | — | 启动入口：映射 `None`，订阅就绪后运行一次，`msg` / `event` 均为 `nil` |
 | `:mail-new` | `mail.new` | A mail was committed by the post office (notification only) |
 | `:mail-delivered` | `mail.delivered` | A mail landed in one recipient's inbox |
 | `:mail-endorsed` | `mail.endorsed` | A delivered mail endorses another mail (reputation signal, see docs/design/mail.md) |
 | `:agent-join` | `agent.join` |  |
 | `:agent-leave` | `agent.leave` |  |
-| `:agent-thinking` | `agent.thinking` |  |
 | `:agent-response` | `agent.response` |  |
 | `:agent-started` | `agent.started` |  |
 | `:agent-stopped` | `agent.stopped` |  |
@@ -48,12 +47,8 @@
 | `:agent-spawned` | `agent.spawned` |  |
 | `:agent-noisy` | `agent.noisy` |  |
 | `:mail-orphan-scan` | `mail.orphan_scan` |  |
-| `:agent-thinking-start` | `agent.thinking_start` |  |
-| `:agent-thinking-end` | `agent.thinking_end` |  |
 | `:agent-llm-request` | `agent.llm_request` |  |
 | `:agent-llm-response` | `agent.llm_response` |  |
-| `:tool-execute` | `tool.execute` |  |
-| `:tool-result` | `tool.result` |  |
 | `:tool-error` | `tool.error` |  |
 | `:tool-execute-start` | `tool.execute_start` |  |
 | `:tool-execute-end` | `tool.execute_end` |  |
@@ -145,14 +140,7 @@
 <!-- END GENERATED: dsl-builtins-policy -->
 
 <!-- BEGIN GENERATED: bridge-query-ports -->
-`make_member_builtins` 在调用方注入 `host` 时追加 4 个宿主查询（`pure=False`，在普通程序中调用，读取注册表或投递目录，调用结果受宿主持久回放；无宿主即不注册这些词；说明取自 `ScriptHostQueries` 协议方法的 docstring）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
-
-| DSL 词 | 宿主方法 | 说明 |
-|---|---|---|
-| `sleeping?` | `host.is_sleeping` | Registered (config known) but not running. |
-| `running?` | `host.is_running` | Currently in the run table. |
-| `lazy?` | `host.is_lazy` | A member that can sleep / be drained: no ``:on :boot`` rule. |
-| `member-roster` | `host.member_roster` | The addressing yellow page: one pre-formatted line per member. |
+注册表读取使用普通只读 Operation：`member-sleeping`、`member-running`、`member-lazy` 接受 `{:agent_id "…"}`，`member-roster` 接受 `{}`。调用结果经统一 invocation 回执采样与重放；不再注入独立宿主谓词或写入 effects 表。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 <!-- END GENERATED: bridge-query-ports -->
 
 ## 4. 资源与恢复

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.history_helpers import LegacyHistoryFixture, insert_legacy_run
 from tlon.agents.loader import legacy_work_error
 from tlon.agents.program_store import ProgramStore
 from tlon.agents.session_journal import SessionJournal
@@ -16,7 +17,9 @@ def test_pending_legacy_session_scan_is_readonly_and_reports_identity(tmp_path: 
     paths = TlonPaths(tmp_path)
     database = paths.agent_sessions_database_file("a")
     store = SessionStore(database)
-    store.append("unfinished-mail", "session/start", {"trigger_content": "evidence"})
+    LegacyHistoryFixture(database).append(
+        "unfinished-mail", "session/start", {"trigger_content": "evidence"}
+    )
     original = database.read_bytes()
     error = legacy_work_error("a", paths)
     assert error is not None
@@ -31,7 +34,7 @@ def test_pending_legacy_program_blocks_but_module_entry_does_not(tmp_path: Path)
     store = ProgramStore(database)
     store.ensure_entry("entry", "{}", "{}", {"modules": {}})
     assert legacy_work_error("a", paths) is None
-    store.ensure("old-run", "{}", "{}")
+    insert_legacy_run(database, "old-run")
     original = database.read_bytes()
     error = legacy_work_error("a", paths)
     assert error is not None and "old-run" in error and str(database) in error
@@ -59,9 +62,10 @@ def test_unreadable_legacy_database_is_blocked_not_treated_as_empty(
 def test_completed_legacy_history_is_readable_without_recreating_execution(tmp_path: Path) -> None:
     paths = TlonPaths(tmp_path)
     database = paths.agent_sessions_database_file("a")
-    store = SessionStore(database)
-    store.append("done", "session/start", {"context": [{"role": "user", "content": "old"}]})
-    store.append("done", "session/end", {"reason": "complete"})
+    LegacyHistoryFixture(database).append(
+        "done", "session/start", {"context": [{"role": "user", "content": "old"}]}
+    )
+    LegacyHistoryFixture(database).append("done", "session/end", {"reason": "complete"})
     original = database.read_bytes()
     assert legacy_work_error("a", paths) is None
     with sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True) as connection:
@@ -88,7 +92,9 @@ async def test_current_module_member_with_legacy_pending_is_not_started(tmp_path
 
     paths = TlonPaths(tmp_path)
     database = paths.agent_sessions_database_file("a")
-    SessionStore(database).append("old-action", "session/start", {"trigger_content": "saved"})
+    LegacyHistoryFixture(database).append(
+        "old-action", "session/start", {"trigger_content": "saved"}
+    )
     original = database.read_bytes()
     member = MemberRuntime(
         member_id="a",

@@ -104,7 +104,9 @@ def test_draft_rejects_unbounded_options_without_model_call() -> None:
         )
 
 
-async def test_draft_recovers_model_receipt_and_keeps_repair_budget(tmp_path: Path) -> None:
+async def test_draft_recovers_model_receipt_and_keeps_repair_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import asyncio
     from unittest.mock import AsyncMock
 
@@ -117,6 +119,7 @@ async def test_draft_recovers_model_receipt_and_keeps_repair_budget(tmp_path: Pa
     from tlon.operations.adapters import OperationTool
     from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
     from tlon.operations.dsl import DSLAdapter
+    from tlon.operations.invocation import Invocation, InvocationOutcome
     from tlon.operations.model import make_model_operations
     from tlon.operations.program import program_check_operation
     from tlon.operations.schema import json_value
@@ -166,7 +169,10 @@ async def test_draft_recovers_model_receipt_and_keeps_repair_budget(tmp_path: Pa
     catalog.append(OperationTool(executor, "program-check").to_openai_definition())
     adapter = DSLAdapter(executor, ToolDispatch(executor, lambda: catalog))
     builtins = {**program_builtins(), **adapter.builtins()}
-    builtins["model-context"] = Builtin(lambda env, args: loads("{:fits true}"), pure=False)
+    monkeypatch.setattr("tlon.operations.model_context.litellm.token_counter", lambda **kwargs: 2)
+    store.freeze_model_context(
+        "root", "config", {"model_name": "openai/test", "context_window": 4096, "max_tokens": 16}
+    )
     package = ModulePackage.from_sources(
         program_module_sources(
             {
@@ -182,8 +188,12 @@ async def test_draft_recovers_model_receipt_and_keeps_repair_budget(tmp_path: Pa
     )
     commit = executor._commit
 
-    async def interrupted(*args: Any) -> None:
-        raise asyncio.CancelledError()
+    async def interrupted(
+        invocation: Invocation, outcome: InvocationOutcome, inputs: dict[str, Any]
+    ) -> None:
+        if invocation.name == "model-call":
+            raise asyncio.CancelledError()
+        await commit(invocation, outcome, inputs)
 
     executor._commit = interrupted
     first = ProgramDriver(

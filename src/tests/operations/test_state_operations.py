@@ -10,6 +10,7 @@ from tlon.agents.tool_executor import ToolExecutor
 from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
 from tlon.operations.dsl import DSLAdapter
+from tlon.operations.invocation import Invocation
 from tlon.operations.schema import (
     DefinitionError,
     InputError,
@@ -97,7 +98,17 @@ async def test_program_transaction_failure_rolls_back_and_can_retry(
         await scope.call("state-put", {"key": "x", "value": 1}, context)
     restarted = ProgramStore(store.database)
     assert restarted.state_get("x") is None
-    assert not restarted._effects
+    call = Invocation(
+        context.call_id,
+        context.run_id,
+        context.call_path,
+        "state-put",
+        '{"key":"x","value":1}',
+        scope.definition_id(scope.registry.get("state-put")),
+        store.build_id,
+    )
+    receipt = restarted.lookup_invocation(call)
+    assert receipt is not None and receipt.error_type == "UnknownOutcomeError"
     monkeypatch.setattr(store, "_commit", original)
     assert await scope.call("state-put", {"key": "x", "value": 1}, context) == 1
     assert restarted.state_get("x") == 1
@@ -147,7 +158,7 @@ async def test_input_cannot_inject_context_or_non_json(arguments: dict[str, obje
     store = ProgramStore(None)
     with pytest.raises(InputError):
         await executor(store).call("state-put", arguments)
-    assert not store._effects and not store._invocations and not store._state
+    assert not store._invocations and not store._state
 
 
 def test_boolean_schema_is_explicit_and_input_root_stays_closed() -> None:
@@ -175,7 +186,7 @@ async def test_invalid_program_input_does_not_claim_intent() -> None:
         await ProgramDriver(
             store, "program", adapter.builtins(), operations=adapter, member_id="a"
         ).run_entry(program_entry(program, adapter), {}, fuel=1000)
-    assert not store._effects and not store._invocations and not store._state
+    assert not store._invocations and not store._state
 
 
 async def test_false_schema_rejects_even_json_values() -> None:

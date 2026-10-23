@@ -13,6 +13,8 @@ from contextlib import nullcontext, suppress
 from dataclasses import dataclass, replace
 from typing import Any, ClassVar, Literal, cast
 
+from tlon.base.events.event import Event, EventType
+from tlon.base.events.event_bus import EventBus
 from tlon.base.execution import (
     BudgetExceededError,
     ExecutionDeadlineError,
@@ -21,6 +23,7 @@ from tlon.base.execution import (
     bind_execution,
     current_execution,
 )
+from tlon.base.logger import get_logger
 from tlon.operations.invocation import Invocation, InvocationOutcome, InvocationStore
 from tlon.operations.schema import (
     DefinitionError,
@@ -36,6 +39,8 @@ from tlon.operations.schema import (
 )
 from tlosure.builtins import ARITHMETIC_BUILTINS, CORE_BUILTINS
 from tlosure.eval import SPECIAL_FORMS
+
+logger = get_logger(__name__)
 
 Effect = Literal["read", "write"]
 
@@ -200,10 +205,12 @@ class OperationExecutor:
         *,
         default_timeout: float = 30,
         write_gate: MemberWriteGate | None = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         self.registry = registry
         self.context = context
         self.store = store
+        self.event_bus = event_bus
         if (
             type(default_timeout) not in (int, float)
             or not math.isfinite(default_timeout)
@@ -237,6 +244,7 @@ class OperationExecutor:
             self.store,
             default_timeout=self.default_timeout,
             write_gate=self._writer,
+            event_bus=self.event_bus,
         )
         return executor
 
@@ -381,11 +389,49 @@ class OperationExecutor:
         remaining = scope.remaining_seconds() if scope is not None else None
         return min(seconds, remaining) if remaining is not None else seconds
 
+    async def _tool_event(
+        self, kind: EventType, operation: Operation, context: CallContext, **payload: Any
+    ) -> None:
+        # Program calls are not model-selected tools. Historical receipts bypass this path.
+        if self.event_bus is None or context.origin != "tool" or operation.name == "model-call":
+            return
+        try:
+            await self.event_bus.publish(
+                Event(
+                    type=kind,
+                    payload={"agent_id": context.member_id, "tool_name": operation.name, **payload},
+                    source=context.member_id,
+                )
+            )
+        except Exception as error:
+            logger.warning("tool_observation_failed", error=str(error))
+
+    async def _invoke(
+        self, operation: Operation, context: CallContext, inputs: dict[str, Any]
+    ) -> Any:
+        await self._tool_event(EventType.TOOL_EXECUTE_START, operation, context)
+        try:
+            if operation.effects:
+                return await cast(AsyncHandler, operation.handler)(context, inputs)
+            return self.call_pure(operation.name, inputs, context)
+        except Exception as error:
+            await self._tool_failure(operation, context, error)
+            raise
+
+    async def _tool_failure(
+        self, operation: Operation, context: CallContext, error: Exception
+    ) -> None:
+        await self._tool_event(EventType.TOOL_ERROR, operation, context, error=str(error))
+        await self._tool_event(EventType.TOOL_EXECUTE_END, operation, context, success=False)
+
     async def call(self, name: str, arguments: Any, context: CallContext | None = None) -> Any:
         bound = self._context(context)
         operation = self.registry.get(name)
         if not operation.effects:
-            return self.call_pure(name, arguments, context)
+            inputs = validate(operation.input_schema, arguments)
+            value = await self._invoke(operation, bound, inputs)
+            await self._tool_event(EventType.TOOL_EXECUTE_END, operation, bound, success=True)
+            return value
         inputs = validate(operation.input_schema, arguments)
         bound = self._context(context)
         scope = bound.execution or current_execution()
@@ -407,12 +453,16 @@ class OperationExecutor:
                             if operation_scope is not None:
                                 operation_scope.check()
                             handler_started = True
-                            value = validate(
-                                operation.output_schema,
-                                await cast(AsyncHandler, operation.handler)(
-                                    replace(bound, execution=operation_scope), inputs
-                                ),
-                                output=True,
+                            result = await self._invoke(
+                                operation, replace(bound, execution=operation_scope), inputs
+                            )
+                            try:
+                                value = validate(operation.output_schema, result, output=True)
+                            except OperationError as error:
+                                await self._tool_failure(operation, bound, error)
+                                raise
+                            await self._tool_event(
+                                EventType.TOOL_EXECUTE_END, operation, bound, success=True
                             )
                             return value
             except ExecutionDeadlineError:
@@ -481,7 +531,8 @@ class OperationExecutor:
                             operation_scope.check()
                         try:
                             handler_started = True
-                            result = await cast(AsyncHandler, operation.handler)(
+                            result = await self._invoke(
+                                operation,
                                 replace(bound, invocation=invocation, execution=operation_scope),
                                 inputs,
                             )
@@ -562,6 +613,7 @@ class OperationExecutor:
                         try:
                             value = validate(operation.output_schema, result, output=True)
                         except OperationError as error:
+                            await self._tool_failure(operation, bound, error)
                             try:
                                 raw = json_value(result)
                             except InputError:
@@ -578,6 +630,9 @@ class OperationExecutor:
                             )
                             raise
                         await self._commit(invocation, InvocationOutcome(True, value=value), inputs)
+                        await self._tool_event(
+                            EventType.TOOL_EXECUTE_END, operation, bound, success=True
+                        )
                         return value
         except asyncio.CancelledError:
             # Cancellation still reaches the task owner. Reconcile any domain-atomic

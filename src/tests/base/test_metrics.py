@@ -9,9 +9,11 @@ e) snapshot() structure (counters and the duration histogram).
 f) REST /metrics endpoint: 200 with a service, 503 without.
 """
 
+import asyncio
 import json
+from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import opentelemetry.metrics._internal as metrics_internal
 import pytest
@@ -563,3 +565,132 @@ async def test_mail_and_start_counters_count_events_not_members(
     assert _point(snapshot, "tlon.mail.delivered", kind="agent")["value"] == 2
     assert _point(snapshot, "tlon.mail.delivered", kind="human")["value"] == 1
     assert _point(snapshot, "tlon.agent.started", agent_id="alice")["value"] == 2
+
+
+async def _flush_metrics_bus(bus: EventBus) -> None:
+    for subscriptions in bus._subscribers.values():
+        for subscription in subscriptions:
+            await asyncio.wait_for(subscription.queue.join(), timeout=2)
+
+
+async def test_model_service_publishes_real_usage_once_across_replay(
+    metric_setup: tuple[InMemoryMetricReader, MetricsService], tmp_path: Path
+) -> None:
+    from tlon.agents.program_store import ProgramStore
+    from tlon.base.config import LLMConfig
+    from tlon.base.execution import ExecutionScope, bind_execution
+    from tlon.base.llm_client import LLMClient, LLMResponse
+    from tlon.base.paths import TlonPaths
+    from tlon.operations.model_service import ModelService
+
+    _, metrics_service = metric_setup
+    bus = metrics_service.event_bus
+    await bus.initialize()
+    await metrics_service.initialize()
+    client = LLMClient(
+        LLMConfig(model_name="openai/test"), agent_id="a", tlon_paths=TlonPaths(home=tmp_path)
+    )
+    client._chat_with_retries = AsyncMock(
+        return_value=LLMResponse(
+            content="answer",
+            tool_calls=[],
+            usage={
+                "prompt_tokens": 7,
+                "completion_tokens": 3,
+                "prompt_tokens_details": {"cached_tokens": 2, "cache_write_tokens": 1},
+            },
+        )
+    )
+    model = ModelService(
+        client,
+        AsyncMock(return_value="system"),
+        event_bus=bus,
+        member_id="a",
+        model_name="openai/test",
+    )
+    store = ProgramStore(None, build_id="build")
+    try:
+        for _ in range(2):
+            scope = ExecutionScope(store, "run", 100, "output")
+            with bind_execution(scope):
+                await scope.initialize()
+                result = await model.request([{"role": "user", "content": "hello"}], max_tokens=5)
+                assert result.content == "answer"
+        await _flush_metrics_bus(bus)
+        snapshot = metrics_service.snapshot()
+        assert client._chat_with_retries.await_count == 1
+        assert _point(snapshot, "tlon.llm.calls", agent_id="a")["value"] == 1
+        assert (
+            _point(snapshot, "tlon.llm.prompt_tokens", agent_id="a", model="openai/test")["value"]
+            == 7
+        )
+        assert (
+            _point(snapshot, "tlon.llm.cached_tokens", agent_id="a", model="openai/test")["value"]
+            == 2
+        )
+    finally:
+        await metrics_service.shutdown()
+        await bus.shutdown()
+
+
+async def test_tool_metrics_count_dispatches_not_receipts_or_program_operations(
+    metric_setup: tuple[InMemoryMetricReader, MetricsService],
+) -> None:
+    from tlon.agents.program_store import ProgramStore
+    from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
+    from tlon.operations.schema import RejectedError
+
+    _, metrics_service = metric_setup
+    bus = metrics_service.event_bus
+    await bus.initialize()
+    await metrics_service.initialize()
+    handler = AsyncMock(return_value=1)
+    rejected = AsyncMock(side_effect=RejectedError("denied", {}))
+    registry = OperationRegistry(
+        [
+            Operation(
+                "read",
+                "",
+                {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+                {"type": "integer"},
+                handler,
+                effects=frozenset({"read"}),
+            ),
+            Operation(
+                "reject",
+                "",
+                {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+                True,
+                rejected,
+                effects=frozenset({"read"}),
+            ),
+        ]
+    )
+    executor = OperationExecutor(
+        registry,
+        CallContext("a", "run", "read", origin="tool"),
+        ProgramStore(None, build_id="build"),
+        event_bus=bus,
+    )
+    try:
+        assert await executor.call("read", {}) == 1
+        assert await executor.call("read", {}) == 1
+        assert (
+            await executor.call("read", {}, CallContext("a", "other", "read-program", origin="program"))
+            == 1
+        )
+        for _ in range(2):
+            with pytest.raises(RejectedError):
+                await executor.call(
+                    "reject", {}, CallContext("a", "reject", "reject", origin="tool")
+                )
+        await _flush_metrics_bus(bus)
+        snapshot = metrics_service.snapshot()
+        assert handler.await_count == 2
+        assert rejected.await_count == 1
+        assert _point(snapshot, "tlon.tool.executions", tool_name="read")["value"] == 1
+        assert _point(snapshot, "tlon.tool.executions", tool_name="reject")["value"] == 1
+        assert _point(snapshot, "tlon.tool.errors", tool_name="reject")["value"] == 1
+    finally:
+        await metrics_service.shutdown()
+        await bus.shutdown()

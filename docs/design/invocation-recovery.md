@@ -2,14 +2,14 @@
 
 > P5：执行与恢复仅有普通模块路径；旧 stage、run-loop、SessionScheduler 和 SessionJournal.resume 已删除。本文的 P4/P6 等旧操作统一阶段记录保留为历史，当前调用权威仍为 ProgramStore；边界以 [Runtime](runtime.md) 为准。
 
-> 已接受目标（P1–P3 已合并，P4a 本阶段实现，P4b/P5 待实施）：[ADR 0046](../decisions/0046-programmable-workflows.md) 与 [可编程工作流程](programmable-workflows.md) 将以模块函数替代 stage 引擎，施工见[分阶段计划](programmable-workflows-plan.md)。P1 的当前用法见 [模块程序指南](../guides/writing-a-module-program.md)。本文的 stage 描述仅适用于 v1。
+> 后续覆盖：P1–P5 已完成，退役后的旧 API、宿主查询和存储边界见 [退役代码清理](workflow-retirement-cleanup.md)。以下阶段描述保留施工背景：[ADR 0046](../decisions/0046-programmable-workflows.md) 与 [可编程工作流程](programmable-workflows.md) 将以模块函数替代 stage 引擎，施工见[分阶段计划](programmable-workflows-plan.md)。P1 的当前用法见 [模块程序指南](../guides/writing-a-module-program.md)。本文的 stage 描述仅适用于 v1。
 
 
-状态：EPIC A、P5 #193 与 P6 #194 已合并，P7 暂停；本文描述当前恢复契约及外部审查后的根隔离决策。总体设计见 [operations](operations.md)，验收见 [operations-plan](operations-plan.md)，共享执行见 [execution-scope](execution-scope.md)。
+状态：EPIC A、P5 #193 与 P6 #194 已合并，P7 暂停；本文保留当时恢复契约及外部审查后的根隔离决策；已删除机制以文首覆盖说明为准。总体设计见 [operations](operations.md)，验收见 [operations-plan](operations-plan.md)，共享执行见 [execution-scope](execution-scope.md)。
 
 ## 所有权
 
-Operation 定义输入、输出、效果和宿主实现；DSL 与模型 Tool 只负责入口投影，分别位于 operations/dsl.py 与 operations/adapters.py。OperationExecutor 在调用实际 handler 前后统一处理持久化。ProgramStore 是叶子操作结果的唯一权威，继续使用成员原有 SQLite，不增加另一套数据库。程序 runs 保存冻结规则与输入；effects 仅保留 run-loop 和现有非 Operation 宿主查询的编排记录。SessionJournal 保留模型请求、工具分发和交互结果，恢复时通过 invocation 引用查询同一 ProgramStore。
+Operation 定义输入、输出、效果和宿主实现；DSL 与模型 Tool 只负责入口投影，分别位于 operations/dsl.py 与 operations/adapters.py。OperationExecutor 在调用实际 handler 前后统一处理持久化。ProgramStore 是叶子操作结果的唯一权威，继续使用成员原有 SQLite，不增加另一套数据库。程序 runs 保存冻结入口声明与输入，package_edn 保存模块包；rule_edn 的旧字段名不表示仍有旧规则解释器。注册表读取现为普通 Operation，旧 effects 执行路径已删除。SessionJournal 保留模型请求、工具分发和交互结果，恢复时通过 invocation 引用查询同一 ProgramStore。
 
 纯计算不写叶子记录。运行时始终给 executor 注入成员 ProgramStore；低层隔离测试可以使用无存储 executor，但该模式不提供恢复保证。私有状态写入与 invocation 成功回执在同一 SQLite 事务提交，不再另建 state 专用 effects 回执。
 

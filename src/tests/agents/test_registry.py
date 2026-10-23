@@ -13,10 +13,11 @@ import pytest
 
 from tests.mail_helpers import make_office
 from tests.program_helpers import write_program
-from tlon.agents.agent_registry import AgentRegistry, RegistryQueries
+from tlon.agents.agent_registry import AgentRegistry
 from tlon.agents.lifecycle import StartRequest
 from tlon.agents.loader import load_member_spec
 from tlon.agents.member_runtime import MemberRuntime
+from tlon.agents.registry_queries import RegistryQueries
 from tlon.base.config import AgentConfig, AgentInfoProvider, LLMConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
@@ -235,7 +236,7 @@ class TestRegistryQueries:
         assert queries.is_running(None) is False
         assert queries.is_lazy(None) is False
         assert queries.is_lazy(42) is False
-        assert queries.start_all_candidates() == []
+        assert registry.boot_candidates() == []
 
     def test_member_roster(self, tmp_path):
         """DSL and tool query the same public delivery directory."""

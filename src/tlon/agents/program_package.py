@@ -67,8 +67,8 @@ def validate_program_sources(
         package = ModulePackage.from_sources(
             program_module_sources(modules), program_builtins(builtins)
         )
-        for _, entry in spec.handlers:
-            package.entry(entry)
+        for handler in spec.handlers:
+            package.entry(handler.entry)
         return replace(spec, module_sources=dict(modules))
     except (ModuleError, EDNParseError) as error:
         raise MemberSpecValidationError(str(error)) from error
