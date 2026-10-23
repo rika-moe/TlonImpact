@@ -1,16 +1,18 @@
 # 可编程工作流程：分阶段实施计划
 
-状态：2026-10-23，设计已接受；P0 文档与任务已建立，P1–P4b 已合并（#208/#209/#210/#211/#212），P5 本阶段实施待合并。设计基线 `9fe00817bd75944e49a05cfd8e0149fa240dc757`（#198），P4a 施工基线 `a65088f`（#210）。设计权威：[目标设计](programmable-workflows.md)；选择理由：[ADR 0046](../decisions/0046-programmable-workflows.md)。当前能力以各阶段实施记录及 reference 为准。
+状态：2026-10-23，设计已接受；P0 文档与任务已建立，P1–P5 全部合并（#208/#209/#210/#211/#212/#213），两个 EPIC 的功能验收已完成。设计基线 `9fe00817bd75944e49a05cfd8e0149fa240dc757`（#198），P4a 施工基线 `a65088f`（#210）。设计权威：[目标设计](programmable-workflows.md)；选择理由：[ADR 0046](../decisions/0046-programmable-workflows.md)。当前能力以各阶段实施记录及 reference 为准。
 
 ## 施工与共同完成标准
 
-两个 EPIC 严格串行：A 建立可恢复的普通工作程序（P1–P3）；B 替换标准会话并退役 stage（P4a、P4b、P5）。每项一个 PR；若切片过大，先调整 issue 与本文，不先堆半套平台。默认等待人类合并；本轮文档通过独立分支和 PR 发布，不自动开始代码施工。
+两个 EPIC 严格串行：A 建立可恢复的普通工作程序（P1–P3）；B 替换标准会话并退役 stage（P4a、P4b、P5）。每项一个 PR；若切片过大，先调整 issue 与本文，不先堆半套平台。各阶段均已按授权独立施工并经人类合并；后续工作仍需单独授权。
 
 每阶段必须：主会话复核 diff 和调用方；运行 `scripts/check_all.sh` 全量且全绿；给出场景/故障注入/实际结果；同步当前设计与生成 reference；隔离 TLON_HOME 起真实 dream，经 SDK 发信并核对持久收件箱，清理临时数据、进程与端口。质量检查项只定义在脚本中。模型阶段区分确定性 fake/provider 故障测试与真实模型冒烟；没有凭据或未实际调用不声称真实模型通过。已知 SDK 高层旧身份字段问题另案处理，使用底层 submit_mail 的验证必须明确标注。
 
 阶段只删本阶段被替代的机制与对应专属测试，不删无关失败来凑绿。无兼容入口、迁移、失败 fallback 或用户历史清库；建设期根据入口格式明确选择执行器，最终一次删除旧路径。
 
-## P0 — 决策和跟踪（本次）
+以下 P0–P5 范围与施工时边界保留为原计划；阶段历史不代表当前仍有旧执行路径。当前验收结论见文末“EPIC 收尾核对”。
+
+## P0 — 决策和跟踪（已完成）
 
 范围：ADR 0046、目标设计、本文、文档索引及相关现行文档的目标链接；两个 EPIC 与阶段子任务。删除项：无代码删除。验收：阶段依赖、变更/保留/删除、故障验收与非目标完整；链接可解析；issue 号回填，全部代码阶段保持未勾选。
 
@@ -134,17 +136,17 @@ issue 用于进度、PR 与证据，目标契约仍以本设计为准。阶段�
 
 <!-- WORKFLOW-ISSUES -->
 - [x] P0：ADR、目标设计、计划及 issue 已建立；发布与合并状态见文档 PR。
-- [ ] [EPIC A：可编程工作流程——模块、模型与工具的统一持久执行](https://github.com/rika-moe/TlonImpact/issues/199)
+- [x] [EPIC A：可编程工作流程——模块、模型与工具的统一持久执行](https://github.com/rika-moe/TlonImpact/issues/199)
 - [x] [P1 — 模块、入口、冻结程序包与最小发信链路](https://github.com/rika-moe/TlonImpact/issues/201)
 - [x] [P2 — 完整模型 Operation 与函数式核验](https://github.com/rika-moe/TlonImpact/issues/202)
 - [x] [P3 — 受控工具分派与可复用对话循环](https://github.com/rika-moe/TlonImpact/issues/203)
-- [ ] [EPIC B：可编程工作流程——标准程序、交互投影与 stage 退役](https://github.com/rika-moe/TlonImpact/issues/200)
+- [x] [EPIC B：可编程工作流程——标准程序、交互投影与 stage 退役](https://github.com/rika-moe/TlonImpact/issues/200)
 - [x] [P4a — Agent 编写模块与标准工作方式](https://github.com/rika-moe/TlonImpact/issues/204)
 - [x] [P4b — 单一恢复权威与交互消费者](https://github.com/rika-moe/TlonImpact/issues/205)
-- [ ] [P5 — 切换内置程序并删除旧引擎](https://github.com/rika-moe/TlonImpact/issues/206)
+- [x] [P5 — 切换内置程序并删除旧引擎](https://github.com/rika-moe/TlonImpact/issues/206)
 <!-- END WORKFLOW-ISSUES -->
 
-## P1 实施细化
+## P1 实施细化（#208 已合并，以下为阶段历史）
 
 P1（#208）实现独立 v2 handlers、tlosure 源码模块、人工完整包发布/审批/实例化及模块运行冻结和调度恢复。v1 仍服务旧原型，不进行格式迁移或执行 fallback。P1 不提供机器自动起草、完整对话循环或新交互投影。
 
@@ -154,17 +156,17 @@ ProgramStore 新增 entry_programs 表，不改旧 runs 列、不迁移/清库�
 
 首次全量验证在调度接口收敛过程中命中了新测试的旧 mock；改为实际新接口并增加确定性恢复等待后重新执行全量。最终命令与数量见 #208；该 PR 已合并，P1 已勾选。
 
-## P2 实施细化
+## P2 实施细化（#209 已合并，以下为阶段历史）
 
 本阶段统一 messages/tools 名称列表模型契约及结构化响应；StageServices 复用 ModelService，不删除仍服务 v1 的 stage。增加纯 tlon.messages 和两模块生成/核验/修订示例；工具分派和对话循环仍属 P3，机器自动起草仍属 P4a，交互投影仍属 P4b。
 
 v2 在入口受理事务冻结 host/config，标准库源码和作者源码一起冻结，作者包不被标准库污染。模型内层响应与预算已提交、外层回执缺失时，从现有 ProgramStore 模型调用记录补回执；不新增账本，不重发 unknown。旧 prompt-only 契约、示例调用及对应专属契约测试已替换，无兼容字段。output/total 计量语义保持。
 
-确定性验收覆盖普通函数三请求共享根预算、空工具与带工具响应、宿主输入冻结、拒绝/未知/超时/取消及回执提交窗口。全量质量门与真实 provider 冒烟的最终证据记录在本阶段 PR 和 #202；未合并前不勾选 P2。
+确定性验收覆盖普通函数三请求共享根预算、空工具与带工具响应、宿主输入冻结、拒绝/未知/超时/取消及回执提交窗口。全量质量门与真实 provider 冒烟的最终证据记录在本阶段 PR 和 #202；P2 已随 #209 合并完成。
 
 P2 本地最终验证：`scripts/check_all.sh` 15/15 全绿，单元 2754 passed / 15 skipped，集成 37 passed。真实 dream + staging/approve + SDK submit_mail + DeepSeek 三次调用完成生成/核验/修订，同根 output 占用 384，SQLite 收件箱一封回信，运行成功结束。服务与隔离目录清理完成。初次冒烟脚本误等待不存在的调度意图，修正后重跑通过；沙箱限制 Node 管道的检查批次停止后，在具备本地通信权限的环境重新全量验证。
 
-## P3 实施细化
+## P3 实施细化（#210 已合并，以下为阶段历史）
 
 新增 tool-execute 编排端口和普通 tlon.conversation/run；逐叶按程序位置和批次索引派生身份，整个批次参数参与身份核对，provider ID 仅作协议关联。端口本身不创建父 intent 或 effects；当前采用声明顺序逐叶 await，复用现有写 gate，不增加语言并发。历史回执先返回，新效果才检查当前工具目录；撤权或定义变化阻塞运行，不能作为未记录的普通失败继续请求模型。
 
@@ -172,9 +174,9 @@ P2 本地最终验证：`scripts/check_all.sh` 15/15 全绿，单元 2754 passed
 
 共享适配层删除兜底普通失败转换，只有 InputError/RejectedError 可反馈；明确文件/路径/命令非零等领域错误同步分类，设备丢失、IO、unknown、输出违约、预算、截止和恢复失配传播。提交回执失败使用真实业务输入保留 request_id，不将含批次元数据的身份快照误当业务参数。内置 stage/旧收集器保留至 P5，P4 的自动起草和交互投影尚未实现。
 
-P3 最终本地验证：`scripts/check_all.sh` 15/15 全绿；单元 2825 passed / 15 skipped，集成 38 passed。真实 dream + SDK + DeepSeek 工具对话、核验、修订和回信通过：4 次模型调用、1 次 time-now、同根 output 占用 512、一封回信。服务和隔离目录已清理。P3 待人类合并后勾选。
+P3 最终本地验证：`scripts/check_all.sh` 15/15 全绿；单元 2825 passed / 15 skipped，集成 38 passed。真实 dream + SDK + DeepSeek 工具对话、核验、修订和回信通过：4 次模型调用、1 次 time-now、同根 output 占用 512、一封回信。服务和隔离目录已清理。P3 已随 #210 合并完成。
 
-## P4a 实施细化
+## P4a 实施细化（#211 已合并，以下为阶段历史）
 
 起草过程由普通 tlon.authoring/draft 运行：模型使用已有 file-read/list/search 查阅 workspace 的 tlon/docs 与 tlon/stdlib，以 program-check 提交候选并按诊断修订；通过后返回候选，外层自行 prototype-write 发布。删除 Python BehaviorProposer、behavior-propose Operation 和长篇语法提示，没有别名回退。资料使用真实仓库文档和标准库源码，随 wheel 发布、只读映射，自定义 working_dir 使用相对路径；L0 仅得到资料只读访问，不扩大普通文件权限。
 
@@ -184,7 +186,7 @@ program-check 复用现有完整包验证，不执行或发布候选；报告持
 
 本次简化链路的真实验收：独立 dream + SDK + DeepSeek 实际读取文档入口、编写指南和标准库源码，收到缺少 work.text 的诊断后补齐第二个模块，再完成发布、全源码评审、人工批准和派生成员回信。起草 3 次模型调用、评审 1 次，派生成员零模型调用；隔离目录和服务已清理。恢复测试验证内层模型提交后缺外层回执时不重复模型、工具或预算收费。
 
-## P4b 实施细化
+## P4b 实施细化（#212 已合并，以下为阶段历史）
 
 新运行使用 `program:<run_id>` 来源 ID。ProgramStore 在入口创建与终态提交事务内记录生命周期时间；读取通过只读 SQLite 快照取得元数据或单个来源的输入、模型/工具回执、结果与失败。旧无时间记录明确保持无时间，不转换历史。SessionJournal 联合旧 SessionStore 读视图，完成列表按结束时间排序；resume/find_unfinished 只服务旧会话，新来源明确拒绝旧恢复入口。
 
@@ -198,9 +200,9 @@ memory digest 增加有界最近交互，使尚未蒸馏的新来源也能被反
 
 新 claim 的 origin 标识 remember 或 distillation；其来源引用用于追踪，不能当成蒸馏完成证据。反思引用交互后，蒸馏仍以自己的消费记录判断进度，两个消费域互不替代。
 
-P4b 本地验收：scripts/check_all.sh 15/15 全绿；主审最后补齐失败/未决摘要后再次执行 --static --unit，14/14 全绿，单元 2869 passed / 15 skipped；集成 40 passed。真实隔离 dream + SDK + DeepSeek 完成三封模块回信与自动蒸馏（共 4 次模型调用，output 预留 4480），来源回读、thread recap、证据导出、读取故障后重建和重复消费均未增加模型调用或扣费。隔离目录与服务均已清理，8080 无监听。
+P4b 本地验收：scripts/check_all.sh 15/15 全绿；主审最后补齐失败/未决摘要后再次执行 --static --unit，14/14 全绿，评审后最终单元 2885 passed / 15 skipped；集成 40 passed。真实隔离 dream + SDK + DeepSeek 完成三封模块回信与自动蒸馏（共 4 次模型调用，output 预留 4480），来源回读、thread recap、证据导出、读取故障后重建和重复消费均未增加模型调用或扣费。隔离目录与服务均已清理，8080 无监听。
 
-主审修复：异步演武场导出必须先完成归档和拆除再公开终态；报告使用实际编码文件名生成证据链接。新 claim 的来源引用与蒸馏完成记录明确分开，反思引用旧/新来源都不替代蒸馏消费进度。P4b 待人类合并后勾选，P5 未开始。
+主审修复：异步演武场导出必须先完成归档和拆除再公开终态；报告使用实际编码文件名生成证据链接。新 claim 的来源引用与蒸馏完成记录明确分开，反思引用旧/新来源都不替代蒸馏消费进度。P4b 已随 #212 合并完成；后续 P5 已经 #213 完成。
 
 P4b 评审补充：v2 在途反思统一计入排空；维护临时失败指数退避 30–300 秒，固定回执中的永久错误阻塞并上浮成员诊断。损坏 checkpoint 保留证据，仅隔离对应维护，不以空进度继续；人工处置见 memory 设计。flaky 测试取消后台 loop 后用确定时钟严格验证调用次数。退休教训路径复用 TlonPaths，旧标量水位说明已清除。
 
@@ -209,7 +211,7 @@ P4b 评审补充：v2 在途反思统一计入排空；维护临时失败指数�
 
 ## P5 实施记录与旧记录处置
 
-施工基线：main `04e48da`（#212）。删除前后调用图、删除项、只读边界和验证证据见 [P5 审计](workflow-p5-audit.md)。当前只接受 v2 模块包；8 套内置原型、Adam、报纸示例已转换。模型工具、投递前核验、压缩和上下文读取均由普通函数组合。质量门删除只服务 stage 的 purity 项，现为 14 项。
+P5 已于 #213 合并，合并提交 `e0c4c14`。施工基线：main `04e48da`（#212）。删除前后调用图、删除项、只读边界和验证证据见 [P5 审计](workflow-p5-audit.md)。当前只接受 v2 模块包；8 套内置原型、Adam、报纸示例已转换。模型工具、投递前核验、压缩和上下文读取均由普通函数组合。质量门删除只服务 stage 的 purity 项，现为 14 项。
 
 旧工作盘点仅查询生命周期元数据，不读邮件正文或改库：本地 32 个成员历史目录，可读数据库未发现旧未完成记录，1 个数据库读取失败。因此不能声称本地所有旧工作已排空；不可读成员仍属未知并阻塞。没有自动操作真实成员生命周期。该盘点是本机快照，不代替部署时逐成员检查。
 
@@ -222,3 +224,25 @@ P4b 评审补充：v2 在途反思统一计入排空；维护临时失败指数�
 5. 现存原型目录和成员源码保持原样，播种不覆盖或混入新模块。旧格式需要人工重新设计并发布完整 v2 包，不能自动转换旧配方。
 
 实现偏差：新增固定结构只读 member-context 操作，作为旧 section 读取归位；没有新增 section 选择器或宿主流程解释。arena 新增只读 list_pending 查询以保留排空检查，不恢复旧执行接口。真实标准原型冒烟暴露 model-context 的布尔 schema 估算问题，改为复用模型预算侧的 JSON 文本估算方式，并以真实装配工具目录覆盖回归。
+
+
+## EPIC 收尾核对（2026-10-23）
+
+核对基线：main `e0c4c14a35019aadd30a3319962142b4d531bda7`。GitHub 确认 #207–#213 均已合并，#201–#206 均已关闭，全部实施 PR 的 static/unit/integration CI 为 SUCCESS。issue 状态只作索引，验收依据同时包含源码、故障测试与各 PR 的真实冒烟记录。
+
+| EPIC / 阶段 | issue / 合并 PR | 已核对的完成证据 |
+|---|---|---|
+| A / P1 | #201 / [#208](https://github.com/rika-moe/TlonImpact/pull/208) | 模块导入导出、私有边界与初始化纯度；完整包审批；源码/输入冻结；发信及根调度提交窗口恢复，不重复效果 |
+| A / P2 | #202 / [#209](https://github.com/rika-moe/TlonImpact/pull/209) | 完整 messages/tools 模型契约、宿主输入冻结、提交窗口及 unknown/预算测试；真实 DeepSeek 三次调用生成/核验/修订，共享 output 预留 384 |
+| A / P3 | #203 / [#210](https://github.com/rika-moe/TlonImpact/pull/210) | 逐叶工具身份、部分完成恢复、消息配对、局部返回；真实两模块工具/核验/修订链，4 次模型、一次 time-now、一封回信 |
+| B / P4a | #204 / [#211](https://github.com/rika-moe/TlonImpact/pull/211) | Agent 实际读 workspace 文档和标准库，依据 program-check 诊断补齐第二模块；staging→审阅→批准→派生回信；无一次性起草调用 |
+| B / P4b | #205 / [#212](https://github.com/rika-moe/TlonImpact/pull/212) | 交互只读投影及来源集合去重；蒸馏、反思、session-read、recap、教训、退休、arena 消费；真实三交互+蒸馏，4 次模型，重复读取/消费不增加调用或扣费 |
+| B / P5 | #206 / [#213](https://github.com/rika-moe/TlonImpact/pull/213) | 8 套内置模块、Adam、播种/wheel；旧执行符号零生产调用；单一恢复路径与旧记录阻塞；发送前核验、轮数失败通知、超时准入与新 fuel 红旗 |
+
+EPIC A #199：两个模块可完成“模型→工具→核验→修订→投信”，嵌套局部返回与共享预算成立，已提交效果恢复不重复，验收通过。
+
+EPIC B #200：Agent 创作完整模块包并经批准派生成员，交互可被记忆消费者读取、旧历史可读，旧 stage 和双重恢复已删除，验收通过。P5 最终质量门 14/14：2450 passed / 15 skipped，集成 40 passed，CI 全绿；真实标准原型和 round-limit 通知链均通过。详细调用图、review 修复及证据见 [P5 审计](workflow-p5-audit.md)。本次收尾只同步文档和 issue，未重新调用模型或操作真实成员生命周期。
+
+源码/测试抽查入口：[模块语义](../../src/tests/tlosure/test_modules.py)、[入口冻结与恢复](../../src/tests/agents/test_module_programs.py)、[模型/工具/核验集成](../../src/tests/integration/test_program_conversation.py)、[Agent 起草与审批](../../src/tests/integration/test_program_authoring.py)、[交互消费集成](../../src/tests/integration/test_program_history_consumers.py)、[旧记录只读阻塞](../../src/tests/agents/test_legacy_recovery_boundary.py)、[超时准入](../../src/tests/operations/test_timeout_admission.py)。
+
+完成不等于自动处理所有部署：本地历史盘点的 1 个不可读库仍为未知并阻塞，不改写为“全部排空”；旧包升级及人工处置见 [发布说明](../releases/p5.md)。长期习惯/自主热更新 #173、DSL 并发、任意事件 await、动态工具视图和新轨迹 UI 不属于这两个 EPIC，未随收尾宣称完成或关闭。
