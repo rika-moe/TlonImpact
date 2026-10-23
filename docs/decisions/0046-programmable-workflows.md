@@ -1,12 +1,12 @@
 # ADR 0046：以模块函数统一成员工作程序
 
-状态：已接受，P1–P4a 已合并（#208/#209/#210/#211），P4b 本阶段实现待合并，P5 待实施，2026-10-23。代码基线：`9fe00817bd75944e49a05cfd8e0149fa240dc757`（#198）。ADR 的接受不授权自动施工或合并；各阶段按明确授权独立实施。
+状态：已接受，P1–P5 全部合并（#208/#209/#210/#211/#212/#213），两个 EPIC 验收完成，2026-10-23。代码基线：`9fe00817bd75944e49a05cfd8e0149fa240dc757`（#198）。ADR 的接受不授权自动施工或合并；各阶段按明确授权独立实施。
 
-设计契约：[可编程工作流程](../design/programmable-workflows.md)。任务范围、验收和删除项：[实施计划](../design/programmable-workflows-plan.md)。本文记录选择与取舍，不将目标描述为已实现。
+设计契约：[可编程工作流程](../design/programmable-workflows.md)。任务范围、验收和删除项：[实施计划](../design/programmable-workflows-plan.md)。本文记录选择与取舍；完成状态与逐项证据见实施计划的“EPIC 收尾核对”。
 
-## 背景
+## 决策时的背景（#198）
 
-Capability 已由 ADR 0045 删除。当前 tlosure 已支持函数、闭包、有界循环及可暂停宿主调用，ProgramDriver / ProgramStore / OperationExecutor 已支持表达式获得真实效果结果和持久回执。但模型会话仍由 SessionRecipe、固定 stage 注册表、LoopDriver、StageOutcome 和 AgentSession 解释，SessionJournal 另有恢复路径。编写新的工作方式经常仍需扩展 Python 阶段。
+Capability 已由 ADR 0045 删除。当时 tlosure 已支持函数、闭包、有界循环及可暂停宿主调用，ProgramDriver / ProgramStore / OperationExecutor 已支持表达式获得真实效果结果和持久回执。但模型会话仍由 SessionRecipe、固定 stage 注册表、LoopDriver、StageOutcome 和 AgentSession 解释，SessionJournal 另有恢复路径。编写新的工作方式经常仍需扩展 Python 阶段。
 
 目标是让 Agent 编写、导入、调用和复用自己的工作程序，包括模型交互、工具调用、核验与修订；新增工作方式不要求注册新的宿主阶段。
 
@@ -36,15 +36,15 @@ Capability 已由 ADR 0045 删除。当前 tlosure 已支持函数、闭包、�
 
 本决策保留 ADR 0018 的包方向、ADR 0021 的函数能力、ADR 0043 的可返回结果程序及 ADR 0045 的删除决定。实施完成后替代 ADR 0004 的 stage 扩展机制、ADR 0042 的旧规则/配方编排边界；ADR 0007/0009/0032 的历史交互记录保留，新运行恢复与交互权威按本决策划分。上述文档在对应实施阶段注明实际切换状态，不提前宣布旧机制已删除。
 
-## 实施记录：P2
+## 实施记录：P2（阶段历史）
 
 完整模型操作已替换 prompt-only 输入，返回包含可空 content、规范化工具建议与 reasoning_content 的响应。纯 tlon.messages 支持函数组合；生成、核验、修订示例不注册 stage。宿主系统输入、工具契约及有效模型配置在 v2 受理时冻结，模型已提交但外层回执缺失可只读恢复并补回执。旧阶段复用相同 ModelService，stage 删除仍在 P5；工具执行与可复用对话循环仍待 P3。阶段验收证据见实施 PR 与 #202，本文不提前宣称后续阶段已完成。
 
-## 实施记录：P3
+## 实施记录：P3（阶段历史）
 
 普通对话模块与 tool-execute 编排端口已实现，叶子回执继续由 ProgramStore/OperationExecutor 负责。消息关联、有限轮循环和局部完成留在普通函数；宿主保留授权、错误分类和恢复。当前分派按声明顺序逐叶执行，不新增并发语法；共享工具边界不再把未知效果和基础设施故障伪装成模型可修正失败。阶段证据见 #203 与实施 PR，旧 stage 和交互消费者继续按 P4/P5 计划保留。
 
-## 实施记录：P4a
+## 实施记录：P4a（阶段历史）
 
 Agent 机器起草与完整模块审阅接入既有 staging/批准/实例化机制；标准工作方式和上下文压缩以普通函数实现，宿主保留窗口估算、领域执行和失败通知。新库不依赖 scratch、StageOutcome 或 AgentSession。新交互投影与旧引擎退役仍按 P4b/P5 施工，不提前声称所有内置原型已切换。
 
@@ -55,4 +55,4 @@ P4b 将交互投影落实为读取时从 ProgramStore 重建，来源为 program
 
 ## P5 实施状态
 
-P4b 已经 #212 合并；P5 当前分支完成旧执行链删除和内置模块切换，待人类合并。现行执行边界见 [Runtime](../design/runtime.md)，旧记录处置及验证见 [P5 审计](../design/workflow-p5-audit.md)。历史阶段文字保留为各阶段当时的状态，不代表旧机制仍可执行。
+P4b 已经 #212 合并，P5 已经 #213 合并（`e0c4c14`）；旧执行链删除、内置模块切换与两个 EPIC 的验收均已完成。现行执行边界见 [Runtime](../design/runtime.md)，旧记录处置及验证见 [P5 审计](../design/workflow-p5-audit.md)。历史阶段文字保留为各阶段当时的状态，不代表旧机制仍可执行。

@@ -1,6 +1,6 @@
 # 可编程工作流程：目标设计
 
-状态：已接受；P1–P4b 已合并（#208/#209/#210/#211/#212），P5 本阶段实现待合并，2026-10-23。决策见 [ADR 0046](../decisions/0046-programmable-workflows.md)，施工与证据见 [实施计划](programmable-workflows-plan.md)。当前机制仍见 [DSL](dsl.md)、[runtime](runtime.md) 和 [调用恢复](invocation-recovery.md)。目标与实现边界以分阶段计划为准；当前语法/API 见[模块程序指南](../guides/writing-a-module-program.md)。
+状态：已接受；P1–P5 全部合并（#208/#209/#210/#211/#212/#213），EPIC A/B 验收完成，2026-10-23。决策见 [ADR 0046](../decisions/0046-programmable-workflows.md)，施工与证据见 [实施计划](programmable-workflows-plan.md)。当前机制仍见 [DSL](dsl.md)、[runtime](runtime.md) 和 [调用恢复](invocation-recovery.md)。目标与实现边界以分阶段计划为准；当前语法/API 见[模块程序指南](../guides/writing-a-module-program.md)。
 
 ## 1. 执行与分层
 
@@ -82,7 +82,7 @@ Operation 的恢复 hook 只读取同根、同稳定调用路径的已提交模�
 
 普通 tlon.workflows 实现短回合、计划执行、独立检索核验、评审修订、路由和原信转发。tlon.context 实现消息组装、窗口适配和逐完整交换的模型摘要；model-context 是宿主只读估算口，包含冻结系统和工具定义。完整组过大时拒绝；缓存前缀、草稿/已执行事实与模型账本保持。
 
-v2 终止保存原始输入/错误/模型回执，并通过普通邮件叶子向核实的人类责任发件人投递幂等通知。通知零模型额度维护根与原根隔离；不重发原未知效果。已失败运行扫描只对账通知，不重新执行程序。交互投影由 P4b 下述只读视图接续，内置原型全面切换仍待 P5。
+v2 终止保存原始输入/错误/模型回执，并通过普通邮件叶子向核实的人类责任发件人投递幂等通知。通知零模型额度维护根与原根隔离；不重发原未知效果。已失败运行扫描只对账通知，不重新执行程序。交互投影由 P4b 下述只读视图接续，内置原型已随 #213 全面切换。
 
 ## 5. 状态、返回与调度
 
@@ -119,4 +119,4 @@ P5 已删除 run-loop ActionRequest、SessionRecipe、stage/section 专属解释
 
 ### P4b 当前实现
 
-SessionJournal 联合旧历史与 ProgramStore 的只读派生事件，来源为 program:<run_id>。完成索引只读元数据，单个来源回读模型与工具回执、未决证据、入口结果和错误；不创建第二份恢复日志。蒸馏与反思按来源 ID 集合、固定批次和独立额度根消费，较早开始但较晚完成的运行不会被时间水位遗漏。session-read、thread recap、教训、退休归档及演武场证据导出使用同一视图；客户端连接会话不变，旧引擎仍待 P5 退役。
+SessionJournal 联合旧历史与 ProgramStore 的只读派生事件，来源为 program:<run_id>。完成索引只读元数据，单个来源回读模型与工具回执、未决证据、入口结果和错误；不创建第二份恢复日志。蒸馏与反思按来源 ID 集合、固定批次和独立额度根消费，较早开始但较晚完成的运行不会被时间水位遗漏。session-read、thread recap、教训、退休归档及演武场证据导出使用同一视图；客户端连接会话不变，旧引擎已随 #213 退役。
