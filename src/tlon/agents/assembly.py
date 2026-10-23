@@ -12,6 +12,7 @@ ports live in ``tlon.lifecycle.ports`` / ``tlon.evolution.ports``).
 from functools import partial
 from typing import TYPE_CHECKING
 
+from tlon.agents.context_builder import ContextBuilder
 from tlon.agents.health import orphan_mail_provider
 from tlon.agents.mail_stats import mail_stats_provider
 from tlon.agents.member_runtime import MemberServices
@@ -46,6 +47,7 @@ from tlon.evolution.review_prototype import PrototypeReviewer
 from tlon.evolution.write_prototype import PrototypeWriter
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
+from tlon.operations.context import member_context_operation
 from tlon.operations.evolution import make_evolution_operations
 from tlon.operations.filesystem import make_filesystem_operations
 from tlon.operations.identity import make_identity_operations
@@ -55,6 +57,7 @@ from tlon.operations.shell import make_shell_operations
 from tlon.operations.tasks import make_task_operations
 from tlon.operations.time import time_operation_definitions
 from tlon.organization.mail.mail import address_for_member
+from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.mail.store import MailStore
 from tlon.sandbox.device import AuditedExecutionDevice, ExecutionDevice
 from tlon.sandbox.docker_runtime import AGENT_HOME_CONTAINER_PATH, DockerRuntime
@@ -75,9 +78,7 @@ logger = get_logger(__name__)
 #: execution-side mechanism the level drives. ``prototype-review`` is
 #: deliberately absent: reviewing a staging proposal is advisory (approve
 #: stays human).
-REPRODUCTION_TOOLS: frozenset[str] = frozenset(
-    {"member-spawn", "prototype-write"}
-)
+REPRODUCTION_TOOLS: frozenset[str] = frozenset({"member-spawn", "prototype-write"})
 
 
 def _resolve_context_window(file_config: LLMConfig, model_name: str) -> int:
@@ -237,7 +238,19 @@ async def assemble_member_services(
     tool_executor = ToolExecutor()
 
     # Assemble operation definitions from member-owned domain services.
-    operations = list(time_operation_definitions())
+    context_reader = ContextBuilder(
+        config,
+        Mailbox(tlon_paths.mail_database_file(), config.id),
+        memory,
+        task_manager,
+        address_for_member(config.id),
+        SessionJournal(config.id, tlon_paths),
+        tlon_paths=tlon_paths,
+    )
+    operations = [
+        *time_operation_definitions(),
+        member_context_operation(context_reader, tool_executor.list_tools),
+    ]
     shell_service = None
     filesystem = MemberFilesystemService(
         config.docker,

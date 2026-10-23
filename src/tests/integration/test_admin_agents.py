@@ -63,7 +63,7 @@ async def test_agent_config_crud_lifecycle(inproc_server: tuple[str, Path]) -> N
             assert updated["agent_id"] == agent_id
             assert "integration-test persona" in (config_dir / "IDENTITY.md").read_text()
         finally:
-            # Adoption returns after assembly; the empty boot rule finishes in its worker.
+            # Adoption returns after assembly; the module boot entry finishes in its worker.
             async def boot_idle() -> None:
                 database = tlon_home / agent_id / "program.sqlite3"
                 for _ in range(300):
@@ -77,13 +77,14 @@ async def test_agent_config_crud_lifecycle(inproc_server: tuple[str, Path]) -> N
                             ).fetchone()
                             runs = (
                                 connection.execute(
-                                    "SELECT rule_edn,completed,error FROM runs"
+                                    "SELECT run_id,completed,error FROM runs"
                                 ).fetchall()
                                 if schema_ready
                                 else []
                             )
                         boot_finished = any(
-                            ':name "boot"' in source and completed for source, completed, _ in runs
+                            identity.endswith(":handler:boot") and completed
+                            for identity, completed, _ in runs
                         )
                         settled = all(
                             completed or error is not None for _, completed, error in runs
@@ -91,7 +92,7 @@ async def test_agent_config_crud_lifecycle(inproc_server: tuple[str, Path]) -> N
                         if status["state"] == "waiting" and boot_finished and settled:
                             return
                     await asyncio.sleep(0.01)
-                raise AssertionError("new member did not finish its empty boot rule")
+                raise AssertionError("new member did not finish its module boot entry")
 
             await asyncio.wait_for(boot_idle(), 5)
             async with http.delete(f"{base_url}/admin/config/agents/{agent_id}") as resp:

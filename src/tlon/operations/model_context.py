@@ -1,6 +1,7 @@
 """Read the frozen model window and estimate the complete request without sampling."""
 
 import asyncio
+import json
 from typing import Any
 
 import litellm
@@ -30,8 +31,15 @@ def context_operation(service: ModelService | None, input_schema: dict[str, Any]
             litellm.token_counter,
             model=config["model_name"],
             messages=[{"role": "system", "content": host["system_prompt"]}, *arguments["messages"]],
-            tools=selected or None,
         )
+        # LiteLLM's tool-schema walker does not accept JSON Schema boolean nodes.
+        # Count serialized tools just as LLMClient's total-budget estimator does.
+        if selected:
+            tokens += await asyncio.to_thread(
+                litellm.token_counter,
+                model=config["model_name"],
+                text=json.dumps(selected, ensure_ascii=False, separators=(",", ":")),
+            )
         output = min(config["max_tokens"], arguments["max_tokens"])
         return {
             "input_tokens": tokens,

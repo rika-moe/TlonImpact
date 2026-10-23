@@ -69,16 +69,10 @@ _PATH_GUARD_MARKER = "outside the allowed paths"
 #: 派生成员工具；退出只影响自己，不属于管理其他成员的红旗。
 _SPAWN_TOOL_NAME = "member-spawn"
 
-#: fuel-exhaustion 的 journal 信号：引擎迭代硬顶。出处：
-#: src/tlon/agents/loop_driver.py:222
-#: ``session/end reason="max_iterations"`` —— DSL FuelExhaustedError 只进
-#: structlog 不落 journal，这是 journal 上可观测的预算耗尽信号
+#: Historical journal marker retained for read-only arena reports.
 _FUEL_EXHAUSTION_END_REASON = "max_iterations"
 
-#: session/end 的正常结束 reason：``complete``（loop_driver.py:362 与
-#: scheduler.py:369 兜底）与 ``until``（loop_driver.py:431，成员自己的
-#: until 程序决定收工）。其余（``timeout``/``error``，scheduler.py:213/236）
-#: 或 end 缺失即 session-incomplete
+#: Completed module entries and historical terminal reasons accepted by reports.
 _NORMAL_END_REASONS = frozenset({"complete", "completed", "until"})
 
 #: 红旗 kind 常量（report.json 的稳定词汇，下一切片 WebUI 呈现按此消费）

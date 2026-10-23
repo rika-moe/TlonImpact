@@ -17,15 +17,30 @@ from tlon.agents.prototypes.staging import list_staging_prototypes, write_stagin
 from tlon.base.paths import TlonPaths
 from tlon.evolution.ports import PrototypeError
 
+_FIXTURE_MODULES = {
+    "{:version 2 :handlers {:mail-delivered work.fixturec9a1e4ca/handle0}}\n": {
+        "work/fixturec9a1e4ca.tlon": '(ns work.fixturec9a1e4ca (:export handle0))\n(defn handle0 [event] (let [msg (get event :mail) self (get event :self)] (let [action0 (mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})] {:result nil})))\n'
+    },
+    "{:version 2 :handlers {:mail-delivered work.fixture8abb1c6f/handle0}}\n": {
+        "work/fixture8abb1c6f.tlon": '(ns work.fixture8abb1c6f (:export handle0))\n(defn handle0 [event] (let [msg (get event :mail) self (get event :self)] (let [action0 (jump {:to ["x@tlon.internal"]})] {:result nil})))\n'
+    },
+    "{:version 2 :handlers {:mail-delivered work.fixturee9d33d1c/handle0} :execution {:level :L9}}\n": {
+        "work/fixturee9d33d1c.tlon": '(ns work.fixturee9d33d1c (:export handle0))\n(defn handle0 [event] (let [msg (get event :mail) self (get event :self)] (let [action0 (mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})] {:result nil})))\n'
+    },
+}
+
 
 class TestWriteStagingValidation:
     def test_unknown_action_rejected(self, tmp_path):
         p = TlonPaths(home=tmp_path)
         with pytest.raises(PrototypeError, match="unknown function or special form: jump"):
             write_staging_prototype(
-                '{:version 1\n :rules [{:name "wild"\n          :on :mail-delivered\n          :actions [(jump {:to ["x@tlon.internal"]})]}]}\n',
+                "{:version 2 :handlers {:mail-delivered work.fixture8abb1c6f/handle0}}\n",
                 tlon_paths=p,
                 display_name="定址转发",
+                modules=_FIXTURE_MODULES.get(
+                    "{:version 2 :handlers {:mail-delivered work.fixture8abb1c6f/handle0}}\n"
+                ),
             )
         assert not p.prototypes_staging_dir().exists()
 
@@ -35,9 +50,12 @@ class TestWriteStagingValidation:
         p = TlonPaths(home=tmp_path)
         with pytest.raises(PrototypeError, match=":execution/:level"):
             write_staging_prototype(
-                '{:version 1\n :execution {:level :L9}\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n',
+                "{:version 2 :handlers {:mail-delivered work.fixturee9d33d1c/handle0} :execution {:level :L9}}\n",
                 tlon_paths=p,
                 display_name="定址转发",
+                modules=_FIXTURE_MODULES.get(
+                    "{:version 2 :handlers {:mail-delivered work.fixturee9d33d1c/handle0} :execution {:level :L9}}\n"
+                ),
             )
         assert not p.prototypes_staging_dir().exists()
 
@@ -48,7 +66,7 @@ BUNDLE_MODULES = {
     "work/helper.tlon": '(ns work.helper (:export result)) (defn result [] {:result "ok"})',
 }
 
-VALID_SPEC = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
+VALID_SPEC = "{:version 2 :handlers {:mail-delivered work.fixturec9a1e4ca/handle0}}\n"
 
 
 class TestListStagingPrototypesTool:
@@ -63,6 +81,7 @@ class TestListStagingPrototypesTool:
             description="夜间值守",
             author_id="lin-zhiyao",
             tlon_paths=p,
+            modules=_FIXTURE_MODULES.get(VALID_SPEC),
         )
         tool = make_staging_tool(lister=lambda: list_staging_prototypes(p))
         result = await tool.execute_context({})
@@ -101,7 +120,11 @@ class TestStagingLineageFields:
     def test_root_proposal_defaults(self, tmp_path):
         p = TlonPaths(home=tmp_path)
         info = write_staging_prototype(
-            VALID_SPEC, author_id="adam", tlon_paths=p, display_name="定址转发"
+            VALID_SPEC,
+            author_id="adam",
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_SPEC),
         )
         assert info.parent is None
         assert info.generation == 1
@@ -109,7 +132,12 @@ class TestStagingLineageFields:
 
     def test_child_derives_generation_from_trusted_parent(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(VALID_SPEC, tlon_paths=p, display_name="定址转发")
+        created_1 = write_trusted_prototype(
+            VALID_SPEC,
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_SPEC),
+        )
         info = write_staging_prototype(
             VALID_SPEC,
             author_id="adam",
@@ -117,6 +145,7 @@ class TestStagingLineageFields:
             proposal_note="换上更严格的门控",
             tlon_paths=p,
             display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_SPEC),
         )
         assert info.parent == created_1.name
         assert info.generation == 2
@@ -125,7 +154,11 @@ class TestStagingLineageFields:
     def test_parent_may_live_in_staging(self, tmp_path):
         p = TlonPaths(home=tmp_path)
         created_1 = write_staging_prototype(
-            VALID_SPEC, author_id="adam", tlon_paths=p, display_name="定址转发"
+            VALID_SPEC,
+            author_id="adam",
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_SPEC),
         )
         info = write_staging_prototype(
             VALID_SPEC,
@@ -133,6 +166,7 @@ class TestStagingLineageFields:
             parent=created_1.name,
             tlon_paths=p,
             display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_SPEC),
         )
         assert info.generation == 2
 
@@ -140,7 +174,12 @@ class TestStagingLineageFields:
         p = TlonPaths(home=tmp_path)
         with pytest.raises(PrototypeError, match="parent prototype 'ghost' not found"):
             write_staging_prototype(
-                VALID_SPEC, author_id="adam", parent="ghost", tlon_paths=p, display_name="定址转发"
+                VALID_SPEC,
+                author_id="adam",
+                parent="ghost",
+                tlon_paths=p,
+                display_name="定址转发",
+                modules=_FIXTURE_MODULES.get(VALID_SPEC),
             )
         assert not p.prototypes_staging_dir().exists()
 
@@ -148,7 +187,12 @@ class TestStagingLineageFields:
         p = TlonPaths(home=tmp_path)
         with pytest.raises(PrototypeError, match="invalid prototype name"):
             write_staging_prototype(
-                VALID_SPEC, author_id="adam", parent="../x", tlon_paths=p, display_name="定址转发"
+                VALID_SPEC,
+                author_id="adam",
+                parent="../x",
+                tlon_paths=p,
+                display_name="定址转发",
+                modules=_FIXTURE_MODULES.get(VALID_SPEC),
             )
 
 
@@ -161,7 +205,11 @@ class TestWritePrototypeToolLessons:
         p = TlonPaths(home=tmp_path)
         tool = make_write_tool(
             author_id="adam",
-            writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
+            writer=lambda *a, **kw: write_staging_prototype(
+                *a,
+                tlon_paths=p,
+                **kw,
+            ),
         )
         result = await tool.execute_context(
             {
@@ -179,7 +227,11 @@ class TestWritePrototypeToolLessons:
         p = TlonPaths(home=tmp_path)
         tool = make_write_tool(
             author_id="adam",
-            writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
+            writer=lambda *a, **kw: write_staging_prototype(
+                *a,
+                tlon_paths=p,
+                **kw,
+            ),
         )
         result = await tool.execute_context(
             {"behavior": BUNDLE_BEHAVIOR, "modules": BUNDLE_MODULES, "display_name": "定址转发"}
@@ -201,7 +253,11 @@ class TestWritePrototypeSolvency:
 
         tool = make_write_tool(
             author_id="adam",
-            writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
+            writer=lambda *a, **kw: write_staging_prototype(
+                *a,
+                tlon_paths=p,
+                **kw,
+            ),
             prototype="broke",
             solvency=_insolvent,
         )
@@ -220,7 +276,11 @@ class TestWritePrototypeSolvency:
 
         tool = make_write_tool(
             author_id="adam",
-            writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
+            writer=lambda *a, **kw: write_staging_prototype(
+                *a,
+                tlon_paths=p,
+                **kw,
+            ),
             prototype="broke",
             solvency=_boom,
         )
@@ -239,7 +299,11 @@ class TestWritePrototypeSolvency:
 
         tool = make_write_tool(
             author_id="adam",
-            writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
+            writer=lambda *a, **kw: write_staging_prototype(
+                *a,
+                tlon_paths=p,
+                **kw,
+            ),
             prototype=None,
             solvency=_insolvent,
         )
@@ -278,7 +342,7 @@ async def test_machine_writer_requires_v2_complete_module_bundle(tmp_path: Path)
     writer = Mock()
     tool = make_write_tool(author_id="adam", writer=writer)
     for package in (
-        {"behavior": VALID_SPEC, "modules": BUNDLE_MODULES},
+        {"behavior": "{:version 1 :rules []}", "modules": BUNDLE_MODULES},
         {"behavior": BUNDLE_BEHAVIOR},
         {"behavior": BUNDLE_BEHAVIOR, "modules": {}},
         {"behavior": BUNDLE_BEHAVIOR, "modules": {"work/reply.tlon": 17}},

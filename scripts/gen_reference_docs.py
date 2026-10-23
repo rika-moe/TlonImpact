@@ -14,17 +14,8 @@ handwritten; only the drift-prone inventories are generated:
   (special forms from tlosure/eval.py, the general ``CORE_BUILTINS`` and
   ``ARITHMETIC_BUILTINS`` vocabularies from tlosure/builtins.py).
 - ``dsl-on-events`` / ``dsl-builtins-{pure,policy}`` /
-  ``dsl-loop-names`` in docs/reference/dsl-reference.md — the host-side
-  inventories (``:on`` event keywords, tlon's domain builtin registries
-  from agents/vocabulary.py, stage/section names from
-  agents/member_spec.py).
-- ``dsl-fuel-defaults`` / ``bridge-env-contracts`` / ``dsl-action-kinds`` /
-  ``bridge-query-ports`` in docs/reference/dsl-reference.md — the Bridge
-  API inventories (ADR 0020): the fuel/depth constants from
-  tlosure/eval.py, and from agents/vocabulary.py the ``*Env`` TypedDict
-  environment contracts, the ``ActionRequest`` kind/data shapes produced
-  by the action builtins, and the closure-injected host query ports
-  (joined with the ``ScriptHostQueries`` protocol docstrings).
+  ``dsl-fuel-defaults`` / ``bridge-query-ports`` in dsl-reference.md —
+  event names, ordinary vocabularies, resource bounds and explicit query ports.
 - ``rest-endpoints`` / ``mode-patterns`` in docs/reference/api-reference.md —
   the route table from ``RESTAPIHandler.create_app`` (with registration
   conditions) and the ``MODE_EVENT_PATTERNS`` mode semantics.
@@ -53,6 +44,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tlon.operations.context import member_context_operation
 from tlon.operations.core import Operation
 from tlon.operations.evolution import evolution_operation_definitions
 from tlon.operations.filesystem import filesystem_operation_definitions
@@ -586,6 +578,7 @@ def render_tool_registry() -> str:
 def operation_domains() -> dict[str, list[Operation]]:
     """Definitions shared with production adapters, with no copied operation inventory."""
     return {
+        "context": [member_context_operation()],
         "mail": list(mail_operation_definitions()),
         "filesystem": list(filesystem_operation_definitions()),
         "shell": list(shell_operation_definitions()),
@@ -712,19 +705,6 @@ def render_builtin_table(registry: str, path: Path) -> str:
     return header + "\n" + "\n".join(rows)
 
 
-def render_dsl_loop_names() -> str:
-    """STAGE_NAMES / SECTION_NAMES for docs/reference/dsl-reference.md §5."""
-    stages = sorted(_frozenset_strings(MEMBER_SPEC_FILE, "STAGE_NAMES"))
-    sections = sorted(_frozenset_strings(MEMBER_SPEC_FILE, "SECTION_NAMES"))
-    stage_list = "、".join(f"`{s}`" for s in stages)
-    section_list = "、".join(f"`{s}`" for s in sections)
-    return (
-        f"合法名称全集（生成自 `member_spec.py`）：{GENERATED_NOTE}\n\n"
-        f"- stage（`STAGE_NAMES`，{len(stages)} 个）：{stage_list}\n"
-        f"- section（`SECTION_NAMES`，{len(sections)} 个）：{section_list}"
-    )
-
-
 def render_rest_endpoints() -> str:
     """Route table for docs/reference/api-reference.md 端点总表."""
     endpoints = rest_endpoints()
@@ -789,9 +769,8 @@ def render_env_vars() -> str:
 #: Purpose of each language-level evaluation-budget constant (generator
 #: configuration — the source defines the value, the doc defines why).
 _FUEL_CONSTANT_PURPOSES = {
-    "DEFAULT_WHEN_FUEL": "`:when` 门控的默认预算",
-    "DEFAULT_FUEL": "动作与会话条件求值的默认预算",
-    "MAX_FUEL": "`:fuel` 自声明的硬顶（超过即加载拒绝）",
+    "DEFAULT_FUEL": "普通程序求值的默认预算",
+    "MAX_FUEL": "程序 `:fuel` 自声明的硬顶（超过即加载拒绝）",
     "DEFAULT_MAX_DEPTH": "form 嵌套深度上限",
 }
 
@@ -810,136 +789,6 @@ def render_dsl_fuel_defaults() -> str:
         f"上文的默认值/上限数字以此表为准）：{GENERATED_NOTE}\n\n"
         "| 常量 | 值 | 用途 |\n"
         "|---|---|---|"
-    )
-    return header + "\n" + "\n".join(rows)
-
-
-#: Top-level environment contract -> its single construction point.
-_ENV_CONTRACT_BUILDERS = {
-    "RuleEnv": "rule_env",
-    "LoopEnv": "loop_until_env",
-    "StageCondEnv": "stage_cond_env",
-}
-
-
-def _typed_dicts(tree: ast.Module, path: Path) -> dict[str, list[tuple[str, str]]]:
-    """All ``class X(TypedDict)`` field lists (name, unparsed annotation)."""
-    contracts: dict[str, list[tuple[str, str]]] = {}
-    for node in tree.body:
-        if not isinstance(node, ast.ClassDef):
-            continue
-        if not any(
-            (isinstance(b, ast.Name) and b.id == "TypedDict")
-            or (isinstance(b, ast.Attribute) and b.attr == "TypedDict")
-            for b in node.bases
-        ):
-            continue
-        fields = [
-            (stmt.target.id, ast.unparse(stmt.annotation))
-            for stmt in node.body
-            if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)
-        ]
-        if not fields:
-            raise GenerationError(f"{path}: TypedDict {node.name} has no annotated fields")
-        contracts[node.name] = fields
-    return contracts
-
-
-def render_bridge_env_contracts() -> str:
-    """Environment contract tables for dsl-reference.md §3.1."""
-    contracts = _typed_dicts(_parse(VOCABULARY_FILE), VOCABULARY_FILE)
-    missing = [name for name in _ENV_CONTRACT_BUILDERS if name not in contracts]
-    if missing:
-        raise GenerationError(f"{VOCABULARY_FILE}: env contracts not found: {missing}")
-    rows: list[str] = []
-    nested_names: list[str] = []
-    for contract, builder in _ENV_CONTRACT_BUILDERS.items():
-        for field_name, type_str in contracts[contract]:
-            if (
-                type_str in contracts
-                and type_str not in _ENV_CONTRACT_BUILDERS
-                and type_str not in nested_names
-            ):
-                nested_names.append(type_str)
-            rows.append(f"| `{contract}` | `{builder}()` | `{field_name}` | `{_cell(type_str)}` |")
-    header = (
-        f"每个求值语境绑定一组固定符号、固定形状的数据（{len(_ENV_CONTRACT_BUILDERS)} 个"
-        f"顶层契约，`vocabulary.py` 的 `*Env` TypedDict 是形状的单一事实源，"
-        f"构建器函数是唯一构造点——引擎调用点全部委托到这里）：{GENERATED_NOTE}\n\n"
-        "| 环境契约 | 构建器 | 字段 | 类型 |\n"
-        "|---|---|---|---|"
-    )
-    body = header + "\n" + "\n".join(rows)
-    if nested_names:
-        notes = "\n".join(
-            f"- `{name}`："
-            + "、".join(f"`{fname}: {_cell(ftype)}`" for fname, ftype in contracts[name])
-            for name in nested_names
-        )
-        body += f"\n\n嵌套类型的字段：\n\n{notes}"
-    return body
-
-
-def action_request_kinds() -> dict[str, list[str]]:
-    """``kind`` -> ``data`` keys of every ``ActionRequest(kind=..., data={...})``
-    call in vocabulary.py, merged per kind in source order."""
-    tree = _parse(VOCABULARY_FILE)
-    found: list[tuple[int, str, list[str]]] = []
-    for node in ast.walk(tree):
-        if not (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "ActionRequest"
-        ):
-            continue
-        kwargs = {kw.arg: kw.value for kw in node.keywords if kw.arg}
-        if node.args or set(kwargs) != {"kind", "data"}:
-            raise GenerationError(
-                f"{VOCABULARY_FILE}:{node.lineno} ActionRequest() is not "
-                "ActionRequest(kind=..., data=...) — teach the generator"
-            )
-        kind = _literal(kwargs["kind"])
-        if not isinstance(kind, str):
-            raise GenerationError(
-                f"{VOCABULARY_FILE}:{node.lineno} ActionRequest kind is not a string"
-            )
-        data = kwargs["data"]
-        if not isinstance(data, ast.Dict):
-            raise GenerationError(
-                f"{VOCABULARY_FILE}:{node.lineno} ActionRequest data is not a dict literal"
-            )
-        keys: list[str] = []
-        for key in data.keys:
-            if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
-                raise GenerationError(
-                    f"{VOCABULARY_FILE}:{node.lineno} ActionRequest data key is not a "
-                    "string literal — teach the generator"
-                )
-            keys.append(key.value)
-        found.append((node.lineno, kind, keys))
-    if not found:
-        raise GenerationError(f"{VOCABULARY_FILE}: no ActionRequest() calls found")
-    merged: dict[str, list[str]] = {}
-    for _lineno, kind, keys in sorted(found):
-        bucket = merged.setdefault(kind, [])
-        for key in keys:
-            if key not in bucket:
-                bucket.append(key)
-    return merged
-
-
-def render_dsl_action_kinds() -> str:
-    """ActionRequest kind/data shapes for dsl-reference.md §4.5."""
-    kinds = action_request_kinds()
-    rows = [
-        f"| `{kind}` | {'、'.join(f'`{key}`' for key in keys)} |" for kind, keys in kinds.items()
-    ]
-    header = (
-        f"效果 builtin 实际产出的 `ActionRequest` 形状（{len(kinds)} 种 kind，"
-        f"生成自 `vocabulary.py` 的调用点；仅用于会话配方声明，"
-        f"普通宿主操作通过 Operation 执行）：{GENERATED_NOTE}\n\n"
-        "| kind | data 字段 |\n"
-        "|---|---|"
     )
     return header + "\n" + "\n".join(rows)
 
@@ -1070,10 +919,7 @@ def _render_sections() -> dict[tuple[Path, str], str]:
         (DSL_REF, "dsl-on-events"): render_dsl_on_events(),
         (DSL_REF, "dsl-builtins-pure"): render_builtin_table("SCRIPT_BUILTINS", VOCABULARY_FILE),
         (DSL_REF, "dsl-builtins-policy"): render_builtin_table("POLICY_BUILTINS", VOCABULARY_FILE),
-        (DSL_REF, "dsl-loop-names"): render_dsl_loop_names(),
         (DSL_REF, "dsl-fuel-defaults"): render_dsl_fuel_defaults(),
-        (DSL_REF, "bridge-env-contracts"): render_bridge_env_contracts(),
-        (DSL_REF, "dsl-action-kinds"): render_dsl_action_kinds(),
         (DSL_REF, "bridge-query-ports"): render_bridge_query_ports(),
         (API_REF, "rest-endpoints"): render_rest_endpoints(),
         (API_REF, "mode-patterns"): render_mode_patterns(),

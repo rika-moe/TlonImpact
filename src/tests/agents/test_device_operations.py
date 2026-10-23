@@ -6,8 +6,8 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from tests.operations.test_filesystem_operations import MemoryDevice
+from tests.program_helpers import make_program
 from tlon.agents.member_runtime import MemberRuntime, MemberServices
-from tlon.agents.member_spec import MemberSpec
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.agents.vocabulary import make_member_builtins
 from tlon.base.config import AgentConfig, DockerRuntimeConfig, LLMConfig
@@ -21,7 +21,6 @@ from tlon.operations.time import time_operation_definitions
 from tlon.sandbox.device import ExecutionDevice, ExecutionResult
 from tlon.sandbox.filesystem import MemberFilesystemService
 from tlon.sandbox.shell import MemberShellService
-from tlosure.edn import loads
 
 
 def member_at(
@@ -37,7 +36,7 @@ def member_at(
         config=AgentConfig(
             id="device-member", name="Device", llm=LLMConfig(model_name="test/model"), docker=config
         ),
-        llm_client=MagicMock(),
+        llm_client=MagicMock(configuration_snapshot=MagicMock(return_value={})),
         memory=MagicMock(),
         task_manager=MagicMock(),
         tool_executor=ToolExecutor(),
@@ -50,9 +49,7 @@ def member_at(
         member_id="device-member",
         name="Device",
         event_bus=EventBus(),
-        spec=MemberSpec.from_edn(
-            loads('{:version 1 :rules [{:name "work" :on :boot :actions [' + actions + "]}]}")
-        ),
+        spec=make_program(actions),
         builtins=make_member_builtins(),
         services=caps,
     )

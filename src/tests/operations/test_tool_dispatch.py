@@ -41,12 +41,8 @@ def store(tmp_path: Path) -> ProgramStore:
     return ProgramStore(tmp_path / "program.sqlite", build_id="test")
 
 
-def setup_dispatch(
-    store: ProgramStore, handler: Any, *, control: bool = False
-) -> tuple[ToolDispatch, list[dict[str, Any]]]:
-    op = Operation(
-        "write", "test", SCHEMA, True, handler, effects=frozenset({"write"}), control=control
-    )
+def setup_dispatch(store: ProgramStore, handler: Any) -> tuple[ToolDispatch, list[dict[str, Any]]]:
+    op = Operation("write", "test", SCHEMA, True, handler, effects=frozenset({"write"}))
     executor = OperationExecutor(
         OperationRegistry([op]), CallContext("member", "root", "parent"), store
     )
@@ -99,7 +95,7 @@ async def test_provider_ids_cannot_rewrite_partially_committed_batch(store: Prog
         await dispatch.execute(changed, context)
 
 
-@pytest.mark.parametrize("kind", ["duplicate", "empty", "outside", "control"])
+@pytest.mark.parametrize("kind", ["duplicate", "empty", "outside"])
 async def test_whole_batch_rejected_before_any_effect(store: ProgramStore, kind: str) -> None:
     calls: list[int] = []
 
@@ -107,7 +103,7 @@ async def test_whole_batch_rejected_before_any_effect(store: ProgramStore, kind:
         calls.append(inputs["value"])
         return inputs
 
-    dispatch, _ = setup_dispatch(store, write, control=kind == "control")
+    dispatch, _ = setup_dispatch(store, write)
     arguments = batch(1, 2)
     if kind == "duplicate":
         arguments["tool_calls"][1]["id"] = "provider-0"
@@ -150,8 +146,6 @@ async def test_output_failure_propagates_instead_of_becoming_model_feedback(
 async def test_nested_program_dispatch_has_only_leaf_receipts_and_keeps_root_budget(
     store: ProgramStore,
 ) -> None:
-    from unittest.mock import AsyncMock
-
     from tlon.agents.program_driver import ProgramDriver
     from tlon.agents.vocabulary import make_member_builtins
     from tlon.base.execution import current_execution
@@ -183,7 +177,6 @@ async def test_nested_program_dispatch_has_only_leaf_receipts_and_keeps_root_bud
             store,
             "root",
             builtins,
-            AsyncMock(),
             operations=adapter,
             member_id="member",
             token_budget=30,

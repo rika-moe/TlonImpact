@@ -8,7 +8,6 @@ import pytest
 from tlosure.builtins import (
     ARITHMETIC_BUILTINS,
     CORE_BUILTINS,
-    ActionRequest,
     Builtin,
     BuiltinCall,
     Closure,
@@ -62,7 +61,7 @@ async def test_handler_can_return_recorded_result_without_invoking_builtin() -> 
 
 async def test_effect_results_are_values_not_recursively_executed_actions() -> None:
     requests: list[BuiltinCall] = []
-    result = ActionRequest("saved", {})
+    result = {"kind": "saved", "data": {}}
 
     async def handler(call: BuiltinCall) -> Any:
         requests.append(call)

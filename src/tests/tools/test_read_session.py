@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from tests.history_helpers import append_history
 from tlon.agents.session_journal import SessionJournal
 from tlon.base.paths import TlonPaths
 from tlon.memory.manager import MemoryManager
@@ -46,7 +47,8 @@ async def _write_session(
     tools: list[str] | None = None,
     end: bool = True,
 ) -> None:
-    await journal.append(
+    await append_history(
+        journal,
         sid,
         "session/start",
         agent_id="agent1",
@@ -57,7 +59,8 @@ async def _write_session(
         anchor_len=1,
     )
     for index, name in enumerate(tools or []):
-        await journal.append(
+        await append_history(
+            journal,
             sid,
             "tool/result",
             tool_call={
@@ -68,9 +71,9 @@ async def _write_session(
             result={"success": True, "data": {}, "message": "ok", "error": None},
         )
     for reply in replies:
-        await journal.append(sid, "llm/response", response={"content": reply})
+        await append_history(journal, sid, "llm/response", response={"content": reply})
     if end:
-        await journal.append(sid, "session/end", reason="complete")
+        await append_history(journal, sid, "session/end", reason="complete")
 
 
 async def test_digest_covers_trigger_replies_tools_and_end(tmp_path: Path) -> None:

@@ -2,7 +2,6 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
 from typing import Any
 
 from tlon.evolution.ports import PrototypeError
@@ -107,20 +106,3 @@ class LifecycleService:
             await self.request("start", member_id, reason, context)
             for member_id in self.start_all_candidates()
         ]
-
-
-def scheduling_request(action: str, args: dict[str, Any]) -> dict[str, Any]:
-    """Declare a self transition; the runtime commits after the turn drains."""
-    request = {"action": action, "reason": args.get("reason", "")}
-    if action == "sleep":
-        try:
-            wake_at = datetime.fromisoformat(args["wake_at"])
-            if wake_at.tzinfo is None or wake_at.utcoffset() is None:
-                raise ValueError("wake_at 必须带时区")
-            wake_at = wake_at.astimezone(UTC)
-            if wake_at <= datetime.now(UTC):
-                raise ValueError("wake_at 必须是未来时间")
-        except (ValueError, TypeError, KeyError) as error:
-            raise InputError(str(error)) from error
-        request["wake_at"] = wake_at.isoformat()
-    return {"scheduling_request": request}

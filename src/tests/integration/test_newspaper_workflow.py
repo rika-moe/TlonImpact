@@ -9,10 +9,15 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tests.mail_helpers import make_office
-from tlon.agents.member_spec import MemberSpec
 from tlon.agents.program_driver import ProgramDriver
+from tlon.agents.program_package import (
+    program_builtins,
+    program_module_sources,
+    read_module_sources,
+    validate_program_sources,
+)
 from tlon.agents.program_store import ProgramStore
-from tlon.agents.vocabulary import make_member_builtins, rule_env
+from tlon.agents.vocabulary import make_member_builtins
 from tlon.base.events.event_bus import EventBus
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
 from tlon.operations.dsl import DSLAdapter
@@ -24,8 +29,8 @@ from tlon.operations.state import make_state_operations
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.mail.member_mail import MemberMailService
-from tlosure.builtins import ActionRequest
-from tlosure.edn import Keyword, dumps, loads
+from tlosure.edn import Keyword, dumps
+from tlosure.modules import ModulePackage
 
 EXAMPLE = Path(__file__).parents[2] / "tlon/resources/examples/newspaper/behavior.tlon"
 ADDRESS = "newspaper@tlon.internal"
@@ -41,7 +46,8 @@ class NewspaperHarness:
 
     def __init__(self, home: Path) -> None:
         self.home = home
-        self.spec = MemberSpec.from_edn(loads(EXAMPLE.read_text()))
+        self.modules = read_module_sources(EXAMPLE.parent / "modules")
+        self.spec = validate_program_sources(EXAMPLE.read_text(), self.modules)
         self.store = ProgramStore(
             home / "newspaper/program.sqlite3", build_id=registry_identity(make_member_builtins())
         )
@@ -67,12 +73,15 @@ class NewspaperHarness:
         return Mail.create(from_address=sender, to=[ADDRESS], subject=subject, content=content)
 
     async def execute(self, mail: Mail, invocation: str = "") -> None:
-        rule = self.spec.rules[0]
-        run_id = f"mail:{mail.id}:{rule.name}:{invocation}"
-        run = self.store.ensure(run_id, dumps(rule.to_edn_data()), dumps(mail.to_dict()))
+        run_id = f"mail:{mail.id}:handler:mail-delivered:{invocation}"
+        run = self.store.ensure(run_id, self.spec.to_edn(), dumps(mail.to_dict()))
         if run.completed:
             return
-        env = rule_env({"mail": mail}, member_id="newspaper", name="来信报")
+        event = {
+            "mail": mail.to_dict(),
+            "sender": mail.from_address,
+            "self": {"id": "newspaper", "address": ADDRESS, "name": "来信报"},
+        }
 
         mailbox = Mailbox(self.home / "shared/mail.sqlite3", "newspaper")
         await mailbox.append_inbox(mail)
@@ -107,17 +116,15 @@ class NewspaperHarness:
             )
         )
 
-        async def effect(request: ActionRequest, name: str, index: int, args: str) -> Any:
-            raise AssertionError("all newspaper effects use shared operations")
-
+        builtins = {**program_builtins(), **operations.builtins()}
+        package = ModulePackage.from_sources(program_module_sources(self.modules), builtins)
         await ProgramDriver(
             self.store,
             run_id,
-            {**make_member_builtins(), **operations.builtins()},
-            effect,
+            builtins,
             operations=operations,
             member_id="newspaper",
-        ).run(rule, env)
+        ).run_entry(package.entry("newspaper.main/handle"), event, fuel=10000)
         self.store.complete(run_id)
 
     def restart(self) -> None:
@@ -230,7 +237,10 @@ async def test_member_runtime_recovers_a_read_publication_before_program_complet
             member_id="newspaper",
             name="来信报",
             event_bus=bus,
-            spec=MemberSpec(version=1, rules=()),
+            spec=validate_program_sources(
+                "{:version 2 :handlers {:mail-delivered fixture/handle}}",
+                {"fixture.tlon": "(ns fixture (:export handle)) (defn handle [e] {:result nil})"},
+            ),
             builtins=make_member_builtins(),
             mailbox=Mailbox(tmp_path / "shared/mail.sqlite3", "newspaper"),
             post_office=paper.office,
@@ -285,11 +295,11 @@ async def test_member_runtime_recovers_a_read_publication_before_program_complet
         crashed = asyncio.Event()
         loop = asyncio.get_running_loop()
 
-        def interrupt_before_complete(run_id: str) -> None:
+        def interrupt_before_complete(run_id: str, result: Any, scheduling: Any) -> None:
             loop.call_soon_threadsafe(crashed.set)
             raise asyncio.CancelledError()
 
-        member._program_store.complete = interrupt_before_complete
+        member._program_store.complete_entry = interrupt_before_complete
         await paper.office.send(
             from_address=ADMIN, to=[ADDRESS], subject="publish:runtime", content="出版"
         )
@@ -328,10 +338,10 @@ async def test_member_runtime_recovers_a_read_publication_before_program_complet
 
 
 @pytest.mark.parametrize("mail_event", [True, False], ids=["read-mail", "non-mail-event"])
-async def test_runtime_recovers_later_rules_after_first_rule_interrupts(
+async def test_runtime_recovers_later_program_effect_after_first_effect_interrupts(
     tmp_path: Path, mail_event: bool
 ) -> None:
-    """Accept all matching rules durably before the first one can consume its trigger."""
+    """One ordinary entry restores its cursor after a prior effect consumes mail."""
     import asyncio
 
     from tlon.agents.member_runtime import MemberRuntime
@@ -339,14 +349,15 @@ async def test_runtime_recovers_later_rules_after_first_rule_interrupts(
     from tlon.base.paths import TlonPaths
 
     on = "mail-delivered" if mail_event else "agent-idle"
-    mark_read = "(mail-mark-read {:mail_ids [(mail-field msg :id)]})" if mail_event else ""
-    spec = MemberSpec.from_edn(
-        loads(
-            f"""{{:version 1 :execution {{:level :L0}} :rules [
-            {{:name "first" :on :{on}
-              :actions [(state-put {{:key "first" :value true}}) {mark_read}]}}
-            {{:name "second" :on :{on} :actions [(state-put {{:key "second" :value true}})]}}]}}"""
-        )
+    mark_read = "(mail-mark-read {:mail_ids [(get (get event :mail) :id)]})" if mail_event else ""
+    spec = validate_program_sources(
+        "{:version 2 :handlers {:" + on + " work.main/handle}}",
+        {
+            "work/main.tlon": "(ns work.main (:export handle)) (defn handle [event] "
+            '(state-put {:key "first" :value true}) '
+            + mark_read
+            + ' (state-put {:key "second" :value true}) {:result nil})'
+        },
     )
     bus = EventBus()
     office = make_office(bus, tmp_path, ["newspaper", "operator"])
@@ -355,7 +366,7 @@ async def test_runtime_recovers_later_rules_after_first_rule_interrupts(
     def runtime() -> MemberRuntime:
         return MemberRuntime(
             member_id="newspaper",
-            name="多规则恢复",
+            name="程序恢复",
             event_bus=bus,
             spec=spec,
             builtins=make_member_builtins(),
@@ -369,15 +380,18 @@ async def test_runtime_recovers_later_rules_after_first_rule_interrupts(
     await member.initialize()
     crashed = asyncio.Event()
     loop = asyncio.get_running_loop()
-    complete = member._program_store.complete
+    begin = member._program_store.begin_invocation
 
-    def interrupt_first(run_id: str) -> None:
-        if run_id.endswith(":first"):
+    def interrupt_second(invocation: Invocation) -> Any:
+        if (
+            invocation.name == "state-put"
+            and json.loads(invocation.arguments_json)["key"] == "second"
+        ):
             loop.call_soon_threadsafe(crashed.set)
             raise asyncio.CancelledError()
-        complete(run_id)
+        return begin(invocation)
 
-    member._program_store.complete = interrupt_first
+    member._program_store.begin_invocation = interrupt_second
     try:
         if mail_event:
             await office.send(from_address=ADMIN, to=[ADDRESS], content="真实事件")
@@ -388,27 +402,19 @@ async def test_runtime_recovers_later_rules_after_first_rule_interrupts(
         await asyncio.wait_for(crashed.wait(), 5)
         assert member._program_store.state_get("first") is True
         assert member._program_store.state_get("second") is None
-        assert len(member._program_store.pending()) == 2
+        assert len(member._program_store.pending()) == 1
         assert await mailbox.unread() == []
         await member.shutdown()
-
         member = runtime()
         await asyncio.wait_for(member.initialize(), 5)
-
-        async def recovered() -> None:
-            for _ in range(300):
-                if (
-                    member._program_store.state_get("second") is True
-                    and not member._program_store.pending()
-                ):
-                    return
+        async with asyncio.timeout(5):
+            while (
+                member._program_store.state_get("second") is not True
+                or member._program_store.pending()
+            ):
                 await asyncio.sleep(0.01)
-            raise AssertionError("later matching rule was lost at the first rule interruption")
-
-        await asyncio.wait_for(recovered(), 5)
         assert await mailbox.unread() == []
         assert member._program_store.state_get("first") is True
-        assert member._program_store.state_get("second") is True
     finally:
         await member.shutdown()
         await bus.shutdown()
@@ -423,10 +429,18 @@ async def test_terminal_expression_error_preserves_effects_and_does_not_block_ne
     from tlon.agents.member_runtime import MemberRuntime
     from tlon.base.paths import TlonPaths
 
-    spec = MemberSpec.from_edn(
-        loads(
-            '{:version 1 :execution {:level :L0} :rules [\n          {:name "work" :on :mail-delivered :actions [\n            (state-put {:key "seen" :value (mail-field msg :id)})\n            (if (= (mail-field msg :subject) "broken")\n              (/ 1 0)\n              (state-put {:key "healthy" :value true}))\n            (mail-mark-read {:mail_ids [(mail-field msg :id)]})]}]}'
-        )
+    spec = validate_program_sources(
+        "{:version 2 :handlers {:mail-delivered work.main/handle}}",
+        {
+            "work/main.tlon": """(ns work.main (:export handle))
+        (defn handle [event]
+          (let [mail (get event :mail)]
+            (state-put {:key "seen" :value (get mail :id)})
+            (if (= (get mail :subject) "broken") (/ 1 0)
+              (state-put {:key "healthy" :value true}))
+            (mail-mark-read {:mail_ids [(get mail :id)]})
+            {:result nil}))"""
+        },
     )
     bus = EventBus()
     office = make_office(bus, tmp_path, ["newspaper", "operator"])
@@ -459,8 +473,9 @@ async def test_terminal_expression_error_preserves_effects_and_does_not_block_ne
             from_address=ADMIN, to=[ADDRESS], subject="broken", content="表达式将失败"
         )
         await asyncio.wait_for(settled(broken.mail.id), 5)
-        run_id = f"{broken.mail.id}:work"
-        failed = member._program_store.ensure(run_id, "unused", "unused")
+        run_id = f"{broken.mail.id}:handler:mail-delivered"
+        failed = member._program_store.get_run(run_id)
+        assert failed is not None
         assert not failed.completed
         assert failed.error
         assert member._program_store.pending() == []
@@ -489,7 +504,8 @@ async def test_terminal_expression_error_preserves_effects_and_does_not_block_ne
         await asyncio.wait_for(settled(good.mail.id), 5)
         assert member._program_store.state_get("healthy") is True
         assert member._program_store.pending() == []
-        failed_after = member._program_store.ensure(run_id, "unused", "unused")
+        failed_after = member._program_store.get_run(run_id)
+        assert failed_after is not None
         assert failed_after.error == failed.error
         assert not failed_after.completed
         assert member._program_store.lookup_invocation(invocation) == recorded

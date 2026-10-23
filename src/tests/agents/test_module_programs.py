@@ -78,7 +78,6 @@ async def test_two_module_mail_entry_returns_result_without_nested_scheduling(
     registry.publish_scheduling_state = AsyncMock()
     member = _member(tmp_path, registry=registry)
     event = _event()
-    member._run_session_effect = AsyncMock(side_effect=AssertionError("no stage fallback"))
     await member.initialize()
     try:
         await member._on_event(event)
@@ -91,8 +90,7 @@ async def test_two_module_mail_entry_returns_result_without_nested_scheduling(
         assert [mail.content for mail in await inbox.unread()] == ["reply:hello"]
         registry.prepare_scheduling_request.assert_not_awaited()
         registry.apply_program_scheduling.assert_not_awaited()
-        member._run_session_effect.assert_not_awaited()
-        assert member._scheduler is None
+        assert not hasattr(member, "_scheduler")
     finally:
         await member.shutdown()
 
@@ -226,7 +224,6 @@ async def test_invalid_entry_return_is_failed_without_stage_fallback(
         "work/reply.tlon": f"(ns work.reply (:export handle)) (defn handle [event] {result})"
     }
     member = _member(tmp_path, modules)
-    member._run_session_effect = AsyncMock(side_effect=AssertionError("no fallback"))
     await member.initialize()
     try:
         await member._run_rule_body(member.spec.rules[0], _event(), run_id="bad-result")
@@ -234,7 +231,6 @@ async def test_invalid_entry_return_is_failed_without_stage_fallback(
         assert record is not None and record.error is not None
         assert "entry" in record.error
         assert record.scheduling_edn is None
-        member._run_session_effect.assert_not_awaited()
     finally:
         await member.shutdown()
 
@@ -275,12 +271,12 @@ async def test_v2_with_real_services_does_not_start_stage_scheduler(tmp_path: Pa
         post_office=shell._post_office,
         services=services,
     )
-    assert member._scheduler is None
+    assert not hasattr(member, "_scheduler")
     await member.initialize()
     try:
         await member._on_event(_event())
         await asyncio.wait_for(member._queue.join(), 2)
-        assert member._scheduler is None
+        assert not hasattr(member, "_scheduler")
         llm.chat.assert_not_awaited()
         inbox = Mailbox(tmp_path / "shared/mail.sqlite3", "sender")
         assert [mail.content for mail in await inbox.unread()] == ["reply:hello"]
@@ -520,11 +516,15 @@ async def test_v2_background_reflection_prevents_idle_drain(tmp_path: Path) -> N
     member._program_task = None
     entered = asyncio.Event()
     release = asyncio.Event()
-    manager = MemoryManager("member", MemoryConfig(reflection_min_interactions=1), data_dir=tmp_path)
+    manager = MemoryManager(
+        "member", MemoryConfig(reflection_min_interactions=1), data_dir=tmp_path
+    )
     assert member._journal is not None
     engine = ReflectionEngine(
-        manager, cast(LLMClient, MagicMock()),
-        ReflectSpec(enabled=True, interval_minutes=0), member._journal,
+        manager,
+        cast(LLMClient, MagicMock()),
+        ReflectSpec(enabled=True, interval_minutes=0),
+        member._journal,
     )
 
     async def digest(journal: Any) -> dict[str, Any]:
@@ -538,7 +538,7 @@ async def test_v2_background_reflection_prevents_idle_drain(tmp_path: Path) -> N
         await member._run_rule_body(member.spec.rules[0], _event(), run_id="reflection-source")
         await engine.check_trigger()
         await asyncio.wait_for(entered.wait(), 2)
-        assert member._scheduler is None
+        assert not hasattr(member, "_scheduler")
         assert engine.is_running
         assert member.active_session_count == 1
         assert member.get_state() == "active"

@@ -112,7 +112,11 @@ def _read_parameters(proto_dir: Any) -> tuple[ParameterSpec, ...]:
     if not behavior_file.exists():
         return ()
     try:
-        return analyze(behavior_file.read_text(encoding="utf-8")).parameters
+        from tlon.agents.program_package import read_module_sources
+
+        return analyze(
+            behavior_file.read_text(encoding="utf-8"), read_module_sources(proto_dir / "modules")
+        ).parameters
     except Exception as e:
         logger.warning("prototype_parameters_unreadable", path=str(behavior_file), error=str(e))
         return ()

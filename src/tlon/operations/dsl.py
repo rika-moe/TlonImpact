@@ -15,9 +15,7 @@ class DSLAdapter:
         self.dispatcher = dispatcher
         self._executor = executor
         self._builtins = {
-            operation.name: self._builtin(
-                operation.name, pure=not operation.effects and not operation.control
-            )
+            operation.name: self._builtin(operation.name, pure=not operation.effects)
             for operation in executor.registry.definitions()
         }
 
@@ -50,9 +48,6 @@ class DSLAdapter:
 
     def builtins(self) -> dict[str, Builtin]:
         return dict(self._builtins)
-
-    def control_names(self) -> frozenset[str]:
-        return frozenset(op.name for op in self._executor.registry.definitions() if op.control)
 
     def owns(self, call: BuiltinCall) -> bool:
         return self._builtins.get(call.name) is call.builtin

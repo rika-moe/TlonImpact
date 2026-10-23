@@ -28,8 +28,12 @@ from tlon.base.llm_client import LLMResponse
 from tlon.base.paths import TlonPaths
 from tlon.operations.adapters import OperationTool
 
-_BASE_SPEC = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
-_CHILD_SPEC = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["y@tlon.internal"]})]}]}\n'
+_BASE_SPEC = "{:version 2 :handlers {:mail-delivered work.reply/handle}}"
+_CHILD_SPEC = _BASE_SPEC
+_BASE_MODULES = {
+    "work/reply.tlon": '(ns work.reply (:export handle)) (defn handle [event] {:result "x@tlon.internal"})'
+}
+_CHILD_MODULES = {path: text.replace("x@", "y@") for path, text in _BASE_MODULES.items()}
 
 
 class _FakeLLM:
@@ -57,9 +61,12 @@ def _make_tool(p: TlonPaths, reviewer_id: str, llm: _FakeLLM) -> OperationTool:
 
 
 def _stage_child(p: TlonPaths) -> tuple[str, str]:
-    created_1 = write_trusted_prototype(_BASE_SPEC, tlon_paths=p, display_name="定址转发")
+    created_1 = write_trusted_prototype(
+        _BASE_SPEC, modules=_BASE_MODULES, tlon_paths=p, display_name="定址转发"
+    )
     child = write_staging_prototype(
         _CHILD_SPEC,
+        modules=_CHILD_MODULES,
         display_name="变更目标转发",
         author_id="c-base-00000001",
         parent=created_1.name,
@@ -140,7 +147,7 @@ class TestReviewPrototype:
         """三个合法 verdict 标记都解析成功并落盘。"""
         p = TlonPaths(home=tmp_path)
         created_1 = write_staging_prototype(
-            _BASE_SPEC, author_id="a", tlon_paths=p, display_name="定址转发"
+            _BASE_SPEC, modules=_BASE_MODULES, author_id="a", tlon_paths=p, display_name="定址转发"
         )
         tool = _make_tool(p, "r-1", _FakeLLM(f"{verdict}\n理由。"))
         result = await tool.execute_context({"name": created_1.name})
@@ -151,7 +158,7 @@ class TestReviewPrototype:
         """首行不是三值之一 → success=False，不写 REVIEW.md。"""
         p = TlonPaths(home=tmp_path)
         created_1 = write_staging_prototype(
-            _BASE_SPEC, author_id="a", tlon_paths=p, display_name="定址转发"
+            _BASE_SPEC, modules=_BASE_MODULES, author_id="a", tlon_paths=p, display_name="定址转发"
         )
         tool = _make_tool(p, "r-1", _FakeLLM("我觉得可以\n因为……"))
         result = await tool.execute_context({"name": created_1.name})
@@ -172,7 +179,9 @@ class TestReviewPrototype:
     async def test_trusted_prototype_not_reviewable(self, tmp_path: Path) -> None:
         """trusted 库原型不可评审（只评 staging 提案）。"""
         p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(_BASE_SPEC, tlon_paths=p, display_name="定址转发")
+        created_1 = write_trusted_prototype(
+            _BASE_SPEC, modules=_BASE_MODULES, tlon_paths=p, display_name="定址转发"
+        )
         llm = _FakeLLM("通过\n理由。")
         tool = _make_tool(p, "r-1", llm)
         result = await tool.execute_context({"name": created_1.name})

@@ -16,121 +16,15 @@ from tlon.agents.prototypes.management import write_trusted_prototype
 from tlon.agents.prototypes.near_kin import find_near_kin
 from tlon.agents.prototypes.staging import write_staging_prototype
 from tlon.base.paths import TlonPaths
+from tlon.evolution.write_prototype import bundle_text
 from tlon.operations.adapters import OperationTool
-
-_EXISTING_SPEC = '; 既有原型：邮件转发器\n{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
-_RESKIN_SPEC = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["y@tlon.internal"]})]}]}\n'
-_DISTINCT_SPEC = '{:version 1\n :rules [{:name "boot-task"\n          :on :boot\n          :actions [(member-start {:agent_id "daily-digest"})]}]}\n'
-_PARENT_SPEC = '{:version 1 :rules [{:name "respond" :on :mail-delivered :when (or (contains? (or (mail-field msg :to) []) (get self :address)) (contains? (or (mail-field msg :cc) []) (get self :address))) :actions [(run-loop (quote {:context {:sections [(persona) (protocol) (knowledge) (skills) (mail-history 20)]} :stages [(think) (act)] :until (or (>= (get state :iteration) (get limits :max_iterations)) (>= (get state :error_count) (get limits :max_consecutive_errors))) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled true :interval-minutes 15}}))]} {:name "boot" :on :boot :actions []}]}'
-_TEMPLATE_SPEC = '{:version 1\n :parameters {:to {:type :string-list :required true}}\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ${to}})]}]}\n'
-
-
-class TestFindNearKin:
-    def test_identical_text_hits(self, tmp_path: Path) -> None:
-        p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(_EXISTING_SPEC, tlon_paths=p, display_name="定址转发")
-        hit = find_near_kin(_EXISTING_SPEC, tlon_paths=p)
-        assert hit == (created_1.name, 1.0)
-
-    def test_near_text_hits(self, tmp_path: Path) -> None:
-        p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(_EXISTING_SPEC, tlon_paths=p, display_name="定址转发")
-        hit = find_near_kin(_RESKIN_SPEC, tlon_paths=p)
-        assert hit is not None
-        name, ratio = hit
-        assert name == created_1.name
-        assert ratio >= 0.9
-
-    def test_staging_area_is_searched_too(self, tmp_path: Path) -> None:
-        p = TlonPaths(home=tmp_path)
-        created_1 = write_staging_prototype(_EXISTING_SPEC, tlon_paths=p, display_name="定址转发")
-        hit = find_near_kin(_EXISTING_SPEC, tlon_paths=p)
-        assert hit == (created_1.name, 1.0)
-
-    def test_most_similar_of_both_areas_wins(self, tmp_path: Path) -> None:
-        p = TlonPaths(home=tmp_path)
-        write_trusted_prototype(_DISTINCT_SPEC, tlon_paths=p, display_name="定址转发")
-        created_2 = write_staging_prototype(_EXISTING_SPEC, tlon_paths=p, display_name="定址转发")
-        hit = find_near_kin(_RESKIN_SPEC, tlon_paths=p)
-        assert hit is not None
-        assert hit[0] == created_2.name
-
-    def test_distinct_text_misses(self, tmp_path: Path) -> None:
-        p = TlonPaths(home=tmp_path)
-        write_trusted_prototype(_EXISTING_SPEC, tlon_paths=p, display_name="定址转发")
-        assert find_near_kin(_DISTINCT_SPEC, tlon_paths=p) is None
-
-    def test_empty_library_misses(self, tmp_path: Path) -> None:
-        p = TlonPaths(home=tmp_path)
-        assert find_near_kin(_EXISTING_SPEC, tlon_paths=p) is None
-
-    def test_template_prototype_compares_verbatim(self, tmp_path: Path) -> None:
-        """模板原型（含 ${var} 占位符）不比挂：文本比较不做 EDN 解析。"""
-        p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(_TEMPLATE_SPEC, tlon_paths=p, display_name="定址转发")
-        assert find_near_kin(_TEMPLATE_SPEC, tlon_paths=p) == (created_1.name, 1.0)
-        assert find_near_kin(_DISTINCT_SPEC, tlon_paths=p) is None
-
-    def test_whitespace_and_comments_normalized_away(self, tmp_path: Path) -> None:
-        """重排版（去注释、改缩进）不逃脱闸：规范化后仍是同一文本。"""
-        p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(_EXISTING_SPEC, tlon_paths=p, display_name="定址转发")
-        reformatted = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
-        hit = find_near_kin(reformatted, tlon_paths=p)
-        assert hit == (created_1.name, 1.0)
-
-    def test_threshold_boundary(self, tmp_path: Path) -> None:
-        p = TlonPaths(home=tmp_path)
-        write_trusted_prototype(_EXISTING_SPEC, tlon_paths=p, display_name="定址转发")
-        assert find_near_kin(_RESKIN_SPEC, threshold=0.999, tlon_paths=p) is None
-
-    def test_generational_micro_tweak_released_by_parent_exemption(self, tmp_path: Path) -> None:
-        """边界实测（docs/design/prototypes.md 冒烟案例形态）：reflect
-        间隔 15→30 的代际微改。
-
-        真实数据：内置 scribe 原型的 behavior.tlon 仅把
-        ``:interval-minutes 15`` 改为 ``30``，规范化文本的
-        SequenceMatcher ratio = 0.996（本测试内联同形态文本实测
-        0.995）。父本豁免（NEAT 式物种形成保护：创新在自己血脉内被
-        保护几代）后该微改放行——世代通道的本质就是沿血脉微进化，
-        阈值 0.9 拦的是换皮与跨血脉趋同。合理的代际改款（换谓词/
-        动作/规则的实质重写）相似度远低于 0.9，本来就不受影响
-        （见 test_distinct_text_misses，实测约 0.29）。
-        """
-        p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(_PARENT_SPEC, tlon_paths=p, display_name="定址转发")
-        micro_tweak = _PARENT_SPEC.replace(":interval-minutes 15", ":interval-minutes 30")
-        assert find_near_kin(micro_tweak, created_1.name, tlon_paths=p) is None
-
-    def test_cross_bloodline_convergence_still_caught(self, tmp_path: Path) -> None:
-        """同样的 15→30 微改文本，父本另有其人（或无父）→ 仍被拦：
-        跨血脉趋同命中最近的近亲。"""
-        p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(_PARENT_SPEC, tlon_paths=p, display_name="定址转发")
-        created_2 = write_trusted_prototype(_DISTINCT_SPEC, tlon_paths=p, display_name="定址转发")
-        micro_tweak = _PARENT_SPEC.replace(":interval-minutes 15", ":interval-minutes 30")
-        hit = find_near_kin(micro_tweak, created_2.name, tlon_paths=p)
-        assert hit is not None
-        name, ratio = hit
-        assert name == created_1.name
-        assert ratio > 0.99
-
-    def test_exclude_only_skips_the_named_prototype(self, tmp_path: Path) -> None:
-        """豁免按名字精确跳过：豁免父本后，与另一个原型雷同仍命中。"""
-        p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(_PARENT_SPEC, tlon_paths=p, display_name="定址转发")
-        created_2 = write_trusted_prototype(_EXISTING_SPEC, tlon_paths=p, display_name="定址转发")
-        hit = find_near_kin(_RESKIN_SPEC, created_1.name, tlon_paths=p)
-        assert hit is not None
-        assert hit[0] == created_2.name
-
 
 _PROGRAM = "{:version 2 :handlers {:mail-delivered work.reply/handle}}"
 _EXISTING_BUNDLE = {
     "behavior": _PROGRAM,
     "modules": {
         "work/helpers.tlon": "(ns work.helpers (:export identity)) (defn identity [value] value)",
-        "work/reply.tlon": '(ns work.reply (:export handle)) (defn handle [event] (let [receipt (mail-forward {:mail_id (get (get event :mail) :id) :to ["x@tlon.internal"]})] {:result receipt}))'
+        "work/reply.tlon": '(ns work.reply (:export handle)) (defn handle [event] (let [receipt (mail-forward {:mail_id (get (get event :mail) :id) :to ["x@tlon.internal"]})] {:result receipt}))',
     },
 }
 _RESKIN_BUNDLE = {
@@ -144,9 +38,89 @@ _DISTINCT_BUNDLE = {
     "behavior": _PROGRAM,
     "modules": {
         "work/helpers.tlon": "(ns work.helpers (:export identity)) (defn identity [value] value)",
-        "work/reply.tlon": '(ns work.reply (:export handle)) (defn handle [event] {:result "offline pure calculation"})'
+        "work/reply.tlon": '(ns work.reply (:export handle)) (defn handle [event] {:result "offline pure calculation"})',
     },
 }
+
+
+class TestFindNearKin:
+    def test_identical_and_reskinned_module_packages(self, tmp_path: Path) -> None:
+        paths = TlonPaths(tmp_path)
+        parent = write_trusted_prototype(
+            _EXISTING_BUNDLE["behavior"],
+            modules=_EXISTING_BUNDLE["modules"],
+            tlon_paths=paths,
+            display_name="转发",
+        )
+        assert find_near_kin(bundle_text(**_EXISTING_BUNDLE), tlon_paths=paths) == (
+            parent.name,
+            1.0,
+        )
+        found = find_near_kin(bundle_text(**_RESKIN_BUNDLE), tlon_paths=paths)
+        assert found is not None and found[0] == parent.name and found[1] > 0.9
+        assert (
+            find_near_kin(bundle_text(**_RESKIN_BUNDLE), threshold=0.999, tlon_paths=paths) is None
+        )
+
+    def test_staging_is_searched_and_most_similar_wins(self, tmp_path: Path) -> None:
+        paths = TlonPaths(tmp_path)
+        write_trusted_prototype(
+            _DISTINCT_BUNDLE["behavior"],
+            modules=_DISTINCT_BUNDLE["modules"],
+            tlon_paths=paths,
+            display_name="计算",
+        )
+        staged = write_staging_prototype(
+            _EXISTING_BUNDLE["behavior"],
+            modules=_EXISTING_BUNDLE["modules"],
+            tlon_paths=paths,
+            display_name="转发",
+        )
+        found = find_near_kin(bundle_text(**_RESKIN_BUNDLE), tlon_paths=paths)
+        assert found is not None and found[0] == staged.name
+
+    def test_distinct_and_empty_library_miss(self, tmp_path: Path) -> None:
+        paths = TlonPaths(tmp_path)
+        assert find_near_kin(bundle_text(**_EXISTING_BUNDLE), tlon_paths=paths) is None
+        write_trusted_prototype(
+            _EXISTING_BUNDLE["behavior"],
+            modules=_EXISTING_BUNDLE["modules"],
+            tlon_paths=paths,
+            display_name="转发",
+        )
+        assert find_near_kin(bundle_text(**_DISTINCT_BUNDLE), tlon_paths=paths) is None
+
+    def test_whitespace_comments_and_parent_exemption(self, tmp_path: Path) -> None:
+        paths = TlonPaths(tmp_path)
+        parent = write_trusted_prototype(
+            _EXISTING_BUNDLE["behavior"],
+            modules=_EXISTING_BUNDLE["modules"],
+            tlon_paths=paths,
+            display_name="转发",
+        )
+        text = bundle_text(**_EXISTING_BUNDLE)
+        reformatted = "; arbitrary comment\n" + text.replace(" ", "  ")
+        assert find_near_kin(reformatted, tlon_paths=paths) == (parent.name, 1.0)
+        assert find_near_kin(bundle_text(**_RESKIN_BUNDLE), parent.name, tlon_paths=paths) is None
+        other = write_trusted_prototype(
+            _DISTINCT_BUNDLE["behavior"],
+            modules=_DISTINCT_BUNDLE["modules"],
+            tlon_paths=paths,
+            display_name="计算",
+        )
+        found = find_near_kin(bundle_text(**_RESKIN_BUNDLE), other.name, tlon_paths=paths)
+        assert found is not None and found[0] == parent.name
+
+    def test_template_modules_compare_verbatim(self, tmp_path: Path) -> None:
+        paths = TlonPaths(tmp_path)
+        behavior = "{:version 2 :parameters {:target {:type :string :required true}} :handlers {:mail-delivered work/handle}}"
+        modules = {
+            "work.tlon": "(ns work (:export handle)) (defn handle [event] {:result ${target}})"
+        }
+        parent = write_trusted_prototype(
+            behavior, modules=modules, tlon_paths=paths, display_name="模板"
+        )
+        assert find_near_kin(bundle_text(behavior, modules), tlon_paths=paths) == (parent.name, 1.0)
 
 
 class TestWritePrototypeNearKin:

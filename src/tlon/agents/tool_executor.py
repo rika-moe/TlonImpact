@@ -71,10 +71,6 @@ class ToolExecutor:
         """
         return [tool.to_openai_definition() for tool in self._tools.values()]
 
-    def control_names(self) -> frozenset[str]:
-        """Control projection from this member's actual tool definitions."""
-        return frozenset(name for name, tool in self._tools.items() if tool.control)
-
     def list_tools(self) -> list[str]:
         """Get list of registered tool names.
 

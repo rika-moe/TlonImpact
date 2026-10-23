@@ -14,7 +14,6 @@ import pytest
 
 from tlon.agents.assembly import REPRODUCTION_TOOLS, assemble_member_services
 from tlon.agents.member_runtime import MemberRuntime
-from tlon.agents.member_spec import MemberSpec
 from tlon.agents.policy import (
     TILT_NEUTRAL,
     PolicyValidationError,
@@ -25,13 +24,13 @@ from tlon.agents.policy import (
     policy_tilt_provider,
     policy_trust_provider,
 )
+from tlon.agents.program_package import validate_program_sources
 from tlon.agents.vocabulary import make_member_builtins
 from tlon.base.config import AgentConfig, LLMConfig, yaml_save
 from tlon.base.events.event_bus import EventBus
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
-from tlosure.edn import loads
 
 
 @pytest.fixture
@@ -332,8 +331,9 @@ class TestAssemblyToolSubset:
             member_id=config.id,
             name=config.name,
             event_bus=EventBus(),
-            spec=MemberSpec.from_edn(
-                loads('{:version 1 :rules [{:name "boot" :on :boot :actions []}]}')
+            spec=validate_program_sources(
+                "{:version 2 :handlers {:boot work/handle}}",
+                {"work.tlon": "(ns work (:export handle)) (defn handle [event] {})"},
             ),
             builtins=make_member_builtins(),
             services=caps,

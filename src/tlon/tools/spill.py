@@ -10,9 +10,9 @@ through the file with ``file-read`` (the workspace is bind-mounted into the
 agent's container at the working dir, so the workspace-relative path is
 directly readable).
 
-Spilling happens in the engine (``LoopDriver.execute_one_tool``) *before*
-the result is journaled, so the session log and the model context hold the
-same locator — replay reproduces exactly what the model saw.
+This helper returns a locator for callers that explicitly opt into spilling.
+The program tool dispatcher currently returns its persisted operation result;
+there is no implicit stage-engine spilling.
 """
 
 import json

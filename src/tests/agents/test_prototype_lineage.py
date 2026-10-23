@@ -17,14 +17,32 @@ from tlon.agents.prototypes.staging import approve_prototype, write_staging_prot
 from tlon.base.paths import TlonPaths
 from tlon.evolution.ports import PrototypeError
 
-SPEC_V1 = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
-SPEC_V2 = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["y@tlon.internal"]})]}]}\n'
-SPEC_V3 = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["z@tlon.internal"]})]}]}\n'
+_FIXTURE_MODULES = {
+    "{:version 2 :handlers {:mail-delivered work.fixturec9a1e4ca/handle0}}\n": {
+        "work/fixturec9a1e4ca.tlon": '(ns work.fixturec9a1e4ca (:export handle0))\n(defn handle0 [event] (let [msg (get event :mail) self (get event :self)] (let [action0 (mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})] {:result nil})))\n'
+    },
+    "{:version 2 :handlers {:mail-delivered work.fixture8e968186/handle0}}\n": {
+        "work/fixture8e968186.tlon": '(ns work.fixture8e968186 (:export handle0))\n(defn handle0 [event] (let [msg (get event :mail) self (get event :self)] (let [action0 (mail-forward {:mail_id (mail-field msg :id) :to ["y@tlon.internal"]})] {:result nil})))\n'
+    },
+    "{:version 2 :handlers {:mail-delivered work.fixtureeb28979f/handle0}}\n": {
+        "work/fixtureeb28979f.tlon": '(ns work.fixtureeb28979f (:export handle0))\n(defn handle0 [event] (let [msg (get event :mail) self (get event :self)] (let [action0 (mail-forward {:mail_id (mail-field msg :id) :to ["z@tlon.internal"]})] {:result nil})))\n'
+    },
+}
+
+
+SPEC_V1 = "{:version 2 :handlers {:mail-delivered work.fixturec9a1e4ca/handle0}}\n"
+SPEC_V2 = "{:version 2 :handlers {:mail-delivered work.fixture8e968186/handle0}}\n"
+SPEC_V3 = "{:version 2 :handlers {:mail-delivered work.fixtureeb28979f/handle0}}\n"
 
 
 def _three_generations(p: TlonPaths) -> tuple[str, str, str]:
     """gen1 (trusted root) → gen2 (trusted) → gen3 (staging proposal)."""
-    created_1 = write_trusted_prototype(SPEC_V1, tlon_paths=p, display_name="定址转发")
+    created_1 = write_trusted_prototype(
+        SPEC_V1,
+        tlon_paths=p,
+        display_name="定址转发",
+        modules=_FIXTURE_MODULES.get(SPEC_V1),
+    )
     created_2 = write_staging_prototype(
         SPEC_V2,
         author_id="adam",
@@ -32,6 +50,7 @@ def _three_generations(p: TlonPaths) -> tuple[str, str, str]:
         proposal_note="换转发目标",
         tlon_paths=p,
         display_name="定址转发",
+        modules=_FIXTURE_MODULES.get(SPEC_V2),
     )
     approve_prototype(created_2.name, tlon_paths=p)
     created_3 = write_staging_prototype(
@@ -41,6 +60,7 @@ def _three_generations(p: TlonPaths) -> tuple[str, str, str]:
         proposal_note="再换转发目标",
         tlon_paths=p,
         display_name="定址转发",
+        modules=_FIXTURE_MODULES.get(SPEC_V3),
     )
     return created_1.name, created_2.name, created_3.name
 
@@ -66,20 +86,18 @@ class TestGetPrototypeLineage:
         diff12 = chain[1]["diff_from_parent"]
         assert f"--- {gen1}/behavior.tlon" in diff12
         assert f"+++ {gen2}/behavior.tlon" in diff12
-        assert (
-            '-          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}'
-            in diff12
-        )
-        assert (
-            '+          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["y@tlon.internal"]})]}'
-            in diff12
-        )
+        assert "x@tlon.internal" in diff12 and "y@tlon.internal" in diff12
         diff23 = chain[2]["diff_from_parent"]
         assert "y@tlon.internal" in diff23 and "z@tlon.internal" in diff23
 
     def test_single_root(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(SPEC_V1, tlon_paths=p, display_name="定址转发")
+        created_1 = write_trusted_prototype(
+            SPEC_V1,
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(SPEC_V1),
+        )
         chain = get_prototype_lineage(created_1.name, tlon_paths=p)
         assert len(chain) == 1
         assert chain[0]["generation"] == 1
@@ -97,9 +115,18 @@ class TestGetPrototypeLineage:
 
     def test_cycle_guard(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(SPEC_V1, tlon_paths=p, display_name="定址转发")
+        created_1 = write_trusted_prototype(
+            SPEC_V1,
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(SPEC_V1),
+        )
         created_2 = write_trusted_prototype(
-            SPEC_V2, parent=created_1.name, tlon_paths=p, display_name="定址转发"
+            SPEC_V2,
+            parent=created_1.name,
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(SPEC_V2),
         )
         update_prototype(created_1.name, parent=created_2.name, tlon_paths=p)
         chain = get_prototype_lineage(created_1.name, tlon_paths=p)
@@ -144,10 +171,19 @@ class TestWritePrototypeToolLineage:
 
     async def test_parent_and_note_passed_through(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(SPEC_V1, tlon_paths=p, display_name="定址转发")
+        created_1 = write_trusted_prototype(
+            SPEC_V1,
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(SPEC_V1),
+        )
         tool = make_write_tool(
             author_id="adam",
-            writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
+            writer=lambda *a, **kw: write_staging_prototype(
+                *a,
+                tlon_paths=p,
+                **kw,
+            ),
         )
         result = await tool.execute_context(
             {
@@ -171,7 +207,11 @@ class TestWritePrototypeToolLineage:
         p = TlonPaths(home=tmp_path)
         tool = make_write_tool(
             author_id="adam",
-            writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
+            writer=lambda *a, **kw: write_staging_prototype(
+                *a,
+                tlon_paths=p,
+                **kw,
+            ),
         )
         result = await tool.execute_context(
             {

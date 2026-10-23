@@ -9,8 +9,7 @@ naming a host business concept):
   family, :class:`Builtin` (one registry entry: a purity marker plus
   either a host ``fn`` or a data-defined :class:`Closure`),
   :class:`Closure` (the user function value ``defn`` / ``fn`` produce,
-  ADR 0021), and :class:`ActionRequest` (the side-effect *data* an action
-  builtin produces), and :class:`BuiltinCall` (a suspended host call
+  ADR 0021), and :class:`BuiltinCall` (a suspended host call
   whose result an asynchronous host supplies back to the expression);
 - the general vocabulary: pure, total functions any host composes into
   its own registries — :data:`CORE_BUILTINS` (``=`` / ``not`` /
@@ -136,20 +135,6 @@ class BuiltinCall:
         if fn is None:
             raise EvalError("closure-backed words must run through the evaluator")
         return fn(self.env, *self.args)
-
-
-@dataclass(frozen=True)
-class ActionRequest:
-    """A side-effecting action recorded during pure evaluation.
-
-    A host builtin validates its arguments and returns this data. A
-    synchronous caller can collect the requests; an asynchronous handler
-    can execute them at the call boundary and resume with actual results.
-    The language core never implements or dispatches a host action.
-    """
-
-    kind: str  # the action name (the host's action vocabulary)
-    data: dict[str, Any]
 
 
 # ── General vocabulary (pure, total functions) ──

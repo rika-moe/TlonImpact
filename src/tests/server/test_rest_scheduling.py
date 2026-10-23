@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from tests.identity_helpers import make_identity
+from tests.program_helpers import write_program
 from tlon.agents.agent_registry import AgentRegistry
 from tlon.agents.member_runtime import MemberRuntime
 from tlon.api.members import MembersFacade
@@ -35,9 +36,7 @@ async def test_admin_termination_waits_for_work_then_preserves_history(
     paths = TlonPaths(home=tmp_path)
     behavior = paths.agent_behavior_file("worker")
     behavior.parent.mkdir(parents=True)
-    behavior.write_text(
-        '{:version 1 :rules [{:name "boot" :on :boot :actions []}]}', encoding="utf-8"
-    )
+    write_program(behavior, "{:version 2 :handlers {:boot work/handle}}")
     history = behavior.parent / "IDENTITY.md"
     history.write_text("历史身份", encoding="utf-8")
     bus = EventBus()

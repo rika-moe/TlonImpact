@@ -187,7 +187,7 @@ async def test_draft_recovers_model_receipt_and_keeps_repair_budget(tmp_path: Pa
 
     executor._commit = interrupted
     first = ProgramDriver(
-        store, "root", builtins, AsyncMock(), operations=adapter, member_id="a", token_budget=32
+        store, "root", builtins, operations=adapter, member_id="a", token_budget=32
     )
     with pytest.raises(asyncio.CancelledError):
         await first.run_entry(package.entry("author/handle"), {}, fuel=10000)
@@ -196,7 +196,7 @@ async def test_draft_recovers_model_receipt_and_keeps_repair_budget(tmp_path: Pa
     assert store.budget_usage("root")["used"] == 16
     executor._commit = commit
     resumed = ProgramDriver(
-        store, "root", builtins, AsyncMock(), operations=adapter, member_id="a", token_budget=32
+        store, "root", builtins, operations=adapter, member_id="a", token_budget=32
     )
     result = await resumed.run_entry(package.entry("author/handle"), {}, fuel=10000)
     assert json_value(result, edn_keys=True) == candidate
@@ -204,7 +204,7 @@ async def test_draft_recovers_model_receipt_and_keeps_repair_budget(tmp_path: Pa
     assert checked == [invalid, candidate]
     assert store.budget_usage("root")["used"] == 32
     replay = ProgramDriver(
-        store, "root", builtins, AsyncMock(), operations=adapter, member_id="a", token_budget=32
+        store, "root", builtins, operations=adapter, member_id="a", token_budget=32
     )
     assert await replay.run_entry(package.entry("author/handle"), {}, fuel=10000) == result
     assert provider.await_count == 2

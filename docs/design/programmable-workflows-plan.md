@@ -1,6 +1,6 @@
 # 可编程工作流程：分阶段实施计划
 
-状态：2026-10-23，设计已接受；P0 文档与任务已建立，P1–P4a 已合并（#208/#209/#210/#211），P4b 本阶段实现待合并，P5 未实施。设计基线 `9fe00817bd75944e49a05cfd8e0149fa240dc757`（#198），P4a 施工基线 `a65088f`（#210）。设计权威：[目标设计](programmable-workflows.md)；选择理由：[ADR 0046](../decisions/0046-programmable-workflows.md)。当前能力以各阶段实施记录及 reference 为准。
+状态：2026-10-23，设计已接受；P0 文档与任务已建立，P1–P4b 已合并（#208/#209/#210/#211/#212），P5 本阶段实施待合并。设计基线 `9fe00817bd75944e49a05cfd8e0149fa240dc757`（#198），P4a 施工基线 `a65088f`（#210）。设计权威：[目标设计](programmable-workflows.md)；选择理由：[ADR 0046](../decisions/0046-programmable-workflows.md)。当前能力以各阶段实施记录及 reference 为准。
 
 ## 施工与共同完成标准
 
@@ -140,7 +140,7 @@ issue 用于进度、PR 与证据，目标契约仍以本设计为准。阶段�
 - [x] [P3 — 受控工具分派与可复用对话循环](https://github.com/rika-moe/TlonImpact/issues/203)
 - [ ] [EPIC B：可编程工作流程——标准程序、交互投影与 stage 退役](https://github.com/rika-moe/TlonImpact/issues/200)
 - [x] [P4a — Agent 编写模块与标准工作方式](https://github.com/rika-moe/TlonImpact/issues/204)
-- [ ] [P4b — 单一恢复权威与交互消费者](https://github.com/rika-moe/TlonImpact/issues/205)
+- [x] [P4b — 单一恢复权威与交互消费者](https://github.com/rika-moe/TlonImpact/issues/205)
 - [ ] [P5 — 切换内置程序并删除旧引擎](https://github.com/rika-moe/TlonImpact/issues/206)
 <!-- END WORKFLOW-ISSUES -->
 
@@ -205,3 +205,20 @@ P4b 本地验收：scripts/check_all.sh 15/15 全绿；主审最后补齐失败/
 P4b 评审补充：v2 在途反思统一计入排空；维护临时失败指数退避 30–300 秒，固定回执中的永久错误阻塞并上浮成员诊断。损坏 checkpoint 保留证据，仅隔离对应维护，不以空进度继续；人工处置见 memory 设计。flaky 测试取消后台 loop 后用确定时钟严格验证调用次数。退休教训路径复用 TlonPaths，旧标量水位说明已清除。
 
 评审修复验收：scripts/check_all.sh 15/15、最终 --static --unit 14/14 全绿；单元 2885 passed / 15 skipped、集成 40 passed，flaky 严格测试 8 路并行 8/8 通过。真实 dream + SDK + DeepSeek 再跑通过，4 次模型调用、output 预留 4480；服务与隔离目录已清理。
+
+
+## P5 实施记录与旧记录处置
+
+施工基线：main `04e48da`（#212）。删除前后调用图、删除项、只读边界和验证证据见 [P5 审计](workflow-p5-audit.md)。当前只接受 v2 模块包；8 套内置原型、Adam、报纸示例已转换。模型工具、投递前核验、压缩和上下文读取均由普通函数组合。质量门删除只服务 stage 的 purity 项，现为 14 项。
+
+旧工作盘点仅查询生命周期元数据，不读邮件正文或改库：本地 32 个成员历史目录，可读数据库未发现旧未完成记录，1 个数据库读取失败。因此不能声称本地所有旧工作已排空；不可读成员仍属未知并阻塞。没有自动操作真实成员生命周期。该盘点是本机快照，不代替部署时逐成员检查。
+
+操作员处置步骤：
+
+1. 停止受影响成员的自动启动，保留原目录、数据库及 WAL/SHM 的一致备份；记录错误路径和未完成身份。
+2. 读取失败先恢复文件可读性或一致备份，再只读盘点；不要删数据库来消除诊断。
+3. 旧未完成执行不再由本版本继续；核对邮局、provider 与其他外部系统的实际提交事实，保留 unknown，不标记成功，不以新身份自动重试。
+4. 由人明确决定是否终止旧成员、保留归档及创建新的 v2 成员。新成员开始新工作前必须核对原责任事项，避免重复外部效果。这不是迁移机制。
+5. 现存原型目录和成员源码保持原样，播种不覆盖或混入新模块。旧格式需要人工重新设计并发布完整 v2 包，不能自动转换旧配方。
+
+实现偏差：新增固定结构只读 member-context 操作，作为旧 section 读取归位；没有新增 section 选择器或宿主流程解释。arena 新增只读 list_pending 查询以保留排空检查，不恢复旧执行接口。真实标准原型冒烟暴露 model-context 的布尔 schema 估算问题，改为复用模型预算侧的 JSON 文本估算方式，并以真实装配工具目录覆盖回归。

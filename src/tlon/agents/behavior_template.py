@@ -55,7 +55,7 @@ class BehaviorTemplate:
         return bool(self.placeholders)
 
 
-def analyze(text: str) -> BehaviorTemplate:
+def analyze(text: str, modules: dict[str, str] | None = None) -> BehaviorTemplate:
     """Parse and validate a behavior template's ``:parameters`` declaration.
 
     No placeholders → an empty template (the text is concrete). Otherwise
@@ -66,7 +66,7 @@ def analyze(text: str) -> BehaviorTemplate:
         BehaviorTemplateError: undeclared placeholder, malformed
             ``:parameters`` map, or unparseable text.
     """
-    placeholders = set(_TEMPLATE_RE.findall(text))
+    placeholders = set(_TEMPLATE_RE.findall(text + "\n" + "\n".join((modules or {}).values())))
     if not placeholders:
         return BehaviorTemplate(parameters=(), placeholders=frozenset(), standin_text=text)
 
@@ -86,11 +86,13 @@ def analyze(text: str) -> BehaviorTemplate:
     return BehaviorTemplate(
         parameters=parameters,
         placeholders=frozenset(placeholders),
-        standin_text=_standin_substitute(text, parameters, placeholders),
+        standin_text=_without_parameters(_standin_substitute(text, parameters, placeholders)),
     )
 
 
-def render_template(text: str, params: dict[str, Any]) -> str:
+def render_template(
+    text: str, params: dict[str, Any], modules: dict[str, str] | None = None
+) -> str:
     """Substitute template parameters, returning valid EDN text.
 
     Every declared required parameter must be provided; extra keys are
@@ -102,7 +104,7 @@ def render_template(text: str, params: dict[str, Any]) -> str:
         BehaviorTemplateError: missing required, unknown key, wrong type,
             or params passed to a concrete behavior.
     """
-    info = analyze(text)
+    info = analyze(text, modules)
     if not info.has_parameters:
         if params:
             raise BehaviorTemplateError(
@@ -139,7 +141,7 @@ def render_template(text: str, params: dict[str, Any]) -> str:
     def _replacer(m: re.Match[str]) -> str:
         return replacements.get(m.group(1), m.group(0))
 
-    return _TEMPLATE_RE.sub(_replacer, text)
+    return _without_parameters(_TEMPLATE_RE.sub(_replacer, text))
 
 
 def _standin_substitute(
@@ -226,3 +228,33 @@ def _type_name(value: Any) -> str:
     if isinstance(value, float):
         return "float"
     return type(value).__name__
+
+
+def render_module_templates(
+    behavior: str, modules: dict[str, str], params: dict[str, Any], *, standins: bool = False
+) -> dict[str, str]:
+    """Render module placeholders from the behavior's single parameter declaration."""
+    info = analyze(behavior, modules)
+    values = (
+        {
+            parameter.name: ([""] if parameter.type == "string-list" else "")
+            for parameter in info.parameters
+        }
+        if standins
+        else params
+    )
+    if not standins:
+        render_template(behavior, values, modules)
+    return {
+        path: _TEMPLATE_RE.sub(lambda match: dumps(values[match.group(1)]), source)
+        for path, source in modules.items()
+    }
+
+
+def _without_parameters(text: str) -> str:
+    """Parameter declarations belong only to write-side package templates."""
+    data = loads(text)
+    key = _find_key(data, "parameters")
+    if key is not None:
+        data.pop(key)
+    return dumps(data) + "\n"

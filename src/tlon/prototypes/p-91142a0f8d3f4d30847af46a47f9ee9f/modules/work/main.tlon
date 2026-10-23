@@ -1,0 +1,9 @@
+(ns work.main (:export boot handle))
+(defn boot [event] {:result nil})
+(defn handle [event]
+  (let [mail (get event :mail)]
+    (if (and (= (get (get event :payload) :recipient) (get (get event :self) :id)) (= (get event :sender) ${sender}) (content-matches? (get event :mail) ${pattern}))
+      (let [sent (mail-forward {:mail_id (get mail :id) :to ${to}})
+            read (mail-mark-read {:mail_ids [(get mail :id)]})]
+        {:result sent})
+      {:result nil})))

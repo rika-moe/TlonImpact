@@ -1,108 +1,79 @@
 # Tlon 工具手册
 
-agent 通过 OpenAI function calling 调用的宿主工具目录；成员还可使用已批准且依赖可用的复合 Operation 投影。所有参数与结果以 [tlon.operations](../../src/tlon/operations) 中的 Operation 定义为准，工具是该定义的协议投影。本文只描述当前实现。
+Tool 是宿主 Operation 的模型协议投影；普通模块函数不注册成 Tool。参数、效果与结果以 `tlon.operations` 中的定义为准。
 
-## 总述
+## 执行与恢复
 
-### Operation 与 Tool 投影
+OperationTool 经 OperationExecutor 执行领域服务；ToolExecutor 提供成员目录、跟踪与协议投影。仅输入错误和明确拒绝转为普通失败；unknown、预算、截止、取消和恢复失配上浮运行器，不能由模型自行重试。
 
-宿主能力唯一权威是 [tlon.operations](../../src/tlon/operations) 中的 Operation：描述、严格 JSON Schema 输入/输出、效果、重试语义、处理器和控制元数据。领域服务拥有业务逻辑与资源生命周期。
+model-call 返回建议，tool-execute 逐叶执行并返回真实结果。每个叶调用拥有稳定身份和持久回执；已有回执优先还原。成员写 gate 保证写序，独立读取可并发。程序与工具共享根预算与授权，不能在业务参数中改身份。
 
-[OperationTool](../../src/tlon/operations/adapters.py) 只把同一定义投影为 OpenAI function calling 协议，并通过 `execute_context(arguments, context)` 调用共享 OperationExecutor。参数和结果统一由 jsonschema 校验，DSL 和模型调用得到同一领域结果；旧 Tool 基类、浅层校验、业务 execute 和空生命周期钩子已删除。
+普通标准库构造完整 assistant/tool 消息组，压缩保留提交事实和未执行草稿的区别。没有 stage dispatch/collect、隐式 spill 或 session journal 恢复。`finish-turn` 是局部纯信号；根入口返回值决定成员调度。
 
-[ToolResult](../../src/tlon/tools/base.py) 保留协议回执 `success/data/error/message`；`ToolExecutor` 负责工具发现、跟踪与异常回执，领域执行权威仍是 OperationExecutor。
+## 工具装配
 
-P5 的复合定义使用同一 OperationTool 投影，不添加 Python 工具包装；定义与依赖随根冻结，恢复时不使用当前磁盘定义。控制工具从 Operation.control 推导。P7 的请求级动态视图和统一授权暂停。tools 尽量保持固定，不随轮次或阶段主动裁剪；不同成员仍可因装配服务、执行装置、信任状态与有效批准依赖拥有不同的稳定目录。固定协议列表不表示永久授权，宿主领域检查仍生效；当前没有统一授权名单或运行中撤权保证。本次调整没有新增缓存机制或缓存命中率实测。
+装配目录依成员身份、信任、执行装置和领域服务确定。冻结模型请求保留目录快照；实际新效果仍校验当前目录和领域权限。固定目录不是永久授权或任意外部操作 exactly-once 的保证。
 
-### ToolExecutor 执行模型
+模型、压缩、核验和嵌套调用共享程序 output 根，获准输出预留不退款。后台维护使用独立根；total 账本语义保留。上下文估算将完整工具 JSON 作为文本计数，支持布尔 schema 节点；估算不是 provider 用量保证。
 
-[agents/tool_executor.py](../../src/tlon/agents/tool_executor.py) 的 `ToolExecutor` 是成员工具协议注册表，会话按冻结根构造独立实例：直接 async 调用，不经过 EventBus。`execute(tool_name, arguments)` 包住一层 tracing span（`tool.{name}`，参数截断到 200 字符），三类失败都转成 `ToolResult(success=False)` 而不是抛异常：工具未注册、参数校验失败、`execute` 内部抛异常（记日志后返回 `error="Execution error: ..."`）。
-
-会话循环里的并发分发不在 ToolExecutor，而在引擎侧：
-
-- act stage（[agents/stages/act.py](../../src/tlon/agents/stages/act.py) 的 `act_stage_step`）是纯变换，只把本轮 LLM 的 tool calls 声明进 `StageOutcome.tool_dispatches`，自己不执行。
-- [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 登记工具任务：读取可并发，同批写入按声明顺序进入成员写 gate。同一 task 的嵌套 await 可重入，不同 task 不可借相同 root ID 重入。执行和超时均交给 [OperationExecutor](../../src/tlon/operations/core.py)，LoopDriver 不再独立 wait_for 或合成 unknown。共享默认来自成员配置 tool.per_timeout（30 秒），Operation.default_timeout 优先，schema 声明的显式 timeout 参数再优先；Shell 以 timeout_grace 声明 10 秒清理宽限，最后与根剩余期限取小。DSL 与 Tool 使用同一规则。超时先查真实回执：已提交成功仍成功；本次未派发是确定拒绝；真正派发后无回执才是 unknown。
-- 超大输出 spill：结果在收割前先过 [tools/spill.py](../../src/tlon/tools/spill.py) 的 `ToolSpill`——`data` 序列化超过 16k 字符即整个落盘到 `workspace/spills/{session_id}/{sha256(call_id)}.json`（缩进 JSON，可分页），模型与 session 日志只见到 locator（路径/大小/preview/检索提示），可用 `file-read` 的 offset/limit 读回（workspace 即容器工作目录的 bind mount）。写盘失败回退原始结果。
-- 收割：`collect_session_results` 把已完成 task 的结果交给 `act_stage_collect`，结果以 `{"role": "tool", ...}` 消息追加回 LLM 上下文（`ToolResult.to_dict()` 的 JSON 序列化）。
-- 结束工具 `finish-turn`、`sleep-until`、`exit-agent` 必须各自单独占一轮，混用其他工具整轮拒绝。邮件工具不负责结束工作，发信后检查结果，再单独请求结束或睡眠。
-
-### 调用记录与恢复 P4a
-
-DSL 与模型 Tool 的操作提交共同使用成员 ProgramStore 的 roots/invocations。session journal 保存 dispatch/result/collect 和供模型消费的结果，不是操作已提交的另一份权威。模型调用身份包含 session、轮次与 tool call ID；spill 文件名使用宿主 call_id 的哈希，避免模型跨轮复用 ID 时覆盖旧输出。
-
-恢复先验证 root 构建身份和操作定义指纹，即使已经存在 journal result 也不能跳过。孤立 dispatch 尚无 intent 可以开始执行；已有回执直接还原；非幂等写只有 intent 而无回执时保留 unknown，安全写复用同键对账，未提交读取可以重新采样。未知提交不承诺 exactly-once，具体见 [调用恢复](../design/invocation-recovery.md)。P4b 通过 [执行作用域](../design/execution-scope.md) 统一预算、取消/截止时间及成员写排序，历史回执先于当前控制检查返回。
-
-### 共享模型额度 P4b
-
-session 的 total 根由 recipe.max_tokens 建立，stage、压缩、model-call 及提案/评审内部的模型调用共享同一持久预算。输入估算加输出上限用于原子预留，可靠 usage 用于实际结算；缺失 usage 或结果未知不退额，实际超额记录真实消费并阻止后续调用。估算不能保证 provider 的实际用量永不越界。程序直接模型调用则使用 output 根，保持获准输出预留不退款的原口径。
-
-响应与结算同事务提交，恢复不重复扣额，也不自动重发未知模型请求。维护任务使用独立根；预算、口径及有效 UTC deadline 冻结保存。取消只约束当前进程的任务树，shutdown 后可按原记录恢复，并非永久撤销。当前 ProgramStore user_version=2，旧格式明确拒绝，不迁移、不清库。
-
-### 工具装配
-
-每个成员经 [assembly.py](../../src/tlon/agents/assembly.py) 绑定私有领域服务并产出操作定义；[MemberRuntime](../../src/tlon/agents/member_runtime.py) 构造共享 OperationRegistry，再为所有注册操作建立 OperationTool。L0 仅提供 workspace 内置文档/源码的文件只读查询，L1 提供普通文件操作，L2 增加 Shell；时间与成员领域操作不依赖装置。见习成员不装配 `member-spawn`、`prototype-write`；其他操作仍按成员身份绑定。
-
-模型调用、原型创作/评审、成员生命周期也使用同一注册表。`finish-turn`、`sleep-until`、`exit-agent` 的调度声明由控制元数据标识；会话引擎负责完成/睡眠/退出的应用，处理器本身不直接操作 session。
-
-### 注册清单
+## 注册清单
 
 <!-- BEGIN GENERATED: tool-registry -->
-满配成员注册 52 个工具（由共享 Operation 按域列出；L0 不注册 7 个装置操作，L1 注册 5 个文件操作，L2 再增加 2 个 Shell 操作；时间不依赖装置）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+满配成员注册 51 个工具（由共享 Operation 按域列出；L0 不注册 7 个装置操作，L1 注册 5 个文件操作，L2 再增加 2 个 Shell 操作；时间不依赖装置）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | # | 工具名 | 实现 | 域 |
 |---|---|---|---|
-| 1 | `mail-send` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
-| 2 | `mail-forward` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
-| 3 | `mail-check-inbox` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
-| 4 | `mail-search` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
-| 5 | `mail-mark-read` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
-| 6 | `file-read` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
-| 7 | `file-write` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
-| 8 | `file-edit` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
-| 9 | `file-list` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
-| 10 | `file-search` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
-| 11 | `shell-run` | [operations/shell.py](../../src/tlon/operations/shell.py) 的 `OperationTool` 投影 | shell |
-| 12 | `shell-check` | [operations/shell.py](../../src/tlon/operations/shell.py) 的 `OperationTool` 投影 | shell |
-| 13 | `time-now` | [operations/time.py](../../src/tlon/operations/time.py) 的 `OperationTool` 投影 | time |
-| 14 | `memory-remember` | [operations/memory.py](../../src/tlon/operations/memory.py) 的 `OperationTool` 投影 | memory |
-| 15 | `memory-search` | [operations/memory.py](../../src/tlon/operations/memory.py) 的 `OperationTool` 投影 | memory |
-| 16 | `memory-forget` | [operations/memory.py](../../src/tlon/operations/memory.py) 的 `OperationTool` 投影 | memory |
-| 17 | `session-read` | [operations/memory.py](../../src/tlon/operations/memory.py) 的 `OperationTool` 投影 | memory |
-| 18 | `task-create` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
-| 19 | `task-list` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
-| 20 | `task-start` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
-| 21 | `task-pause` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
-| 22 | `task-complete` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
-| 23 | `task-remove` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
-| 24 | `task-current` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
-| 25 | `contacts-read` | [operations/identity.py](../../src/tlon/operations/identity.py) 的 `OperationTool` 投影 | identity |
-| 26 | `contacts-upsert` | [operations/identity.py](../../src/tlon/operations/identity.py) 的 `OperationTool` 投影 | identity |
-| 27 | `persona-update` | [operations/identity.py](../../src/tlon/operations/identity.py) 的 `OperationTool` 投影 | identity |
-| 28 | `metrics-read` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
-| 29 | `mail-stats` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
-| 30 | `reputation-read` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
-| 31 | `social-health` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
-| 32 | `traces-list` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
-| 33 | `trace-read` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
-| 34 | `state-get` | [operations/state.py](../../src/tlon/operations/state.py) 的 `OperationTool` 投影 | state |
-| 35 | `state-put` | [operations/state.py](../../src/tlon/operations/state.py) 的 `OperationTool` 投影 | state |
-| 36 | `member-spawn` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
-| 37 | `member-list` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
-| 38 | `member-self-state` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
-| 39 | `member-start` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
-| 40 | `member-stop` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
-| 41 | `member-start-all` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
-| 42 | `finish-turn` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
-| 43 | `sleep-until` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
-| 44 | `exit-agent` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
-| 45 | `program-check` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 46 | `prototype-write` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 47 | `prototype-list` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 48 | `prototype-staging-list` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 49 | `prototype-lineage` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 50 | `prototype-review` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 51 | `model-call` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
-| 52 | `model-context` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
+| 1 | `member-context` | [operations/context.py](../../src/tlon/operations/context.py) 的 `OperationTool` 投影 | context |
+| 2 | `mail-send` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
+| 3 | `mail-forward` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
+| 4 | `mail-check-inbox` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
+| 5 | `mail-search` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
+| 6 | `mail-mark-read` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
+| 7 | `file-read` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
+| 8 | `file-write` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
+| 9 | `file-edit` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
+| 10 | `file-list` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
+| 11 | `file-search` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
+| 12 | `shell-run` | [operations/shell.py](../../src/tlon/operations/shell.py) 的 `OperationTool` 投影 | shell |
+| 13 | `shell-check` | [operations/shell.py](../../src/tlon/operations/shell.py) 的 `OperationTool` 投影 | shell |
+| 14 | `time-now` | [operations/time.py](../../src/tlon/operations/time.py) 的 `OperationTool` 投影 | time |
+| 15 | `memory-remember` | [operations/memory.py](../../src/tlon/operations/memory.py) 的 `OperationTool` 投影 | memory |
+| 16 | `memory-search` | [operations/memory.py](../../src/tlon/operations/memory.py) 的 `OperationTool` 投影 | memory |
+| 17 | `memory-forget` | [operations/memory.py](../../src/tlon/operations/memory.py) 的 `OperationTool` 投影 | memory |
+| 18 | `session-read` | [operations/memory.py](../../src/tlon/operations/memory.py) 的 `OperationTool` 投影 | memory |
+| 19 | `task-create` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
+| 20 | `task-list` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
+| 21 | `task-start` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
+| 22 | `task-pause` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
+| 23 | `task-complete` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
+| 24 | `task-remove` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
+| 25 | `task-current` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
+| 26 | `contacts-read` | [operations/identity.py](../../src/tlon/operations/identity.py) 的 `OperationTool` 投影 | identity |
+| 27 | `contacts-upsert` | [operations/identity.py](../../src/tlon/operations/identity.py) 的 `OperationTool` 投影 | identity |
+| 28 | `persona-update` | [operations/identity.py](../../src/tlon/operations/identity.py) 的 `OperationTool` 投影 | identity |
+| 29 | `metrics-read` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
+| 30 | `mail-stats` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
+| 31 | `reputation-read` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
+| 32 | `social-health` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
+| 33 | `traces-list` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
+| 34 | `trace-read` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
+| 35 | `state-get` | [operations/state.py](../../src/tlon/operations/state.py) 的 `OperationTool` 投影 | state |
+| 36 | `state-put` | [operations/state.py](../../src/tlon/operations/state.py) 的 `OperationTool` 投影 | state |
+| 37 | `member-spawn` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
+| 38 | `member-list` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
+| 39 | `member-self-state` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
+| 40 | `member-start` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
+| 41 | `member-stop` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
+| 42 | `member-start-all` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
+| 43 | `finish-turn` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
+| 44 | `program-check` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 45 | `prototype-write` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 46 | `prototype-list` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 47 | `prototype-staging-list` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 48 | `prototype-lineage` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 49 | `prototype-review` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 50 | `model-call` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
+| 51 | `model-context` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
 <!-- END GENERATED: tool-registry -->
 
 上表是正式成员的满配。见习成员不注册 member-spawn、prototype-write 两个生殖/演化工具；所有成员均可使用绑定自身的四个调度工具。L0 仅注册 file-read/list/search 查询内置只读资料，不注册 shell、file-write/edit，L1 不注册 shell 两个工具。
@@ -1017,7 +988,7 @@ adam请求启动所有声明boot规则的成员。
 
 ### finish-turn
 
-结束本轮工作，排空后进入等待；只能独立调用。
+结束当前局部会话；不改变成员调度状态。
 
 输入：
 
@@ -1028,40 +999,7 @@ adam请求启动所有声明boot规则的成员。
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `scheduling_request` | object | 是 | — |
-
-### sleep-until
-
-结束本轮并睡至未来带时区时间，期间来信只入箱；只能独立调用。
-
-输入：
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `wake_at` | string | 是 | — |
-| `reason` | string | 否 | — |
-
-输出：
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `scheduling_request` | object | 是 | — |
-
-### exit-agent
-
-永久退出并拒收新邮件，保留历史；只能独立调用。
-
-输入：
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `reason` | string | 否 | — |
-
-输出：
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `scheduling_request` | object | 是 | — |
+| `finished` | boolean | 是 | enum=[True] |
 <!-- END GENERATED: lifecycle-operations -->
 
 ## evolution
@@ -1308,3 +1246,32 @@ Estimate the complete frozen model request size and window; does not call the pr
 | `output_tokens` | integer | 是 | minimum=1 |
 | `fits` | boolean | 是 | — |
 <!-- END GENERATED: model-operations -->
+
+## context
+
+<!-- BEGIN GENERATED: context-operations -->
+Operation 单一契约；输入与输出字段保留 snake_case。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
+### member-context
+
+读取自己的知识、教训、技能索引、当前任务、最近交互、邮件历史与可用工具名；返回普通值，不解释流程配置。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `query` | string | 否 | — |
+| `history_limit` | integer | 否 | minimum=0; maximum=100 |
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `knowledge` | string | 是 | — |
+| `lessons` | string | 是 | — |
+| `skills` | string | 是 | — |
+| `current_task` | string | 是 | — |
+| `thread_recap` | string | 是 | — |
+| `mail_history` | array[object] | 是 | — |
+| `tools` | array[string] | 是 | — |
+<!-- END GENERATED: context-operations -->

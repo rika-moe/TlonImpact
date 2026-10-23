@@ -3,11 +3,9 @@
 import shutil
 from typing import Any
 
-from tlon.agents.behavior_template import analyze
 from tlon.agents.program_package import (
     program_digest,
     read_module_sources,
-    validate_program_sources,
 )
 from tlon.agents.prototypes.info import (
     BEHAVIOR_FILE,
@@ -112,11 +110,9 @@ def update_prototype(
     staging: bool = False,
     tlon_paths: TlonPaths,
 ) -> PrototypeInfo:
-    """Update a prototype's metadata and/or rewrite its behavior file.
+    """Update metadata while preserving the immutable approved source package.
 
-    Version 2 source packages are immutable: author a new prototype to change
-    behavior/modules. Version 1 behavior changes run the full validation chain first — a broken spec
-    raises and leaves the disk untouched. The metadata rewrite preserves
+    Author a new prototype to change behavior or modules. The metadata rewrite preserves
     the existing ``:trusted``/``:author`` fields (only the explicitly
     provided fields change). Lineage (see docs/design/prototypes.md):
     providing ``parent`` re-links the prototype and re-derives its
@@ -127,13 +123,13 @@ def update_prototype(
         name: prototype directory name
         display_name: new display name (None = keep)
         description: new description (None = keep)
-        behavior_edn: new raw EDN behavior spec (None = keep)
+        behavior_edn: source replacement request, rejected; create a derived prototype
         parent: new lineage parent (None = keep; must exist in either area)
         proposal_note: new change note (None = keep)
         lessons: new lessons text, rewritten as ``LESSONS.md``
             (None = keep)
         staging: update in the staging area instead of the trusted library
-            (pre-approval editing of an LLM-authored prototype)
+            (metadata and lessons only, before human approval)
         tlon_paths: path resolver for the target layout
 
     Returns:
@@ -177,18 +173,12 @@ def update_prototype(
     except ValueError as e:
         raise PrototypeError(str(e)) from e
     old_behavior = (proto_dir / BEHAVIOR_FILE).read_text(encoding="utf-8")
-    spec_text = _validate_behavior(
+    _validate_behavior(
         old_behavior if behavior_edn is None else behavior_edn,
         tlon_paths=p,
         modules=package_modules,
     )
-    old_spec = validate_program_sources(
-        analyze(old_behavior).standin_text, read_module_sources(proto_dir / "modules")
-    )
-    new_spec = validate_program_sources(analyze(spec_text).standin_text, package_modules)
-    if (old_spec.version == 2 or new_spec.version == 2) and (
-        behavior_edn is not None or modules is not None
-    ):
+    if behavior_edn is not None or modules is not None:
         raise PrototypeError(
             "module program packages are immutable; create a new prototype with parent instead"
         )
@@ -212,9 +202,6 @@ def update_prototype(
     lessons_file = proto_dir / LESSONS_FILE
     if lessons is not None and lessons_file.is_symlink():
         raise PrototypeError("prototype lessons must not be a symlink")
-    if old_spec.version == 1 and behavior_edn is not None:
-        (proto_dir / BEHAVIOR_FILE).write_text(spec_text, encoding="utf-8")
-        data[Keyword("program-digest")] = program_digest(spec_text, package_modules)
     if lessons is not None:
         lessons_file.write_text(lessons, encoding="utf-8")
     metadata_file.write_text(dumps(data) + "\n", encoding="utf-8")
@@ -223,7 +210,7 @@ def update_prototype(
         "prototype_updated",
         name=name,
         staging=staging,
-        behavior_rewritten=spec_text is not None,
+        behavior_rewritten=False,
     )
     return _read_metadata(proto_dir)
 

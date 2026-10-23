@@ -2,6 +2,7 @@
 
 from functools import cache
 
+from tlon.operations.context import member_context_operation
 from tlon.operations.core import Operation
 from tlon.operations.evolution import evolution_operation_definitions
 from tlon.operations.filesystem import filesystem_operation_definitions
@@ -22,6 +23,7 @@ def host_operation_definitions() -> tuple[Operation, ...]:
     return tuple(
         operation
         for factory in (
+            lambda: (member_context_operation(),),
             evolution_operation_definitions,
             lifecycle_operation_definitions,
             model_operation_definitions,

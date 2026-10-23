@@ -1,5 +1,7 @@
 # 执行作用域、共享额度与写入边界（P4b）
 
+> P5：普通模块共享 output 根；旧 run-loop/recipe total 根的创建入口已删除，total 账本语义保留供宿主维护使用。本文涉及 stage/session 的说明属于旧阶段记录；当前路径见 [Runtime](runtime.md)。
+
 状态：EPIC A、P5 #193 与 P6 #194 已合并，P7 暂停；本文描述当前共享执行契约。总体方案与验收见 [operations-plan](operations-plan.md)，叶子结果以 [ProgramStore invocation](invocation-recovery.md) 为权威。
 
 ## 宿主作用域

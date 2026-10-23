@@ -26,7 +26,7 @@ async def test_admin_sleep_wake_drain_wait_and_terminal_death(tmp_path: Path) ->
 
     async def infer(**kwargs: Any) -> LLMResponse:
         nonlocal calls
-        if kwargs.get("purpose", "think") != "think":
+        if kwargs.get("purpose", "program") != "program":
             return LLMResponse(content="[]")
         calls += 1
         unread = store.mails(member_id, "unread")
@@ -46,8 +46,6 @@ async def test_admin_sleep_wake_drain_wait_and_terminal_death(tmp_path: Path) ->
         registry = app._runtime.agent_registry
         store = app._runtime.post_office.store
         prototype = builtin_id("短回合交流")
-        behavior = tmp_path / "prototypes" / prototype / "behavior.tlon"
-        behavior.write_text(behavior.read_text().replace(":enabled true", ":enabled false"))
         async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
             async with http.post(
                 f"{url}/admin/config/agents",
@@ -73,7 +71,7 @@ async def test_admin_sleep_wake_drain_wait_and_terminal_death(tmp_path: Path) ->
                         await asyncio.sleep(0.01)
 
             async def boot_idle() -> None:
-                # Assembly returns before the worker commits its empty boot rule.
+                # Assembly returns before the worker commits its module boot entry.
                 database = tmp_path / member_id / "program.sqlite3"
                 async with asyncio.timeout(10):
                     while True:
@@ -86,14 +84,14 @@ async def test_admin_sleep_wake_drain_wait_and_terminal_death(tmp_path: Path) ->
                                 ).fetchone()
                                 runs = (
                                     connection.execute(
-                                        "SELECT rule_edn,completed,error FROM runs"
+                                        "SELECT run_id,completed,error FROM runs"
                                     ).fetchall()
                                     if initialized
                                     else []
                                 )
                             boot_finished = any(
-                                ':name "boot"' in source and completed
-                                for source, completed, _ in runs
+                                identity.endswith(":handler:boot") and completed
+                                for identity, completed, _ in runs
                             )
                             settled = all(
                                 completed or error is not None for _, completed, error in runs

@@ -24,16 +24,23 @@ async def test_module_mail_distills_once_and_reads_provenance(
     async def complete(**kwargs: Any) -> Any:
         calls.append(kwargs)
         return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(
-                content='{"claims":[{"text":"发布前先核验","importance":0.7}]}',
-                tool_calls=[], reasoning_content=None,
-            ), finish_reason="stop")],
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content='{"claims":[{"text":"发布前先核验","importance":0.7}]}',
+                        tool_calls=[],
+                        reasoning_content=None,
+                    ),
+                    finish_reason="stop",
+                )
+            ],
             usage=SimpleNamespace(model_dump=lambda: {"completion_tokens": 20, "total_tokens": 40}),
         )
 
     monkeypatch.setenv("OPENAI_API_KEY", "fake")
     monkeypatch.setattr("litellm.acompletion", complete)
-    modules = {"work.tlon": """
+    modules = {
+        "work.tlon": """
     (ns work (:export handle))
     (defn handle [event]
       (let [task (get (get event :mail) :content)
@@ -42,19 +49,28 @@ async def test_module_mail_distills_once_and_reads_provenance(
                      (str "done:" task))]
         (mail-send {:to [(get event :sender)] :content answer})
         {:result answer}))
-    """}
+    """
+    }
     async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
-        async with http.post(url + "/admin/prototypes", json={
-            "display_name": "来源消费测试",
-            "behavior": "{:version 2 :handlers {:mail-delivered work/handle} :fuel 10000}",
-            "modules": modules,
-        }) as response:
+        async with http.post(
+            url + "/admin/prototypes",
+            json={
+                "display_name": "来源消费测试",
+                "behavior": "{:version 2 :handlers {:mail-delivered work/handle} :fuel 10000}",
+                "modules": modules,
+            },
+        ) as response:
             body = await response.json()
             assert response.status == 201, body
             prototype = body["prototype"]["name"]
-        async with http.post(url + "/admin/config/agents", json={
-            "prototype": prototype, "name": "来源消费测试", "model": "openai/gpt-test",
-        }) as response:
+        async with http.post(
+            url + "/admin/config/agents",
+            json={
+                "prototype": prototype,
+                "name": "来源消费测试",
+                "model": "openai/gpt-test",
+            },
+        ) as response:
             body = await response.json()
             assert response.status == 200, body
             member = body["agent_id"]
@@ -80,6 +96,9 @@ async def test_module_mail_distills_once_and_reads_provenance(
                 await asyncio.sleep(0.02)
         assert any("程序返回" in item["content"] for item in replies)
         journal = SessionJournal(member, TlonPaths(home=home))
-        assert await journal.find_unfinished() == []
+        async with asyncio.timeout(10):
+            while await journal.list_pending():
+                await asyncio.sleep(0.01)
+        assert await journal.list_pending() == []
         assert len(calls) == 1  # reading a source did not regenerate its program or distill again
         assert not (home / member / "sessions.sqlite3").exists()

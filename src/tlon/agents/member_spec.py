@@ -1,228 +1,40 @@
-"""Member behavior: event gates and ordinary DSL action expressions.
-
-SessionRecipe is independent request data for the run-loop action. A member
-can invoke several recipes from different rules, conditions, or loops.
-"""
+"""Version 2 member entry declarations; workflows live in ordinary modules."""
 
 from dataclasses import dataclass, field
 from typing import Any
 
-from tlon.agents.vocabulary import (
-    ACTION_SCOPE,
-    LOOP_SCOPE,
-    RULE_SCOPE,
-    STAGE_SCOPE,
-    make_member_builtins,
-    validate_condition,
-    validate_member_actions,
-)
 from tlon.base.events.event import EventType
-from tlon.base.logger import get_logger
-from tlosure.builtins import Builtin, EvalError
-from tlosure.edn import EDNParseError, Form, Keyword, Symbol, dumps, loads
+from tlosure.builtins import Builtin
+from tlosure.edn import Form, Keyword, Symbol, dumps
 from tlosure.eval import DEFAULT_FUEL, MAX_FUEL
 
-logger = get_logger(__name__)
-
-MEMBER_SPEC_VERSION = 1
-
-#: Stage names the engine implements (phases 7a/7c). Each stage is a
-#: Python-implemented, testable semantic unit; ``act`` means "execute
-#: this round's tool calls — all of them", not a single tool call.
-#: Relocated from the legacy ``agents/spec.py`` in phase C.
-STAGE_NAMES = frozenset({"think", "act", "plan", "critique", "revise"})
-
-#: Section names the engine implements (phase 7b). ``persona`` and
-#: ``protocol`` feed the system prompt; ``knowledge``, ``lessons``,
-#: ``skills``, ``current-task``, ``thread-recap`` and ``mail-history``
-#: feed the conversation context, in vector order. ``lessons`` (see
-#: docs/design/memory.md) injects the member's inherited ``config/LESSONS.md``.
-#: Relocated from the legacy ``agents/spec.py`` in phase C.
-SECTION_NAMES = frozenset(
-    {
-        "persona",
-        "protocol",
-        "knowledge",
-        "lessons",
-        "skills",
-        "current-task",
-        "thread-recap",
-        "mail-history",
-    }
-)
+MEMBER_SPEC_VERSION = 2
+EXECUTION_LEVELS = frozenset({"L0", "L1", "L2"})
 
 
-def has_section(sections: tuple[Form, ...], name: str) -> bool:
-    """Whether the section vector contains a section named ``name``."""
-    return any(str(form[0]) == name for form in sections)
+class MemberSpecValidationError(ValueError):
+    """A member declaration failed structural validation."""
 
 
 @dataclass(frozen=True)
 class ReflectSpec:
-    """Periodic background memory audit settings (for a session recipe)."""
+    """Periodic background memory audit settings."""
 
     enabled: bool
     interval_minutes: int
 
 
-#: ``:recipe/:replies`` 允许的键（加载期 total 校验，未知键拒载）：三条面向
-#: 用户的终止回信措辞。引擎内置文案（``loop_driver`` 的常量）是未声明键的兜底。
-REPLY_KINDS = frozenset({"iteration_limit", "error", "timeout"})
-
-#: ``:execution/:level`` 允许的层级——执行装置能力阶梯（宪法一，
-#: docs/design/execution-device.md）：声明进基因组、随原型提案一起评审；
-#: 实例化时一次性投影进 agent.yaml 的 ``docker.level``，运行时权威仍是后者。
-EXECUTION_LEVELS = frozenset({"L0", "L1", "L2"})
-
-
-class MemberSpecValidationError(ValueError):
-    """A member spec failed structural (EDN-level) validation."""
-
-
-@dataclass(frozen=True)
-class SessionRecipe:
-    """Configuration for one requested session.
-
-    ``context_sections`` is the section vector the engine assembles into the
-    LLM context; ``stages`` the stage vector and ``until`` the termination
-    expression of the engine-executed loop. ``max_iterations`` and
-    ``max_tokens`` are the engine's two hard ceilings (ADR 0023): the
-    iteration count and the session-cumulative stage-LLM token budget,
-    whichever is exhausted first ends the session. ``reflect`` is the
-    session reflection setting. ``fuel`` (phase D) is the self-declared
-    budget of the iron-law revision (docs/design/dsl-agents.md): it caps
-    the DSL evaluation of the loop's ``:until`` and stage conditions
-    (``None`` = the engine default). Bounded above by
-    :data:`tlosure.eval.MAX_FUEL`. ``replies`` overrides the user-facing
-    termination reply wording per kind (snake_case keys, see
-    :data:`REPLY_KINDS`); undeclared kinds fall back to the engine's
-    built-in texts.
-    """
-
-    context_sections: tuple[Form, ...]
-    stages: tuple[Form, ...]
-    until: Form
-    max_iterations: int
-    max_consecutive_errors: int
-    max_tokens: int
-    reflect: ReflectSpec
-    fuel: int | None = None
-    replies: dict[str, str] = field(default_factory=dict)
-
-    # ── Serialization ──
-
-    @classmethod
-    def from_edn(cls, data: Any) -> "SessionRecipe":
-        """Parse an independent EDN session recipe."""
-        return _recipe_from(_normalize_data(data), "run-loop")
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SessionRecipe":
-        """Parse the journal's plain-data representation."""
-        return _recipe_from(data, "run-loop")
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize to a plain dict (snake_case keys)."""
-        return {
-            "context": {"sections": [dumps(form) for form in self.context_sections]},
-            "stages": [dumps(form) for form in self.stages],
-            "until": dumps(self.until),
-            "max_iterations": self.max_iterations,
-            "max_consecutive_errors": self.max_consecutive_errors,
-            "max_tokens": self.max_tokens,
-            "reflect": {
-                "enabled": self.reflect.enabled,
-                "interval_minutes": self.reflect.interval_minutes,
-            },
-            "fuel": self.fuel,
-            "replies": dict(self.replies),
-        }
-
-    def to_edn_data(self) -> dict[Keyword, Any]:
-        """The EDN-native form (kebab-case keywords, Form values)."""
-        data: dict[Keyword, Any] = {
-            Keyword("context"): {Keyword("sections"): self.context_sections},
-            Keyword("stages"): self.stages,
-            Keyword("until"): self.until,
-            Keyword("max-iterations"): self.max_iterations,
-            Keyword("max-consecutive-errors"): self.max_consecutive_errors,
-            Keyword("max-tokens"): self.max_tokens,
-            Keyword("reflect"): {
-                Keyword("enabled"): self.reflect.enabled,
-                Keyword("interval-minutes"): self.reflect.interval_minutes,
-            },
-        }
-        if self.fuel is not None:
-            data[Keyword("fuel")] = self.fuel
-        if self.replies:
-            data[Keyword("replies")] = {
-                Keyword(kind.replace("_", "-")): text for kind, text in self.replies.items()
-            }
-        return data
-
-
 @dataclass(frozen=True)
 class MemberRule:
-    """An event, optional pure gate, and a sequence of ordinary DSL expressions.
-
-    The gate and actions share one optional evaluation fuel allowance.
-    Session execution is an effect requested from actions, like mail delivery.
-    """
+    """Event subscription projected from one ordinary module handler."""
 
     name: str
     on: EventType | None
-    when: Form | None
-    actions: tuple[Form, ...]
-    fuel: int | None = None
-
-    # ── Serialization ──
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize to a plain dict (snake_case keys)."""
-        return {
-            "name": self.name,
-            "on": _on_to_str(self.on),
-            "when": dumps(self.when) if self.when is not None else None,
-            "actions": [dumps(form) for form in self.actions],
-            "fuel": self.fuel,
-        }
-
-    def to_edn_data(self) -> dict[Keyword, Any]:
-        """The EDN-native form (kebab-case keywords, Form values)."""
-        data: dict[Keyword, Any] = {
-            Keyword("name"): self.name,
-            Keyword("on"): (Keyword("boot") if self.on is None else Keyword(_on_to_str(self.on))),
-            Keyword("actions"): self.actions,
-        }
-        if self.when is not None:
-            data[Keyword("when")] = self.when
-        if self.fuel is not None:
-            data[Keyword("fuel")] = self.fuel
-        return data
 
 
 @dataclass(frozen=True)
 class MemberSpec:
-    """Complete unified behavior spec for one member (semantics authority).
-
-    ``source_hash`` is provenance, not semantics: the sha256 short hash of
-    the behavior file the spec was loaded from. The loader computes it for
-    every member (phase C, previously react-only). It is serialized for
-    observability events but never written back into a behavior file.
-
-    Model selection is deployment policy, not genotype (ADR 0016): the
-    spec carries no model declaration; a top-level ``:llm`` key is a load
-    error. The member's model comes from ``instantiate``'s required
-    ``model`` argument / spawn inheritance, landing in agent.yaml.
-
-    ``execution_level`` is the optional ``:execution`` section — the
-    execution-device capability declaration (constitution 1,
-    docs/design/execution-device.md): one of ``"L0"`` / ``"L1"`` /
-    ``"L2"``, ``None`` when the section is absent. It is genotype, reviewed
-    with the prototype proposal; ``instantiate`` projects it once into
-    agent.yaml's ``docker.level`` — the runtime authority stays agent.yaml,
-    so a member editing its own behavior file cannot escalate itself.
-    """
+    """Event handlers and reviewed execution level for a source package."""
 
     version: int
     rules: tuple[MemberRule, ...]
@@ -232,377 +44,83 @@ class MemberSpec:
     fuel: int = DEFAULT_FUEL
     module_sources: dict[str, str] = field(default_factory=dict, compare=False, repr=False)
 
-    # ── Factories ──
-
     def to_dict(self) -> dict[str, Any]:
-        """Serialize to a plain dict (snake_case keys)."""
-        if self.version == 2:
-            return {
-                "version": 2,
-                "handlers": {name: Symbol(entry) for name, entry in self.handlers},
-                "fuel": self.fuel,
-                "execution": {"level": self.execution_level} if self.execution_level else None,
-                "source_hash": self.source_hash,
-            }
         return {
-            "version": self.version,
+            "version": 2,
+            "handlers": {name: Symbol(entry) for name, entry in self.handlers},
+            "fuel": self.fuel,
+            "execution": {"level": self.execution_level} if self.execution_level else None,
             "source_hash": self.source_hash,
-            "execution": (
-                {"level": self.execution_level} if self.execution_level is not None else None
-            ),
-            "rules": [rule.to_dict() for rule in self.rules],
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "MemberSpec":
-        """Build from a dict (snake_case keys) — structural validation.
-
-        Total semantics, mirroring the legacy specs: missing required fields
-        are errors, not defaults. Unknown keys are ignored with a warning
-        (forward compatibility). The ``:when`` / ``:until`` / stage and
-        section expressions are only shape-checked here — builtin-scope
-        validation happens in :func:`validate_member_spec` (called by the
-        loader, never by this factory, so roundtrips of host-dependent
-        rules are not rejected).
-        """
-        if "llm" in data:
-            raise MemberSpecValidationError(
-                ":llm 已从 spec 语法移除（ADR 0016）：模型是部署策略不是基因型——"
-                "在成员 agent.yaml 的 llm.model_name 配置（创建成员时经 WebUI/admin API 选择）"
-            )
-        _warn_unknown_keys(data, "top")
-        version = _read(data, "version", path=":version", kind=int)
-        if version == 2:
-            allowed = {"version", "handlers", "fuel", "execution", "source_hash"}
-            if unknown := set(data) - allowed:
-                raise MemberSpecValidationError(f"version 2 unknown fields: {sorted(unknown)}")
-            handlers = data.get("handlers")
-            if type(handlers) is not dict or not handlers:
-                raise MemberSpecValidationError(":handlers must be a non-empty map")
-            parsed: list[tuple[str, str]] = []
-            handler_rules: list[MemberRule] = []
-            for event, entry in handlers.items():
-                if not isinstance(event, str) or not isinstance(entry, Symbol):
-                    raise MemberSpecValidationError(
-                        ":handlers requires event keys and qualified symbols"
-                    )
-                name = str(event).replace("_", "-")
-                on = _on_from(name, name)
-                if "/" not in str(entry):
-                    raise MemberSpecValidationError("handler must be a qualified module function")
-                if any(existing == name for existing, _ in parsed):
-                    raise MemberSpecValidationError("duplicate handler event")
-                parsed.append((name, str(entry)))
-                handler_rules.append(
-                    MemberRule(name=f"handler:{name}", on=on, when=None, actions=())
+        if type(data.get("version")) is not int or data["version"] != MEMBER_SPEC_VERSION:
+            raise MemberSpecValidationError("only :version 2 module programs are supported")
+        allowed = {"version", "handlers", "fuel", "execution", "source_hash"}
+        if unknown := set(data) - allowed:
+            raise MemberSpecValidationError(f"version 2 unknown fields: {sorted(unknown)}")
+        handlers = data.get("handlers")
+        if type(handlers) is not dict or not handlers:
+            raise MemberSpecValidationError(":handlers must be a non-empty map")
+        parsed: list[tuple[str, str]] = []
+        rules: list[MemberRule] = []
+        for event, entry in handlers.items():
+            if not isinstance(event, str) or type(entry) is not Symbol:
+                raise MemberSpecValidationError(
+                    ":handlers requires event keys and qualified symbols"
                 )
-            fuel = data.get("fuel", DEFAULT_FUEL)
-            if type(fuel) is not int or not 0 < fuel <= MAX_FUEL:
-                raise MemberSpecValidationError(f":fuel must be in 1..{MAX_FUEL}")
-            return cls(
-                version=2,
-                rules=tuple(handler_rules),
-                handlers=tuple(parsed),
-                fuel=fuel,
-                source_hash=_read_optional_str(data, "source_hash", ":source-hash"),
-                execution_level=_execution_from(data.get("execution")),
-            )
-        if "handlers" in data:
-            raise MemberSpecValidationError(":handlers requires version 2")
-        if version != MEMBER_SPEC_VERSION:
-            raise MemberSpecValidationError(
-                f"unsupported :version {version!r}; only version {MEMBER_SPEC_VERSION} is supported"
-            )
-        raw_rules = _require(data, "rules", ":rules")
-        if isinstance(raw_rules, Form) or not isinstance(raw_rules, (list, tuple)):
-            raise MemberSpecValidationError(
-                f":rules must be a vector, got {_type_name(raw_rules)}: {raw_rules!r}"
-            )
-        if not raw_rules:
-            raise MemberSpecValidationError(":rules must not be empty")
-        rules = tuple(_rule_from(item, str(index)) for index, item in enumerate(raw_rules))
-        return cls(
-            version=MEMBER_SPEC_VERSION,
-            source_hash=_read_optional_str(data, "source_hash", ":source-hash"),
-            execution_level=_execution_from(data.get("execution")),
-            rules=rules,
-        )
+            name = str(event).replace("_", "-")
+            on = _on_from(name, name)
+            if "/" not in str(entry):
+                raise MemberSpecValidationError("handler must be a qualified module function")
+            if any(existing == name for existing, _ in parsed):
+                raise MemberSpecValidationError("duplicate handler event")
+            parsed.append((name, str(entry)))
+            rules.append(MemberRule(name=f"handler:{name}", on=on))
+        fuel = data.get("fuel", DEFAULT_FUEL)
+        if type(fuel) is not int or not 0 < fuel <= MAX_FUEL:
+            raise MemberSpecValidationError(f":fuel must be in 1..{MAX_FUEL}")
+        source_hash = data.get("source_hash")
+        if source_hash is not None and type(source_hash) is not str:
+            raise MemberSpecValidationError(":source-hash must be a string")
+        execution = data.get("execution")
+        level = None
+        if execution is not None:
+            if type(execution) is not dict or set(execution) != {"level"}:
+                raise MemberSpecValidationError(":execution must contain only :level")
+            level = execution["level"]
+            if not isinstance(level, str) or str(level) not in EXECUTION_LEVELS:
+                raise MemberSpecValidationError(":execution/:level must be one of :L0/:L1/:L2")
+            level = str(level)
+        return cls(2, tuple(rules), source_hash, level, tuple(parsed), fuel)
 
     @classmethod
     def from_edn(cls, data: Any) -> "MemberSpec":
-        """Build from a parsed EDN map (kebab-case keyword keys)."""
         if not isinstance(data, dict):
-            raise MemberSpecValidationError(
-                f"spec must contain a top-level map, got {_type_name(data)}: {data!r}"
-            )
+            raise MemberSpecValidationError("spec must contain a top-level map")
         return cls.from_dict(_normalize_data(data))
 
     def to_edn(self) -> str:
-        """Serialize to EDN source text (kebab-case keywords)."""
         return dumps(self.to_edn_data())
 
     def to_edn_data(self) -> dict[Keyword, Any]:
-        """The EDN-native form of the whole spec.
-
-        ``:source-hash`` is emitted only when set — the write side must
-        not serialize provenance into a behavior file (phase C).
-        """
-        data: dict[Keyword, Any]
-        if self.version == 2:
-            data = {
-                Keyword("version"): 2,
-                Keyword("handlers"): {
-                    Keyword(name): Symbol(entry) for name, entry in self.handlers
-                },
-                Keyword("fuel"): self.fuel,
-            }
-            if self.execution_level is not None:
-                data[Keyword("execution")] = {Keyword("level"): Keyword(self.execution_level)}
-            return data
-        data = {
-            Keyword("version"): self.version,
-            Keyword("rules"): [rule.to_edn_data() for rule in self.rules],
+        data: dict[Keyword, Any] = {
+            Keyword("version"): 2,
+            Keyword("handlers"): {Keyword(name): Symbol(entry) for name, entry in self.handlers},
+            Keyword("fuel"): self.fuel,
         }
-        if self.source_hash is not None:
-            data[Keyword("source-hash")] = self.source_hash
         if self.execution_level is not None:
             data[Keyword("execution")] = {Keyword("level"): Keyword(self.execution_level)}
         return data
 
 
-# ── Single validator (phase B; unified scopes in phase C) ──
-
-
 def validate_member_spec(
     member: MemberSpec, *, builtins: dict[str, Builtin] | None = None
 ) -> MemberSpec:
-    """Statically validate a MemberSpec at load time (no execution).
-
-    Every expression field of every rule is checked against the unified
-    member vocabulary: ``:when`` admits deterministic computation and
-    pure functions from the member registry under :data:`~tlon.agents.vocabulary.RULE_SCOPE`;
-    actions validate as a sequence against the *full* member registry
-    under :data:`~tlon.agents.vocabulary.ACTION_SCOPE` via
-    :func:`~tlon.agents.vocabulary.validate_member_actions` (ADR 0021:
-    no syntax partition, sequential ``defn`` threading). Literal session
-    recipes are checked against the section, stage, and loop vocabulary.
-
-    ``builtins`` is the registry to validate against (host predicates
-    included, e.g. Adam's ``sleeping?``); it defaults to the host-less
-    unified registry. This is the loader's gate, never
-    ``from_dict``/``from_edn`` — the EDN front stays structural so that
-    serialization roundtrips of host-dependent rules are
-    not rejected. Returns ``member`` unchanged (usable as a chainable
-    gate).
-    """
-    names = [rule.name for rule in member.rules]
-    if len(names) != len(set(names)):
-        raise MemberSpecValidationError("rule names must be unique within one member")
-    registry = make_member_builtins() if builtins is None else builtins
-    for rule in member.rules:
-        label = f"rule {rule.name!r}"
-        _validate_when(rule, label, registry)
-        _validate_actions(rule, label, registry)
-        _validate_literal_recipes(rule.actions, label, registry)
-        _validate_fuel(rule, label)
+    """Validate declarations; complete module admission is program_package's job."""
+    MemberSpec.from_dict(member.to_dict())
     return member
-
-
-def _validate_fuel(rule: MemberRule, label: str) -> None:
-    """Total-semantics fuel checks (phase D): positive, under the engine cap.
-
-    ``None`` means "use the engine defaults" and passes. A rule-level
-    ``:fuel`` that is non-positive or
-    exceeds :data:`~tlosure.eval.MAX_FUEL` rejects the spec at load.
-    """
-    if rule.fuel is not None:
-        if rule.fuel <= 0:
-            raise MemberSpecValidationError(
-                f"{label}: :fuel must be a positive int, got {rule.fuel}"
-            )
-        if rule.fuel > MAX_FUEL:
-            raise MemberSpecValidationError(
-                f"{label}: :fuel {rule.fuel} exceeds engine hard cap {MAX_FUEL}"
-            )
-
-
-def _validate_when(rule: MemberRule, label: str, registry: dict[str, Builtin]) -> None:
-    """Validate ``:when`` against pure words, unified env scope."""
-    if rule.when is None:
-        return
-    try:
-        validate_condition(rule.when, registry, RULE_SCOPE)
-    except EvalError as e:
-        raise MemberSpecValidationError(f"{label}: invalid :when expression: {e}") from e
-
-
-def _validate_actions(rule: MemberRule, label: str, registry: dict[str, Builtin]) -> None:
-    """Validate the rule's action forms against the full member registry.
-
-    ADR 0021: no syntax-level purity partition — any expression may sit
-    in action position; ``defn`` names thread forward across the form
-    sequence (define-before-use).
-    """
-    try:
-        validate_member_actions(rule.actions, registry=registry, scope=set(ACTION_SCOPE))
-    except EvalError as e:
-        raise MemberSpecValidationError(f"{label}: invalid action: {e}") from e
-
-
-def validate_session_recipe(
-    recipe: SessionRecipe,
-    label: str = "run-loop",
-    *,
-    builtins: dict[str, Builtin] | None = None,
-) -> SessionRecipe:
-    """Validate one session request independently of its rule and event."""
-    registry = make_member_builtins() if builtins is None else builtins
-    _validate_sections(recipe.context_sections, label)
-    _validate_stages(recipe.stages, label, registry)
-    if recipe.fuel is not None and not 0 < recipe.fuel <= MAX_FUEL:
-        raise MemberSpecValidationError(
-            f"{label}: :fuel must be positive and under hard cap {MAX_FUEL}"
-        )
-    try:
-        validate_condition(recipe.until, registry, LOOP_SCOPE)
-    except EvalError as e:
-        raise MemberSpecValidationError(f"{label}: invalid :until expression: {e}") from e
-    return recipe
-
-
-def _validate_literal_recipes(value: Any, label: str, registry: dict[str, Builtin]) -> None:
-    """Check literal session recipes wherever calls occur, leaving data quoted."""
-    if isinstance(value, Form):
-        if value and value[0] == Symbol("quote"):
-            return
-        if len(value) == 2 and value[0] == Symbol("run-loop"):
-            argument = value[1]
-            if isinstance(argument, Form) and len(argument) == 2 and argument[0] == Symbol("quote"):
-                validate_session_recipe(
-                    SessionRecipe.from_edn(argument[1]), label, builtins=registry
-                )
-        for item in value:
-            _validate_literal_recipes(item, label, registry)
-    elif isinstance(value, (list, tuple)):
-        for item in value:
-            _validate_literal_recipes(item, label, registry)
-    elif isinstance(value, dict):
-        for item in value.values():
-            _validate_literal_recipes(item, label, registry)
-
-
-def _validate_sections(sections: tuple[Form, ...], label: str) -> None:
-    """Validate the section vector (mirrored the legacy AgentSpec's section checks)."""
-    seen: set[str] = set()
-    for form in sections:
-        if not isinstance(form, Form) or not form:
-            raise MemberSpecValidationError(
-                f"{label}: :sections items must be section forms like (persona), "
-                f"got {_type_name(form)}: {form!r}"
-            )
-        head = form[0]
-        if not isinstance(head, Symbol):
-            raise MemberSpecValidationError(
-                f"{label}: :sections form head must be a symbol, got {dumps(head)}"
-            )
-        name = str(head)
-        if name not in SECTION_NAMES:
-            raise MemberSpecValidationError(
-                f"{label}: unknown section {name!r} in :sections (allowed: {sorted(SECTION_NAMES)})"
-            )
-        if name in seen:
-            raise MemberSpecValidationError(f"{label}: duplicate section {name!r} in :sections")
-        seen.add(name)
-        if name == "mail-history":
-            if len(form) not in (2, 3):
-                raise MemberSpecValidationError(
-                    f"{label}: section 'mail-history' takes one or two count "
-                    f"arguments, got {dumps(form)}"
-                )
-            for count in form[1:]:
-                if not isinstance(count, int) or isinstance(count, bool) or count < 0:
-                    raise MemberSpecValidationError(
-                        f"{label}: section 'mail-history' count must be a "
-                        f"non-negative int, got {dumps(count)}"
-                    )
-        elif len(form) != 1:
-            raise MemberSpecValidationError(
-                f"{label}: section {name!r} takes no arguments, got {dumps(form)}"
-            )
-
-
-def _validate_stages(stages: tuple[Form, ...], label: str, registry: dict[str, Builtin]) -> None:
-    """Validate the stage vector (mirrored the legacy AgentSpec's stage checks)."""
-    if not stages:
-        raise MemberSpecValidationError(
-            f"{label}: :stages must not be empty (no stage would ever advance the loop)"
-        )
-    for form in stages:
-        if not isinstance(form, Form) or not form:
-            raise MemberSpecValidationError(
-                f"{label}: :stages items must be stage forms like (think), "
-                f"got {_type_name(form)}: {form!r}"
-            )
-        head = form[0]
-        if not isinstance(head, Symbol):
-            raise MemberSpecValidationError(
-                f"{label}: :stages form head must be a symbol, got {dumps(head)}"
-            )
-        name = str(head)
-        if name not in STAGE_NAMES:
-            raise MemberSpecValidationError(
-                f"{label}: unknown stage {name!r} in :stages (allowed: {sorted(STAGE_NAMES)})"
-            )
-        if len(form) > 2:
-            raise MemberSpecValidationError(
-                f"{label}: stage {name!r} takes at most one opts map, got {dumps(form)}"
-            )
-        if len(form) == 2:
-            opts = form[1]
-            if isinstance(opts, Form) or not isinstance(opts, dict):
-                raise MemberSpecValidationError(
-                    f"{label}: stage {name!r} opts must be a map, got {dumps(opts)}"
-                )
-            _validate_stage_opts(name, opts, form, label, registry)
-
-
-def _validate_stage_opts(
-    name: str, opts: dict[Any, Any], form: Form, label: str, registry: dict[str, Builtin]
-) -> None:
-    """Validate one stage's opts map (mirrored the legacy AgentSpec's phase 7c checks)."""
-    allowed = {"if"}
-    if name == "plan":
-        allowed.add("max-steps")
-    elif name == "critique":
-        allowed.add("instructions")
-    for key, value in opts.items():
-        if not isinstance(key, Keyword):
-            raise MemberSpecValidationError(
-                f"{label}: stage {name!r} opts keys must be keywords, "
-                f"got {_type_name(key)}: {key!r}"
-            )
-        if str(key) not in allowed:
-            raise MemberSpecValidationError(
-                f"{label}: stage {name!r}: unknown opts key :{key} in {dumps(form)}"
-            )
-        if str(key) == "if":
-            try:
-                validate_condition(value, registry, STAGE_SCOPE)
-            except EvalError as e:
-                raise MemberSpecValidationError(f"{label}: stage {name!r} :if: {e}") from e
-        elif str(key) == "instructions":
-            if type(value) is not str or not value.strip():
-                raise MemberSpecValidationError(
-                    f"{label}: stage 'critique' :instructions must be a non-empty string, "
-                    f"got {dumps(value)}"
-                )
-        elif not isinstance(value, int) or isinstance(value, bool) or value <= 0:
-            raise MemberSpecValidationError(
-                f"{label}: stage 'plan' :max-steps must be a positive int, got {dumps(value)}"
-            )
-
-
-# ── Normalization (EDN keyword keys → snake_case strings) ──
 
 
 def _normalize_data(value: Any) -> Any:
@@ -625,151 +143,6 @@ def _normalize_key(key: Any) -> str:
     if isinstance(key, (Keyword, str)):
         return str(key).replace("-", "_")
     raise MemberSpecValidationError(f"spec keys must be keywords, got {_type_name(key)}: {key!r}")
-
-
-# ── Field readers / validators ──
-
-
-def _type_name(value: Any) -> str:
-    if value is None:
-        return "nil"
-    if isinstance(value, bool):
-        return "bool"
-    if isinstance(value, Keyword):
-        return "keyword"
-    if isinstance(value, str):
-        return "string"
-    if isinstance(value, int):
-        return "int"
-    if isinstance(value, float):
-        return "float"
-    return type(value).__name__
-
-
-def _require(data: dict[str, Any], key: str, path: str) -> Any:
-    """Read a required key or fail validation (total semantics)."""
-    if key not in data:
-        raise MemberSpecValidationError(f"missing required {path}")
-    return data[key]
-
-
-def _read(data: dict[str, Any], key: str, path: str, kind: type) -> Any:
-    """Read a required scalar field, validating its type."""
-    value = _require(data, key, path)
-    if kind is bool:
-        if not isinstance(value, bool):
-            raise MemberSpecValidationError(
-                f"{path} must be a bool, got {_type_name(value)}: {value!r}"
-            )
-        return value
-    if kind is str:
-        if not isinstance(value, str):
-            raise MemberSpecValidationError(
-                f"{path} must be a string, got {_type_name(value)}: {value!r}"
-            )
-        return value
-    # int (bool excluded: it is an int subclass but never valid here)
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise MemberSpecValidationError(
-            f"{path} must be an int, got {_type_name(value)}: {value!r}"
-        )
-    return value
-
-
-def _read_optional_int(data: dict[str, Any], key: str, path: str) -> int | None:
-    """Read an optional int field; missing or nil yields None."""
-    value = data.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise MemberSpecValidationError(
-            f"{path} must be an int, got {_type_name(value)}: {value!r}"
-        )
-    return value
-
-
-def _read_optional_str(data: dict[str, Any], key: str, path: str) -> str | None:
-    """Read an optional string field; missing or nil yields None."""
-    value = data.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise MemberSpecValidationError(
-            f"{path} must be a string, got {_type_name(value)}: {value!r}"
-        )
-    return value
-
-
-def _warn_unknown_keys(raw: dict[str, Any], section: str) -> None:
-    known = _KNOWN_KEYS[section]
-    for key in raw:
-        if key not in known:
-            logger.warning("member_spec_unknown_key", section=section, key=key)
-
-
-_KNOWN_KEYS: dict[str, frozenset[str]] = {
-    "top": frozenset({"version", "source_hash", "execution", "rules", "handlers", "fuel"}),
-    "rule": frozenset({"name", "on", "when", "actions", "fuel"}),
-    "recipe": frozenset(
-        {
-            "context",
-            "stages",
-            "until",
-            "max_iterations",
-            "max_consecutive_errors",
-            "max_tokens",
-            "reflect",
-            "fuel",
-            "replies",
-        }
-    ),
-    "context": frozenset({"sections"}),
-    "reflect": frozenset({"enabled", "interval_minutes"}),
-    "execution": frozenset({"level"}),
-}
-
-
-def _execution_from(value: Any) -> str | None:
-    """Optional top-level ``:execution`` section — the execution-device
-    capability declaration (constitution 1, docs/design/execution-device.md).
-
-    Total semantics: when the section is present it must be a map carrying
-    ``:level``, one of :data:`EXECUTION_LEVELS`. Unknown keys inside the
-    section are warn-only (forward compatibility, same as every other map).
-    ``None`` = section absent — the config default applies at instantiation.
-    """
-    if value is None:
-        return None
-    if isinstance(value, Form) or not isinstance(value, dict):
-        raise MemberSpecValidationError(
-            f":execution must be a map, got {_type_name(value)}: {value!r}"
-        )
-    _warn_unknown_keys(value, "execution")
-    level = _require(value, "level", ":execution/:level")
-    if not isinstance(level, str) or str(level) not in EXECUTION_LEVELS:
-        raise MemberSpecValidationError(
-            f":execution/:level must be one of :L0/:L1/:L2, got {_type_name(level)}: {level!r}"
-        )
-    return str(level)
-
-
-def _rule_from(item: Any, rule_name: str) -> MemberRule:
-    if isinstance(item, Form) or not isinstance(item, dict):
-        raise MemberSpecValidationError(
-            f"rule {rule_name!r}: must be a map, got {_type_name(item)}: {item!r}"
-        )
-    if "loop" in item:
-        raise MemberSpecValidationError(
-            "rule :loop was removed; use (run-loop (quote {...})) in :actions"
-        )
-    _warn_unknown_keys(item, "rule")
-    return MemberRule(
-        name=_read(item, "name", path=f"rule {rule_name!r}: :name", kind=str),
-        on=_on_from(_require(item, "on", f"rule {rule_name!r}: :on"), rule_name),
-        when=_expr_from(item.get("when"), ":when", rule_name, required=False),
-        actions=_actions_from(item.get("actions"), rule_name),
-        fuel=_read_optional_int(item, "fuel", f"rule {rule_name!r}: :fuel"),
-    )
 
 
 def _on_from(value: Any, rule_name: str) -> EventType | None:
@@ -796,201 +169,5 @@ def _on_to_str(on: EventType | None) -> str | None:
     return on.name.lower().replace("_", "-")
 
 
-def _expr_from(value: Any, path: str, rule_name: str, *, required: bool) -> "Form | None":
-    """Read an expression field: a parsed Form or an EDN source string.
-
-    Structural shape only — builtin-scope validation is done by
-    ``validate_member_spec`` in this module.
-    """
-    if value is None:
-        if required:
-            raise MemberSpecValidationError(f"rule {rule_name!r}: missing required {path}")
-        return None
-    if isinstance(value, Form):
-        return value
-    if isinstance(value, str):
-        try:
-            parsed = loads(value)
-        except EDNParseError as e:
-            raise MemberSpecValidationError(
-                f"rule {rule_name!r}: invalid {path} expression: {e}"
-            ) from e
-        if not isinstance(parsed, Form):
-            raise MemberSpecValidationError(
-                f"rule {rule_name!r}: {path} must be an expression, "
-                f"got {_type_name(parsed)}: {parsed!r}"
-            )
-        return parsed
-    raise MemberSpecValidationError(
-        f"rule {rule_name!r}: {path} must be an expression, got {_type_name(value)}: {value!r}"
-    )
-
-
-def _required_expr(value: Any, path: str, rule_name: str) -> Form:
-    """Read a required expression field (never None)."""
-    form = _expr_from(value, path, rule_name, required=True)
-    assert form is not None
-    return form
-
-
-def _forms_from(value: Any, path: str, rule_name: str) -> tuple[Form, ...]:
-    """Read a vector of expression forms (parsed Forms or EDN strings)."""
-    if isinstance(value, Form) or not isinstance(value, (list, tuple)):
-        raise MemberSpecValidationError(
-            f"rule {rule_name!r}: {path} must be a vector, got {_type_name(value)}: {value!r}"
-        )
-    forms: list[Form] = []
-    for item in value:
-        form = item
-        if type(form) is str:
-            try:
-                form = loads(form)
-            except EDNParseError as e:
-                raise MemberSpecValidationError(
-                    f"rule {rule_name!r}: invalid {path} expression: {e}"
-                ) from e
-        if not isinstance(form, Form) or not form:
-            raise MemberSpecValidationError(
-                f"rule {rule_name!r}: {path} items must be forms like (think), "
-                f"got {_type_name(item)}: {item!r}"
-            )
-        forms.append(form)
-    return tuple(forms)
-
-
-def _recipe_from(value: Any, rule_name: str) -> SessionRecipe:
-    """Read a session recipe map."""
-    if not isinstance(value, dict):
-        raise MemberSpecValidationError(
-            f"rule {rule_name!r}: recipe must be a map, got {_type_name(value)}: {value!r}"
-        )
-    _warn_unknown_keys(value, "recipe")
-    raw_context = _require(value, "context", f"rule {rule_name!r}: :recipe/:context")
-    if not isinstance(raw_context, dict):
-        raise MemberSpecValidationError(
-            f"rule {rule_name!r}: :recipe/:context must be a map, "
-            f"got {_type_name(raw_context)}: {raw_context!r}"
-        )
-    _warn_unknown_keys(raw_context, "context")
-    return SessionRecipe(
-        context_sections=_forms_from(
-            _require(
-                raw_context,
-                "sections",
-                f"rule {rule_name!r}: :recipe/:context/:sections",
-            ),
-            ":recipe/:context/:sections",
-            rule_name,
-        ),
-        stages=_forms_from(
-            _require(value, "stages", f"rule {rule_name!r}: :recipe/:stages"),
-            ":recipe/:stages",
-            rule_name,
-        ),
-        until=_required_expr(value.get("until"), ":recipe/:until", rule_name),
-        max_iterations=_read(
-            value,
-            "max_iterations",
-            f"rule {rule_name!r}: :recipe/:max-iterations",
-            kind=int,
-        ),
-        max_consecutive_errors=_read(
-            value,
-            "max_consecutive_errors",
-            f"rule {rule_name!r}: :recipe/:max-consecutive-errors",
-            kind=int,
-        ),
-        max_tokens=_read(
-            value,
-            "max_tokens",
-            f"rule {rule_name!r}: :recipe/:max-tokens",
-            kind=int,
-        ),
-        reflect=_reflect_from(
-            _require(value, "reflect", f"rule {rule_name!r}: :recipe/:reflect"),
-            rule_name,
-        ),
-        fuel=_read_optional_int(value, "fuel", f"rule {rule_name!r}: :recipe/:fuel"),
-        replies=_replies_from(value.get("replies"), rule_name),
-    )
-
-
-def _replies_from(value: Any, rule_name: str) -> dict[str, str]:
-    """Optional :recipe/:replies map — termination reply wording overrides.
-
-    Total semantics (strict like stage opts): unknown kinds and non-string
-    or empty values reject the spec at load. The texts are plain data,
-    used verbatim at termination — no evaluation, no templating.
-    """
-    if value is None:
-        return {}
-    if isinstance(value, Form) or not isinstance(value, dict):
-        raise MemberSpecValidationError(
-            f"rule {rule_name!r}: :recipe/:replies must be a map, got {_type_name(value)}: {value!r}"
-        )
-    replies: dict[str, str] = {}
-    for key, text in value.items():
-        if key not in REPLY_KINDS:
-            allowed = sorted(k.replace("_", "-") for k in REPLY_KINDS)
-            raise MemberSpecValidationError(
-                f"rule {rule_name!r}: unknown :recipe/:replies key "
-                f":{str(key).replace('_', '-')} (allowed: {allowed})"
-            )
-        if not isinstance(text, str) or not text:
-            raise MemberSpecValidationError(
-                f"rule {rule_name!r}: :recipe/:replies/:{str(key).replace('_', '-')} "
-                f"must be a non-empty string, got {_type_name(text)}: {text!r}"
-            )
-        replies[str(key)] = text
-    return replies
-
-
-def _reflect_from(value: Any, rule_name: str) -> ReflectSpec:
-    if not isinstance(value, dict):
-        raise MemberSpecValidationError(
-            f"rule {rule_name!r}: :recipe/:reflect must be a map, got {_type_name(value)}: {value!r}"
-        )
-    _warn_unknown_keys(value, "reflect")
-    return ReflectSpec(
-        enabled=_read(
-            value, "enabled", f"rule {rule_name!r}: :recipe/:reflect/:enabled", kind=bool
-        ),
-        interval_minutes=_read(
-            value,
-            "interval_minutes",
-            f"rule {rule_name!r}: :recipe/:reflect/:interval-minutes",
-            kind=int,
-        ),
-    )
-
-
-def _actions_from(value: Any, rule_name: str) -> tuple[Form, ...]:
-    """Read the optional :actions vector; every item a non-empty form.
-
-    Shape only — vocabulary/scope validation and ``defn`` threading are
-    the single validator's job (:func:`validate_member_spec`), not the
-    EDN front's.
-    """
-    if value is None:
-        return ()
-    if isinstance(value, Form) or not isinstance(value, (list, tuple)):
-        raise MemberSpecValidationError(
-            f"rule {rule_name!r}: :actions must be a vector, got {_type_name(value)}: {value!r}"
-        )
-    forms: list[Form] = []
-    for item in value:
-        form = item
-        if type(form) is str:
-            try:
-                form = loads(form)
-            except EDNParseError as e:
-                raise MemberSpecValidationError(
-                    f"rule {rule_name!r}: invalid :actions expression: {e}"
-                ) from e
-        if not isinstance(form, Form) or not form:
-            raise MemberSpecValidationError(
-                f"rule {rule_name!r}: :actions items must be action forms, "
-                f"got {_type_name(item)}: {item!r}"
-            )
-        forms.append(form)
-    return tuple(forms)
+def _type_name(value: Any) -> str:
+    return type(value).__name__

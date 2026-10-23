@@ -347,9 +347,9 @@ async def test_already_committed_model_response_survives_wrapper_failure(
 async def test_real_assembled_tool_schemas_with_boolean_values_are_counted_as_text(
     store: ProgramStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from tests.program_helpers import make_program
     from tlon.agents.assembly import assemble_member_services
     from tlon.agents.member_runtime import MemberRuntime
-    from tlon.agents.member_spec import MemberSpec
     from tlon.agents.vocabulary import make_member_builtins
     from tlon.base.config import AgentConfig, DockerRuntimeConfig
     from tlon.base.events.event_bus import EventBus
@@ -375,7 +375,7 @@ async def test_real_assembled_tool_schemas_with_boolean_values_are_counted_as_te
         member_id=config.id,
         name=config.name,
         event_bus=EventBus(),
-        spec=MemberSpec(version=1, rules=[]),
+        spec=make_program(),
         builtins=make_member_builtins(),
         services=services,
     )
@@ -383,6 +383,26 @@ async def test_real_assembled_tool_schemas_with_boolean_values_are_counted_as_te
     state_put = next(tool for tool in tools if tool["function"]["name"] == "state-put")
     assert state_put["function"]["parameters"]["properties"]["value"] is True
     assert len(tools) > 30
+    # The ordinary context estimator must accept that same real catalog.
+    from tlon.operations.core import CallContext
+    from tlon.operations.model_context import context_operation
+    from tlon.operations.model_service import ModelService
+
+    context_scope = ExecutionScope(store, "estimate", 100000, "output")
+    store.freeze_model_context("estimate", "config", config.llm.model_dump())
+    estimator = context_operation(
+        ModelService(services.llm_client, AsyncMock(return_value="system"), lambda: tools), {"type": "object", "properties": {}, "required": [], "additionalProperties": False}
+    )
+    with bind_execution(context_scope):
+        size = await estimator.handler(
+            CallContext("counter", "estimate", "context"),
+            {
+                "messages": [{"role": "user", "content": "question"}],
+                "tools": [tool["function"]["name"] for tool in tools],
+                "max_tokens": 5,
+            },
+        )
+    assert size["input_tokens"] > 0 and size["fits"] is True
     client = services.llm_client
     client._chat_with_retries = AsyncMock(
         return_value=LLMResponse("answer", usage={"total_tokens": 8})

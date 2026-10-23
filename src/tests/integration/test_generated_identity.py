@@ -5,10 +5,12 @@ from pathlib import Path
 
 import aiohttp
 
+from tests.program_helpers import MINIMAL_MODULES
+
 from .conftest import WEBUI_HEADERS, _read_inbox, _send_mail
 from .test_post_office import _server
 
-BEHAVIOR = '{:version 1 :rules [{:name "receive" :on :mail-delivered :actions []}]}'
+BEHAVIOR = "{:version 2 :handlers {:mail-delivered work/handle}}"
 
 
 async def test_generated_ids_create_deliver_and_survive_restart(tmp_path: Path) -> None:
@@ -19,6 +21,7 @@ async def test_generated_ids_create_deliver_and_survive_restart(tmp_path: Path) 
                 "display_name": "收到后静默",
                 "description": "收到邮件后不执行动作",
                 "behavior": BEHAVIOR,
+                "modules": MINIMAL_MODULES,
             },
         ) as response:
             payload = await response.json()
@@ -48,6 +51,7 @@ async def test_generated_ids_create_deliver_and_survive_restart(tmp_path: Path) 
                 "name": "developer",
                 "display_name": "不应创建",
                 "behavior": BEHAVIOR,
+                "modules": MINIMAL_MODULES,
             },
         ) as response:
             assert response.status == 400

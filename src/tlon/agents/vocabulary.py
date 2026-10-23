@@ -1,31 +1,17 @@
-"""Member vocabulary and explicit data scopes for behavior conditions.
-
-All ``:when``, ``:until`` and stage ``:if`` expressions share the pure
-projection of the member operation directory. Context differences are data
-bindings, never separate function lists. Host queries and writes stay in the
-ordinary program vocabulary; conditions receive materialized JSON records.
-"""
+"""Ordinary member vocabulary, materialized events, and society policy data."""
 
 import re
-from collections.abc import Iterator
-from contextlib import contextmanager
-from contextvars import ContextVar
 from typing import Any, Protocol, TypedDict
 
-from tlon.operations.control import validate_control_forms
 from tlon.operations.definitions import host_operation_definitions
-from tlon.operations.schema import InputError, json_value
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlosure.builtins import (
     ARITHMETIC_BUILTINS,
     CORE_BUILTINS,
-    ActionRequest,
     Builtin,
     EvalError,
 )
-from tlosure.edn import Form, Keyword
-from tlosure.eval import DEFAULT_FUEL, current_evaluation, eval_form
-from tlosure.validate import _is_defn, _validate_defn, validate_form
+from tlosure.edn import Keyword
 
 # ── Environment contracts (the data each context may see) ──
 #
@@ -47,76 +33,8 @@ class SelfEnv(TypedDict):
     address: str
 
 
-class RuleEnv(TypedDict):
-    """Rule evaluation context (``:when`` gates and ``:actions``).
-
-    ``msg`` is the payload's materialized mail record, or None for non-mail
-    events. ``event`` contains the same materialized payload; no live mail
-    or service objects enter the condition evaluator.
-    """
-
-    msg: dict[str, Any] | None
-    event: Any
-    self: SelfEnv
-
-
-class LoopStateEnv(TypedDict):
-    """The ``state`` binding: live loop counters."""
-
-    iteration: int
-    error_count: int
-    token_usage: int
-
-
-class LoopLimitsEnv(TypedDict):
-    """The ``limits`` binding: the loop's declared caps."""
-
-    max_iterations: int
-    max_consecutive_errors: int
-    max_tokens: int
-
-
-class LoopEnv(TypedDict):
-    """session ``:until`` context (``loop_driver``)."""
-
-    self: SelfEnv
-    state: LoopStateEnv
-    limits: LoopLimitsEnv
-
-
-class RoundEnv(TypedDict):
-    """The ``round`` binding: facts about the round being gated."""
-
-    completing: bool
-    sending_mail: bool
-
-
-class StageCondEnv(TypedDict):
-    """Stage ``:if`` context (``loop_driver``): loop state, the session's
-    loop scratchpad, and the round's completion flag."""
-
-    state: LoopStateEnv
-    scratch: dict[str, Any]
-    round: RoundEnv
-
-
-#: Load-time validation scope for ``:when`` gates (mirrors RuleEnv).
-RULE_SCOPE: frozenset[str] = frozenset({"msg", "event", "self"})
-
-#: Actions use the same bindings as the event gate.
-ACTION_SCOPE: frozenset[str] = RULE_SCOPE
-
-LOOP_SCOPE: frozenset[str] = frozenset({"self", "state", "limits"})
-STAGE_SCOPE: frozenset[str] = frozenset({"state", "scratch", "round"})
-
-
-def self_env(member_id: str, name: str) -> SelfEnv:
-    """The ``self`` binding for any context."""
-    return {"id": member_id, "name": name, "address": address_for_member(member_id)}
-
-
-def rule_env(payload: Any, *, member_id: str, name: str) -> RuleEnv:
-    """The rule evaluation env (``MemberRuntime._env`` delegates here)."""
+def rule_env(payload: Any, *, member_id: str, name: str) -> dict[str, Any]:
+    """Materialize event data before passing it to an ordinary entry."""
     mail = payload.get("mail") if isinstance(payload, dict) else None
     return {
         "msg": _materialize(mail),
@@ -125,52 +43,8 @@ def rule_env(payload: Any, *, member_id: str, name: str) -> RuleEnv:
     }
 
 
-def loop_until_env(
-    *,
-    member_id: str,
-    name: str,
-    iteration: int,
-    error_count: int,
-    token_usage: int,
-    max_iterations: int,
-    max_consecutive_errors: int,
-    max_tokens: int,
-) -> LoopEnv:
-    """The ``:until`` env (``loop_driver`` delegates here)."""
-    return {
-        "self": self_env(member_id, name),
-        "state": {
-            "iteration": iteration,
-            "error_count": error_count,
-            "token_usage": token_usage,
-        },
-        "limits": {
-            "max_iterations": max_iterations,
-            "max_consecutive_errors": max_consecutive_errors,
-            "max_tokens": max_tokens,
-        },
-    }
-
-
-def stage_cond_env(
-    *,
-    iteration: int,
-    error_count: int,
-    token_usage: int,
-    scratch: dict[str, Any],
-    completing: bool,
-    sending_mail: bool = False,
-) -> StageCondEnv:
-    """The stage ``:if`` env (``loop_driver`` delegates here)."""
-    return {
-        "state": {
-            "iteration": iteration,
-            "error_count": error_count,
-            "token_usage": token_usage,
-        },
-        "scratch": scratch,
-        "round": {"completing": completing, "sending_mail": sending_mail},
-    }
+def self_env(member_id: str, name: str) -> SelfEnv:
+    return {"id": member_id, "name": name, "address": address_for_member(member_id)}
 
 
 def _materialize(value: Any) -> Any:
@@ -182,40 +56,6 @@ def _materialize(value: Any) -> Any:
     if isinstance(value, list):
         return [_materialize(item) for item in value]
     return value
-
-
-def condition_builtins(registry: dict[str, Builtin]) -> dict[str, Builtin]:
-    """One pure projection for every condition; read-only I/O is not pure."""
-    return {name: builtin for name, builtin in registry.items() if builtin.pure}
-
-
-def validate_condition(form: Any, registry: dict[str, Builtin], scope: frozenset[str]) -> None:
-    """Validate all branches, including local function bodies, with pure words."""
-    validate_form(form, condition_builtins(registry), scope=set(scope))
-
-
-def condition_env(env: dict[str, Any], scope: frozenset[str]) -> dict[str, Any]:
-    """Require the complete context and admit only explicit JSON data bindings."""
-    missing = scope - env.keys()
-    if missing:
-        raise EvalError(f"condition context missing bindings: {', '.join(sorted(missing))}")
-    try:
-        return {name: json_value(env[name], edn_keys=True) for name in scope}
-    except InputError as exc:
-        raise EvalError(f"condition context must contain materialized data: {exc}") from exc
-
-
-def evaluate_condition(
-    form: Any,
-    env: dict[str, Any],
-    registry: dict[str, Builtin],
-    scope: frozenset[str],
-    *,
-    fuel: int = DEFAULT_FUEL,
-) -> Any:
-    """Use the shared language evaluator after the common purity/data gates."""
-    validate_condition(form, registry, scope)
-    return eval_form(form, condition_env(env, scope), condition_builtins(registry), fuel=fuel)
 
 
 def _builtin_from(env: dict[str, Any], msg: Any, address: Any) -> bool:
@@ -381,77 +221,18 @@ class ScriptHostQueries(Protocol):
         ...
 
 
-# ── Effect ports (DSL → host, effects-as-data) ──
-#
-# Action builtins validate their arguments during pure evaluation and
-# produce ActionRequest data; the program driver executes each request
-# and records its result before evaluation continues. Host quotas and
-# trust gates remain outside the member program.
-
-
-#: Effects available to every rule, independent of its event or other actions.
-MEMBER_ACTION_NAMES = frozenset({"run-loop", "tool-execute"}) | frozenset(
-    operation.name for operation in host_operation_definitions()
-)
-
-_EFFECT_COLLECTOR: ContextVar[list[ActionRequest] | None] = ContextVar(
-    "tlon_effect_collector", default=None
-)
-
-
-@contextmanager
-def collect_member_effects() -> Iterator[list[ActionRequest]]:
-    """Collect one synchronous evaluation."""
-    requests: list[ActionRequest] = []
-    token = _EFFECT_COLLECTOR.set(requests)
-    try:
-        yield requests
-    finally:
-        _EFFECT_COLLECTOR.reset(token)
-
-
 def _unavailable_operation(_env: dict[str, Any], *args: Any) -> Any:
     raise EvalError("Operation unavailable for this member")
 
 
-def make_member_builtins(
-    host: ScriptHostQueries | None = None,
-    collector: list[ActionRequest] | None = None,
-) -> dict[str, Builtin]:
-    """Build the member vocabulary with optional effect collection.
-
-    Operation names are static unavailable placeholders until DSLAdapter binds
-    member services. Only run-loop constructs ActionRequest recipe data;
-    an optional collector supports synchronous recipe analysis. Host queries
-    are injected closures.
-    """
-
-    def _record(request: ActionRequest) -> ActionRequest:
-        target = _EFFECT_COLLECTOR.get()
-        if target is None:
-            target = collector
-        if target is not None:
-            target.append(request)
-        return request
-
-    def _run_loop(env: dict[str, Any], recipe: Any) -> ActionRequest:
-        from tlon.agents.member_spec import SessionRecipe, validate_session_recipe
-
-        try:
-            active = current_evaluation()
-            registry = active[0].builtins if active is not None else builtins
-            validate_session_recipe(SessionRecipe.from_edn(recipe), builtins=registry)
-        except ValueError as exc:
-            raise EvalError(str(exc)) from exc
-        return _record(ActionRequest(kind="run_loop", data={"recipe": recipe}))
-
+def make_member_builtins(host: ScriptHostQueries | None = None) -> dict[str, Builtin]:
+    """Build ordinary operation placeholders and explicit host query closures."""
     builtins: dict[str, Builtin] = {
         **{
             operation.name: Builtin(fn=_unavailable_operation, pure=False)
             for operation in host_operation_definitions()
         },
         **SCRIPT_BUILTINS,
-        "run-loop": Builtin(_run_loop, pure=False),
         "tool-execute": Builtin(_unavailable_operation, pure=False),
     }
     if host is not None:
@@ -460,31 +241,3 @@ def make_member_builtins(
         builtins["lazy?"] = Builtin(lambda env, aid: host.is_lazy(aid), pure=False)
         builtins["member-roster"] = Builtin(lambda env: host.member_roster(), pure=False)
     return builtins
-
-
-# ── Static gate: full-registry validation with defn threading ──
-
-
-def validate_member_actions(
-    forms: tuple[Form, ...], *, registry: dict[str, Builtin], scope: set[str]
-) -> None:
-    """Statically validate a rule's action-form sequence (ADR 0021).
-
-    The action position is no longer syntax-partitioned: any expression
-    validates here, and a function body may carry actions — "where
-    actions may occur" is not statically enumerable, so convergence is a
-    runtime fact handled by the effect collector. What remains is full-registry validation:
-    every form is checked by :func:`tlosure.validate.validate_form`
-    against the *full* member registry (action builtins included) under
-    ``scope``, so unregistered vocabulary and undefined symbols are
-    still rejected at load — plus sequential ``defn`` threading: a
-    ``defn`` head form adds its name to the scope the *following* forms
-    see (define-before-use), mirroring the runtime's shared env dict.
-    """
-    validate_control_forms(forms)
-    local = set(scope)
-    for form in forms:
-        if _is_defn(form):
-            local.add(_validate_defn(form, registry, local, None))
-            continue
-        validate_form(form, registry, local)

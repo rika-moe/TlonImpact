@@ -1,5 +1,7 @@
 # ADR 0008：上下文压力管理——存储不动，视图分级减压
 
+> P5 状态：本文的 stage/recipe/旧规则机制已退役；历史决策保留，当前实现由 [ADR 0046](0046-programmable-workflows.md) 替代。
+
 > P4b 当前说明：程序 output 根保持获准输出预留不退款；session total 根统一覆盖 stage、压缩及工具内模型调用，按可靠 usage 结算，未知保留预留。ProgramStore 保存模型回执与额度事实，journal 只投影；预算与 UTC deadline 冻结，进程取消不是永久撤销。本文保留历史，现行契约见 [执行作用域](../design/execution-scope.md)。
 
 > 阅读定位：本文保留当时的选择与理由；当前设计见 [runtime](../design/runtime.md)、[memory](../design/memory.md)。当前适用范围：减压模型保留；anchor 由 ADR 0017、唤醒模板由 ADR 0028 修订。完整关系见 [决策索引](README.md)。

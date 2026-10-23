@@ -7,7 +7,7 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
-from tlon.agents.member_spec import MemberSpec, MemberSpecValidationError, validate_member_spec
+from tlon.agents.member_spec import MemberSpec, MemberSpecValidationError
 from tlon.agents.vocabulary import make_member_builtins
 from tlosure.builtins import Builtin
 from tlosure.edn import EDNParseError, Keyword, Symbol, loads, loads_all
@@ -15,12 +15,8 @@ from tlosure.modules import ModuleError, ModulePackage
 
 
 def program_builtins(builtins: dict[str, Builtin] | None = None) -> dict[str, Builtin]:
-    """New programs use host operations, never legacy session/control constructors."""
-    from tlon.operations.control import control_names
-
-    registry = make_member_builtins() if builtins is None else builtins
-    excluded = control_names() | {"run-loop"}
-    return {name: value for name, value in registry.items() if name not in excluded}
+    """Every member uses the same ordinary operation vocabulary."""
+    return make_member_builtins() if builtins is None else dict(builtins)
 
 
 def program_module_sources(sources: dict[str, str]) -> dict[str, str]:
@@ -47,6 +43,7 @@ def program_module_sources(sources: dict[str, str]) -> dict[str, str]:
                     "tlon.context",
                     "tlon.workflows",
                     "tlon.authoring",
+                    "tlon.agent",
                 }:
                     name = namespace[5:]
                     if name not in names:
@@ -67,10 +64,6 @@ def validate_program_sources(
     """Admit a complete source package; no function bodies or effects run."""
     try:
         spec = MemberSpec.from_edn(loads(behavior))
-        if spec.version == 1:
-            if modules:
-                raise MemberSpecValidationError("version 1 does not accept module sources")
-            return validate_member_spec(spec, builtins=builtins)
         package = ModulePackage.from_sources(
             program_module_sources(modules), program_builtins(builtins)
         )

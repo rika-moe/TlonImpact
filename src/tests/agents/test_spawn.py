@@ -17,13 +17,21 @@ from uuid import UUID
 
 import pytest
 
+from tlon.agents.prototypes.management import write_trusted_prototype
 from tlon.agents.spawn import SpawnManager
 from tlon.base.config import AgentConfig, LLMConfig, yaml_load_file
 from tlon.base.paths import TlonPaths
 from tlon.evolution.ports import PrototypeError
 from tlon.lifecycle.ports import SpawnRejectedError
 
-ECHO_EDN = '{:version 1\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["sink@tlon.internal"]})]}]}\n'
+_FIXTURE_MODULES = {
+    "{:version 2 :handlers {:mail-delivered work.fixture6bdb126e/handle0}}\n": {
+        "work/fixture6bdb126e.tlon": '(ns work.fixture6bdb126e (:export handle0))\n(defn handle0 [event] (let [msg (get event :mail) self (get event :self)] (let [action0 (mail-forward {:mail_id (mail-field msg :id) :to ["sink@tlon.internal"]})] {:result nil})))\n'
+    }
+}
+
+
+ECHO_EDN = "{:version 2 :handlers {:mail-delivered work.fixture6bdb126e/handle0}}\n"
 
 _SPAWNER_MODEL = "test/spawner-model"
 
@@ -72,9 +80,10 @@ class _FakeRegistry:
 
 
 def _write_prototype(p: TlonPaths, name: str) -> None:
-    proto_dir = p.prototypes_dir() / name
-    proto_dir.mkdir(parents=True, exist_ok=True)
-    (proto_dir / "behavior.tlon").write_text(ECHO_EDN, encoding="utf-8")
+    created = write_trusted_prototype(
+        ECHO_EDN, modules=_FIXTURE_MODULES[ECHO_EDN], display_name="relay", tlon_paths=p
+    )
+    (p.prototypes_dir() / created.name).rename(p.prototypes_dir() / name)
 
 
 class TestQuotaPersistence:

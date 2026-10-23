@@ -73,7 +73,6 @@ class Operation:
     handler: Handler | AsyncHandler
     retry_safe: bool
     recover: RecoverHandler | None
-    control: bool
     default_timeout: float | None
     timeout_grace: float
     _input_json: str
@@ -90,7 +89,6 @@ class Operation:
         effects: frozenset[Effect] = frozenset(),
         retry_safe: bool = False,
         recover: RecoverHandler | None = None,
-        control: bool = False,
         default_timeout: float | None = None,
         timeout_grace: float = 0,
     ) -> None:
@@ -123,7 +121,6 @@ class Operation:
         object.__setattr__(self, "default_timeout", default_timeout)
         object.__setattr__(self, "retry_safe", retry_safe)
         object.__setattr__(self, "recover", recover)
-        object.__setattr__(self, "control", control)
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "description", description)
         object.__setattr__(self, "handler", handler)
@@ -246,10 +243,8 @@ class OperationExecutor:
     def call_pure(self, name: str, arguments: Any, context: CallContext | None = None) -> Any:
         bound = self._context(context)
         operation = self.registry.get(name)
-        if operation.effects or operation.control:
-            raise OperationError(
-                f"{name}: effectful or control operation requires async invocation"
-            )
+        if operation.effects:
+            raise OperationError(f"{name}: effectful operation requires async invocation")
         inputs = validate(operation.input_schema, arguments)
         result = cast(Handler, operation.handler)(bound, inputs)
         if inspect.isawaitable(result):
@@ -267,7 +262,6 @@ class OperationExecutor:
             "effects": sorted(operation.effects),
             "retry_safe": operation.retry_safe,
             "recover": operation.recover is not None,
-            "control": operation.control,
             "default_timeout": operation.default_timeout,
             "timeout_grace": operation.timeout_grace,
         }

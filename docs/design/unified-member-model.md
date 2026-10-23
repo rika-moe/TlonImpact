@@ -1,5 +1,7 @@
 # 统一成员模型（Unified Member Model）
 
+> P5 当前补充：成员只执行 v2 模块入口。下文旧 rules/run-loop/stage 示例是演进记录，已由 [普通程序设计](programmable-workflows.md) 和 [Runtime](runtime.md) 替代。
+
 本文定义成员、行为和原型的关系，以及成员生命周期与自主权边界。原型的写入、审批和 spawn 机制见 [prototypes.md](prototypes.md)，身份与人格见 [identity.md](identity.md)，程序执行见 [runtime.md](runtime.md)。历史来源是 [ADR 0006](../decisions/0006-unified-member-model.md)、[ADR 0024](../decisions/0024-subjective-identity.md) 与 [ADR 0030](../decisions/0030-sqlite-post-office.md)。
 
 ## 概念与关系

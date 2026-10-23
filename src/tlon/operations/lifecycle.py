@@ -4,8 +4,8 @@ from collections.abc import Awaitable
 from typing import Any, TypeVar
 
 from tlon.base.execution import BudgetExceededError, ExecutionDeadlineError
-from tlon.lifecycle.service import LifecycleService, scheduling_request
-from tlon.operations.core import AsyncHandler, CallContext, Operation
+from tlon.lifecycle.service import LifecycleService
+from tlon.operations.core import CallContext, Operation
 from tlon.operations.schema import OperationError, UnknownOutcomeError
 
 
@@ -80,25 +80,9 @@ def make_lifecycle_operations(service: LifecycleService | None) -> tuple[Operati
     async def start_all(context: CallContext, args: dict[str, Any]) -> list[dict[str, Any]]:
         return await mutate(context, bound(context).request_all(args.get("reason", ""), context))
 
-    def control_handler(action: str) -> AsyncHandler:
-        async def handler(context: CallContext, args: dict[str, Any]) -> dict[str, Any]:
-            bound(context)
-            return scheduling_request(action, args)
+    def finish(context: CallContext, args: dict[str, Any]) -> dict[str, Any]:
+        return {"finished": True}
 
-        return handler
-
-    requests = _object(
-        {
-            "scheduling_request": _object(
-                {
-                    "action": {"type": "string", "enum": ["finish", "sleep", "exit"]},
-                    "reason": _STRING,
-                    "wake_at": _STRING,
-                },
-                ["action", "reason"],
-            )
-        }
-    )
     return (
         Operation(
             "member-spawn",
@@ -169,30 +153,10 @@ def make_lifecycle_operations(service: LifecycleService | None) -> tuple[Operati
         ),
         Operation(
             "finish-turn",
-            "结束本轮工作，排空后进入等待；只能独立调用。",
+            "结束当前局部会话；不改变成员调度状态。",
             _object({}),
-            requests,
-            control_handler("finish"),
-            effects=frozenset({"write"}),
-            control=True,
-        ),
-        Operation(
-            "sleep-until",
-            "结束本轮并睡至未来带时区时间，期间来信只入箱；只能独立调用。",
-            _object({"wake_at": _STRING, **_REASON}, ["wake_at"]),
-            requests,
-            control_handler("sleep"),
-            effects=frozenset({"write"}),
-            control=True,
-        ),
-        Operation(
-            "exit-agent",
-            "永久退出并拒收新邮件，保留历史；只能独立调用。",
-            _object(_REASON, []),
-            requests,
-            control_handler("exit"),
-            effects=frozenset({"write"}),
-            control=True,
+            _object({"finished": {"type": "boolean", "enum": [True]}}),
+            finish,
         ),
     )
 

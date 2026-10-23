@@ -5,6 +5,7 @@ from typing import Any
 from tlon.agents.behavior_template import (
     BehaviorTemplateError,
     analyze,
+    render_module_templates,
     render_template,
 )
 from tlon.agents.member_spec import MemberSpec, MemberSpecValidationError
@@ -38,7 +39,7 @@ def instantiate(
     """Create an agent from a prototype: copy, no merging.
 
     Persona files are copied verbatim; the prototype ``behavior.tlon`` —
-    a complete, total spec in the unified rules form — is copied verbatim
+    an event-handler declaration with its complete module source package — is copied
     as the instance's own behavior file.
 
     When the prototype's spec declares ``:parameters`` (a parameterized
@@ -92,17 +93,15 @@ def instantiate(
         modules = read_module_sources(proto_dir / "modules")
     except ValueError as e:
         raise PrototypeError(str(e)) from e
-    info = analyze(raw_text)
-    raw_spec = MemberSpec.from_edn(loads(info.standin_text))
-    if raw_spec.version == 2:
-        metadata_file = proto_dir / METADATA_FILE
-        if metadata_file.is_symlink() or not metadata_file.is_file():
-            raise PrototypeError("module program requires trusted package metadata")
-        metadata = loads(metadata_file.read_text(encoding="utf-8"))
-        if not metadata.get("trusted", False) or metadata.get("program-digest") != program_digest(
-            raw_text, modules
-        ):
-            raise PrototypeError("prototype program differs from its approved package")
+    info = analyze(raw_text, modules)
+    metadata_file = proto_dir / METADATA_FILE
+    if metadata_file.is_symlink() or not metadata_file.is_file():
+        raise PrototypeError("module program requires trusted package metadata")
+    metadata = loads(metadata_file.read_text(encoding="utf-8"))
+    if not metadata.get("trusted", False) or metadata.get("program-digest") != program_digest(
+        raw_text, modules
+    ):
+        raise PrototypeError("prototype program differs from its approved package")
     if info.has_parameters:
         if params is None:
             raise PrototypeError(
@@ -111,7 +110,8 @@ def instantiate(
                 f"params must be provided at instantiation"
             )
         try:
-            behavior_text = render_template(raw_text, params)
+            behavior_text = render_template(raw_text, params, modules)
+            modules = render_module_templates(raw_text, modules, params)
         except BehaviorTemplateError as e:
             raise PrototypeError(f"prototype '{prototype_name}' parameter error: {e}") from e
     else:
@@ -151,7 +151,7 @@ def instantiate(
     # Lessons inheritance (see docs/design/prototypes.md): a prototype's
     # LESSONS.md — lessons distilled from a retired member — is copied
     # next to the behavior file
-    # (a persona-file neighbor); the DSL ``(lessons)`` section injects it.
+    # (a persona-file neighbor); ordinary programs read it through member-context.
     # No LESSONS.md in the prototype → no file on the member either.
     prototype_lessons = proto_dir / LESSONS_FILE
     if prototype_lessons.exists():

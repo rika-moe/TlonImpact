@@ -2,7 +2,9 @@
 metadata / full-detail reads.
 """
 
+from collections.abc import Iterator
 from importlib import resources
+from importlib.resources.abc import Traversable
 from pathlib import Path
 
 from tlon.agents.prototypes.info import (
@@ -18,8 +20,21 @@ from tlon.agents.prototypes.info import (
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.evolution.ports import PrototypeError
+from tlon.evolution.publication import publish_directory
 
 logger = get_logger(__name__)
+
+
+def _resource_files(root: Traversable, prefix: str = "") -> Iterator[tuple[str, Traversable]]:
+    """Walk packaged source directories without relying on filesystem paths."""
+    for resource in root.iterdir():
+        if resource.name.startswith(("_", ".")):
+            continue
+        relative = prefix + resource.name
+        if resource.is_dir():
+            yield from _resource_files(resource, relative + "/")
+        elif resource.is_file():
+            yield relative, resource
 
 
 def seed_prototypes(tlon_paths: TlonPaths) -> int:
@@ -39,15 +54,13 @@ def seed_prototypes(tlon_paths: TlonPaths) -> int:
         if not entry.is_dir() or entry.name.startswith(("_", ".")):
             continue
         target_dir = target_root / entry.name
-        for resource in entry.iterdir():
-            if not resource.is_file() or resource.name.startswith(("_", ".")):
-                continue
-            target = target_dir / resource.name
-            if target.exists():
-                continue
-            target_dir.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(resource.read_bytes())
-            copied += 1
+        # Existing packages belong to the user, including older formats.
+        # Never inject a new module set into an existing behavior package.
+        if target_dir.exists():
+            continue
+        content = {relative: resource.read_bytes() for relative, resource in _resource_files(entry)}
+        publish_directory(target_dir, content)
+        copied += len(content)
     logger.info("prototypes_seeded", copied=copied, dir=str(target_root))
     return copied
 

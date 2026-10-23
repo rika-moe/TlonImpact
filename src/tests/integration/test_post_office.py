@@ -98,13 +98,14 @@ async def test_retired_and_unknown_addresses_refuse_entire_post(tmp_path: Path) 
                             ).fetchone()
                             runs = (
                                 connection.execute(
-                                    "SELECT rule_edn,completed,error FROM runs"
+                                    "SELECT run_id,completed,error FROM runs"
                                 ).fetchall()
                                 if initialized
                                 else []
                             )
                         boot_finished = any(
-                            ':name "boot"' in source and completed for source, completed, _ in runs
+                            identity.endswith(":handler:boot") and completed
+                            for identity, completed, _ in runs
                         )
                         settled = all(
                             completed or error is not None for _, completed, error in runs

@@ -85,7 +85,7 @@ def test_symlink_modules_rejected_before_copy(tmp_path: Path) -> None:
 
 
 def test_v1_rejects_module_payload(tmp_path: Path) -> None:
-    with pytest.raises(PrototypeError, match="version 1"):
+    with pytest.raises(PrototypeError, match="only :version 2"):
         write_trusted_prototype(
             '{:version 1 :rules [{:name "noop" :on :mail-delivered :actions [(+ 1 2)]}]}',
             display_name="Old",

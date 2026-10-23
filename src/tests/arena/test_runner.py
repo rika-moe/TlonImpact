@@ -25,6 +25,9 @@ from typing import Any, cast
 
 import pytest
 
+from tests.history_helpers import append_history
+from tests.program_helpers import MINIMAL_MODULES, write_program
+from tlon.agents.program_package import program_digest
 from tlon.agents.session_journal import SessionJournal
 from tlon.arena.runner import (
     ArenaError,
@@ -43,7 +46,7 @@ from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.mail.store import StoredPost
 
-_RELAY_SPEC = '{:version 1\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
+_RELAY_SPEC = "{:version 2 :handlers {:mail-delivered work/handle}}"
 
 _TYPICAL_JSON = json.dumps(
     [
@@ -56,10 +59,10 @@ _TYPICAL_JSON = json.dumps(
 def _write_staging_proto(paths: TlonPaths, name: str = "relay") -> Path:
     proto_dir = paths.prototypes_staging_dir() / name
     proto_dir.mkdir(parents=True, exist_ok=True)
-    (proto_dir / "behavior.tlon").write_text(_RELAY_SPEC, encoding="utf-8")
+    write_program(proto_dir / "behavior.tlon", _RELAY_SPEC)
     (proto_dir / "prototype.tlon").write_text(
         f'{{:name "{name}" :display-name "{name}" :description "转发邮件的中继成员"'
-        " :trusted false}",
+        f' :program-digest "{program_digest(_RELAY_SPEC, MINIMAL_MODULES)}" :trusted false}}',
         encoding="utf-8",
     )
     return proto_dir
@@ -141,7 +144,8 @@ class _FakeJournal:
         self._count += 1
         self._remaining -= 1
         sid = f"{self._agent_id}-{self._count:012d}"
-        await self._journal.append(
+        await append_history(
+            self._journal,
             sid,
             "session/start",
             agent_id=self._agent_id,
@@ -150,7 +154,7 @@ class _FakeJournal:
             responsibility=[mail.id for mail in take],
             context=[],
         )
-        await self._journal.append(sid, "session/end", reason="complete")
+        await append_history(self._journal, sid, "session/end", reason="complete")
         for mail in take:
             await self._mailbox.mark_read(mail.id)
 
@@ -158,8 +162,8 @@ class _FakeJournal:
         await self._step()
         return await self._journal.count_completed(started_after=started_after)
 
-    async def find_unfinished(self) -> list[str]:
-        return await self._journal.find_unfinished()
+    async def list_pending(self) -> list[str]:
+        return await self._journal.list_pending()
 
 
 class _FakeClock:
@@ -222,11 +226,17 @@ class _Harness:
         self.runtime = _FakeRuntime()
         self.runtime_seen_paths: TlonPaths | None = None
         self.config_at_build: AgentConfig | None = None
+        self.prototype_metadata_at_build: dict[str, Any] | None = None
         self.gc = gc if gc is not None else _FakeGC()
         self.clock = __import__("time").monotonic if real_clock else _FakeClock(step=clock_step)
 
         async def runtime_factory(arena_paths: TlonPaths) -> IsolatedRuntime:
             self.runtime_seen_paths = arena_paths
+            from tlosure.edn import loads
+
+            self.prototype_metadata_at_build = loads(
+                (arena_paths.prototypes_dir() / "relay" / "prototype.tlon").read_text()
+            )
             agent_yaml = list(arena_paths.tlon_home().glob("arena-*/config/agent.yaml"))
             if agent_yaml:
                 self.config_at_build = yaml_load_file(agent_yaml[0])
@@ -272,6 +282,7 @@ def _archive_dir(h: _Harness, run: ArenaRun) -> Path:
 async def test_happy_path_layout_feed_archive_teardown(tmp_path: Path) -> None:
     h = _Harness(tmp_path, settings=_settings())
     proto_dir = _write_staging_proto(h.paths)
+    original_metadata = (proto_dir / "prototype.tlon").read_bytes()
 
     run = await h.runner.start_run("relay", model="deepseek/test-chat")
     assert run.status is RunStatus.PREPARING
@@ -284,6 +295,12 @@ async def test_happy_path_layout_feed_archive_teardown(tmp_path: Path) -> None:
     # 隔离家园已拆；staging 原件完好
     assert not (tmp_path / "arena" / run.run_id).exists()
     assert (proto_dir / "behavior.tlon").read_text(encoding="utf-8") == _RELAY_SPEC
+    assert (proto_dir / "prototype.tlon").read_bytes() == original_metadata
+    assert h.prototype_metadata_at_build is not None
+    assert h.prototype_metadata_at_build["trusted"] is True
+    assert h.prototype_metadata_at_build["program-digest"] == program_digest(
+        _RELAY_SPEC, MINIMAL_MODULES
+    )
 
     # 成员接入 + 每封语料一个 MAIL_NEW
     assert h.runtime.members.adopted == [agent_id]

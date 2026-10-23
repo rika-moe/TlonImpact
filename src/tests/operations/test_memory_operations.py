@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from tests.history_helpers import append_history
 from tlon.agents.session_journal import SessionJournal
 from tlon.base.paths import TlonPaths
 from tlon.memory.manager import MemoryManager
@@ -58,7 +59,7 @@ async def test_two_members_memory_and_journal_isolation(tmp_path: Path) -> None:
     await a.call("memory-remember", {"fact": "private secret"})
     assert "private secret" not in (await b.call("memory-search", {"query": "private"}))["results"]
     for journal, text in ((ja, "A secret"), (jb, "B private")):
-        await journal.append("same-id", "session/start", trigger_content=text)
+        await append_history(journal, "same-id", "session/start", trigger_content=text)
     assert "A secret" in (await a.call("session-read", {"session_id": "same-id"}))["digest"]
     assert "B private" in (await b.call("session-read", {"session_id": "same-id"}))["digest"]
     with pytest.raises(InputError):

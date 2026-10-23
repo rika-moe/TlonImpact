@@ -43,8 +43,8 @@ class ContextWindowExceededError(ModelRequestRejectedError):
     """The provider rejected the request because the context is too long.
 
     Raised instead of retrying (ADR 0008): a context-length 4xx can never
-    succeed on retry — the engine (LoopDriver) catches it, force-compacts
-    the session context, and retries the stage once.
+    succeed with the same request. Ordinary programs must fit context
+    before requesting a model; the host preserves the rejection outcome.
     """
 
     def __init__(self, message: str) -> None:

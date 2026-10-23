@@ -1,4 +1,1 @@
-{:name :p-39c280594c5b4e4084ce8aad72e6b07f
- :display-name "定址转发"
- :description "L0 执行能力；收到邮件时原样转发给必填参数 :to 指定的地址列表，不调用 LLM。"
- :trusted true}
+{:name :p-39c280594c5b4e4084ce8aad72e6b07f :display-name "定址转发" :description "L0 执行能力；收到邮件时原样转发给必填参数 :to 指定的地址列表，不调用 LLM。" :trusted true :program-digest "c040b9c3d42d235c4b0914febc5f44e73d0abbcbf7039a088f31bb6c2aad0f1b"}

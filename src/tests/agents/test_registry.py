@@ -12,6 +12,7 @@ import asyncio
 import pytest
 
 from tests.mail_helpers import make_office
+from tests.program_helpers import write_program
 from tlon.agents.agent_registry import AgentRegistry, RegistryQueries
 from tlon.agents.lifecycle import StartRequest
 from tlon.agents.loader import load_member_spec
@@ -24,21 +25,23 @@ from tlon.lifecycle.ports import StopRejectedError
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 
-RELAY_EDN = '{:version 1\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["sink@tlon.internal"]})]}]}\n'
-
-#: Mail rule + a boot rule: belongs to the boot set and subscribes to mail.
-BOOTY_EDN = '{:version 1\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["sink@tlon.internal"]})]}\n         {:name "boot"\n          :on :boot\n          :actions []}]}\n'
-
-#: Boot rule only — no mail subscription (cannot be woken by mail).
-BOOT_ONLY_EDN = """\
-{:version 1
- :rules [{:name "boot"
-          :on :boot
-          :actions []}]}
-"""
-
-#: A member program with auto-optout, session response and boot rules.
-MIXED_MEMBER_EDN = '{:version 1 :rules [{:name "auto-optout" :on :mail-delivered :when (content-matches? msg "退订") :actions [(mail-send {:to [(mail-field msg :from)] :content "已为您处理退订" :in_reply_to (mail-field msg :id)})]} {:name "respond" :on :mail-delivered :when (and (contains? (or (mail-field msg :to) []) (get self :address)) (not (content-matches? msg "退订"))) :actions [(run-loop (quote {:context {:sections [(persona) (protocol)]} :stages [(think) (act)] :until (or (>= (get state :iteration) (get limits :max_iterations)) (>= (get state :error_count) (get limits :max_consecutive_errors))) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 5}}))]} {:name "boot" :on :boot :actions []}]}'
+RELAY_EDN = "{:version 2 :handlers {:mail-delivered work/handle}}"
+BOOTY_EDN = "{:version 2 :handlers {:mail-delivered work/handle :boot work/boot}}"
+BOOT_ONLY_EDN = "{:version 2 :handlers {:boot work/boot}}"
+MIXED_MEMBER_EDN = "{:version 2 :handlers {:mail-delivered work/optout :boot work/boot}}"
+_MODULES = {
+    "work.tlon": """(ns work (:export handle boot optout))
+(defn boot [event] {:result nil})
+(defn handle [event]
+  (let [msg (get event :mail)]
+    (mail-forward {:mail_id (mail-field msg :id) :to ["sink@tlon.internal"]}))
+  {:result nil})
+(defn optout [event]
+  (let [msg (get event :mail)]
+    (if (content-matches? msg "退订")
+      (mail-send {:to [(mail-field msg :from)] :content "已为您处理退订" :in_reply_to (mail-field msg :id)}) nil))
+  {:result nil})"""
+}
 
 
 class _StaticProvider(AgentInfoProvider):
@@ -75,7 +78,7 @@ async def _wait_for(predicate, timeout: float = 3.0) -> None:
 def _write_behavior(p: TlonPaths, agent_id: str, text: str) -> None:
     behavior = p.agent_behavior_file(agent_id)
     behavior.parent.mkdir(parents=True, exist_ok=True)
-    behavior.write_text(text, encoding="utf-8")
+    write_program(behavior, text, _MODULES)
 
 
 class TestRegistryStart:

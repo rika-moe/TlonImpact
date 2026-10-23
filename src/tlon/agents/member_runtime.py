@@ -11,18 +11,12 @@ from typing import TYPE_CHECKING, Any
 
 from structlog.contextvars import bound_contextvars
 
-from tlon.agents.context_builder import ContextBuilder
-from tlon.agents.context_pressure import ContextPressure
-from tlon.agents.executor import EffectExecutor
 from tlon.agents.lifecycle import StartRequest, StopRequest
-from tlon.agents.loader import has_frozen_work
-from tlon.agents.loop_driver import LoopDriver
+from tlon.agents.loader import has_frozen_work, legacy_work_error
 from tlon.agents.member_spec import (
     MemberRule,
     MemberSpec,
     ReflectSpec,
-    SessionRecipe,
-    validate_member_spec,
 )
 from tlon.agents.program_driver import ProgramDriver
 from tlon.agents.program_package import (
@@ -35,24 +29,19 @@ from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
 from tlon.agents.recovery import RecoveryBlockedError, blocked_reason, blocks_recovery
 from tlon.agents.reflection import ReflectionEngine
-from tlon.agents.scheduler import SessionScheduler
-from tlon.agents.session import AgentSession
 from tlon.agents.session_journal import SessionJournal
-from tlon.agents.stages.services import StageServices, make_event_publisher
 from tlon.agents.tool_executor import ToolExecutor
-from tlon.agents.trigger import AgentIdentity
 from tlon.agents.vocabulary import rule_env
 from tlon.base.component import Component
-from tlon.base.config import DEFAULT_CONTEXT_WINDOW, AgentConfig
+from tlon.base.config import AgentConfig
 from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
-from tlon.base.execution import ExecutionScope, MemberWriteGate, bind_execution, current_execution
-from tlon.base.llm_client import LLMClient, ToolCall
+from tlon.base.execution import ExecutionScope, MemberWriteGate, bind_execution
+from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.maintenance import MaintenanceRetry
 from tlon.base.paths import TlonPaths
-from tlon.base.tracing.trace_context import continue_trace
 from tlon.lifecycle.service import LifecycleService
 from tlon.memory.manager import MemoryManager
 from tlon.operations.adapters import OperationTool
@@ -75,10 +64,8 @@ from tlon.organization.mail.store import MailStore
 from tlon.organization.messaging.member import Member
 from tlon.sandbox.shell import MemberShellService
 from tlon.tasks.manager import TaskManager
-from tlon.tools.base import ToolResult
-from tlon.tools.spill import ToolSpill
-from tlosure.builtins import ActionRequest, Builtin, EvalError, FuelExhaustedError
-from tlosure.edn import Keyword, Symbol, dumps, loads
+from tlosure.builtins import Builtin, EvalError
+from tlosure.edn import Keyword, dumps, loads
 from tlosure.modules import ModuleError, ModulePackage
 
 if TYPE_CHECKING:
@@ -123,7 +110,7 @@ class MemberServices:
     # DockerRuntime; close() passes through to the Docker client. None
     # for members declaring docker.level=L0 (无执行装置, issue #26),
     # when the daemon was unreachable at assembly time, and for
-    # capability sets built without assembly (Adam, tests).
+    # service bundles built without assembly (Adam, tests).
     docker_runtime: "ExecutionDevice | None" = None
     operations: tuple[Operation, ...] = ()
     shell_service: MemberShellService | None = None
@@ -160,8 +147,8 @@ class MemberRuntime(Member):
                 read-marking (None only for bare test instances; Adam
                 carries ``~/.tlon/adam/mail/`` — docs/design/mail.md
                 「守护者信箱」)
-            services: The member's capability set (LLM/memory/tools).
-                Programs request sessions explicitly with run-loop.
+            services: The member's services (LLM/memory/tools).
+                Programs invoke module entries directly.
                 Bare host-service members may omit these services.
             registry: Agent registry for ``spawn`` actions (None, e.g.
                 Adam, disables them)
@@ -236,18 +223,9 @@ class MemberRuntime(Member):
         self._builtins = {**self._host_builtins, **self._operations.builtins()}
         self._behavior_error: str | None = None
         try:
-            if spec.version == 2:
-                validate_program_sources(spec.to_edn(), spec.module_sources, self._builtins)
-            else:
-                validate_member_spec(spec, builtins=self._builtins)
+            validate_program_sources(spec.to_edn(), spec.module_sources, self._builtins)
         except ValueError as error:
-            referenced = self._referenced_names(
-                [item for rule in spec.rules for item in [rule.when, *rule.actions]]
-            )
-            unavailable = sorted(referenced & (host_names - set(self._operations.builtins())))
             message = f"member {member_id}: required operation admission failed: {error}"
-            if unavailable:
-                message += f"; service not assembled for {unavailable}"
             if self._paths is None or not has_frozen_work(member_id, self._paths):
                 raise ValueError(message) from error
             self._behavior_error = message
@@ -261,19 +239,13 @@ class MemberRuntime(Member):
                 services.tool_executor.register_tool(
                     OperationTool(operation_executor, operation.name)
                 )
-        self._mentor_cc = services.mentor_cc if services is not None else None
         # Rule idle bookkeeping (registry drain): initialize time
         # and the last executed rule action, both monotonic.
         self._initialized_at: float | None = None
         self._last_action_at: float | None = None
         self._active_actions = 0
-        # Session services are initialized when a program requests a session.
-        self._scheduler: SessionScheduler | None = None
-        self._loop_driver: LoopDriver | None = None
-        self._effect_executor: EffectExecutor | None = None
-        self._stage_services: StageServices | None = None
+        # Background reflection shares the same committed interaction history.
         self._reflection: ReflectionEngine | None = None
-        self._context_builder: ContextBuilder | None = None
         self._logger = logger.bind(agent_id=member_id)
         self._state: MemberState | None = None
         # The one background mail-rescan task (ADR 0028 决策 4: boot scan +
@@ -281,7 +253,6 @@ class MemberRuntime(Member):
         self._rescan_task: asyncio.Task[None] | None = None
         self._queue: asyncio.Queue[Event] = asyncio.Queue()
         self._queued_mail: set[str] = set()
-        self._completed_dispatches: set[tuple[str, str]] = set()
         self._program_task: asyncio.Task[None] | None = None
         self._deferred_boot: list[MemberRule] = []
         self._maintenance_sources: frozenset[str] | None = None
@@ -291,8 +262,6 @@ class MemberRuntime(Member):
                 member_id,
                 services.tlon_paths,
                 program_store=self._program_store,
-                verify_root=self._verify_session_root,
-                verify_invocation=self._verify_invocation,
             )
             if services
             else (
@@ -300,18 +269,12 @@ class MemberRuntime(Member):
                     member_id,
                     tlon_paths,
                     program_store=self._program_store,
-                    verify_root=self._verify_session_root,
-                    verify_invocation=self._verify_invocation,
                 )
                 if tlon_paths is not None
                 else None
             )
         )
-        if services is not None and spec.version == 1:
-            assert self._journal is not None
-            self._journal.resolve_dispatch = self._resolve_session_dispatch
-            self._assemble_scheduler(services)
-        elif services is not None:
+        if services is not None:
             assert self._journal is not None
             registry = self._registry
             self._reflection = ReflectionEngine(
@@ -337,41 +300,6 @@ class MemberRuntime(Member):
             else f"maintenance:{purpose}:{uuid.uuid4().hex}"
         )
         return ExecutionScope(self._program_store, root, limit, "output")
-
-    async def _session_execution(self, session_id: str, recipe: SessionRecipe) -> ExecutionScope:
-        parent = current_execution()
-        deadline = parent.effective_deadline() if parent is not None else None
-        assert self._journal is not None
-        events = await self._journal.read_events(session_id)
-        start = next((event for event in events if event["type"] == "session/start"), None)
-        if start is not None:
-            deadline = start.get("execution_deadline")
-        scope = ExecutionScope(
-            self._program_store,
-            session_id,
-            recipe.max_tokens,
-            "total",
-            deadline=deadline,
-            parent=parent,
-        )
-        await scope.initialize()
-        return scope
-
-    async def _resolve_session_dispatch(
-        self, session_id: str, tool_call: ToolCall, metadata: dict[str, Any]
-    ) -> ToolResult:
-        assert self._journal is not None and self._services is not None
-        events = await self._journal.read_events(session_id)
-        start = next(event for event in events if event["type"] == "session/start")
-        recipe = SessionRecipe.from_edn(loads(start["recipe"]))
-        driver = self._assemble_session(self._services, recipe)
-        scope = await self._session_execution(session_id, recipe)
-        with bind_execution(scope):
-            return await driver.resolve_dispatch(session_id, tool_call, metadata)
-
-    async def _verify_session_root(self, session_id: str) -> str:
-        await asyncio.to_thread(self._program_store.ensure_root, session_id)
-        return self._program_store.build_id
 
     # ── Identity / derived values ──
 
@@ -411,38 +339,39 @@ class MemberRuntime(Member):
 
     @property
     def active_session_count(self) -> int:
-        """Count all live work: sessions, reflection and rule handlers.
+        """Count all live work: program handlers and background reflection.
 
         Draining must wait for every kind of work, including external I/O.
         """
-        return (
-            (self._scheduler.active_session_count if self._scheduler is not None else 0)
-            + self._active_actions
-            + int(self._reflection is not None and self._reflection.is_running)
+        return self._active_actions + int(
+            self._reflection is not None and self._reflection.is_running
         )
 
     @property
     def idle_seconds(self) -> float:
-        """Idle time covers rule effects, sessions and background maintenance."""
+        """Idle time covers program effects and background maintenance."""
         if self.active_session_count > 0 or self._initialized_at is None:
             return 0.0
         since = self._last_action_at or self._initialized_at
         elapsed = time.monotonic() - since
-        return min(elapsed, self._scheduler.idle_seconds) if self._scheduler else elapsed
+        return elapsed
 
     # ── Lifecycle ──
 
     async def initialize(self) -> None:
-        """Load services, recover sessions, and start the one program worker."""
+        """Load services, recover module entries, and start the program worker."""
         self._state = MemberState.INITIALIZING
+        if self._paths is not None:
+            legacy_error = await asyncio.to_thread(legacy_work_error, self._member_id, self._paths)
+            if legacy_error:
+                self._behavior_error = legacy_error
+                self._state = MemberState.ERROR
+                raise RecoveryBlockedError(legacy_error)
         if self._services is not None:
             await self._services.memory.load()
             self._services.task_manager.load()
         self._initialized = True
         self._initialized_at = time.monotonic()
-        if self._scheduler is not None and self._spec.version == 1:
-            self._scheduler.start()
-            await self._scheduler.wait_ready()
         admitted_rules = self._spec.rules if self._behavior_error is None else ()
         event_types = {rule.on for rule in admitted_rules if rule.on is not None}
         for event_type in sorted(event_types, key=str):
@@ -459,7 +388,7 @@ class MemberRuntime(Member):
 
     async def shutdown(self) -> None:
         """Shutdown the member: cancel the background tasks (rescan,
-        in-flight reflection), stop the session loop, release
+        in-flight reflection), stop the program worker, release
         subscriptions, shut down tools (cancelling background bash tasks),
         and close the Docker client (its connection pool must not leak
         across sleep→wake re-assembly)."""
@@ -474,10 +403,8 @@ class MemberRuntime(Member):
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._program_task
                 self._program_task = None
-            if self._scheduler is not None:
-                await self._scheduler.stop()
             if self._reflection is not None:
-                # The scheduler is stopped, so no new reflection can
+                # The program worker is stopped, so no new reflection can
                 # trigger; cancel one already in flight — no
                 # free-floating task survives the member.
                 await self._reflection.shutdown()
@@ -535,8 +462,6 @@ class MemberRuntime(Member):
             self._logger.error("member_program_worker_failed", error=str(error))
 
     async def _program_loop(self) -> None:
-        if self._scheduler is not None and self._spec.version == 1:
-            await self._scheduler.wait_recovered()
         while True:
             try:
                 await self._restore_entry_scheduling()
@@ -553,8 +478,7 @@ class MemberRuntime(Member):
                 if await asyncio.to_thread(self._program_store.pending):
                     await asyncio.sleep(1)
                     continue
-            if self._spec.version == 2:
-                await self._check_program_maintenance()
+            await self._check_program_maintenance()
             if self._deferred_boot:
                 rule = self._deferred_boot.pop(0)
                 try:
@@ -568,11 +492,7 @@ class MemberRuntime(Member):
                     )
                 continue
             try:
-                event = (
-                    await asyncio.wait_for(self._queue.get(), timeout=1.0)
-                    if self._spec.version == 2
-                    else await self._queue.get()
-                )
+                event = await asyncio.wait_for(self._queue.get(), timeout=1.0)
             except TimeoutError:
                 continue
             mail = event.payload.get("mail") if isinstance(event.payload, dict) else None
@@ -641,49 +561,14 @@ class MemberRuntime(Member):
     async def _dispatch_event(self, event: Event) -> None:
         if self._behavior_error is not None or not self._can_schedule():
             return
-        mail = event.payload.get("mail") if isinstance(event.payload, dict) else None
         rules = [rule for rule in self._spec.rules if rule.on == event.type]
-        # Admit every matching rule in one durable transaction. A prior rule
-        # may mark the source read; later rules must survive without rescans.
-        if self._spec.version == 2:
-            for rule in rules:
-                completed = await self._run_rule(rule, event, event.payload)
-                if not completed:
-                    break
-            return
-        items = [self._program_record_data(rule, event, event.payload) for rule in rules]
-        records = await asyncio.to_thread(
-            self._program_store.ensure_many,
-            items,
-        )
-        for record in records:
-            rule, source, payload = self._program_input(record)
-            completed = await self._run_rule(rule, source, payload, run_id=record.run_id)
-            if not completed:
+        for rule in rules:
+            if not await self._run_rule(rule, event, event.payload):
                 break
-            if isinstance(mail, Mail):
-                await self._complete_dispatch(mail.id, rule.name)
 
     async def _dispatch_completed(self, mail_id: str, rule_name: str) -> bool:
-        if self._spec.version == 2:
-            run = await asyncio.to_thread(self._program_store.get_run, f"{mail_id}:{rule_name}")
-            return run is not None and (run.completed or run.error is not None)
-        key = (mail_id, rule_name)
-        if key in self._completed_dispatches:
-            return True
-        if self._journal is not None:
-            events = await self._journal.read_events(f"dispatch:{mail_id}:{rule_name}")
-            if any(event["type"] == "dispatch/complete" for event in events):
-                self._completed_dispatches.add(key)
-                return True
-        return False
-
-    async def _complete_dispatch(self, mail_id: str, rule_name: str) -> None:
-        if self._journal is not None:
-            await self._journal.append(f"dispatch:{mail_id}:{rule_name}", "dispatch/complete")
-        self._completed_dispatches.add((mail_id, rule_name))
-        if len(self._completed_dispatches) > 4096:
-            self._completed_dispatches.pop()
+        run = await asyncio.to_thread(self._program_store.get_run, f"{mail_id}:{rule_name}")
+        return run is not None and (run.completed or run.error is not None)
 
     # ── Rule evaluation ──
 
@@ -746,35 +631,22 @@ class MemberRuntime(Member):
             return MemberRuntime._snapshot_input(asdict(value))
         return value
 
-    @staticmethod
-    def _restore_input(value: Any) -> Any:
-        if isinstance(value, dict):
-            if set(value) == {"__tlon_mail__"}:
-                return Mail.from_dict(value["__tlon_mail__"])
-            return {key: MemberRuntime._restore_input(item) for key, item in value.items()}
-        if isinstance(value, list):
-            return [MemberRuntime._restore_input(item) for item in value]
-        return value
-
     async def _restore_programs(self) -> None:
         await self._restore_entry_scheduling()
         for record in await asyncio.to_thread(self._program_store.pending):
             if not self._can_schedule():
                 break
+            if record.package_edn is None:
+                self._behavior_error = (
+                    f"Legacy recovery blocked: {record.run_id} in "
+                    f"{self._program_store.database}; stage execution has been removed"
+                )
+                self._state = MemberState.ERROR
+                self._logger.error("legacy_recovery_blocked", error=self._behavior_error)
+                return
             try:
                 await asyncio.to_thread(self._program_store.ensure_root, record.run_id)
-                if record.package_edn is not None:
-                    await self._run_entry_record(record)
-                    continue
-                if self._spec.version == 2:
-                    raise RecoveryBlockedError("legacy rule requires its original behavior engine")
-                rule, event, payload = self._program_input(record)
-                completed = await self._run_rule(rule, event, payload, run_id=record.run_id)
-                mail = payload.get("mail") if isinstance(payload, dict) else None
-                if not completed:
-                    break
-                if isinstance(mail, Mail):
-                    await self._complete_dispatch(mail.id, rule.name)
+                await self._run_entry_record(record)
             except Exception as error:
                 if blocks_recovery(error):
                     await asyncio.to_thread(
@@ -791,14 +663,6 @@ class MemberRuntime(Member):
                     exc_info=True,
                 )
                 break
-
-    def _program_input(self, record: ProgramRun) -> tuple[MemberRule, Event | None, Any]:
-        rule = MemberSpec.from_edn(loads(record.rule_edn)).rules[0]
-        snapshot = loads(record.input_edn)
-        payload = self._restore_input(snapshot["payload"])
-        event_data = snapshot["event"]
-        event = Event.from_dict({**event_data, "payload": payload}) if event_data else None
-        return rule, event, payload
 
     def _program_record_data(
         self,
@@ -820,7 +684,7 @@ class MemberRuntime(Member):
             event_data.pop("payload")
         return (
             run_id or f"{identity}:{rule.name}",
-            MemberSpec(version=1, rules=(rule,)).to_edn(),
+            self._spec.to_edn(),
             dumps(
                 {
                     "payload": self._snapshot_input(payload),
@@ -830,25 +694,6 @@ class MemberRuntime(Member):
             ),
         )
 
-    @staticmethod
-    def _referenced_names(value: Any) -> set[str]:
-        """Conservatively retain named source dependencies, including data literals.
-
-        Retaining quoted names is harmless and keeps this scan independent
-        of the language's static admission; execution still uses frozen source.
-        """
-        if isinstance(value, Symbol):
-            return {str(value)}
-        names: set[str] = set()
-        if isinstance(value, dict):
-            for key, item in value.items():
-                names.update(MemberRuntime._referenced_names(key))
-                names.update(MemberRuntime._referenced_names(item))
-        elif isinstance(value, (list, tuple)):
-            for item in value:
-                names.update(MemberRuntime._referenced_names(item))
-        return names
-
     async def _run_rule_body(
         self,
         rule: MemberRule,
@@ -857,105 +702,30 @@ class MemberRuntime(Member):
         *,
         run_id: str | None = None,
     ) -> bool:
-        frozen = await asyncio.to_thread(self._program_store.get_run, run_id) if run_id else None
-        if self._spec.version == 2 and (frozen is None or frozen.package_edn is not None):
-            identity, _, input_edn = self._program_record_data(rule, trigger_event, payload, run_id)
-            existing = await asyncio.to_thread(self._program_store.get_run, identity)
-            if existing is not None:
-                if existing.package_edn is None:
-                    raise RecoveryBlockedError("entry identity belongs to a legacy rule")
-                return await self._run_entry_record(existing)
-            model_contexts = await self._program_model_contexts()
-            record = await asyncio.to_thread(
-                self._program_store.ensure_entry,
-                identity,
-                self._spec.to_edn(),
-                input_edn,
-                {
-                    "behavior": self._spec.to_edn(),
-                    "modules": program_module_sources(self._spec.module_sources),
-                    "model_contexts": model_contexts,
-                    "entry": dict(self._spec.handlers)[rule.name.removeprefix("handler:")],
-                    "fuel": self._spec.fuel,
-                    "token_budget": self._services.config.llm.max_tokens
-                    if self._services and self._services.config.llm
-                    else 4096,
-                },
-            )
-            return await self._run_entry_record(record)
+        identity, _, input_edn = self._program_record_data(rule, trigger_event, payload, run_id)
+        existing = await asyncio.to_thread(self._program_store.get_run, identity)
+        if existing is not None:
+            if existing.package_edn is None:
+                raise RecoveryBlockedError("entry identity belongs to a legacy rule")
+            return await self._run_entry_record(existing)
+        model_contexts = await self._program_model_contexts()
         record = await asyncio.to_thread(
-            self._program_store.ensure,
-            *self._program_record_data(rule, trigger_event, payload, run_id),
+            self._program_store.ensure_entry,
+            identity,
+            self._spec.to_edn(),
+            input_edn,
+            {
+                "behavior": self._spec.to_edn(),
+                "modules": program_module_sources(self._spec.module_sources),
+                "model_contexts": model_contexts,
+                "entry": dict(self._spec.handlers)[rule.name.removeprefix("handler:")],
+                "fuel": self._spec.fuel,
+                "token_budget": self._services.config.llm.max_tokens
+                if self._services and self._services.config.llm
+                else 4096,
+            },
         )
-        run_id = record.run_id
-        if record.completed or record.error is not None:
-            return True
-        # The stored program and trigger are the execution authority, even
-        # when the member's behavior file changed while the process was down.
-        rule, trigger_event, payload = self._program_input(record)
-        mail = payload.get("mail") if isinstance(payload, dict) else None
-
-        async def execute(request: ActionRequest, name: str, index: int, args_edn: str) -> Any:
-            self._last_action_at = time.monotonic()
-            if request.kind == "run_loop":
-                await self._run_session_effect(
-                    request,
-                    rule.name,
-                    mail,
-                    trigger_event,
-                    program_effect={
-                        "run_id": run_id,
-                        "index": index,
-                        "name": name,
-                        "args_edn": args_edn,
-                    },
-                )
-                return None
-            raise EvalError(f"unknown orchestration request: {request.kind}")
-
-        root_executor = self._operation_executor
-        root_operations = DSLAdapter(root_executor)
-        driver = ProgramDriver(
-            self._program_store,
-            run_id,
-            {**self._host_builtins, **root_operations.builtins()},
-            execute,
-            operations=root_operations,
-            member_id=self._member_id,
-            on_operation=self._record_activity,
-            on_control=self._apply_program_control,
-            token_budget=self._services.config.llm.max_tokens
-            if self._services and self._services.config.llm
-            else 4096,
-        )
-        try:
-            env = self._env(payload)
-            env["self"] = loads(record.input_edn)["self"]
-            with contextlib.ExitStack() as stack:
-                if trigger_event is not None and trigger_event.trace_id:
-                    stack.enter_context(
-                        continue_trace(trigger_event.trace_id, trigger_event.span_id)
-                    )
-                await driver.run(rule, env)
-        except (EvalError, ValueError) as error:
-            if blocks_recovery(error):
-                await asyncio.to_thread(self._program_store.fail, run_id, blocked_reason(error))
-                raise
-            if isinstance(error, UnknownOutcomeError):
-                raise
-            await asyncio.to_thread(self._program_store.fail, run_id, str(error))
-            self._state = MemberState.ERROR
-            self._logger.warning(
-                "member_rule_fuel_exhausted"
-                if isinstance(error, FuelExhaustedError)
-                else "member_rule_eval_failed",
-                member_id=self._member_id,
-                rule=rule.name,
-                error=str(error),
-            )
-            return True
-        await asyncio.to_thread(self._program_store.complete, run_id)
-        return True
+        return await self._run_entry_record(record)
 
     @staticmethod
     def _entry_result(value: Any) -> tuple[Any, dict[str, Any] | None]:
@@ -1087,14 +857,10 @@ class MemberRuntime(Member):
                 event["mail"] = mail["__tlon_mail__"]
                 event["sender"] = event["mail"]["from_address"]
 
-            async def forbidden(request: ActionRequest, name: str, index: int, args: str) -> Any:
-                raise EvalError("module programs cannot invoke legacy orchestration")
-
             driver = ProgramDriver(
                 self._program_store,
                 record.run_id,
                 builtins,
-                forbidden,
                 operations=self._operations,
                 member_id=self._member_id,
                 on_operation=self._record_activity,
@@ -1129,14 +895,6 @@ class MemberRuntime(Member):
         self._last_action_at = time.monotonic()
 
     # ── Unified action executor ──
-
-    async def _apply_program_control(self, request: dict[str, Any]) -> None:
-        if self._registry is None:
-            if request["action"] != "finish":
-                raise EvalError("self scheduling requires a member registry")
-            return
-        await self._registry.prepare_scheduling_request(self._member_id, request, "")
-        await self._registry.apply_scheduling_request(self._member_id, request)
 
     async def _request_member_lifecycle(
         self, action: str, agent_id: str, reason: str, context: CallContext
@@ -1224,220 +982,6 @@ class MemberRuntime(Member):
         while True:
             await asyncio.sleep(interval)
             await self._scan_unread_mail()
-
-    def _assemble_scheduler(self, caps: MemberServices) -> None:
-        assert self._journal is not None
-        registry = self._registry
-
-        async def check_reflection() -> None:
-            if self._behavior_error is None and self._reflection is not None:
-                await self._reflection.check_trigger()
-
-        def session_span(session: AgentSession) -> Any:
-            assert self._stage_services is not None
-            return self._stage_services.session_span(session)
-
-        self._scheduler = SessionScheduler(
-            caps.config,
-            caps.memory,
-            session_span,
-            check_reflection,
-            lambda recipe: self._assemble_session(caps, recipe),
-            self._journal,
-            self._mailbox,
-            can_schedule=self._can_schedule,
-            state_changed=(lambda: registry.publish_scheduling_state(self._member_id))
-            if registry
-            else None,
-            apply_scheduling_request=(
-                lambda request: registry.apply_scheduling_request(self._member_id, request)
-            )
-            if registry
-            else None,
-            resume_invocation=self._resume_invocation,
-            block_invocation=self._block_invocation,
-            verify_invocation=self._verify_invocation,
-            needs_continuation=self._needs_continuation,
-            execution_factory=self._session_execution,
-            maintenance_factory=self._maintenance_execution,
-        )
-
-    async def _run_session_effect(
-        self,
-        request: ActionRequest,
-        rule_name: str,
-        mail: Mail | None,
-        event: Event | None,
-        *,
-        program_effect: dict[str, Any] | None = None,
-    ) -> None:
-        if self._scheduler is None:
-            raise RuntimeError("run-loop requires member services")
-        recipe = SessionRecipe.from_edn(request.data["recipe"])
-        invocation = {
-            "rule_name": rule_name,
-            "program_effect": program_effect,
-        }
-        trigger = mail.content if mail else f"Event: {event.type.value if event else 'boot'}"
-        await self._scheduler.run_invocation(
-            recipe,
-            trigger,
-            [mail] if mail else [],
-            {
-                "trace_id": event.trace_id if event else None,
-                "span_id": event.span_id if event else None,
-            },
-            invocation,
-        )
-
-    async def _block_invocation(self, invocation: dict[str, Any], reason: str) -> None:
-        effect = invocation.get("program_effect")
-        if (
-            effect is not None
-            and await asyncio.to_thread(self._program_store.get_run, effect["run_id"]) is not None
-        ):
-            await asyncio.to_thread(self._program_store.fail, effect["run_id"], reason)
-
-    async def _needs_continuation(self, invocation: dict[str, Any]) -> bool:
-        effect = invocation.get("program_effect")
-        if effect is None:
-            return False
-        record = await asyncio.to_thread(self._program_store.get_run, effect["run_id"])
-        if record is not None and (record.completed or record.error is not None):
-            return False
-        found, _ = await asyncio.to_thread(
-            self._program_store.get_effect,
-            effect["run_id"],
-            effect["index"],
-            effect["name"],
-            effect["args_edn"],
-        )
-        return not found
-
-    async def _verify_invocation(self, invocation: dict[str, Any]) -> None:
-        effect = invocation.get("program_effect")
-        if effect is None:
-            return
-        record = await asyncio.to_thread(self._program_store.get_run, effect["run_id"])
-        if record is None:
-            raise RecoveryBlockedError("Frozen session parent program is missing")
-        if record.error is not None:
-            raise RecoveryBlockedError(record.error)
-        await asyncio.to_thread(self._program_store.ensure_root, effect["run_id"])
-
-    async def _resume_invocation(self, session: AgentSession) -> None:
-        await self._verify_invocation(session.invocation)
-        effect = session.invocation.get("program_effect")
-        if effect is None:
-            return
-        await asyncio.to_thread(
-            self._program_store.record_effect,
-            effect["run_id"],
-            effect["index"],
-            effect["name"],
-            effect["args_edn"],
-            dumps(None),
-        )
-
-    def _assemble_session(self, caps: MemberServices, recipe: SessionRecipe) -> LoopDriver:
-        """Assemble the session engine from services — the injected
-        services, plain data, and closures over the event bus — never a
-        back-reference to this runtime."""
-        registry = caps.registry
-        tool_executor = caps.tool_executor
-        root_executor = self._operation_executor
-
-        self._logger = logger.bind(agent_id=self._member_id)
-
-        identity = AgentIdentity(id=self._member_id, name=self._name, address=self.address)
-        publisher = make_event_publisher(self._event_bus, self._name)
-        # Session event journal (ADR 0007): one append-only log per session,
-        # written by the driver, read by the scheduler (resume on boot), the
-        # reflection digest, the distillation trigger (ADR 0017) and the
-        # context builder (thread-recap section).
-        journal = self._journal
-        assert journal is not None
-        self._context_builder = ContextBuilder(
-            caps.config,
-            self._mailbox,
-            caps.memory,
-            caps.task_manager,
-            recipe,
-            self.address,
-            journal,
-            tlon_paths=caps.tlon_paths,
-        )
-        if self._reflection is None:
-            self._reflection = ReflectionEngine(
-                caps.memory,
-                caps.llm_client,
-                recipe.reflect,
-                journal,
-                execution_factory=self._maintenance_execution,
-                state_changed=(lambda: registry.publish_scheduling_state(self._member_id))
-                if registry is not None
-                else None,
-            )
-        else:
-            self._reflection.enabled = recipe.reflect.enabled
-            self._reflection._interval = recipe.reflect.interval_minutes * 60
-        self._stage_services = StageServices(
-            identity=identity,
-            source_hash=self._spec.source_hash,
-            llm_client=caps.llm_client,
-            context_builder=self._context_builder,
-            publish=publisher,
-            tool_definitions=tool_executor.get_tool_definitions,
-            control_names=tool_executor.control_names,
-            logger=self._logger,
-        )
-        self._effect_executor = EffectExecutor(
-            identity=identity,
-            mailbox=self._mailbox,
-            publish=publisher,
-            logger=self._logger,
-            mentor_cc=self._mentor_cc,
-            post_office=self._post_office,
-        )
-
-        def is_human_sender(address: str) -> bool:
-            """ADR 0027: termination replies go to human senders only. The
-            known-human set is re-resolved on every call in a worker thread;
-            humans register when connecting, so the set grows at runtime."""
-            humans = {
-                address_for_member(h)
-                for h in MailStore(caps.tlon_paths.mail_database_file()).known_human_ids()
-            }
-            return address in humans
-
-        self._loop_driver = LoopDriver(
-            identity=identity,
-            recipe=recipe,
-            services=self._stage_services,
-            executor=self._effect_executor,
-            tool_executor=tool_executor,
-            journal=journal,
-            spill=ToolSpill(caps.tlon_paths, self._member_id),
-            # Context pressure relief (ADR 0008): same journal, the
-            # model's context window — resolved to an int at assembly
-            # (ADR 0012 phase 2); the fallback covers services built
-            # without assembly (tests), whose config.llm may be None.
-            pressure=ContextPressure(
-                caps.llm_client,
-                journal,
-                (caps.config.llm.context_window if caps.config.llm else None)
-                or DEFAULT_CONTEXT_WINDOW,
-            ),
-            is_human_sender=is_human_sender,
-            condition_registry={
-                **self._host_builtins,
-                **DSLAdapter(root_executor).builtins(),
-            },
-            prepare_scheduling_request=(
-                registry.prepare_scheduling_request if registry is not None else None
-            ),
-        )
-        return self._loop_driver
 
     def _env(self, payload: Any) -> dict[str, Any]:
         """The unified evaluation env — the shape is the :class:`RuleEnv`

@@ -1,4 +1,1 @@
-{:name :p-5bb5829d38ad49e2af1a6deea842e68c
- :display-name "短回合交流"
- :description "L0 执行能力；保留人格、协议、当前任务、最近 5 封邮件和线程摘要，仅思考与执行；最多 3 轮、累计 32000 token，每 15 分钟反思。适合日常询问、确认和协调。"
- :trusted true}
+{:name :p-5bb5829d38ad49e2af1a6deea842e68c :display-name "短回合交流" :description "L0 执行能力；保留人格、协议、当前任务、最近 5 封邮件和线程摘要，仅思考与执行；最多 3 轮、每次模型输出最多 512 token，后台维护按成员配置反思。适合日常询问、确认和协调。" :trusted true :program-digest "56b1058df493aae74fb7c0c98b9b6a182c78ad6f55f8ca508872ef8d329fe1a4"}

@@ -1,0 +1,94 @@
+(ns tlon.agent
+  (:require [tlon.messages :as messages] [tlon.context :as context])
+  (:export respond))
+
+;; Only committed successful delivery receipts suppress the automatic reply.
+;; Drafted calls and failed calls never count as a delivery.
+(defn replied? [exchanges sender]
+  (let [sender-id (reduce previous part (if (= previous nil) part previous) nil (split sender "@"))
+        internal (= sender (str sender-id "@tlon.internal"))]
+    (reduce sent exchange
+      (or sent (reduce sent result
+        (let [receipt (get result :data {})
+              gateway-sent (reduce found gateway
+                (or found (and (= (get gateway :address) sender) (= (get gateway :status) "delivered")))
+                false (get receipt :gateways []))]
+          (or sent (and (contains? ["mail-send" "mail-forward"] (get result :name))
+                        (get result :success)
+                        (or (and internal (contains? (get receipt :local_recipients []) sender-id))
+                            gateway-sent))))
+        false (get exchange :results))) false exchanges)))
+
+;; Delivery review is a normal function over data, before any delivery effect.
+(defn review-text [request text]
+  (let [review (context/complete
+          {:messages (conj (get request :messages)
+                       (messages/user (str "Review and revise this proposed delivery BEFORE it is sent. "
+                         (get request :review_instructions "Check claims against committed evidence; preserve uncertainty.")
+                         " Return only the complete revised delivery text. Proposal: " text)))
+           :tools [] :max_tokens (get request :max_tokens)})
+        revised (get review :content)]
+    (assert (and (= revised (str revised)) (not (= revised ""))) "review requires a textual delivery")
+    revised))
+
+(defn prepare-calls [request calls]
+  (map call
+    (if (and (not (= (get request :method) "short-turn")) (= (get call :name) "mail-send"))
+      (assoc call :arguments (assoc (get call :arguments) :content
+        (review-text request (get (get call :arguments) :content)))) call) calls))
+
+(defn work [request]
+  (let [planned (if (= (get request :method) "plan-then-act")
+                  (let [plan (context/complete {:messages (conj (get request :messages)
+                                     (messages/user "Plan at most five steps. A plan is not execution."))
+                              :tools [] :max_tokens (get request :max_tokens)})]
+                    (assoc request :messages (conj (conj (get request :messages) (messages/response plan))
+                        (messages/user "Execute the plan using tools. Distinguish evidence from assumptions.")))) request)]
+    (while [history (get planned :messages) round 0 exchanges []]
+      true
+      (if (>= round (get request :max_rounds))
+        {:content nil :messages history :exchanges exchanges :reason "round-limit"}
+        (let [prepared (context/fit (assoc planned :messages history))
+              response (model-call {:messages (get prepared :messages) :tools (get planned :tools)
+                                    :max_tokens (get planned :max_tokens)})
+              calls (get response :tool_calls [])
+              ends (filter call (= (get call :name) "finish-turn") calls)
+              checked (if (> (count ends) 0)
+                        (assert (and (= (count calls) 1) (= (get (reduce previous call call nil calls) :arguments) {}))
+                                "finish-turn must be an empty standalone call") true)]
+          (if (= (count calls) 0)
+            (let [text (get response :content)
+                  revised (if (or (= (get request :method) "short-turn") (= text nil) (= text "")) text
+                            (review-text (assoc request :messages history) text))]
+              {:content revised :messages (conj history (messages/assistant revised))
+               :exchanges exchanges :reason "complete"})
+            (let [reviewed (prepare-calls (assoc request :messages history) calls)
+                  response (assoc response :tool_calls reviewed)
+                  results (tool-execute {:tools (get planned :tools) :tool_calls reviewed})]
+              (if (> (count ends) 0)
+                {:content nil :messages (messages/exchange (get prepared :messages) response results)
+                 :exchanges (conj exchanges {:calls reviewed :results results}) :reason "finish-turn"}
+                (recur (messages/exchange (get prepared :messages) response results) (+ round 1)
+                       (conj exchanges {:calls reviewed :results results}))))))))))
+
+(defn respond [event options]
+  (let [mail (get event :mail) self (get event :self)
+        addressed (or (contains? (get mail :to []) (get self :address))
+                      (contains? (get mail :cc []) (get self :address)))]
+    (if (not addressed) {:result nil}
+      (let [data (member-context {:query (get mail :content) :history_limit (get options :history_limit 20)})
+            context (str "Knowledge:\n" (get data :knowledge) "\nLessons:\n" (get data :lessons)
+                         "\nSkills:\n" (get data :skills) "\nCurrent task:\n" (get data :current_task)
+                         "\nThread recap:\n" (get data :thread_recap))
+            prefix [(messages/user context)]
+            history (reduce result message (conj result message) prefix (get data :mail_history []))
+            task (messages/user (str "Incoming mail from " (get event :sender) ":\n" (get mail :content)
+                     "\nUse tools when needed. A final textual answer will be sent to the sender automatically unless a tool already delivered to them."))
+            request (assoc options :messages (conj history task) :tools (get data :tools []))
+            answer (work request)
+            sent (replied? (get answer :exchanges []) (get event :sender))
+            content (get answer :content)
+            delivery (if (and (not sent) (not (= content nil)) (not (= content "")))
+                       (mail-send {:to [(get event :sender)] :content content :in_reply_to (get mail :id)}) nil)
+            read (mail-mark-read {:mail_ids [(get mail :id)]})]
+        {:result answer}))))

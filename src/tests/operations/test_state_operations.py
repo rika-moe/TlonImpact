@@ -1,11 +1,9 @@
 """Two state entry points share strict data and atomic durable replay."""
 
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
 
-from tlon.agents.member_spec import MemberRule, MemberSpec
 from tlon.agents.program_driver import ProgramDriver
 from tlon.agents.program_store import ProgramStore
 from tlon.agents.tool_executor import ToolExecutor
@@ -23,13 +21,16 @@ from tlon.operations.schema import (
     json_value,
 )
 from tlon.operations.state import make_state_operations
+from tlosure.builtins import Closure
 from tlosure.edn import Keyword, dumps, loads
+from tlosure.modules import ModulePackage
 
 
-def rule(source: str) -> MemberRule:
-    return MemberSpec.from_edn(
-        loads('{:version 1 :rules [{:name "test" :on :mail-delivered :actions [' + source + "]}]}")
-    ).rules[0]
+def program_entry(source: str, adapter: DSLAdapter) -> Closure:
+    return ModulePackage.from_sources(
+        {"work.tlon": "(ns work (:export handle)) (defn handle [event] " + source + ")"},
+        adapter.builtins(),
+    ).entry("work/handle")
 
 
 def executor(store: ProgramStore, member: str = "a") -> OperationExecutor:
@@ -49,10 +50,10 @@ async def test_tool_and_dsl_share_member_state_and_exact_key_spelling(tmp_path: 
     )
     assert result.success and result.data == value
     adapter = DSLAdapter(scope)
-    program = rule('(state-put {:key "copied" :value (state-get {:key "state"})})')
+    program = '(state-put {:key "copied" :value (state-get {:key "state"})})'
     await ProgramDriver(
-        store, "program", adapter.builtins(), AsyncMock(), operations=adapter, member_id="a"
-    ).run(program, {})
+        store, "program", adapter.builtins(), operations=adapter, member_id="a"
+    ).run_entry(program_entry(program, adapter), {}, fuel=1000)
     assert (
         await scope.call("state-get", {"key": "copied"}, CallContext("a", "session", "read-copy"))
         == value
@@ -169,11 +170,11 @@ def test_boolean_schema_is_explicit_and_input_root_stays_closed() -> None:
 async def test_invalid_program_input_does_not_claim_intent() -> None:
     store = ProgramStore(None)
     adapter = DSLAdapter(executor(store))
-    program = rule('(state-put {:key "x" :value 1 :effect_index 0})')
+    program = '(state-put {:key "x" :value 1 :effect_index 0})'
     with pytest.raises(InputError):
         await ProgramDriver(
-            store, "program", adapter.builtins(), AsyncMock(), operations=adapter, member_id="a"
-        ).run(program, {})
+            store, "program", adapter.builtins(), operations=adapter, member_id="a"
+        ).run_entry(program_entry(program, adapter), {}, fuel=1000)
     assert not store._effects and not store._invocations and not store._state
 
 
@@ -224,10 +225,10 @@ async def test_dynamic_json_keys_survive_sqlite_state_and_program_replay(tmp_pat
         == original
     )
     adapter = DSLAdapter(executor(restarted))
-    program = rule('(state-put {:key "copy" :value (state-get {:key "delivered"})})')
+    program = '(state-put {:key "copy" :value (state-get {:key "delivered"})})'
     await ProgramDriver(
-        restarted, "program", adapter.builtins(), AsyncMock(), operations=adapter, member_id="a"
-    ).run(program, {})
+        restarted, "program", adapter.builtins(), operations=adapter, member_id="a"
+    ).run_entry(program_entry(program, adapter), {}, fuel=1000)
     assert (
         await executor(restarted).call(
             "state-get", {"key": "copy"}, CallContext("a", "session", "read-copy")

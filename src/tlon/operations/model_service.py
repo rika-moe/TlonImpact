@@ -1,4 +1,4 @@
-"""One member-bound model boundary for programs and legacy stages."""
+"""One member-bound model boundary for ordinary programs."""
 
 import asyncio
 import json

@@ -28,7 +28,8 @@ from tlon.operations.evolution import make_evolution_operations
 from tlon.operations.schema import RejectedError, UnknownOutcomeError, edn_value
 from tlosure.builtins import BuiltinCall
 
-_SPEC = '{:version 1 :rules [{:name "boot" :on :boot :actions []}]}'
+_SPEC = "{:version 2 :handlers {:boot work/handle}}"
+_MODULES = {"work.tlon": "(ns work (:export handle)) (defn handle [event] {})"}
 
 
 def staging_snapshot(paths: TlonPaths) -> dict[str, bytes]:
@@ -47,7 +48,9 @@ def executor(
     behavior = paths.agent_behavior_file("alice")
     behavior.parent.mkdir(parents=True, exist_ok=True)
     behavior.write_text(_SPEC)
-    info = write_staging_prototype(_SPEC, display_name="existing", tlon_paths=paths)
+    info = write_staging_prototype(
+        _SPEC, modules=_MODULES, display_name="existing", tlon_paths=paths
+    )
     services = make_evolution_operations(
         "alice",
         True,

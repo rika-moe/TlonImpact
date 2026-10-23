@@ -5,10 +5,12 @@ source structurally while a durable root supplies its own rule and dependencies.
 """
 
 import hashlib
+import sqlite3
 from dataclasses import replace
 
 from tlon.agents.member_spec import MemberSpec
 from tlon.agents.program_package import read_module_sources, validate_program_sources
+from tlon.agents.recovery import RecoveryBlockedError
 from tlon.base.paths import TlonPaths
 from tlosure.builtins import Builtin
 from tlosure.edn import loads
@@ -16,15 +18,78 @@ from tlosure.edn import loads
 
 def has_frozen_work(agent_id: str, tlon_paths: TlonPaths) -> bool:
     """Inspect unfinished roots without authorizing their execution."""
-    from tlon.agents.program_store import ProgramStore
-    from tlon.agents.session_store import SessionStore
+    diagnostic = legacy_work_error(agent_id, tlon_paths)
+    if diagnostic:
+        raise RecoveryBlockedError(diagnostic)
+    database = tlon_paths.agent_program_database_file(agent_id)
+    if not database.exists():
+        return False
+    try:
+        with sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True) as connection:
+            if not connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='entry_programs'"
+            ).fetchone():
+                return False
+            return bool(
+                connection.execute(
+                    "SELECT 1 FROM runs r LEFT JOIN entry_programs e USING(run_id) "
+                    "WHERE e.run_id IS NOT NULL AND ((r.completed=0 AND r.error IS NULL) "
+                    "OR (e.scheduling_edn IS NOT NULL AND e.scheduling_applied=0)) LIMIT 1"
+                ).fetchone()
+            )
+    except (sqlite3.Error, OSError) as error:
+        raise RecoveryBlockedError(
+            f"Frozen program scan blocked for {database}: {error}"
+        ) from error
 
+
+def legacy_work_error(agent_id: str, tlon_paths: TlonPaths) -> str | None:
+    """Inspect obsolete pending work read-only; preserve evidence and refuse execution.
+
+    An unreadable or unrecognized persisted database blocks admission too. No
+    schema initialization or progress writes are allowed during this scan.
+    """
+    problems: list[str] = []
+    sessions = tlon_paths.agent_sessions_database_file(agent_id)
+    if sessions.exists():
+        try:
+            with sqlite3.connect(f"{sessions.resolve().as_uri()}?mode=ro", uri=True) as connection:
+                if connection.execute("PRAGMA user_version").fetchone()[0] != 1:
+                    raise ValueError("unrecognized legacy session database")
+                unfinished = [
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT session_id FROM sessions WHERE started_at IS NOT NULL "
+                        "AND ended_at IS NULL ORDER BY session_id"
+                    )
+                ]
+            if unfinished:
+                problems.append(f"{sessions}: unfinished legacy session IDs={unfinished}")
+        except (sqlite3.Error, ValueError, OSError) as error:
+            problems.append(f"{sessions}: legacy session scan failed: {error}")
     database = tlon_paths.agent_program_database_file(agent_id)
     if database.exists():
-        store = ProgramStore(database)
-        if store.pending() or store.pending_scheduling():
-            return True
-    return bool(SessionStore(tlon_paths.agent_sessions_database_file(agent_id)).unfinished_ids())
+        try:
+            with sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True) as connection:
+                tables = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )
+                }
+                if "runs" not in tables:
+                    raise ValueError("unrecognized program database")
+                query = "SELECT run_id FROM runs WHERE completed=0 AND error IS NULL"
+                if "entry_programs" in tables:
+                    query += " AND run_id NOT IN (SELECT run_id FROM entry_programs)"
+                unfinished = [row[0] for row in connection.execute(query + " ORDER BY run_id")]
+                if unfinished:
+                    problems.append(f"{database}: unfinished legacy rule IDs={unfinished}")
+        except (sqlite3.Error, ValueError, OSError) as error:
+            problems.append(f"{database}: legacy rule scan failed: {error}")
+    if not problems:
+        return None
+    return "Legacy recovery blocked; stage execution has been removed. " + "; ".join(problems)
 
 
 def read_member_spec(agent_id: str, *, tlon_paths: TlonPaths) -> MemberSpec:
@@ -66,6 +131,9 @@ def load_member_spec(
         EDNParseError: file is not valid EDN
         MemberSpecValidationError: the spec fails the single validator
     """
+    diagnostic = legacy_work_error(agent_id, tlon_paths)
+    if diagnostic:
+        raise RecoveryBlockedError(diagnostic)
     member = read_member_spec(agent_id, tlon_paths=tlon_paths)
     admitted = validate_program_sources(member.to_edn(), member.module_sources, builtins)
     return replace(admitted, source_hash=member.source_hash)
