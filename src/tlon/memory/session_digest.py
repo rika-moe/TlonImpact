@@ -1,5 +1,6 @@
 """Bounded rendering of member session journal events."""
 
+import json
 from typing import Any
 
 #: Truncation budget. The digest must stay small enough to drop into the
@@ -29,12 +30,16 @@ def render_session_digest(events: list[dict[str, Any]]) -> str:
     """
     trigger = ""
     end_reason = ""
+    source = ""
+    program_result = ""
     replies: list[str] = []
+    errors: list[str] = []
     tool_counts: dict[str, int] = {}
     for event in events:
         event_type = event.get("type")
         if event_type == "session/start":
             trigger = str(event.get("trigger_content") or "")
+            source = str(event.get("session_id") or "")
         elif event_type == "llm/response":
             content = (event.get("response") or {}).get("content") or ""
             if content:
@@ -43,10 +48,23 @@ def render_session_digest(events: list[dict[str, Any]]) -> str:
             tool_call = event.get("tool_call") or {}
             name = (tool_call.get("function") or {}).get("name", "unknown")
             tool_counts[name] = tool_counts.get(name, 0) + 1
+        elif event_type == "program/invocation-pending":
+            identity = event.get("invocation") or {}
+            errors.append(f"[未决调用] {identity.get('name', 'unknown')} {identity.get('call_id', '')}")
         elif event_type == "session/end":
+            if event.get("error"):
+                errors.append(f"[失败] {event['error']}")
             end_reason = str(event.get("reason") or "")
+            if event.get("result") is not None:
+                program_result = json.dumps(event["result"], ensure_ascii=False)
 
     lines: list[str] = []
+    for error in errors[-5:]:
+        lines.append(_clip(error, _RESPONSE_MAX))
+    if source:
+        lines.append(f"来源：{source}")
+    if program_result:
+        lines.append(f"程序返回：{_clip(program_result, _RESPONSE_MAX)}")
     if trigger:
         lines.append(f"触发语：{_clip(trigger, _TRIGGER_MAX)}")
     if end_reason:

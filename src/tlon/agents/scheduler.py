@@ -13,6 +13,7 @@ from typing import Any, TypeVar
 
 from tlon.agents.loop_driver import LoopDriver
 from tlon.agents.member_spec import SessionRecipe
+from tlon.agents.program_history import PROGRAM_SOURCE_PREFIX
 from tlon.agents.recovery import blocked_reason, blocks_recovery
 from tlon.agents.session import AgentSession, SessionState
 from tlon.agents.session_journal import SessionJournal, SessionReplay
@@ -35,7 +36,6 @@ from tlosure.edn import dumps, loads
 logger = get_logger(__name__)
 SessionSpan = Callable[[AgentSession], AbstractContextManager[None]]
 CheckReflection = Callable[[], Awaitable[None]]
-NoteInteraction = Callable[[], None]
 _Result = TypeVar("_Result")
 
 
@@ -48,7 +48,6 @@ class SessionScheduler:
         memory: MemoryManager,
         session_span: SessionSpan,
         check_reflection: CheckReflection,
-        note_interaction: NoteInteraction,
         make_driver: Callable[[SessionRecipe], LoopDriver],
         journal: SessionJournal,
         mailbox: Mailbox | None,
@@ -67,7 +66,6 @@ class SessionScheduler:
         self._memory = memory
         self._session_span = session_span
         self._check_reflection = check_reflection
-        self._note_interaction = note_interaction
         self._make_driver = make_driver
         self._journal = journal
         self._mailbox = mailbox
@@ -141,7 +139,7 @@ class SessionScheduler:
             if self._resume_invocation is not None:
                 continuations: dict[tuple[str, int], tuple[str, SessionReplay]] = {}
                 for sid in await self._journal.list_completed():
-                    if sid in recovered:
+                    if sid.startswith(PROGRAM_SOURCE_PREFIX) or sid in recovered:
                         continue
                     events = await self._journal.read_events(sid)
                     start = next(
@@ -371,7 +369,6 @@ class SessionScheduler:
                     await self._notify_failure_reply(session, "error")
                 await asyncio.sleep(0.01)
             await self._ensure_session_end(session)
-            self._note_interaction()
             if self._can_schedule():
                 self._maintenance_running = True
                 try:
@@ -467,7 +464,7 @@ class SessionScheduler:
 
         Never raises: a distillation failure (LLM outage, disk error)
         is logged and retried at the next session's reap — the pending
-        sessions stay pending because the watermark never advanced.
+        sources stay pending because their consumption receipts were not committed.
         """
         try:
             scope = (

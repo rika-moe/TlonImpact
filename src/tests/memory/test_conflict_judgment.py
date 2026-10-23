@@ -304,7 +304,7 @@ class TestDistillationConflicts:
         manager.distiller = fake  # type: ignore[assignment]
         projections = [SessionProjection(session_id="s1", trigger_content="q")]
 
-        claim_count = await manager._distill_sessions(projections, [None])
+        claim_count = await manager._distill_sessions(projections)
 
         assert claim_count == 2
         old = await manager.claims.get_claim("c-old")
@@ -361,7 +361,7 @@ class TestDegradation:
         manager.distiller = fake  # type: ignore[assignment]
         projections = [SessionProjection(session_id="s1", trigger_content="q")]
 
-        claim_count = await manager._distill_sessions(projections, [None])
+        claim_count = await manager._distill_sessions(projections)
 
         assert claim_count == 1
         assert fake.judge_calls  # judgment was attempted — and failed
@@ -383,7 +383,7 @@ class TestDegradation:
         manager.distiller = fake  # type: ignore[assignment]
         projections = [SessionProjection(session_id="s1", trigger_content="整理部署文档")]
 
-        claim_count = await manager._distill_sessions(projections, [None])
+        claim_count = await manager._distill_sessions(projections)
 
         assert claim_count == 1
         texts = [c["text"] for c in await manager.claims.get_all_claims()]

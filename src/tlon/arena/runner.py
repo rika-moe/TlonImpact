@@ -20,7 +20,7 @@ import shutil
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -30,7 +30,6 @@ from tlon.agents.prototypes.info import BEHAVIOR_FILE
 from tlon.agents.prototypes.instantiate import instantiate
 from tlon.agents.prototypes.staging import list_staging_prototypes
 from tlon.agents.session_journal import SessionJournal
-from tlon.agents.session_store import SessionStore
 from tlon.arena.corpus import (
     ADVERSARIAL_SUITE,
     DEFAULT_CORPUS_LIMIT,
@@ -450,11 +449,17 @@ class ArenaRunner:
             logger.error("arena_run_failed", run_id=run.run_id, error=run.error)
         finally:
             run.finished_at = _utc_now()
-            if run.status is RunStatus.COLLECTING:
-                run.status = RunStatus.DONE if run.drained else RunStatus.TIMED_OUT
+            final_status = (
+                RunStatus.FAILED if run.error is not None
+                else RunStatus.DONE if run.drained else RunStatus.TIMED_OUT
+            )
+            run.status = RunStatus.COLLECTING
+            # Archive the intended terminal status, but expose completion only
+            # after async export and teardown have actually finished.
+            archived_run = replace(run, status=final_status)
             # 归档先于拆除：证据落盘后再 shutdown / GC / 删家园
             if archive_dir is not None and arena_paths is not None:
-                self._archive(run, arena_paths, archive_dir, agent_id)
+                await self._archive(archived_run, arena_paths, archive_dir, agent_id)
                 # 报告 fail-soft：报告失败只记 error + run.json 加
                 # report_error，绝不毁掉已归档的证据或跳过拆除
                 try:
@@ -462,7 +467,8 @@ class ArenaRunner:
                 except Exception as e:
                     run.report_error = f"{type(e).__name__}: {e}"
                     logger.error("arena_report_failed", run_id=run.run_id, error=run.report_error)
-                    self._rewrite_run_json(run, archive_dir)
+                    archived_run.report_error = run.report_error
+                    self._rewrite_run_json(archived_run, archive_dir)
             if runtime is not None:
                 try:
                     await runtime.shutdown()
@@ -478,6 +484,7 @@ class ArenaRunner:
                     shutil.rmtree(arena_home)
                 except Exception as e:
                     logger.warning("arena_home_cleanup_failed", run_id=run.run_id, error=str(e))
+            run.status = final_status
             logger.info(
                 "arena_run_finished",
                 run_id=run.run_id,
@@ -573,7 +580,7 @@ class ArenaRunner:
                 return completed_count, drained_streak >= 2
             await asyncio.sleep(self._poll_seconds)
 
-    def _archive(
+    async def _archive(
         self,
         run: ArenaRun,
         arena_paths: TlonPaths,
@@ -589,7 +596,7 @@ class ArenaRunner:
         failure here must not skip teardown.
         """
         try:
-            SessionStore(arena_paths.agent_sessions_database_file(agent_id)).export_jsonl(
+            await SessionJournal(agent_id, arena_paths).export_jsonl(
                 archive_dir / "sessions"
             )
             ledger_src = arena_paths.agent_ledger_file(agent_id)

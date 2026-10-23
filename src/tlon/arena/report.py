@@ -79,7 +79,7 @@ _FUEL_EXHAUSTION_END_REASON = "max_iterations"
 #: scheduler.py:369 兜底）与 ``until``（loop_driver.py:431，成员自己的
 #: until 程序决定收工）。其余（``timeout``/``error``，scheduler.py:213/236）
 #: 或 end 缺失即 session-incomplete
-_NORMAL_END_REASONS = frozenset({"complete", "until"})
+_NORMAL_END_REASONS = frozenset({"complete", "completed", "until"})
 
 #: 红旗 kind 常量（report.json 的稳定词汇，下一切片 WebUI 呈现按此消费）
 FLAG_TOOL_ATTEMPT_BLOCKED = "tool-attempt-blocked"
@@ -209,6 +209,8 @@ class ArenaReport:
 
 def _summarize_session(
     events: list[tuple[int, dict[str, Any]]],
+    *,
+    filename: str | None = None,
 ) -> tuple[dict[str, Any], list[RedFlag]]:
     """Distill one session journal into a summary plus session-level flags.
 
@@ -233,7 +235,7 @@ def _summarize_session(
         event_type = event.get("type")
         seq = event.get("seq", lineno)
         session_id = str(event.get("session_id") or session_id)
-        pointer = f"sessions/{session_id}.jsonl#seq-{seq}"
+        pointer = f"sessions/{filename or (session_id + '.jsonl')}#seq-{seq}"
 
         if event_type == "iteration":
             value = event.get("value")
@@ -305,7 +307,7 @@ def _summarize_session(
             RedFlag(
                 FLAG_FUEL_EXHAUSTION,
                 f"引擎迭代硬顶耗尽（session/end reason={end_reason}）",
-                f"sessions/{session_id}.jsonl#seq-{end_seq}",
+                f"sessions/{filename or (session_id + '.jsonl')}#seq-{end_seq}",
             )
         )
     if end_reason is None:
@@ -313,7 +315,7 @@ def _summarize_session(
             RedFlag(
                 FLAG_SESSION_INCOMPLETE,
                 "session 未结束（journal 无 session/end——超时拆除或中断）",
-                f"sessions/{session_id}.jsonl",
+                f"sessions/{filename or (session_id + '.jsonl')}",
             )
         )
     elif end_reason not in _NORMAL_END_REASONS and not fuel_exhausted:
@@ -321,7 +323,7 @@ def _summarize_session(
             RedFlag(
                 FLAG_SESSION_INCOMPLETE,
                 f"session 非正常结束（reason={end_reason}）",
-                f"sessions/{session_id}.jsonl#seq-{end_seq}",
+                f"sessions/{filename or (session_id + '.jsonl')}#seq-{end_seq}",
             )
         )
 
@@ -546,6 +548,7 @@ class _SessionFile:
     """一个 session journal 文件的读侧视图——报告的主轴（按 session 组织）。"""
 
     session_id: str
+    filename: str
     trigger: str
     started_at: str
     responsibility: list[str]
@@ -570,7 +573,8 @@ def _load_sessions(archive_dir: Path) -> list[_SessionFile]:
         )
         sessions.append(
             _SessionFile(
-                session_id=path.stem,
+                session_id=str(start.get("session_id") or path.stem) if start else path.stem,
+                filename=path.name,
                 trigger=str(start.get("trigger_content") or "") if start else "",
                 started_at=str(start.get("ts") or "") if start else "",
                 responsibility=(
@@ -634,7 +638,7 @@ def generate_report(archive_dir: Path) -> ArenaReport:
     sessions: list[dict[str, Any]] = []
     red_flags: list[RedFlag] = []
     for session_file in session_files:
-        session_summary, flags = _summarize_session(session_file.events)
+        session_summary, flags = _summarize_session(session_file.events, filename=session_file.filename)
         red_flags.extend(flags)
         sessions.append(
             {

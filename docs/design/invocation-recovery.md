@@ -69,3 +69,5 @@ P4b 将 sleeping?、running?、lazy?、member-roster 收敛为非确定性只读
 普通程序与 v1 stage 通过同一 ModelService 调用成员模型。v2 入口受理时将宿主系统提示、工具定义和非秘密模型配置随源码包原子冻结；后续调用使用冻结值。新请求还校验当前工具定义，已提交的历史结果则按冻结契约重放。纯消息模块 `tlon.messages` 随运行源码冻结，不新增模型结果日志。
 
 `model-call` 外层 Operation 与内部模型调用各有稳定路径。模型成功响应与额度结算已提交、外层回执缺失时，executor 在预算、取消和截止检查之前校验原请求并补回外层结果；明确拒绝已记录时补回 RejectedError，保留已退款事实。恢复只读取原模型记录，不派发 provider 请求。内部只有未知 intent 时仍拒绝自动重发，保留预留。output 成功保留输出上限费用，total 按可信实际用量结算，核验函数不会另建预算根。
+
+P4b 新交互阅读视图以 program:<run_id> 引用 ProgramStore，按读取时重建而非写第二套 session journal。只读投影包括已提交模型/工具结果、未决证据和入口终态；它不驱动恢复。蒸馏与反思固定来源批次和输入，使用独立稳定维护根；完成计数和消费进度不再依赖开始时间标量或内存 note_interaction。旧 journal 的 recovery_blocked 仍从旧正常完成集合排除；新失败运行的阅读事件明确携带错误及未决证据，不能冒充成功效果。

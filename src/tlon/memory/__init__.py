@@ -1,10 +1,10 @@
 """Memory system for Agents.
 
-The session journal is the sole interaction truth (ADR 0007); completed
-sessions are distilled in batches into claims — natural-language
+Legacy journals and module program receipts provide completed interaction
+sources, which are distilled in batches into claims — natural-language
 assertions with provenance — under the claim model (ADR 0017).
-Distillation progress is tracked by a scalar timestamp watermark, never
-by scanning the stored claims.
+Distillation tracks consumed source IDs and a frozen pending batch in a
+durable checkpoint.
 
 Usage:
     >>> from tlon.memory import MemoryManager, MemoryConfig

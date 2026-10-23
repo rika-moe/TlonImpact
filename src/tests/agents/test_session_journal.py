@@ -767,7 +767,6 @@ def _make_scheduler(
         memory=MagicMock(),
         session_span=lambda session: contextlib.nullcontext(),
         check_reflection=AsyncMock(),
-        note_interaction=MagicMock(),
         make_driver=lambda recipe: loop_driver or MagicMock(),
         journal=journal,
         mailbox=mailbox,

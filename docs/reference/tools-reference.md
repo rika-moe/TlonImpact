@@ -498,7 +498,7 @@ Operation 单一契约；输入与输出字段保留 snake_case。（本区块�
 
 ### session-read
 
-回读自己的历史会话，返回有界原文摘要。
+回读自己的交互来源，旧 session ID 或 program:<run_id>，返回有界摘要；只读且不恢复执行。
 
 输入：
 

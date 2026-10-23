@@ -1,6 +1,6 @@
 # 可编程工作流程：分阶段实施计划
 
-状态：2026-10-23，设计已接受；P0 文档与任务已建立，P1–P3 已合并（#208/#209/#210），P4a 本阶段实现待合并，P4b/P5 未实施。设计基线 `9fe00817bd75944e49a05cfd8e0149fa240dc757`（#198），P4a 施工基线 `a65088f`（#210）。设计权威：[目标设计](programmable-workflows.md)；选择理由：[ADR 0046](../decisions/0046-programmable-workflows.md)。当前能力以各阶段实施记录及 reference 为准。
+状态：2026-10-23，设计已接受；P0 文档与任务已建立，P1–P4a 已合并（#208/#209/#210/#211），P4b 本阶段实现待合并，P5 未实施。设计基线 `9fe00817bd75944e49a05cfd8e0149fa240dc757`（#198），P4a 施工基线 `a65088f`（#210）。设计权威：[目标设计](programmable-workflows.md)；选择理由：[ADR 0046](../decisions/0046-programmable-workflows.md)。当前能力以各阶段实施记录及 reference 为准。
 
 ## 施工与共同完成标准
 
@@ -93,16 +93,16 @@
 
 依赖：P4a。
 
-范围：`agents/{session_journal,session_store,scheduler,member_runtime,reflection,lessons,retirement}.py`、`operations/memory.py`、`memory/{manager,session_projection}.py`（以实际引用为准）、`context_builder.py`、`evolution/propose_behavior.py` 及真实消费的 observability/API。客户端连接 `/sessions` 与 WebUI SessionsView 不属于 AgentSession，不迁移。
+范围：`agents/{session_journal,session_store,scheduler,member_runtime,reflection,lessons,retirement}.py`、`operations/memory.py`、`memory/{manager,session_projection}.py`（以实际引用为准）、`context_builder.py`、`arena/runner.py` 及真实消费的 observability/API。客户端连接 `/sessions` 与 WebUI SessionsView 不属于 AgentSession，不迁移。
 
-实施：新运行交互消息、结束状态和完成索引来自 ProgramStore 权威事实；SessionJournal 作为读取/投影接口，支持原历史读取；投影可追赶重建。迁移 digest、thread recap、反思、蒸馏、教训、行为提案与退休归档消费者；完成计数、水位与维护任务按稳定来源身份去重。不给新运行建设第二套 session resume。
+实施：新运行交互消息、结束状态和完成索引来自 ProgramStore 权威事实；SessionJournal 作为读取/投影接口，支持原历史读取；新投影按需读取权威记录重建，不存第二份投影数据库。迁移 digest、thread recap、反思、蒸馏、教训、行为提案与退休归档消费者；完成计数、水位与维护任务按稳定来源身份去重。不给新运行建设第二套 session resume。
 
 删除项：新运行对 SessionJournal.resume/find_unfinished 与 stage 执行字段的恢复依赖；已退出消费者的重复完成计数/额度来源。旧历史读取及尚在排空的旧恢复保留到 P5。
 
 验收：
 
 - 权威记录提交后投影失败、追赶/重复消费、全量重建均不重新调用模型/工具；不重复计完成次数或触发重复维护任务。
-- 新运行可被蒸馏、反思、memory-read、thread recap、教训、提案与退休归档消费；来源引用可追溯；混合旧/新来源、较早开始但投影延迟的运行均无蒸馏水位遗漏。
+- 新运行可被蒸馏、反思、session-read、thread recap、教训、提案与退休归档消费；来源引用可追溯；混合旧/新来源、较早开始但投影延迟的运行均无蒸馏水位遗漏。
 - 原交互历史可读，不转换/清库；旧/新来源查询边界明确，同一运行不被两次恢复。
 - 客户端连接会话、REST/SSE 不受替换影响；不借本阶段新增对话轨迹 UI。
 
@@ -139,7 +139,7 @@ issue 用于进度、PR 与证据，目标契约仍以本设计为准。阶段�
 - [x] [P2 — 完整模型 Operation 与函数式核验](https://github.com/rika-moe/TlonImpact/issues/202)
 - [x] [P3 — 受控工具分派与可复用对话循环](https://github.com/rika-moe/TlonImpact/issues/203)
 - [ ] [EPIC B：可编程工作流程——标准程序、交互投影与 stage 退役](https://github.com/rika-moe/TlonImpact/issues/200)
-- [ ] [P4a — Agent 编写模块与标准工作方式](https://github.com/rika-moe/TlonImpact/issues/204)
+- [x] [P4a — Agent 编写模块与标准工作方式](https://github.com/rika-moe/TlonImpact/issues/204)
 - [ ] [P4b — 单一恢复权威与交互消费者](https://github.com/rika-moe/TlonImpact/issues/205)
 - [ ] [P5 — 切换内置程序并删除旧引擎](https://github.com/rika-moe/TlonImpact/issues/206)
 <!-- END WORKFLOW-ISSUES -->
@@ -183,3 +183,25 @@ program-check 复用现有完整包验证，不执行或发布候选；报告持
 完整模块审批、复制和冻结沿 P1 机制；近亲比较和逐代 diff 覆盖全部作者文件。普通 context/workflows 库、窗口估算、消息压缩与失败通知保留；旧引擎和新交互消费者仍待 P5/P4b。原初版的一次性起草验收记录见 #211 历史，本次以能实际读取文件、发现源码错误并修订的普通程序链路重新验收。
 
 本次简化链路的真实验收：独立 dream + SDK + DeepSeek 实际读取文档入口、编写指南和标准库源码，收到缺少 work.text 的诊断后补齐第二个模块，再完成发布、全源码评审、人工批准和派生成员回信。起草 3 次模型调用、评审 1 次，派生成员零模型调用；隔离目录和服务已清理。恢复测试验证内层模型提交后缺外层回执时不重复模型、工具或预算收费。
+
+## P4b 实施细化
+
+新运行使用 `program:<run_id>` 来源 ID。ProgramStore 在入口创建与终态提交事务内记录生命周期时间；读取通过只读 SQLite 快照取得元数据或单个来源的输入、模型/工具回执、结果与失败。旧无时间记录明确保持无时间，不转换历史。SessionJournal 联合旧 SessionStore 读视图，完成列表按结束时间排序；resume/find_unfinished 只服务旧会话，新来源明确拒绝旧恢复入口。
+
+投影采用读取时重建，不建设额外投影表或追赶后台服务。完成事实提交后读取失败，仅重试读取；故障不能触发新的模型或工具调用。模型未决请求以 unknown 事实展示，已提交效果即使入口失败也保留。原历史不清库、不转换；客户端 REST /sessions 和 WebUI SessionsView 无变动。
+
+蒸馏与反思均按稳定来源集合建立固定维护批次，使用独立额度根。蒸馏移除开始时间水位过滤，保存消费 ID、固定投影、候选 claims 与冲突计划；反思移除内存完成计数，保存固定 digest、操作及应用进度。记录使用稳定 claim ID，删除目标在应用前固定；重复扫描、重启或进度保存失败不重复消费与模型请求。无 origin 字段的旧 claims 的来源引用作为已消费历史证据，不依据旧标量跳过新来源。
+
+memory digest 增加有界最近交互，使尚未蒸馏的新来源也能被反思、session-read、thread recap、教训与退休清点读取。教训以固定 digest hash 建立维护根，重复退休事件复用模型回执。演武场导出也读取联合视图，保留新运行的证据。新 v2 无 stage 配方，反思沿宿主维护默认值；旧引擎和内置原型切换仍属于 P5。
+
+删除项：新运行对 session resume/find_unfinished 的恢复依赖、蒸馏 started_at 标量筛选、反思 note_interaction 内存完成计数。保留项：旧历史及旧运行恢复、现有 claims、客户端连接会话、P5 尚未退役的 stage 引擎。
+
+新 claim 的 origin 标识 remember 或 distillation；其来源引用用于追踪，不能当成蒸馏完成证据。反思引用交互后，蒸馏仍以自己的消费记录判断进度，两个消费域互不替代。
+
+P4b 本地验收：scripts/check_all.sh 15/15 全绿；主审最后补齐失败/未决摘要后再次执行 --static --unit，14/14 全绿，单元 2869 passed / 15 skipped；集成 40 passed。真实隔离 dream + SDK + DeepSeek 完成三封模块回信与自动蒸馏（共 4 次模型调用，output 预留 4480），来源回读、thread recap、证据导出、读取故障后重建和重复消费均未增加模型调用或扣费。隔离目录与服务均已清理，8080 无监听。
+
+主审修复：异步演武场导出必须先完成归档和拆除再公开终态；报告使用实际编码文件名生成证据链接。新 claim 的来源引用与蒸馏完成记录明确分开，反思引用旧/新来源都不替代蒸馏消费进度。P4b 待人类合并后勾选，P5 未开始。
+
+P4b 评审补充：v2 在途反思统一计入排空；维护临时失败指数退避 30–300 秒，固定回执中的永久错误阻塞并上浮成员诊断。损坏 checkpoint 保留证据，仅隔离对应维护，不以空进度继续；人工处置见 memory 设计。flaky 测试取消后台 loop 后用确定时钟严格验证调用次数。退休教训路径复用 TlonPaths，旧标量水位说明已清除。
+
+评审修复验收：scripts/check_all.sh 15/15、最终 --static --unit 14/14 全绿；单元 2885 passed / 15 skipped、集成 40 passed，flaky 严格测试 8 路并行 8/8 通过。真实 dream + SDK + DeepSeek 再跑通过，4 次模型调用、output 预留 4480；服务与隔离目录已清理。

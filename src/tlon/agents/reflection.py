@@ -7,17 +7,22 @@ claims). Extracted from the Agent god class.
 
 import asyncio
 import contextlib
+import hashlib
 import json
+import os
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from importlib import resources
 from typing import Any, cast
 
-from tlon.agents.member_spec import SessionRecipe
+from tlon.agents.member_spec import ReflectSpec
 from tlon.agents.session_journal import SessionJournal
+from tlon.base.execution import ExecutionScope, bind_execution
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
+from tlon.base.maintenance import MaintenanceCheckpointError, MaintenanceRetry
 from tlon.memory.manager import MemoryManager
+from tlon.operations.schema import RecoveryMismatchError, UnknownOutcomeError
 
 logger = get_logger(__name__)
 
@@ -35,12 +40,12 @@ REFLECTION_SYSTEM_PROMPT = (
 class ReflectionEngine:
     """Runs background memory reflections for an agent.
 
-    Owns the reflection scheduling state (interval, session counter,
-    running flag). Initial enabled/interval come from the session recipe;
+    Owns the durable completed-source checkpoint and running task.
+    Initial enabled/interval come from explicit reflection settings;
     ``enabled`` stays a runtime switch.
 
     The engine receives its services (memory, LLM client, session
-    journal) and the session recipe directly — no back-reference to the
+    journal) and reflection settings directly — no back-reference to the
     owning member runtime.
     """
 
@@ -48,21 +53,22 @@ class ReflectionEngine:
         self,
         memory: MemoryManager,
         llm_client: LLMClient,
-        recipe: SessionRecipe,
+        reflect: ReflectSpec,
         journal: SessionJournal,
         state_changed: Callable[[], Awaitable[None]] | None = None,
+        execution_factory: Callable[[str], ExecutionScope] | None = None,
     ):
         self._state_changed = state_changed
         self._memory = memory
         self._llm_client = llm_client
         self._journal = journal
 
-        reflect = recipe.reflect
+        self._execution_factory = execution_factory
+        self._checkpoint = memory.storage_path / "reflection.json"
         self.enabled: bool = reflect.enabled
         self._interval: float = reflect.interval_minutes * 60
         self._min_interactions: int = memory.config.reflection_min_interactions
-        self._last_reflection_time: datetime | None = None
-        self._session_count_since_reflection = 0
+        self._retry = MaintenanceRetry()
         self._running = False
         self._task: asyncio.Task[None] | None = None
 
@@ -76,30 +82,101 @@ class ReflectionEngine:
         """
         return self._running
 
-    def note_interaction(self) -> None:
-        """Record that a session completed (feeds the trigger)."""
-        self._session_count_since_reflection += 1
+    @property
+    def diagnostic_error(self) -> str | None:
+        """Latest maintenance failure for operator diagnostics."""
+        return self._retry.error
+
+    def _load_checkpoint(self) -> dict[str, Any]:
+        if not self._checkpoint.exists():
+            return {"seen": [], "last_completed": None, "pending": None}
+        try:
+            state = json.loads(self._checkpoint.read_text(encoding="utf-8"))
+            self._validate_checkpoint(state)
+        except (ValueError, TypeError, KeyError) as error:
+            raise MaintenanceCheckpointError(self._checkpoint, str(error)) from error
+        return cast(dict[str, Any], state)
+
+    @staticmethod
+    def _validate_checkpoint(state: Any) -> None:
+        """Reject damaged progress without discarding frozen operations."""
+
+        def strings(value: Any) -> bool:
+            return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+        if not isinstance(state, dict) or not strings(state.get("seen")):
+            raise ValueError("seen must be a list of source IDs")
+        completed = state["last_completed"]
+        if completed is not None and (
+            not isinstance(completed, str) or datetime.fromisoformat(completed).tzinfo is None
+        ):
+            raise ValueError("last_completed must be a timezone-aware timestamp or null")
+        pending = state["pending"]
+        if pending is None:
+            return
+        if not isinstance(pending, dict):
+            raise ValueError("pending must be an object or null")
+        if not isinstance(pending["id"], str) or not strings(pending["sources"]):
+            raise ValueError("pending requires a string ID and source IDs")
+        digest = pending["digest"]
+        if digest is not None and (
+            not isinstance(digest, dict)
+            or not isinstance(digest.get("claims"), list)
+            or type(digest.get("claim_count")) is not int
+            or type(digest.get("undistilled_session_count")) is not int
+            or not isinstance(digest.get("recent_interactions", []), list)
+        ):
+            raise ValueError("pending digest must contain memory counts and claims")
+        operations = pending["operations"]
+        if operations is not None and (
+            not isinstance(operations, list)
+            or not all(isinstance(operation, dict) for operation in operations)
+        ):
+            raise ValueError("pending operations must be objects or null")
+        index = pending["next"]
+        if type(index) is not int or index < 0 or index > len(operations or []):
+            raise ValueError("pending next must identify an operation boundary")
+
+    def _save_checkpoint(self, state: dict[str, Any]) -> None:
+        temporary = self._checkpoint.with_suffix(".tmp")
+        with temporary.open("w", encoding="utf-8") as stream:
+            json.dump(state, stream, ensure_ascii=False, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, self._checkpoint)
 
     async def check_trigger(self) -> None:
-        """Check if memory reflection should run and trigger if needed."""
-        if not self.enabled:
+        """Count durable completed sources, retaining one frozen batch on failure."""
+        if not self.enabled or self._running or not self._retry.ready():
             return
-        if self._running:
-            return
-
-        now = datetime.now(UTC)
-        if self._last_reflection_time:
-            elapsed = (now - self._last_reflection_time).total_seconds()
-            if elapsed < self._interval:
-                return
-
-        if self._session_count_since_reflection < self._min_interactions:
-            return
-
-        self._last_reflection_time = now
-        self._session_count_since_reflection = 0
-        self._running = True
-        self._task = asyncio.create_task(self._run())
+        try:
+            state = await asyncio.to_thread(self._load_checkpoint)
+            if state["pending"] is None:
+                sources = sorted(set(await self._journal.list_completed()) - set(state["seen"]))
+                if len(sources) < self._min_interactions:
+                    return
+                if state["last_completed"] is not None:
+                    elapsed = (
+                        datetime.now(UTC) - datetime.fromisoformat(state["last_completed"])
+                    ).total_seconds()
+                    if elapsed < self._interval:
+                        return
+                batch = hashlib.sha256(json.dumps(sources).encode()).hexdigest()
+                state["pending"] = {
+                    "id": batch,
+                    "sources": sources,
+                    "digest": None,
+                    "operations": None,
+                    "next": 0,
+                }
+                await asyncio.to_thread(self._save_checkpoint, state)
+            self._running = True
+            self._task = asyncio.create_task(self._run(state))
+        except Exception as error:
+            self._retry.failed(
+                error, blocked=isinstance(error, (RecoveryMismatchError, UnknownOutcomeError))
+            )
+            logger.warning("reflection_failed", error=str(error))
 
     async def shutdown(self) -> None:
         """Cancel an in-flight reflection and await it.
@@ -114,44 +191,118 @@ class ReflectionEngine:
             await self._task
         self._task = None
 
-    async def _run(self) -> None:
-        """Run a background memory reflection/audit.
-
-        Takes a snapshot of memory state, asks LLM to analyze it, and applies
-        the resulting operations (add/delete claims). Runs in a background
-        task to avoid blocking the main loop.
-        """
+    async def _run(self, state: dict[str, Any]) -> None:
+        """Run an independently budgeted, replayable maintenance batch."""
         try:
             if self._state_changed is not None:
                 await self._state_changed()
-            digest = await self._memory.get_memory_digest(self._journal)
-
-            if digest["claim_count"] == 0:
-                logger.debug("reflection_skipped", reason="no_memory")
-                return
-
-            prompt = self._build_prompt(digest)
-            response = await self._llm_client.chat(
-                system_prompt=REFLECTION_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": prompt}],
-                timeout=60.0,
-                purpose="reflect",
+            pending = state["pending"]
+            scope = (
+                self._execution_factory("reflection:" + pending["id"])
+                if self._execution_factory
+                else None
             )
-
-            if not response.content:
-                return
-
-            operations = self._parse_response(response.content)
-            await self._apply_operations(operations)
-
-            logger.info("reflection_completed", operation_count=len(operations))
-        except Exception as e:
-            logger.warning("reflection_failed", error=str(e))
+            with bind_execution(scope):
+                if scope is not None:
+                    await scope.initialize()
+                if pending["digest"] is None:
+                    pending["digest"] = await self._memory.get_memory_digest(self._journal)
+                    await asyncio.to_thread(self._save_checkpoint, state)
+                digest = pending["digest"]
+                if pending["operations"] is None:
+                    if digest["claim_count"] == 0 and not digest.get("recent_interactions"):
+                        operations = []
+                    else:
+                        response = await self._llm_client.chat(
+                            system_prompt=REFLECTION_SYSTEM_PROMPT,
+                            messages=[{"role": "user", "content": self._build_prompt(digest)}],
+                            timeout=60.0,
+                            purpose="reflect",
+                        )
+                        operations = self._parse_response(response.content or "{}")
+                    pending["operations"] = await self._freeze_operations(
+                        operations, digest["claims"]
+                    )
+                    await asyncio.to_thread(self._save_checkpoint, state)
+                operations = pending["operations"]
+                while pending["next"] < len(operations):
+                    index = pending["next"]
+                    child = scope.child(f"operation:{index}") if scope else None
+                    with bind_execution(child):
+                        await self._apply_operation(
+                            operations[index],
+                            hashlib.sha256(
+                                f"reflection:{pending['id']}:{index}".encode()
+                            ).hexdigest()[:32],
+                            pending["sources"],
+                        )
+                    pending["next"] += 1
+                    await asyncio.to_thread(self._save_checkpoint, state)
+                state["seen"] = sorted(set(state["seen"]) | set(pending["sources"]))
+                state["last_completed"] = datetime.now(UTC).isoformat()
+                state["pending"] = None
+                await asyncio.to_thread(self._save_checkpoint, state)
+                self._retry.succeeded()
+                logger.info("reflection_completed", operation_count=len(operations))
+        except Exception as error:
+            self._retry.failed(
+                error, blocked=isinstance(error, (RecoveryMismatchError, UnknownOutcomeError))
+            )
+            logger.warning("reflection_failed", error=str(error))
         finally:
             self._running = False
             self._task = None
             if self._state_changed is not None:
                 await self._state_changed()
+
+    async def _freeze_operations(
+        self, operations: list[dict[str, Any]], claims: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Resolve deletion targets once, so retries cannot delete newer claims."""
+        frozen = []
+        for operation in operations:
+            op = dict(operation)
+            if op.get("action") == "delete_claim":
+                prefix = op.get("claim_id", "")
+                if prefix:
+                    matches = [claim for claim in claims if str(claim["id"]).startswith(prefix)]
+                    op["claim_ids"] = [str(matches[0]["id"])] if len(matches) == 1 else []
+                    if len(matches) != 1:
+                        logger.warning("reflection_delete_claim_unresolved", claim_id=prefix)
+                else:
+                    description = op.get("description", "")
+                    keywords = [part for part in description.split() if len(part) > 1] or [
+                        description
+                    ]
+                    matches = [
+                        claim
+                        for claim in claims
+                        if description
+                        and any(
+                            keyword.lower() in str(claim.get("text", "")).lower()
+                            for keyword in keywords
+                        )
+                    ]
+                    op["claim_ids"] = [str(claim["id"]) for claim in matches]
+                    if not description:
+                        logger.warning("reflection_delete_claim_no_target", operation=op)
+            frozen.append(op)
+        return frozen
+
+    async def _apply_operation(
+        self, op: dict[str, Any], claim_id: str | None = None, sources: list[str] | None = None
+    ) -> None:
+        action = op.get("action", "")
+        if action == "record_claim":
+            await self._memory.remember_fact(
+                fact=op.get("description", ""),
+                importance=float(op.get("importance", 0.5)),
+                claim_id=claim_id,
+                source_session_ids=sources,
+            )
+        elif action == "delete_claim":
+            for target in op.get("claim_ids", []):
+                await self._memory.delete_claim(target)
 
     def _build_prompt(self, digest: dict[str, Any]) -> str:
         """Build the reflection prompt from memory digest."""
@@ -170,6 +321,9 @@ class ReflectionEngine:
             parts.append("")
 
         parts.append("")
+        if digest.get("recent_interactions"):
+            parts.append("### 最近完成的交互（含来源 ID）")
+            parts.append(json.dumps(digest["recent_interactions"], ensure_ascii=False))
         parts.append("请分析以上记忆状态，返回需要执行的 JSON 操作列表。")
 
         return "\n".join(parts)
@@ -195,39 +349,3 @@ class ReflectionEngine:
         except json.JSONDecodeError:
             logger.warning("reflection_parse_failed", content=content)
             return []
-
-    async def _apply_operations(self, operations: list[dict[str, Any]]) -> None:
-        """Apply reflection operations to memory."""
-        for op in operations:
-            action = op.get("action", "")
-            try:
-                if action == "record_claim":
-                    await self._memory.remember_fact(
-                        fact=op.get("description", ""),
-                        importance=float(op.get("importance", 0.5)),
-                    )
-                    logger.debug("reflection_claim_recorded", description=op.get("description", ""))
-                elif action == "delete_claim":
-                    claim_id = op.get("claim_id", "")
-                    if claim_id:
-                        deleted = await self._memory.delete_claim(claim_id)
-                        if deleted:
-                            logger.debug("reflection_claim_deleted", claim_id=claim_id)
-                        # Not found / ambiguous: already logged by the manager.
-                    else:
-                        description = op.get("description", "")
-                        if description:
-                            result = await self._memory.forget(query=description, confirm=True)
-                            logger.debug(
-                                "reflection_claim_deleted_by_description",
-                                description=description,
-                                result=result,
-                            )
-                        else:
-                            logger.warning("reflection_delete_claim_no_target", operation=op)
-                elif action == "noop":
-                    pass
-                else:
-                    logger.debug("reflection_action_unknown", action=action)
-            except Exception as e:
-                logger.warning("reflection_action_failed", action=action, error=str(e))

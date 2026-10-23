@@ -100,9 +100,14 @@ def _render_thread_recap(events: list[dict[str, Any]]) -> str:
     trigger = projection.trigger_content
     end_reason = projection.end_reason
     tool_lines = [_clip(line, _RECAP_TOOL_MAX) for line in projection.tool_results]
-    conclusion = projection.llm_responses[-1] if projection.llm_responses else ""
+    conclusion = (
+        projection.llm_responses[-1] if projection.llm_responses else projection.program_result
+    )
 
     lines = ["[最近会话摘要]"]
+    source = next((event.get("session_id") for event in events if event["type"] == "session/start"), None)
+    if source:
+        lines.append(f"来源：{source}")
     if trigger:
         lines.append(f"触发语：{_clip(trigger, _RECAP_TRIGGER_MAX)}")
     if end_reason:
@@ -113,6 +118,8 @@ def _render_thread_recap(events: list[dict[str, Any]]) -> str:
         header += f"，列最近 {len(shown)} 条）：" if len(tool_lines) > len(shown) else "）："
         lines.append(header)
         lines.extend(f"- {line}" for line in shown)
+    for error in projection.errors[-3:]:
+        lines.append(f"失败或未决：{_clip(error, _RECAP_TOOL_MAX)}")
     if conclusion:
         lines.append(f"结论：{_clip(conclusion, _RECAP_CONCLUSION_MAX)}")
     return "\n".join(lines) if len(lines) > 1 else ""

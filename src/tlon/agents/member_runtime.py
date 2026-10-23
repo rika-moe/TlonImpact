@@ -17,7 +17,13 @@ from tlon.agents.executor import EffectExecutor
 from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.agents.loader import has_frozen_work
 from tlon.agents.loop_driver import LoopDriver
-from tlon.agents.member_spec import MemberRule, MemberSpec, SessionRecipe, validate_member_spec
+from tlon.agents.member_spec import (
+    MemberRule,
+    MemberSpec,
+    ReflectSpec,
+    SessionRecipe,
+    validate_member_spec,
+)
 from tlon.agents.program_driver import ProgramDriver
 from tlon.agents.program_package import (
     program_builtins,
@@ -44,6 +50,7 @@ from tlon.base.events.event_bus import EventBus
 from tlon.base.execution import ExecutionScope, MemberWriteGate, bind_execution, current_execution
 from tlon.base.llm_client import LLMClient, ToolCall
 from tlon.base.logger import get_logger
+from tlon.base.maintenance import MaintenanceRetry
 from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_context import continue_trace
 from tlon.lifecycle.service import LifecycleService
@@ -56,7 +63,7 @@ from tlon.operations.invocation import registry_identity
 from tlon.operations.lifecycle import make_lifecycle_operations
 from tlon.operations.mail import make_mail_operations
 from tlon.operations.model import make_model_operations
-from tlon.operations.schema import UnknownOutcomeError, json_value
+from tlon.operations.schema import RecoveryMismatchError, UnknownOutcomeError, json_value
 from tlon.operations.state import make_state_operations
 from tlon.operations.time import time_operation_definitions
 from tlon.operations.tool_dispatch import ToolDispatch
@@ -277,10 +284,13 @@ class MemberRuntime(Member):
         self._completed_dispatches: set[tuple[str, str]] = set()
         self._program_task: asyncio.Task[None] | None = None
         self._deferred_boot: list[MemberRule] = []
+        self._maintenance_sources: frozenset[str] | None = None
+        self._distillation_retry = MaintenanceRetry()
         self._journal = (
             SessionJournal(
                 member_id,
                 services.tlon_paths,
+                program_store=self._program_store,
                 verify_root=self._verify_session_root,
                 verify_invocation=self._verify_invocation,
             )
@@ -289,6 +299,7 @@ class MemberRuntime(Member):
                 SessionJournal(
                     member_id,
                     tlon_paths,
+                    program_store=self._program_store,
                     verify_root=self._verify_session_root,
                     verify_invocation=self._verify_invocation,
                 )
@@ -300,6 +311,19 @@ class MemberRuntime(Member):
             assert self._journal is not None
             self._journal.resolve_dispatch = self._resolve_session_dispatch
             self._assemble_scheduler(services)
+        elif services is not None:
+            assert self._journal is not None
+            registry = self._registry
+            self._reflection = ReflectionEngine(
+                services.memory,
+                services.llm_client,
+                ReflectSpec(True, 30),
+                self._journal,
+                state_changed=(lambda: registry.publish_scheduling_state(self._member_id))
+                if registry
+                else None,
+                execution_factory=self._maintenance_execution,
+            )
 
     def _maintenance_execution(self, purpose: str) -> ExecutionScope:
         limit = (
@@ -307,9 +331,12 @@ class MemberRuntime(Member):
             if self._services and self._services.config.llm
             else 4096
         )
-        return ExecutionScope(
-            self._program_store, f"maintenance:{purpose}:{uuid.uuid4().hex}", limit, "output"
+        root = (
+            f"maintenance:{purpose}"
+            if purpose.startswith("reflection:")
+            else f"maintenance:{purpose}:{uuid.uuid4().hex}"
         )
+        return ExecutionScope(self._program_store, root, limit, "output")
 
     async def _session_execution(self, session_id: str, recipe: SessionRecipe) -> ExecutionScope:
         parent = current_execution()
@@ -364,8 +391,22 @@ class MemberRuntime(Member):
 
     def get_diagnostic_error(self) -> str | None:
         """Runtime failure is a diagnostic, never a scheduling state."""
-        return self._behavior_error or (
-            "runtime error" if self._state is MemberState.ERROR else None
+        maintenance_errors = [
+            f"{purpose}: {error}"
+            for purpose, error in (
+                ("distillation", self._distillation_retry.error),
+                ("reflection", self._reflection.diagnostic_error if self._reflection else None),
+                (
+                    "distillation checkpoint",
+                    self._services.memory.maintenance_error if self._services else None,
+                ),
+            )
+            if error
+        ]
+        return (
+            self._behavior_error
+            or "; ".join(maintenance_errors)
+            or ("runtime error" if self._state is MemberState.ERROR else None)
         )
 
     @property
@@ -374,13 +415,11 @@ class MemberRuntime(Member):
 
         Draining must wait for every kind of work, including external I/O.
         """
-        if self._scheduler is not None:
-            return (
-                self._scheduler.active_session_count
-                + self._active_actions
-                + int(self._reflection is not None and self._reflection.is_running)
-            )
-        return self._active_actions
+        return (
+            (self._scheduler.active_session_count if self._scheduler is not None else 0)
+            + self._active_actions
+            + int(self._reflection is not None and self._reflection.is_running)
+        )
 
     @property
     def idle_seconds(self) -> float:
@@ -514,6 +553,8 @@ class MemberRuntime(Member):
                 if await asyncio.to_thread(self._program_store.pending):
                     await asyncio.sleep(1)
                     continue
+            if self._spec.version == 2:
+                await self._check_program_maintenance()
             if self._deferred_boot:
                 rule = self._deferred_boot.pop(0)
                 try:
@@ -526,7 +567,14 @@ class MemberRuntime(Member):
                         exc_info=True,
                     )
                 continue
-            event = await self._queue.get()
+            try:
+                event = (
+                    await asyncio.wait_for(self._queue.get(), timeout=1.0)
+                    if self._spec.version == 2
+                    else await self._queue.get()
+                )
+            except TimeoutError:
+                continue
             mail = event.payload.get("mail") if isinstance(event.payload, dict) else None
             try:
                 if self._can_schedule():
@@ -556,6 +604,39 @@ class MemberRuntime(Member):
                 if isinstance(mail, Mail):
                     self._queued_mail.discard(mail.id)
                 self._queue.task_done()
+
+    async def _check_program_maintenance(self) -> None:
+        """Maintenance consumes terminal history; it never owns entry recovery."""
+        if self._services is None or self._journal is None or not self._can_schedule():
+            return
+        if self._distillation_retry.ready():
+            active = False
+            try:
+                sources = frozenset(await self._journal.list_completed())
+                if sources != self._maintenance_sources:
+                    self._active_actions += 1
+                    active = True
+                    if self._registry is not None:
+                        await self._registry.publish_scheduling_state(self._member_id)
+                    with bind_execution(self._maintenance_execution("distill")):
+                        await self._services.memory.maybe_distill_completed_sessions(self._journal)
+                    self._maintenance_sources = sources
+                self._distillation_retry.succeeded()
+            except Exception as error:
+                self._distillation_retry.failed(
+                    error, blocked=isinstance(error, (RecoveryMismatchError, UnknownOutcomeError))
+                )
+                self._logger.warning("program_distillation_failed", error=str(error))
+            finally:
+                if active:
+                    self._active_actions -= 1
+                    if self._registry is not None:
+                        await self._registry.publish_scheduling_state(self._member_id)
+        try:
+            if self._reflection is not None:
+                await self._reflection.check_trigger()
+        except Exception as error:
+            self._logger.warning("program_reflection_failed", error=str(error))
 
     async def _dispatch_event(self, event: Event) -> None:
         if self._behavior_error is not None or not self._can_schedule():
@@ -1150,13 +1231,7 @@ class MemberRuntime(Member):
 
         async def check_reflection() -> None:
             if self._behavior_error is None and self._reflection is not None:
-                scope = self._maintenance_execution("reflection")
-                with bind_execution(scope):
-                    await self._reflection.check_trigger()
-
-        def note_interaction() -> None:
-            if self._reflection is not None:
-                self._reflection.note_interaction()
+                await self._reflection.check_trigger()
 
         def session_span(session: AgentSession) -> Any:
             assert self._stage_services is not None
@@ -1167,7 +1242,6 @@ class MemberRuntime(Member):
             caps.memory,
             session_span,
             check_reflection,
-            note_interaction,
             lambda recipe: self._assemble_session(caps, recipe),
             self._journal,
             self._mailbox,
@@ -1297,8 +1371,9 @@ class MemberRuntime(Member):
             self._reflection = ReflectionEngine(
                 caps.memory,
                 caps.llm_client,
-                recipe,
+                recipe.reflect,
                 journal,
+                execution_factory=self._maintenance_execution,
                 state_changed=(lambda: registry.publish_scheduling_state(self._member_id))
                 if registry is not None
                 else None,

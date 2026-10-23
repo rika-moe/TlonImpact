@@ -383,7 +383,6 @@ class TestReplay:
             memory=MagicMock(),
             session_span=lambda session: contextlib.nullcontext(),
             check_reflection=AsyncMock(),
-            note_interaction=MagicMock(),
             make_driver=MagicMock(),
             journal=journal,
             mailbox=None,

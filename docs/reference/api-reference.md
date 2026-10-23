@@ -263,7 +263,7 @@ Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相
 | `wake_at` | 睡眠的 UTC ISO 到期时间，其余状态为 null |
 | `scheduling_pending` | 当前等待/睡眠/退出意图；活跃且非空表示排空中，sleeping 的 sleep 表示已入睡 |
 | `stop_pending` | 管理员永久退出正在排空 |
-| `resident` / `waking` / `error` | 实例驻留、装配中、故障诊断，均不改变四态定义 |
+| `resident` / `waking` / `error` | 实例驻留、装配中、故障诊断；error 也包含按维护类别标记的退避/阻塞原因和损坏 checkpoint 路径，均不改变四态定义 |
 | `prototype` | 行为原型 |
 | `spawned_by` | spawn 者 id |
 | `spawn_depth` | spawn 深度 |

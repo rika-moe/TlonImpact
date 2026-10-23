@@ -1,7 +1,10 @@
-"""SessionJournal — append-only session events in SQLite (ADR 0007/0032).
+"""Legacy session recovery events and read-only member-program interaction views.
+
+Module-program views rebuild from ProgramStore on read; they never enter legacy
+session recovery. Source IDs use the reserved ``program:`` namespace.
 
 Each agent owns one ``~/.tlon/{agent_id}/sessions.sqlite3`` database. It is
-the sole source of truth for session state: the engine commits every state
+the sole source of truth for legacy session state: the engine commits every state
 change *before* mutating the in-memory
 :class:`~tlon.agents.session.AgentSession` (the invariant
 "model-visible ⇒ journaled"), and a restart rebuilds the session by
@@ -36,8 +39,8 @@ Replay rules:
 The operation store decides whether recovery replays a committed outcome,
 retries a safe invocation, or reports an unsafe submitted call as unknown.
 Completed session metadata (``list_completed``) also feeds the
-journal → claims distillation trigger (ADR 0017): the database is the sole
-interaction truth, and watermark filtering happens before event reads.
+history → claims distillation trigger (ADR 0017). Consumers track stable
+source IDs independently; program facts come from ProgramStore, not this log.
 
 Writes are serialized by one asyncio lock per agent database, shared
 process-wide across SessionJournal instances. SQLite transactions coordinate
@@ -47,13 +50,17 @@ consistent.
 """
 
 import asyncio
+import json
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
+from tlon.agents.program_history import PROGRAM_SOURCE_PREFIX, program_events
+from tlon.agents.program_store import ProgramStore
 from tlon.agents.recovery import RecoveryBlockedError
 from tlon.agents.session import SessionState
 from tlon.agents.session_store import SessionStore
@@ -72,6 +79,11 @@ _LOCKS_CAP = 4096
 #: Database-keyed locks shared by every SessionJournal over the same agent
 #: (bounded LRU; a locked entry is never evicted — see mailbox._lock_for).
 _LOCKS: OrderedDict[Path, asyncio.Lock] = OrderedDict()
+
+
+def _completion_time(timestamp: str | None) -> float:
+    """Compare persisted clocks across timezone offsets; undated sources sort first."""
+    return datetime.fromisoformat(timestamp).timestamp() if timestamp else float("-inf")
 
 
 def _lock_for(database: Path) -> asyncio.Lock:
@@ -121,9 +133,8 @@ class SessionReplay:
 class SessionJournal:
     """Append-only event log for one agent's sessions.
 
-    The journal knows nothing about session semantics beyond the event
-    vocabulary above; the engine (LoopDriver / SessionScheduler) decides
-    what to write and when.
+    Legacy engines write session events. Module-program interactions are
+    reconstructed on demand from ProgramStore, never written to this journal.
     """
 
     def __init__(
@@ -131,6 +142,7 @@ class SessionJournal:
         agent_id: str,
         tlon_paths: TlonPaths,
         *,
+        program_store: ProgramStore | None = None,
         verify_root: Callable[[str], Awaitable[str]] | None = None,
         verify_invocation: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
         resolve_dispatch: Callable[[str, ToolCall, dict[str, Any]], Awaitable[ToolResult]]
@@ -142,6 +154,8 @@ class SessionJournal:
             agent_id: Owning agent id (the session database lives under its home)
             tlon_paths: Path resolver (tests inject an isolated home)
         """
+        self._program_store = program_store
+        self._program_database = tlon_paths.agent_program_database_file(agent_id)
         self._verify_root = verify_root
         self._verify_invocation = verify_invocation
         self.resolve_dispatch = resolve_dispatch
@@ -164,6 +178,8 @@ class SessionJournal:
             event_type: One of the event types in the module docstring
             payload: JSON-serializable event payload
         """
+        if session_id.startswith(PROGRAM_SOURCE_PREFIX):
+            raise ValueError("Program source IDs are reserved for reading projections")
         async with _lock_for(self._database):
             try:
                 await asyncio.to_thread(self._store.append, session_id, event_type, payload)
@@ -185,6 +201,8 @@ class SessionJournal:
         — the caller proceeds as for a fresh session. Missing tool results
         are resolved through the injected operation authority.
         """
+        if session_id.startswith(PROGRAM_SOURCE_PREFIX):
+            raise ValueError("Program reading projections cannot be resumed as sessions")
         events = await self.read_events(session_id)
         if not events:
             return None
@@ -356,19 +374,41 @@ class SessionJournal:
 
     async def end_reason(self, session_id: str) -> str | None:
         """The committed ``session/end`` reason, without reading events."""
+        if session_id.startswith(PROGRAM_SOURCE_PREFIX):
+            events = await self.read_events(session_id)
+            return next((str(e["reason"]) for e in events if e["type"] == "session/end"), None)
         return await asyncio.to_thread(self._store.end_reason, session_id)
 
     async def list_completed(self, started_after: datetime | None = None) -> list[str]:
-        """Completed session ids, optionally pending after a start watermark.
+        """Completed session ids, ordered by completion, optionally after a watermark.
 
-        Sessions without ``started_at`` always pass the watermark filter.
-        Only lifecycle metadata is queried; event bodies are not read.
+        Legacy sessions filter by their start clock; program entries filter by
+        their terminal clock so late completion is visible. Undated records
+        always pass. Only lifecycle metadata is read.
         """
-        return await asyncio.to_thread(self._store.completed_ids, started_after)
+        legacy = await asyncio.to_thread(self._store.completed_metadata, started_after)
+        records = await asyncio.to_thread(self._program_metadata)
+        completed = [(source_id, ended_at) for source_id, ended_at in legacy]
+        completed.extend(
+            (PROGRAM_SOURCE_PREFIX + record["run_id"], record["ended_at"])
+            for record in records
+            if (record["completed"] or record["error"] is not None)
+            and (
+                started_after is None
+                or record["ended_at"] is None
+                or datetime.fromisoformat(record["ended_at"]) > started_after
+            )
+        )
+        return [
+            source_id
+            for source_id, _ in sorted(
+                completed, key=lambda item: (_completion_time(item[1]), item[0])
+            )
+        ]
 
     async def count_completed(self, started_after: datetime | None = None) -> int:
         """Count completed sessions with the same metadata watermark filter."""
-        return await asyncio.to_thread(self._store.count_completed, started_after)
+        return len(await self.list_completed(started_after))
 
     async def latest_completed(self) -> str | None:
         """The latest session by committed end metadata, or None.
@@ -376,7 +416,20 @@ class SessionJournal:
         Feeds the context builder's ``thread-recap`` section (ADR 0028).
         Only lifecycle metadata is queried; event bodies are not read.
         """
-        return await asyncio.to_thread(self._store.latest_completed)
+        legacy = await asyncio.to_thread(self._store.latest_completed_metadata)
+        candidates: list[tuple[str, str]] = []
+        if legacy is not None:
+            candidates.append((legacy[1], legacy[0]))
+        for record in await asyncio.to_thread(self._program_metadata):
+            if record["completed"] or record["error"] is not None:
+                candidates.append(
+                    (record["ended_at"] or "", PROGRAM_SOURCE_PREFIX + record["run_id"])
+                )
+        return (
+            max(candidates, key=lambda item: (_completion_time(item[0]), item[1]))[1]
+            if candidates
+            else None
+        )
 
     async def find_unfinished(self) -> list[str]:
         """Started sessions without a committed end, in session id order.
@@ -389,4 +442,47 @@ class SessionJournal:
 
     async def read_events(self, session_id: str) -> list[dict[str, Any]]:
         """Read only the requested session's events, ordered by sequence."""
+        if session_id.startswith(PROGRAM_SOURCE_PREFIX):
+            run_id = session_id.removeprefix(PROGRAM_SOURCE_PREFIX)
+            records = await asyncio.to_thread(self._program_history, run_id)
+            return next(
+                (program_events(r, self._agent_id) for r in records if r["run"].run_id == run_id),
+                [],
+            )
         return await asyncio.to_thread(self._store.events, session_id)
+
+    def _program_metadata(self) -> list[dict[str, Any]]:
+        if self._program_store is None:
+            if not self._program_database.exists():
+                return []
+            self._program_store = ProgramStore(self._program_database)
+        return self._program_store.entry_metadata()
+
+    def _program_history(
+        self, run_id: str | None = None, *, include_invocations: bool = True
+    ) -> list[dict[str, Any]]:
+        if self._program_store is None:
+            if not self._program_database.exists():
+                return []
+            self._program_store = ProgramStore(self._program_database)
+        return self._program_store.entry_history(run_id, include_invocations=include_invocations)
+
+    async def export_jsonl(self, directory: Path) -> None:
+        """Export reading artifacts including pending entries; never resume work."""
+        await asyncio.to_thread(self._store.export_jsonl, directory)
+        records = await asyncio.to_thread(self._program_history)
+
+        def export() -> None:
+            for record in records:
+                source_id = PROGRAM_SOURCE_PREFIX + record["run"].run_id
+                directory.mkdir(parents=True, exist_ok=True)
+                destination = directory / (quote(source_id, safe="") + ".jsonl")
+                destination.write_text(
+                    "".join(
+                        json.dumps(e, ensure_ascii=False) + "\n"
+                        for e in program_events(record, self._agent_id)
+                    ),
+                    encoding="utf-8",
+                )
+
+        await asyncio.to_thread(export)
