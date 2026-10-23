@@ -8,7 +8,7 @@ policy/mechanism split):
   AGENT_STOP_REQUEST and fulfills them idempotently (wake locks,
   ``_waking`` dedup, run-state re-validation)
 - Idle *fact* detection: the monitor (``agents/reaper.py`` ``IdleReaper``)
-  publishes AGENT_IDLE for lazy agents (no ``:on :boot`` rule) idle past
+  publishes AGENT_IDLE for lazy agents (no ``:handlers {:boot ...}`` handler) idle past
   their timeout with no live sessions — deciding what to do with that
   fact is not the registry's job
 - Spawn/stop of members (stage 6b, unified member model ADR 0006):
@@ -31,10 +31,10 @@ Policy — which agents should run — lives in Adam (tlon.agents.adam), the
 built-in init member: boot set and idle drain are its two decision lines.
 Wake-on-mail is not a policy line any more (phase E): the registry
 *derives* it from each member's spec — a waiting recipient whose spec
-declares ``:on :mail-delivered`` can be activated. Timed sleep requires
+declares a ``:mail-delivered`` handler can be activated. Timed sleep requires
 its deadline or an administrator wake before ordinary mail can activate it. Lifecycle membership is
 spec-declared: the boot set and the lazy set come from each member's
-``:on`` rules (the spec is the single authority). The registry never
+handlers (the spec is the single authority). The registry never
 imports Adam.
 
 Configuration is delegated to AgentInfoProvider (typically ConfigManager).
@@ -73,7 +73,7 @@ from tlon.agents.policy import (
 from tlon.agents.reaper import IdleReaper
 from tlon.agents.scheduling_store import SchedulingStore
 from tlon.agents.spawn import SpawnManager
-from tlon.agents.vocabulary import ScriptHostQueries, make_member_builtins
+from tlon.agents.vocabulary import make_member_builtins
 from tlon.base.component import Component
 from tlon.base.config import AgentConfig
 from tlon.base.events.event import Event, EventType
@@ -94,48 +94,6 @@ if TYPE_CHECKING:
     from tlon.base.config import AgentInfoProvider
 
 logger = get_logger(__name__)
-
-
-class RegistryQueries(ScriptHostQueries):
-    """The shared ``ScriptHostQueries`` implementation over the registry.
-
-    Used by registry-spawned script members (P5b) and by Adam
-    (``agents/adam.py``), which imports it from here — Adam depends on the
-    registry, never the reverse (kernel first, PID 1 second; the DAG stays
-    acyclic). Explicitly implements the protocol so signature drift fails
-    at this definition site. Non-string input safely reads as False.
-    """
-
-    def __init__(self, registry: "AgentRegistry"):
-        self._registry = registry
-
-    def is_sleeping(self, agent_id: Any) -> bool:
-        """Registered (config known) but not running."""
-        if not isinstance(agent_id, str) or not agent_id:
-            return False
-        intent = self._registry._scheduling_intents.get(agent_id)
-        return intent is not None and intent[0] == "sleep"
-
-    def is_running(self, agent_id: Any) -> bool:
-        """Currently in the run table."""
-        return isinstance(agent_id, str) and self._registry.get_agent(agent_id) is not None
-
-    def is_lazy(self, agent_id: Any) -> bool:
-        """A member that can sleep / be drained (phase E: spec-derived)."""
-        if not isinstance(agent_id, str):
-            return False
-        return self._registry.is_lazy(agent_id)
-
-    def start_all_candidates(self) -> list[str]:
-        """The boot set: members whose spec declares ``:on :boot`` (phase E)."""
-        return self._registry.boot_candidates()
-
-    def member_roster(self) -> str:
-        """Render the public delivery directory, including offline members."""
-        return "\n".join(
-            f"{member['name']}（{member['id']}） — {member['address']}"
-            for member in self._registry.list_members()
-        )
 
 
 class AgentRegistry(Component):
@@ -305,7 +263,7 @@ class AgentRegistry(Component):
         # Host builtins validated against — shared by the profile loader and
         # ``_start_agent`` so a member's spec passes the same gate whether
         # loaded for derivation or for assembly.
-        self._host_builtins = make_member_builtins(RegistryQueries(self))
+        self._host_builtins = make_member_builtins()
 
         logger.info("agent_registry_constructed")
 
@@ -352,9 +310,8 @@ class AgentRegistry(Component):
         """Load (and cache) a member's validated spec, or None if unreadable.
 
         The profile is the source of boot-set, lazy-set, and wake
-        eligibility. It is validated against the same host builtins as
-        ``_start_agent`` so a spec that uses host predicates (``sleeping?``
-        etc.) derives consistently. A failed load is cached as None with a
+        eligibility. It is validated against the same operation vocabulary as
+        ``_start_agent`` so admission derives consistently. A failed load is cached as None with a
         single warning — the entry is invalidated by adopt/reload so a fixed
         file is retried.
         """
@@ -374,15 +331,15 @@ class AgentRegistry(Component):
 
     def boot_candidates(self) -> list[str]:
         """The boot set (phase E): registered members whose spec declares
-        ``:on :boot``, not already running.
+        ``:handlers {:boot ...}``, not already running.
 
-        A member whose spec cannot be loaded has no boot rule to declare and
+        A member whose spec cannot be loaded has no boot handler to declare and
         is excluded — the spec is the single lifecycle authority.
         """
         candidates: list[str] = []
         for agent_id in self._registered_ids:
             spec = self._spec_profile(agent_id)
-            if spec is None or not any(rule.on is None for rule in spec.rules):
+            if spec is None or not any(handler.on is None for handler in spec.handlers):
                 continue
             if self._agents.get(agent_id) is not None:
                 continue
@@ -392,16 +349,16 @@ class AgentRegistry(Component):
     def is_lazy(self, agent_id: str) -> bool:
         """A member that can sleep / be drained (spec-derived, ADR 0006).
 
-        A member is lazy iff its spec has no ``:on :boot`` rule — or its
+        A member is lazy iff its spec has no ``:handlers {:boot ...}`` handler — or its
         spec cannot be loaded, in which case it is inert (registered
         only). Laziness is a spec fact, never a birth marker: a spawned
-        member whose prototype carries a boot rule is a boot member
+        member whose prototype carries a boot handler is a boot member
         and starts at boot like any other.
         """
         spec = self._spec_profile(agent_id)
         if spec is None:
             return True
-        return not any(rule.on is None for rule in spec.rules)
+        return not any(handler.on is None for handler in spec.handlers)
 
     async def initialize(self) -> None:
         """Initialize the registry: subscribe to requests, start the monitor.
@@ -538,8 +495,7 @@ class AgentRegistry(Component):
         This is the sole assembler for members and their infrastructure.
         Every member gets its assembled services (``assemble_member_services`` in
         ``agents/assembly.py``: LLM client, memory, task manager, Docker
-        runtime, tools). The same rule executor handles all members;
-        session services are used only when a program requests them.
+        runtime, tools). The same module program executor handles all members.
 
         Args:
             agent_id: ID of the agent to start
@@ -567,11 +523,7 @@ class AgentRegistry(Component):
         try:
             logger.info("agent_starting", agent_id=agent_id, agent_name=config.name)
 
-            # Unified assembly (ADR 0006): every member gets the full
-            # capability set. Rules request session execution when needed.
-            # Host builtins gate
-            # validation too (D6.6: host predicates open to registry
-            # members).
+            # Shared operation vocabulary admits ordinary module entry programs.
             builtins = self._member_builtins()
             spec = self._load_activation_spec(agent_id, builtins)
             self._profiles[agent_id] = spec  # cache the profile (phase E)
@@ -672,12 +624,12 @@ class AgentRegistry(Component):
 
         Mechanized policy — the spec is the single lifecycle authority:
         a MAIL_DELIVERED whose recipient is registered, not running/waking,
-        and whose spec declares ``:on :mail-delivered`` gets an
+        and whose spec declares a ``:mail-delivered`` handler gets an
         AGENT_START_REQUEST{reason="wake"} that joins the delivery's trace
         tree (``_fulfill_wake`` continues the same trace). The mail is
         already durably in the member's inbox, so no trigger event is
         carried — the woken member scans unread mail on boot
-        (docs/design/mail.md). Previously this was Adam's wake rule; the
+        (docs/design/mail.md). Previously this was Adam's wake handler; the
         decision now lives here so lifecycle policy is spec-derived.
         """
         recipient = event.payload.get("recipient")
@@ -694,7 +646,9 @@ class AgentRegistry(Component):
         if self._agent_info.get_config(recipient) is None:
             return  # unknown member
         spec = self._spec_profile(recipient)
-        if spec is None or not any(rule.on is EventType.MAIL_DELIVERED for rule in spec.rules):
+        if spec is None or not any(
+            handler.on is EventType.MAIL_DELIVERED for handler in spec.handlers
+        ):
             return  # spec does not subscribe to mail delivery
         await self.event_bus.publish(
             Event(

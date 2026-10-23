@@ -25,7 +25,6 @@ class EventType(StrEnum):
     # Agent events
     AGENT_JOIN = "agent.join"
     AGENT_LEAVE = "agent.leave"
-    AGENT_THINKING = "agent.thinking"
     AGENT_RESPONSE = "agent.response"
     AGENT_STARTED = "agent.started"
     AGENT_STOPPED = "agent.stopped"
@@ -56,18 +55,13 @@ class EventType(StrEnum):
         "mail.orphan_scan"  # Periodic orphan-mail (unanswered thread root) scan statistics
     )
 
-    # Agent thinking process (observability)
-    AGENT_THINKING_START = "agent.thinking_start"
-    AGENT_THINKING_END = "agent.thinking_end"
+    # Ordinary model invocation observability
     AGENT_LLM_REQUEST = "agent.llm_request"
     AGENT_LLM_RESPONSE = "agent.llm_response"
 
-    # Tool events
-    TOOL_EXECUTE = "tool.execute"
-    TOOL_RESULT = "tool.result"
+    # Tool invocation observability
     TOOL_ERROR = "tool.error"
 
-    # Tool execution (observability)
     TOOL_EXECUTE_START = "tool.execute_start"
     TOOL_EXECUTE_END = "tool.execute_end"
 

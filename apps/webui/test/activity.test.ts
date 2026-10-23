@@ -35,29 +35,6 @@ test("mail.delivered maps to a mail entry with sender and recipient", () => {
   assert.equal(item.detail, undefined);
 });
 
-test("agent.thinking_start/end map to thinking entries", () => {
-  const start = toActivity(
-    ev("agent.thinking_start", {
-      agent_id: "lin-zhiyao",
-      agent_name: "林知遥",
-      context_length: 12,
-    }),
-  );
-  assert.equal(start.kind, "thinking");
-  assert.equal(start.title, "林知遥 is thinking (12 context messages)");
-  assert.equal(start.agentId, "lin-zhiyao");
-
-  const end = toActivity(
-    ev("agent.thinking_end", {
-      agent_id: "lin-zhiyao",
-      agent_name: "林知遥",
-      duration_ms: 1800,
-    }),
-  );
-  assert.equal(end.kind, "thinking");
-  assert.equal(end.title, "林知遥 finished thinking · 1.8s");
-});
-
 test("agent.llm_request maps to an llm entry with model and counts", () => {
   const item = toActivity(
     ev("agent.llm_request", {
@@ -207,8 +184,8 @@ test("non-object payloads never throw", () => {
   assert.equal(item.kind, "mail");
   assert.equal(item.title, "New mail");
 
-  const bare = toActivity(ev("agent.thinking_start", "oops"));
-  assert.equal(bare.title, "? is thinking");
+  const bare = toActivity(ev("agent.llm_request", "oops"));
+  assert.equal(bare.title, "? LLM request");
   assert.equal(bare.agentId, undefined);
 });
 

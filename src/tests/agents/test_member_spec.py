@@ -13,8 +13,9 @@ def test_handler_roundtrip_and_event_projection() -> None:
             "{:version 2 :handlers {:boot work/start :mail-delivered work/mail} :execution {:level :L0}}"
         )
     )
-    assert spec.rules[0].on is None
-    assert spec.handlers[1] == ("mail-delivered", "work/mail")
+    assert spec.handlers[0].on is None
+    assert spec.handlers[1].event_name == "mail-delivered"
+    assert spec.handlers[1].entry == "work/mail"
     assert MemberSpec.from_edn(loads(spec.to_edn())) == spec
 
 

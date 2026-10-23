@@ -41,7 +41,7 @@ _REVIEW_SYSTEM_PROMPT = (
     "以独立评审者的身份判断这份提案是否值得晋级为 trusted（可被 spawn）。\n"
     "评审角度：\n"
     "- 显示名与描述是否对应 spec 中的实际行为，不以职业或职位代替行为差异；原型不授予社会身份；\n"
-    "- spec 是否完整自足、形态合法（v2 handlers 及完整模块依赖（历史 v1 按其原规约审阅））；\n"
+    "- spec 是否完整自足、形态合法（v2 handlers 及完整模块依赖）；\n"
     "- 相对父代的变更是否有实质意义、与变更说明（proposal_note）一致；\n"
     "- 执行能力声明（:execution :level）是否名副其实——L0/L1 足以满足需求"
     "却声明 L2（Docker 完整 Linux userland）是评审红旗；\n"

@@ -31,7 +31,9 @@ async def test_mail_to_agent_lands_in_inbox(tlon_server: tuple[str, Path]) -> No
     token = f"smoke-{uuid.uuid4().hex}"
 
     async with (
-        aiohttp.ClientSession(headers=WEBUI_HEADERS) as http,
+        aiohttp.ClientSession(
+            headers=WEBUI_HEADERS, timeout=aiohttp.ClientTimeout(total=30.0)
+        ) as http,
         http.post(
             f"{base_url}/admin/config/agents",
             json={
@@ -44,7 +46,9 @@ async def test_mail_to_agent_lands_in_inbox(tlon_server: tuple[str, Path]) -> No
         assert resp.status == 200
         agent_id = (await resp.json())["agent_id"]
 
-    async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
+    async with aiohttp.ClientSession(
+        headers=WEBUI_HEADERS, timeout=aiohttp.ClientTimeout(total=30.0)
+    ) as http:
         accepted = await _send_mail(http, base_url, token, to=[agent_id], subject="smoke")
 
     assert accepted
@@ -56,7 +60,9 @@ async def test_mail_to_known_human_lands_in_inbox(tlon_server: tuple[str, Path])
     base_url, tlon_home = tlon_server
     token = f"smoke-{uuid.uuid4().hex}"
 
-    async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
+    async with aiohttp.ClientSession(
+        headers=WEBUI_HEADERS, timeout=aiohttp.ClientTimeout(total=30.0)
+    ) as http:
         # Reading bob's inbox creates his mailbox, making him a known human.
         _register_human(tlon_home, "bob")
         accepted = await _send_mail(http, base_url, token, to=["bob"], subject="smoke")

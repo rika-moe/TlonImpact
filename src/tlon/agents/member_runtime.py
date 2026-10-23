@@ -14,7 +14,7 @@ from structlog.contextvars import bound_contextvars
 from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.agents.loader import has_frozen_work, legacy_work_error
 from tlon.agents.member_spec import (
-    MemberRule,
+    MemberHandler,
     MemberSpec,
     ReflectSpec,
 )
@@ -29,9 +29,10 @@ from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
 from tlon.agents.recovery import RecoveryBlockedError, blocked_reason, blocks_recovery
 from tlon.agents.reflection import ReflectionEngine
+from tlon.agents.registry_queries import RegistryQueries
 from tlon.agents.session_journal import SessionJournal
 from tlon.agents.tool_executor import ToolExecutor
-from tlon.agents.vocabulary import rule_env
+from tlon.agents.vocabulary import entry_env
 from tlon.base.component import Component
 from tlon.base.config import AgentConfig
 from tlon.base.device import Device
@@ -52,6 +53,7 @@ from tlon.operations.invocation import registry_identity
 from tlon.operations.lifecycle import make_lifecycle_operations
 from tlon.operations.mail import make_mail_operations
 from tlon.operations.model import make_model_operations
+from tlon.operations.registry import make_registry_query_operations
 from tlon.operations.schema import RecoveryMismatchError, UnknownOutcomeError, json_value
 from tlon.operations.state import make_state_operations
 from tlon.operations.time import time_operation_definitions
@@ -118,7 +120,7 @@ class MemberServices:
 
 
 class MemberRuntime(Member):
-    """Execute matching event rules through one serial member-owned worker."""
+    """Execute matching event handlers through one serial member-owned worker."""
 
     def __init__(
         self,
@@ -141,8 +143,8 @@ class MemberRuntime(Member):
             name: Display name (component/device name)
             event_bus: Event bus for subscriptions and request publishing
             spec: The policy spec (pure data, validated at parse time)
-            builtins: Evaluation registry, host predicate closures
-                included (built by the caller via make_member_builtins)
+            builtins: Language vocabulary and operation placeholders
+                (built by the caller via make_member_builtins)
             mailbox: The member's mailbox for unread rescue scans and
                 read-marking (None only for bare test instances; Adam
                 carries ``~/.tlon/adam/mail/`` — docs/design/mail.md
@@ -186,6 +188,8 @@ class MemberRuntime(Member):
                 )
             )
         )
+        if self._registry is not None:
+            operations.extend(make_registry_query_operations(RegistryQueries(self._registry)))
         operations.extend(make_state_operations(self._program_store))
         if services is not None:
             operations.extend(
@@ -193,6 +197,9 @@ class MemberRuntime(Member):
                     services.llm_client,
                     self._program_system_prompt,
                     tool_definitions=services.tool_executor.get_tool_definitions,
+                    event_bus=self.event_bus,
+                    member_id=member_id,
+                    model_name=services.llm_client.config.model_name or "",
                 )
             )
         if not any(operation.name == "time-now" for operation in operations):
@@ -210,6 +217,7 @@ class MemberRuntime(Member):
             OperationRegistry(operations),
             CallContext(member_id, "member", "member"),
             self._program_store,
+            event_bus=self.event_bus,
             default_timeout=services.per_tool_timeout if services is not None else 30.0,
             write_gate=services.write_gate if services is not None else None,
         )
@@ -239,8 +247,8 @@ class MemberRuntime(Member):
                 services.tool_executor.register_tool(
                     OperationTool(operation_executor, operation.name)
                 )
-        # Rule idle bookkeeping (registry drain): initialize time
-        # and the last executed rule action, both monotonic.
+        # Handler idle bookkeeping (registry drain): initialize time
+        # and the last executed handler action, both monotonic.
         self._initialized_at: float | None = None
         self._last_action_at: float | None = None
         self._active_actions = 0
@@ -254,7 +262,7 @@ class MemberRuntime(Member):
         self._queue: asyncio.Queue[Event] = asyncio.Queue()
         self._queued_mail: set[str] = set()
         self._program_task: asyncio.Task[None] | None = None
-        self._deferred_boot: list[MemberRule] = []
+        self._deferred_boot: list[MemberHandler] = []
         self._maintenance_sources: frozenset[str] | None = None
         self._distillation_retry = MaintenanceRetry()
         self._journal = (
@@ -372,13 +380,13 @@ class MemberRuntime(Member):
             self._services.task_manager.load()
         self._initialized = True
         self._initialized_at = time.monotonic()
-        admitted_rules = self._spec.rules if self._behavior_error is None else ()
-        event_types = {rule.on for rule in admitted_rules if rule.on is not None}
+        admitted_handlers = self._spec.handlers if self._behavior_error is None else ()
+        event_types = {handler.on for handler in admitted_handlers if handler.on is not None}
         for event_type in sorted(event_types, key=str):
             self.subscribe(event_type, self._on_event)
-        for rule in admitted_rules:
-            if rule.on is None:
-                self._deferred_boot.append(rule)
+        for handler in admitted_handlers:
+            if handler.on is None:
+                self._deferred_boot.append(handler)
         self._program_task = asyncio.create_task(self._program_loop())
         self._program_task.add_done_callback(self._program_finished)
         await self._scan_unread_mail()
@@ -470,7 +478,7 @@ class MemberRuntime(Member):
                 self._logger.error("entry_scheduling_recovery_failed", error=str(error))
                 await asyncio.sleep(1)
                 continue
-            # An unfinished rule owns the serial member until it completes.
+            # An unfinished handler owns the serial member until it completes.
             # Interleaving newer state writes would let an old continuation
             # overwrite a newer subscriber or submission on retry.
             if await asyncio.to_thread(self._program_store.pending):
@@ -480,13 +488,13 @@ class MemberRuntime(Member):
                     continue
             await self._check_program_maintenance()
             if self._deferred_boot:
-                rule = self._deferred_boot.pop(0)
+                handler = self._deferred_boot.pop(0)
                 try:
-                    await self._run_rule(rule, None)
+                    await self._run_handler(handler, None)
                 except Exception as error:
                     self._logger.error(
                         "member_boot_program_failed",
-                        rule=rule.name,
+                        handler=handler.event_name,
                         error=str(error),
                         exc_info=True,
                     )
@@ -561,20 +569,20 @@ class MemberRuntime(Member):
     async def _dispatch_event(self, event: Event) -> None:
         if self._behavior_error is not None or not self._can_schedule():
             return
-        rules = [rule for rule in self._spec.rules if rule.on == event.type]
-        for rule in rules:
-            if not await self._run_rule(rule, event, event.payload):
+        handlers = [handler for handler in self._spec.handlers if handler.on == event.type]
+        for handler in handlers:
+            if not await self._run_handler(handler, event, event.payload):
                 break
 
-    async def _dispatch_completed(self, mail_id: str, rule_name: str) -> bool:
-        run = await asyncio.to_thread(self._program_store.get_run, f"{mail_id}:{rule_name}")
+    async def _dispatch_completed(self, mail_id: str, handler_name: str) -> bool:
+        run = await asyncio.to_thread(self._program_store.get_run, f"{mail_id}:{handler_name}")
         return run is not None and (run.completed or run.error is not None)
 
-    # ── Rule evaluation ──
+    # ── Handler execution ──
 
-    async def _run_rule(
+    async def _run_handler(
         self,
-        rule: MemberRule,
+        handler: MemberHandler,
         trigger_event: Event | None,
         payload: Any = None,
         *,
@@ -588,7 +596,7 @@ class MemberRuntime(Member):
         try:
             if trigger_event is None and self._registry is not None:
                 await self._registry.publish_scheduling_state(self._member_id)
-            return await self._run_rule_body(rule, trigger_event, payload, run_id=run_id)
+            return await self._run_handler_body(handler, trigger_event, payload, run_id=run_id)
         finally:
             self._program_trigger = previous_trigger
             self._active_actions -= 1
@@ -666,7 +674,7 @@ class MemberRuntime(Member):
 
     def _program_record_data(
         self,
-        rule: MemberRule,
+        handler: MemberHandler,
         trigger_event: Event | None,
         payload: Any,
         run_id: str | None = None,
@@ -683,7 +691,7 @@ class MemberRuntime(Member):
         if event_data is not None:
             event_data.pop("payload")
         return (
-            run_id or f"{identity}:{rule.name}",
+            run_id or f"{identity}:handler:{handler.event_name}",
             self._spec.to_edn(),
             dumps(
                 {
@@ -694,15 +702,15 @@ class MemberRuntime(Member):
             ),
         )
 
-    async def _run_rule_body(
+    async def _run_handler_body(
         self,
-        rule: MemberRule,
+        handler: MemberHandler,
         trigger_event: Event | None,
         payload: Any = None,
         *,
         run_id: str | None = None,
     ) -> bool:
-        identity, _, input_edn = self._program_record_data(rule, trigger_event, payload, run_id)
+        identity, _, input_edn = self._program_record_data(handler, trigger_event, payload, run_id)
         existing = await asyncio.to_thread(self._program_store.get_run, identity)
         if existing is not None:
             if existing.package_edn is None:
@@ -718,7 +726,7 @@ class MemberRuntime(Member):
                 "behavior": self._spec.to_edn(),
                 "modules": program_module_sources(self._spec.module_sources),
                 "model_contexts": model_contexts,
-                "entry": dict(self._spec.handlers)[rule.name.removeprefix("handler:")],
+                "entry": handler.entry,
                 "fuel": self._spec.fuel,
                 "token_budget": self._services.config.llm.max_tokens
                 if self._services and self._services.config.llm
@@ -959,9 +967,9 @@ class MemberRuntime(Member):
             for mail in await self._mailbox.unread():
                 if all(
                     [
-                        await self._dispatch_completed(mail.id, rule.name)
-                        for rule in self._spec.rules
-                        if rule.on is EventType.MAIL_DELIVERED
+                        await self._dispatch_completed(mail.id, f"handler:{handler.event_name}")
+                        for handler in self._spec.handlers
+                        if handler.on is EventType.MAIL_DELIVERED
                     ]
                 ):
                     continue
@@ -984,6 +992,5 @@ class MemberRuntime(Member):
             await self._scan_unread_mail()
 
     def _env(self, payload: Any) -> dict[str, Any]:
-        """The unified evaluation env — the shape is the :class:`RuleEnv`
-        contract; construction lives in :func:`vocabulary.rule_env`."""
-        return dict(rule_env(payload, member_id=self._member_id, name=self._name))
+        """Materialize the ordinary entry environment."""
+        return dict(entry_env(payload, member_id=self._member_id, name=self._name))

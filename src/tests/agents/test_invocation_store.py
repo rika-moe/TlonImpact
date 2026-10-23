@@ -67,13 +67,13 @@ def test_unknown_can_be_resolved_but_success_cannot_change(tmp_path: Path, disk:
 def test_restart_build_drift_rejects_program_and_session_roots(tmp_path: Path) -> None:
     path = tmp_path / "store.sqlite"
     store = ProgramStore(path, build_id="build")
-    store.ensure("program", "source", "input")
+    store.ensure_entry("program", "source", "input", {})
     store.ensure_root("session")
     changed = ProgramStore(path, build_id="changed")
     # Enumeration must expose every root so the runtime can isolate each one.
     assert [run.run_id for run in changed.pending()] == ["program"]
     for action in [
-        lambda: changed.ensure("program", "source", "input"),
+        lambda: changed.ensure_entry("program", "source", "input", {}),
         lambda: changed.ensure_root("program"),
         lambda: changed.ensure_root("session"),
     ]:

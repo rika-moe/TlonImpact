@@ -50,7 +50,7 @@ test("irrelevant events and missing agent_id return the map unchanged", () => {
   assert.equal(applyEvent(map, ev("mail.new", { from_address: "x@tlon.internal" })), map);
   assert.equal(applyEvent(map, ev("config.updated", { agent_id: "a" })), map);
   assert.equal(applyEvent(map, ev("system.startup", { agents: 2 })), map);
-  for (const eventType of ["agent.thinking_start", "agent.thinking_end", "agent.stopped", "agent.sleeping"]) {
+  for (const eventType of ["agent.stopped", "agent.sleeping"]) {
     assert.equal(applyEvent(map, ev(eventType, { agent_id: "a" })), map);
   }
   // Relevant type but no agent_id in the payload: nothing to key on.

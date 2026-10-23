@@ -74,7 +74,12 @@ class NewspaperHarness:
 
     async def execute(self, mail: Mail, invocation: str = "") -> None:
         run_id = f"mail:{mail.id}:handler:mail-delivered:{invocation}"
-        run = self.store.ensure(run_id, self.spec.to_edn(), dumps(mail.to_dict()))
+        run = self.store.ensure_entry(
+            run_id,
+            self.spec.to_edn(),
+            dumps(mail.to_dict()),
+            {"modules": program_module_sources(self.modules)},
+        )
         if run.completed:
             return
         event = {
@@ -125,7 +130,7 @@ class NewspaperHarness:
             operations=operations,
             member_id="newspaper",
         ).run_entry(package.entry("newspaper.main/handle"), event, fuel=10000)
-        self.store.complete(run_id)
+        self.store.complete_entry(run_id, None)
 
     def restart(self) -> None:
         self.store = ProgramStore(

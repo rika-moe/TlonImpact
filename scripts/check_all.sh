@@ -71,7 +71,7 @@ if [ "$want_unit" -eq 1 ]; then
 fi
 
 if [ "$want_integration" -eq 1 ]; then
-    run "pytest-integration" uv run pytest src/tests/integration/ -q
+    run "pytest-integration" uv run pytest src/tests/integration/ -vv --durations=10
 fi
 
 printf '\n\033[1m======== 质量门汇总 ========\033[0m\n'

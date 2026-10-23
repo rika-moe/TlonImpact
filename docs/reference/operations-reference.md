@@ -10,7 +10,7 @@
 
 `OperationExecutor.call_pure` 仅执行纯操作；`call` 支持两类操作。纯操作直接执行；宿主效果操作依次执行输入严格 JSON 复制与 schema 校验、稳定身份与历史核对、持久化 intent、handler、输出校验及回执提交。已有回执在进入当前 handler 前还原；参数错误不写 intent。修改 handler 参数、返回值或 Tool schema 投影都不能污染原调用数据或权威 schema。
 
-尚不提供通用授权名单或动态工具视图；共享执行作用域已覆盖现有模型调用入口。真实 runtime 为两入口注入同一成员 ProgramStore；SessionJournal 提供历史及程序交互只读投影，PostOffice 保留邮件领域幂等回执，不另建第三权威日志。四个 DSL 宿主查询由程序驱动单独记录重放，受限宿主失败通知亦不经过普通 Operation invocation；两项例外见 [审计](../design/operations-audit.md)。上下文隔离不是完整授权系统。输出不合约报 `OutputError`，不得据此假定效果未发生或自动重试。
+尚不提供通用授权名单或动态工具视图；共享执行作用域已覆盖现有模型调用入口。真实 runtime 为两入口注入同一成员 ProgramStore；SessionJournal 提供历史及程序交互只读投影，PostOffice 保留邮件领域幂等回执，不另建第三权威日志。member-sleeping、member-running、member-lazy 与 member-roster 均为普通只读 Operation，通过同一 invocation 回执记录采样值，旧宿主 builtin 及独立 effects 路径已删除。受限宿主失败通知仍属于宿主故障处理出口，详见 [退役代码清理](../design/workflow-retirement-cleanup.md)。上下文隔离不是完整授权系统。输出不合约报 `OutputError`，不得据此假定效果未发生或自动重试。
 
 ## 调用记录与指纹 P4a
 

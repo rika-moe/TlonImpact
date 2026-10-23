@@ -438,7 +438,7 @@ Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相
 事件类型枚举在 [base/events/event.py](../../src/tlon/base/events/event.py) 的 `EventType`：
 
 <!-- BEGIN GENERATED: event-types -->
-枚举全集（36 个，生成自源码，注释即源码行内注释）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+枚举全集（31 个，生成自源码，注释即源码行内注释）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | event_type | 枚举成员 | 说明 |
 |---|---|---|
@@ -447,7 +447,6 @@ Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相
 | `mail.endorsed` | `MAIL_ENDORSED` | A delivered mail endorses another mail (reputation signal, see docs/design/mail.md) |
 | `agent.join` | `AGENT_JOIN` |  |
 | `agent.leave` | `AGENT_LEAVE` |  |
-| `agent.thinking` | `AGENT_THINKING` |  |
 | `agent.response` | `AGENT_RESPONSE` |  |
 | `agent.started` | `AGENT_STARTED` |  |
 | `agent.stopped` | `AGENT_STOPPED` |  |
@@ -465,12 +464,8 @@ Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相
 | `agent.spawned` | `AGENT_SPAWNED` |  |
 | `agent.noisy` | `AGENT_NOISY` |  |
 | `mail.orphan_scan` | `MAIL_ORPHAN_SCAN` |  |
-| `agent.thinking_start` | `AGENT_THINKING_START` |  |
-| `agent.thinking_end` | `AGENT_THINKING_END` |  |
 | `agent.llm_request` | `AGENT_LLM_REQUEST` |  |
 | `agent.llm_response` | `AGENT_LLM_RESPONSE` |  |
-| `tool.execute` | `TOOL_EXECUTE` |  |
-| `tool.result` | `TOOL_RESULT` |  |
 | `tool.error` | `TOOL_ERROR` |  |
 | `tool.execute_start` | `TOOL_EXECUTE_START` |  |
 | `tool.execute_end` | `TOOL_EXECUTE_END` |  |
@@ -494,8 +489,12 @@ Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相
 | `agent.spawned` | `AgentRegistry` | `agent_id`、`name`、`prototype`、`spawner_id`、`spawn_depth`、`started` |
 | `system.startup` / `system.shutdown` | `ServerApp`（source `server`） | 如 `{"agents": n}` |
 | `config.updated` | 配置层（`ConfigManager.reload_agent`） | `{"agent_id", "action"}` |
+| `agent.llm_request` / `agent.llm_response` | `ModelService.request` | `agent_id`、`model`；请求含数量，完成含耗时、finish_reason 与 token 用量 |
+| `tool.execute_start` / `tool.execute_end` / `tool.error` | `OperationExecutor` 的实际工具 handler 调用 | `agent_id`、`tool_name`；结束含 success，错误含 error |
 
-以下事件名仍保留在 `EventType`，当前生产代码没有发布点：`agent.join`、`agent.leave`、`agent.thinking`、`agent.response`、`agent.error`、`tool.execute`、`tool.result`、`system.error`，以及已退役 stage 引擎曾发布的 `agent.thinking_start`、`agent.thinking_end`、`agent.llm_request`、`agent.llm_response`、`tool.execute_start`、`tool.execute_end`、`tool.error`。订阅它们不会收到新事件。模型与工具的持久执行证据读取 ProgramStore/交互历史；保留事件枚举不表示存在同名观测发布能力。
+模型调用由 `ModelService` 发布 `agent.llm_request` / `agent.llm_response`，包含成员与模型身份、消息/工具数量、耗时和 token 用量，不携带消息正文。工具由 `OperationExecutor` 在 `origin=tool` 的实际 handler 调用处发布 `tool.execute_start`、`tool.execute_end` / `tool.error`；普通程序直接调用 Operation 不冒充工具。回放持久回执和恢复已提交结果均不重新发布或累计指标。事件是尽力观测，取消、超时或进程退出可能只有 start，不能据此推断效果未发生；持久执行证据仍读取 ProgramStore/交互历史。
+
+旧 stage 的 `agent.thinking` / `agent.thinking_start` / `agent.thinking_end` 以及无发布者的 `tool.execute` / `tool.result` 已删除。以下事件名仍保留但当前无生产发布点：`agent.join`、`agent.leave`、`agent.response`、`agent.error`、`system.error`。
 
 ### mode 与 filters
 

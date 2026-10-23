@@ -76,12 +76,6 @@ def test_failed_entries_preserve_package_and_cannot_complete(store: ProgramStore
         store.complete_entry("run", "ok")
 
 
-def test_entry_cannot_reinterpret_rule_run(store: ProgramStore) -> None:
-    store.ensure("run", "rule", "nil")
-    with pytest.raises(RecoveryMismatchError, match="not a module entry"):
-        store.ensure_entry("run", "handler", "nil", package())
-
-
 def test_entry_recovery_rejects_changed_host(tmp_path: Path) -> None:
     path = tmp_path / "program.db"
     ProgramStore(path, build_id="old").ensure_entry("run", "handler", "nil", package())
@@ -116,3 +110,16 @@ def test_sql_failure_rolls_back_input_source_and_root(tmp_path: Path) -> None:
     assert reopen(store).get_run("run") is None
     with sqlite3.connect(store.database) as connection:
         assert connection.execute("SELECT count(*) FROM roots").fetchone()[0] == 0
+
+
+def test_entry_rejects_archived_run_without_reinterpreting_evidence(tmp_path: Path) -> None:
+    from tests.history_helpers import insert_legacy_run
+
+    database = tmp_path / "program.db"
+    store = ProgramStore(database, build_id="build")
+    store.ensure_root("run")
+    insert_legacy_run(database, "run", "rule", "nil")
+    original = store.get_run("run")
+    with pytest.raises(RecoveryMismatchError, match="not a module entry"):
+        store.ensure_entry("run", "handler", "nil", package())
+    assert store.get_run("run") == original

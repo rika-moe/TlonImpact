@@ -109,7 +109,7 @@ async def test_restart_replays_frozen_modules_after_committed_send(
     monkeypatch.setattr(member._program_store, "complete_entry", crash)
     try:
         with pytest.raises(asyncio.CancelledError):
-            await member._run_rule_body(member.spec.rules[0], event, run_id="frozen-run")
+            await member._run_handler_body(member.spec.handlers[0], event, run_id="frozen-run")
         saved = member._program_store.get_run("frozen-run")
         assert saved is not None and not saved.completed
     finally:
@@ -185,7 +185,7 @@ async def test_entry_scheduling_restarts_from_committed_result(tmp_path: Path) -
     await member.initialize()
     try:
         with pytest.raises(asyncio.CancelledError):
-            await member._run_rule_body(member.spec.rules[0], _event(), run_id="schedule-run")
+            await member._run_handler_body(member.spec.handlers[0], _event(), run_id="schedule-run")
         record = member._program_store.get_run("schedule-run")
         assert record is not None and record.completed and not record.scheduling_applied
         assert loads(record.result_edn) == "done"
@@ -226,7 +226,7 @@ async def test_invalid_entry_return_is_failed_without_stage_fallback(
     member = _member(tmp_path, modules)
     await member.initialize()
     try:
-        await member._run_rule_body(member.spec.rules[0], _event(), run_id="bad-result")
+        await member._run_handler_body(member.spec.handlers[0], _event(), run_id="bad-result")
         record = member._program_store.get_run("bad-result")
         assert record is not None and record.error is not None
         assert "entry" in record.error
@@ -300,7 +300,7 @@ async def test_missing_frozen_operation_is_quarantined_without_blocking_new_even
     monkeypatch.setattr(original._program_store, "complete_entry", crash)
     try:
         with pytest.raises(asyncio.CancelledError):
-            await original._run_rule_body(original.spec.rules[0], event, run_id="missing-operation")
+            await original._run_handler_body(original.spec.handlers[0], event, run_id="missing-operation")
     finally:
         monkeypatch.setattr(original._program_store, "complete_entry", complete)
         await original.shutdown()
@@ -401,7 +401,7 @@ async def test_entry_failure_courtesy_mail_is_durable_and_human_only(
     run_id = f"{mail.id}:handler:mail-delivered"
     await member.initialize()
     try:
-        await member._run_rule_body(member.spec.rules[0], event, run_id=run_id)
+        await member._run_handler_body(member.spec.handlers[0], event, run_id=run_id)
         saved = member._program_store.get_run(run_id)
         assert saved is not None and saved.error and not saved.completed
         assert "keep this" in saved.input_edn
@@ -444,7 +444,7 @@ async def test_failure_courtesy_lookup_error_preserves_original_program_failure(
     member._operation_executor.call = AsyncMock()
     await member.initialize()
     try:
-        await member._run_rule_body(member.spec.rules[0], event, run_id="lookup-failed")
+        await member._run_handler_body(member.spec.handlers[0], event, run_id="lookup-failed")
         record = member._program_store.get_run("lookup-failed")
         assert record is not None and record.error == "invalid entry scheduling request"
         assert not record.completed
@@ -470,7 +470,7 @@ async def test_program_maintenance_failure_never_replays_completed_entry(
         await member._program_task
     member._program_task = None
     try:
-        await member._run_rule_body(member.spec.rules[0], _event(), run_id="finished")
+        await member._run_handler_body(member.spec.handlers[0], _event(), run_id="finished")
         assert member._journal is not None
         assert "program:finished" in await member._journal.list_completed()
         services = MagicMock()
@@ -535,7 +535,7 @@ async def test_v2_background_reflection_prevents_idle_drain(tmp_path: Path) -> N
     manager.get_memory_digest = AsyncMock(side_effect=digest)
     member._reflection = engine
     try:
-        await member._run_rule_body(member.spec.rules[0], _event(), run_id="reflection-source")
+        await member._run_handler_body(member.spec.handlers[0], _event(), run_id="reflection-source")
         await engine.check_trigger()
         await asyncio.wait_for(entered.wait(), 2)
         assert not hasattr(member, "_scheduler")

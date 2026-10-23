@@ -13,7 +13,7 @@ from typing import Any, cast
 
 from tlon.base.execution import BudgetExceededError
 from tlon.operations.invocation import Invocation, InvocationOutcome
-from tlon.operations.schema import RecoveryMismatchError, ReplayConflictError, edn_value, json_value
+from tlon.operations.schema import RecoveryMismatchError, edn_value, json_value
 from tlosure.edn import dumps, loads
 
 
@@ -48,7 +48,6 @@ class ProgramStore:
         self._lock = threading.RLock()
         self._runs: dict[str, ProgramRun] = {}
         self._history_times: dict[str, tuple[str, str | None]] = {}
-        self._effects: dict[tuple[str, int], tuple[str, str, str]] = {}
         self._state: dict[str, str] = {}
 
     @contextmanager
@@ -70,9 +69,6 @@ class ProgramStore:
             schema = (
                 "CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, "
                 "rule_edn TEXT NOT NULL, input_edn TEXT NOT NULL, completed INTEGER NOT NULL DEFAULT 0, error TEXT);"
-                "CREATE TABLE IF NOT EXISTS effects (run_id TEXT NOT NULL, ordinal INTEGER NOT NULL, "
-                "name TEXT NOT NULL, args_edn TEXT NOT NULL, result_edn TEXT NOT NULL, "
-                "PRIMARY KEY(run_id,ordinal));"
                 "CREATE TABLE IF NOT EXISTS roots (root_id TEXT PRIMARY KEY, build_id TEXT NOT NULL);"
                 "CREATE TABLE IF NOT EXISTS invocations (call_id TEXT PRIMARY KEY, identity_json TEXT NOT NULL, outcome_json TEXT, root_id TEXT NOT NULL, path_json TEXT NOT NULL, UNIQUE(root_id,path_json));"
                 "PRAGMA user_version=2;"
@@ -90,56 +86,6 @@ class ProgramStore:
                 yield connection
         finally:
             connection.close()
-
-    def ensure(
-        self,
-        run_id: str,
-        rule_edn: str,
-        input_edn: str,
-    ) -> ProgramRun:
-        """Create once; an existing invocation always retains its original source/input."""
-        return self.ensure_many([(run_id, rule_edn, input_edn)])[0]
-
-    def ensure_many(
-        self,
-        items: list[tuple[str, str, str]],
-    ) -> list[ProgramRun]:
-        """Register an event's rules atomically in execution order, retaining existing records."""
-        if not items:
-            return []
-        with self._lock:
-            if self.database is None:
-                for run_id, _, _ in items:
-                    previous = self._roots.get(run_id)
-                    frozen = self._runs.get(run_id)
-                    if frozen is not None and frozen.error is not None:
-                        continue
-                    if previous is not None and previous != self.build_id:
-                        raise RecoveryMismatchError("Runtime build changed for frozen root")
-                for run_id, rule_edn, input_edn in items:
-                    frozen = self._runs.get(run_id)
-                    if frozen is not None and frozen.error is not None:
-                        continue
-                    self._root(run_id)
-                    if run_id not in self._runs:
-                        self._runs[run_id] = ProgramRun(run_id, rule_edn, input_edn, False)
-                return [self._runs[run_id] for run_id, _, _ in items]
-            with self._connection() as connection:
-                records: list[ProgramRun] = []
-                for run_id, rule_edn, input_edn in items:
-                    stored = self._read_run(connection, run_id)
-                    if stored is not None and stored.error is not None:
-                        records.append(stored)
-                        continue
-                    self._root(run_id, connection)
-                    connection.execute(
-                        "INSERT OR IGNORE INTO runs(run_id,rule_edn,input_edn) VALUES (?,?,?)",
-                        (run_id, rule_edn, input_edn),
-                    )
-                    run = self._read_run(connection, run_id)
-                    assert run is not None
-                    records.append(run)
-                return records
 
     @staticmethod
     def _read_run(connection: sqlite3.Connection, run_id: str) -> ProgramRun | None:
@@ -317,67 +263,6 @@ class ProgramStore:
                     connection.execute(
                         "UPDATE entry_programs SET scheduling_applied=1 WHERE run_id=?", (run_id,)
                     )
-
-    @staticmethod
-    def _check(
-        row: tuple[str, str, str] | None, name: str, args_edn: str
-    ) -> tuple[bool, str | None]:
-        if row is None:
-            return False, None
-        if row[:2] != (name, args_edn):
-            raise ReplayConflictError("Program replay effect name/arguments changed")
-        return True, row[2]
-
-    def get_effect(
-        self, run_id: str, index: int, name: str, args_edn: str
-    ) -> tuple[bool, str | None]:
-        """Return (found, result EDN), distinguishing a recorded nil from absence."""
-        with self._lock:
-            if self.database is None:
-                return self._check(self._effects.get((run_id, index)), name, args_edn)
-            with self._connection() as connection:
-                row = connection.execute(
-                    "SELECT name,args_edn,result_edn FROM effects WHERE run_id=? AND ordinal=?",
-                    (run_id, index),
-                ).fetchone()
-                return self._check(row, name, args_edn)
-
-    @staticmethod
-    def _record(
-        connection: sqlite3.Connection,
-        run_id: str,
-        index: int,
-        name: str,
-        args_edn: str,
-        result_edn: str,
-    ) -> None:
-        existing = connection.execute(
-            "SELECT name,args_edn,result_edn FROM effects WHERE run_id=? AND ordinal=?",
-            (run_id, index),
-        ).fetchone()
-        if existing is not None:
-            if existing != (name, args_edn, result_edn):
-                raise ReplayConflictError("Program effect result conflicts with committed record")
-            return
-        connection.execute(
-            "INSERT INTO effects VALUES (?,?,?,?,?)", (run_id, index, name, args_edn, result_edn)
-        )
-
-    def record_effect(
-        self, run_id: str, index: int, name: str, args_edn: str, result_edn: str
-    ) -> None:
-        with self._lock:
-            if self.database is None:
-                key = (run_id, index)
-                value = (name, args_edn, result_edn)
-                if key in self._effects and self._effects[key] != value:
-                    raise ReplayConflictError(
-                        "Program effect result conflicts with committed record"
-                    )
-                self._effects[key] = value
-                return
-            with self._connection() as connection:
-                self._record(connection, run_id, index, name, args_edn, result_edn)
 
     def state_get(self, key: str) -> Any:
         with self._lock:
@@ -913,18 +798,6 @@ class ProgramStore:
             else:
                 with self._connection() as connection:
                     self._finish_model(root_id, path, None, 0, error_type, message, connection)
-
-    def complete(self, run_id: str) -> None:
-        with self._lock:
-            if self.database is None:
-                run = self._runs[run_id]
-                if run.error is None:
-                    self._runs[run_id] = replace(run, completed=True)
-            else:
-                with self._connection() as connection:
-                    connection.execute(
-                        "UPDATE runs SET completed=1 WHERE run_id=? AND error IS NULL", (run_id,)
-                    )
 
     def fail(self, run_id: str, error: str) -> None:
         """Finish a failed program without claiming success or discarding committed effects."""

@@ -2,6 +2,8 @@
 
 > 历史审计档案：下文的“当前”均指 main `f5a8faf`（#194），不代表现行运行时。Capability/复合 Operation 已由 ADR 0045 删除；P5 进一步删除 v1 rules、条件作用域、Operation.control 与 stage 引擎。现行接口见 [DSL reference](../reference/dsl-reference.md)、[Operation reference](../reference/operations-reference.md) 和 [普通工作程序](programmable-workflows.md)。本页保留当时证据及决策背景。
 
+> 后续覆盖：P5 后续清理已将四个注册表查询改为普通 Operation，并删除独立 effects 执行路径、旧写入 API 与 handler 重复投影。历史读取和未完成工作阻断保留；当前范围见 [退役代码清理](workflow-retirement-cleanup.md)。下文的宿主查询例外仅是当时状态。
+
 状态：P8a 的独立审计，基线为 main `f5a8faf`（#194）。P1–P6 已合并；P7 暂停，原 P8 未整体完成。本文件记录源码证据与已知边界，不把符号搜索当成功能验证。本次完整质量门及真实邮件冒烟结果在实施计划和 PR 记录。
 
 ## 决策与范围

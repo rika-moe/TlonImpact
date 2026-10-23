@@ -19,7 +19,7 @@ model-call 返回建议，tool-execute 逐叶执行并返回真实结果。每�
 ## 注册清单
 
 <!-- BEGIN GENERATED: tool-registry -->
-满配成员注册 51 个工具（由共享 Operation 按域列出；L0 不注册 7 个装置操作，L1 注册 5 个文件操作，L2 再增加 2 个 Shell 操作；时间不依赖装置）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+满配成员注册 55 个工具（由共享 Operation 按域列出；L0 不注册 7 个装置操作，L1 注册 5 个文件操作，L2 再增加 2 个 Shell 操作；时间不依赖装置）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | # | 工具名 | 实现 | 域 |
 |---|---|---|---|
@@ -66,14 +66,18 @@ model-call 返回建议，tool-execute 逐叶执行并返回真实结果。每�
 | 41 | `member-stop` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
 | 42 | `member-start-all` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
 | 43 | `finish-turn` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
-| 44 | `program-check` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 45 | `prototype-write` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 46 | `prototype-list` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 47 | `prototype-staging-list` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 48 | `prototype-lineage` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 49 | `prototype-review` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 50 | `model-call` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
-| 51 | `model-context` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
+| 44 | `member-sleeping` | [operations/registry.py](../../src/tlon/operations/registry.py) 的 `OperationTool` 投影 | registry |
+| 45 | `member-running` | [operations/registry.py](../../src/tlon/operations/registry.py) 的 `OperationTool` 投影 | registry |
+| 46 | `member-lazy` | [operations/registry.py](../../src/tlon/operations/registry.py) 的 `OperationTool` 投影 | registry |
+| 47 | `member-roster` | [operations/registry.py](../../src/tlon/operations/registry.py) 的 `OperationTool` 投影 | registry |
+| 48 | `program-check` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 49 | `prototype-write` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 50 | `prototype-list` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 51 | `prototype-staging-list` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 52 | `prototype-lineage` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 53 | `prototype-review` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 54 | `model-call` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
+| 55 | `model-context` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
 <!-- END GENERATED: tool-registry -->
 
 上表是正式成员的满配。见习成员不注册 member-spawn、prototype-write 两个生殖/演化工具；所有成员均可使用绑定自身的四个调度工具。L0 仅注册 file-read/list/search 查询内置只读资料，不注册 shell、file-write/edit，L1 不注册 shell 两个工具。
@@ -1275,3 +1279,81 @@ Operation 单一契约；输入与输出字段保留 snake_case。（本区块�
 | `mail_history` | array[object] | 是 | — |
 | `tools` | array[string] | 是 | — |
 <!-- END GENERATED: context-operations -->
+
+
+## 注册表读取
+
+<!-- BEGIN GENERATED: registry-operations -->
+Operation 单一契约；输入与输出字段保留 snake_case。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
+### member-sleeping
+
+查询成员是否休眠。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `agent_id` | string | 是 | — |
+
+输出：
+
+```json
+{
+  "type": "boolean"
+}
+```
+
+### member-running
+
+查询成员是否正在运行。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `agent_id` | string | 是 | — |
+
+输出：
+
+```json
+{
+  "type": "boolean"
+}
+```
+
+### member-lazy
+
+查询成员是否允许空闲卸载。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `agent_id` | string | 是 | — |
+
+输出：
+
+```json
+{
+  "type": "boolean"
+}
+```
+
+### member-roster
+
+读取格式化的公开成员寻址黄页。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+
+输出：
+
+```json
+{
+  "type": "string"
+}
+```
+<!-- END GENERATED: registry-operations -->

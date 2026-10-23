@@ -27,7 +27,9 @@ def test_loads_module_entry_with_raw_source_provenance(tmp_path: Path) -> None:
     paths = TlonPaths(tmp_path)
     _write(paths)
     spec = load_member_spec("a", tlon_paths=paths)
-    assert spec.handlers == (("mail-delivered", "work.main/handle"),)
+    assert [(handler.event_name, handler.entry) for handler in spec.handlers] == [
+        ("mail-delivered", "work.main/handle")
+    ]
     assert spec.module_sources == {"work/main.tlon": MODULE}
     assert spec.source_hash == hashlib.sha256(BEHAVIOR.encode()).hexdigest()[:12]
     assert not has_frozen_work("a", paths)

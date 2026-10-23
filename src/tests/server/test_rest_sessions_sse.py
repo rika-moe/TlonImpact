@@ -508,9 +508,9 @@ class TestEventsStream:
                     source="mail_delivery",
                 )
             )
-            # Suppressed by the chat mode patterns (agent.thinking is not
+            # Suppressed by the chat mode patterns (agent.idle is not
             # in "chat"'s event set)
-            await bus.publish(Event(type=EventType.AGENT_THINKING, payload={}, source="xie-yunshu"))
+            await bus.publish(Event(type=EventType.AGENT_IDLE, payload={}, source="xie-yunshu"))
             # Passes the chat mode patterns (system.*)
             await bus.publish(Event(type=EventType.SYSTEM_STARTUP, payload={}, source="test"))
 
@@ -518,7 +518,7 @@ class TestEventsStream:
             second = await _read_event_frame(resp)
 
         # Exactly one mail.delivered copy (single-track), then the
-        # system event — agent.thinking never crossed the stream.
+        # system event — agent.idle never crossed the stream.
         assert first["event_type"] == "mail.delivered"
         assert first["payload"]["mail"]["id"] == mail.id
         assert first["payload"]["mail"]["content"] == "你好"

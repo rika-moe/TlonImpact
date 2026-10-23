@@ -15,6 +15,7 @@ from tlon.agents.vocabulary import (
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
 from tlon.operations.dsl import DSLAdapter
 from tlon.operations.invocation import registry_identity
+from tlon.operations.registry import make_registry_query_operations
 from tlosure.builtins import Builtin, EvalError
 from tlosure.edn import loads
 from tlosure.modules import ModulePackage
@@ -45,10 +46,16 @@ class Host:
 
 
 @pytest.mark.parametrize(
-    "expression", ['(sleeping? "a")', '(running? "a")', '(lazy? "a")', "(member-roster)"]
+    "expression",
+    [
+        '(member-sleeping {:agent_id "a"})',
+        '(member-running {:agent_id "a"})',
+        '(member-lazy {:agent_id "a"})',
+        "(member-roster {})",
+    ],
 )
 def test_host_reads_are_not_pure_policy_vocabulary(expression: str) -> None:
-    builtins = make_member_builtins(Host())
+    builtins = make_member_builtins()
     assert not builtins[str(loads(expression)[0])].pure
     with pytest.raises(EvalError):
         validate_form(loads(expression), POLICY_BUILTINS, scope=set())
@@ -62,22 +69,40 @@ async def test_host_reads_sample_each_call_and_replay_without_querying(
     store = ProgramStore(tmp_path / "program.sqlite" if disk else None, build_id="test")
     mutations: list[bool] = []
 
-    def stop(_env: dict[str, Any]) -> None:
+    async def stop(_context: CallContext, _args: dict[str, Any]) -> None:
         host.running = False
         mutations.append(False)
 
-    builtins = {**make_member_builtins(host), "change-state": Builtin(stop, pure=False)}
+    from tlon.operations.core import Operation
+
+    definitions = (
+        *make_registry_query_operations(host),
+        Operation(
+            "change-state",
+            "test mutation",
+            {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+            {"type": "null"},
+            stop,
+            effects=frozenset({"write"}),
+        ),
+    )
+
+    def adapter_for(target: ProgramStore) -> DSLAdapter:
+        return DSLAdapter(
+            OperationExecutor(
+                OperationRegistry(definitions), CallContext("a", "root", "call"), target
+            )
+        )
+
+    adapter = adapter_for(store)
+    builtins = {**make_member_builtins(), **adapter.builtins()}
     package = ModulePackage.from_sources(
         {
-            "work.tlon": '(ns work (:export handle)) (defn handle [event] (let [a (member-roster) b (change-state) c (running? "a")] (member-roster)))'
+            "work.tlon": '(ns work (:export handle)) (defn handle [event] (let [a (member-roster {}) b (change-state {}) c (member-running {:agent_id "a"})] (member-roster {})))'
         },
         builtins,
     )
-    adapter = DSLAdapter(
-        OperationExecutor(OperationRegistry([]), CallContext("a", "root", "call"), store)
-    )
-    original = ProgramDriver(store, "root", builtins, operations=adapter)
-    assert original.builtins["running?"] is builtins["running?"]
+    original = ProgramDriver(store, "root", builtins, operations=adapter, member_id="a")
     await original.run_entry(package.entry("work/handle"), {}, fuel=1000)
     assert host.samples == [
         ("roster", "True"),
@@ -87,9 +112,17 @@ async def test_host_reads_sample_each_call_and_replay_without_querying(
     assert mutations == [False]
     host.samples.clear()
     restarted = ProgramStore(store.database, build_id="test") if disk else store
-    await ProgramDriver(restarted, "root", builtins, operations=adapter).run_entry(
-        package.entry("work/handle"), {}, fuel=1000
+    replay_adapter = adapter_for(restarted)
+    replay_builtins = {**make_member_builtins(), **replay_adapter.builtins()}
+    replay_package = ModulePackage.from_sources(
+        {
+            "work.tlon": '(ns work (:export handle)) (defn handle [event] (let [a (member-roster {}) b (change-state {}) c (member-running {:agent_id "a"})] (member-roster {})))'
+        },
+        replay_builtins,
     )
+    await ProgramDriver(
+        restarted, "root", replay_builtins, operations=replay_adapter, member_id="a"
+    ).run_entry(replay_package.entry("work/handle"), {}, fuel=1000)
     assert host.samples == []
     assert mutations == [False]
 
@@ -99,3 +132,20 @@ def test_purity_metadata_is_frozen_in_registry_identity() -> None:
     assert registry_identity({"query": builtin}) != registry_identity(
         {"query": replace(builtin, pure=True)}
     )
+
+
+async def test_program_rejects_unjournaled_effectful_builtin() -> None:
+    calls: list[str] = []
+    builtins = {"untracked": Builtin(lambda _env: calls.append("called"), pure=False)}
+    store = ProgramStore(None)
+    adapter = DSLAdapter(
+        OperationExecutor(OperationRegistry([]), CallContext("a", "r", "c"), store)
+    )
+    package = ModulePackage.from_sources(
+        {"work.tlon": "(ns work (:export handle)) (defn handle [event] (untracked))"}, builtins
+    )
+    with pytest.raises(EvalError, match="effectful builtin is not an operation"):
+        await ProgramDriver(store, "r", builtins, operations=adapter, member_id="a").run_entry(
+            package.entry("work/handle"), {}, fuel=100
+        )
+    assert calls == []

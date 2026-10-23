@@ -16,7 +16,9 @@ delivery, and reading a member's SQLite inbox.
 
 import asyncio
 import contextlib
+import logging
 import os
+import signal
 import socket
 import tempfile
 from collections.abc import AsyncGenerator, Callable
@@ -34,6 +36,9 @@ from tlon_server.serverapp import ServerApp
 
 SERVER_STARTUP_TIMEOUT = 45.0
 SERVER_SHUTDOWN_TIMEOUT = 15.0
+SERVER_TERMINATE_TIMEOUT = 10.0
+SERVER_KILL_TIMEOUT = 5.0
+logger = logging.getLogger(__name__)
 
 
 def _free_port() -> int:
@@ -50,7 +55,7 @@ async def _wait_ready(
 ) -> None:
     """Poll GET /health until the REST API answers 200."""
     deadline = asyncio.get_running_loop().time() + SERVER_STARTUP_TIMEOUT
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=2.0)) as session:
         while True:
             if proc.returncode is not None:
                 raise RuntimeError(
@@ -60,13 +65,52 @@ async def _wait_ready(
                 async with session.get(f"{base_url}/health") as resp:
                     if resp.status == 200:
                         return
-            except aiohttp.ClientError:
+            except (aiohttp.ClientError, TimeoutError):
                 pass  # Server not listening yet
             if asyncio.get_running_loop().time() > deadline:
                 raise TimeoutError(
                     f"tlon dream not ready within {SERVER_STARTUP_TIMEOUT}s:\n{server_output()}"
                 )
             await asyncio.sleep(0.25)
+
+
+async def _stop_server_process(
+    proc: asyncio.subprocess.Process,
+    drain: asyncio.Task[None],
+    server_output: Callable[[], str],
+) -> None:
+    """Reap the CLI process group, including descendants holding its output pipe."""
+
+    def signal_group(sig: signal.Signals) -> None:
+        # The group may outlive uv; proc.returncode cannot prove it is gone.
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, sig)
+
+    async def finish() -> None:
+        await proc.wait()
+        await drain
+
+    signal_group(signal.SIGTERM)
+    finished = asyncio.create_task(finish())
+    try:
+        try:
+            await asyncio.wait_for(asyncio.shield(finished), SERVER_TERMINATE_TIMEOUT)
+        except TimeoutError:
+            logger.warning("tlon dream pid=%s: shutdown pending; killing process group", proc.pid)
+            signal_group(signal.SIGKILL)
+            try:
+                await asyncio.wait_for(asyncio.shield(finished), SERVER_KILL_TIMEOUT)
+            except TimeoutError as exc:
+                raise TimeoutError(
+                    f"tlon dream process group {proc.pid} did not close after SIGKILL; "
+                    f"returncode={proc.returncode}, output_done={drain.done()}:\n{server_output()}"
+                ) from exc
+    finally:
+        # Also run on cancellation, so an interrupted test cannot leave dream alive.
+        signal_group(signal.SIGKILL)
+        finished.cancel()
+        drain.cancel()
+        await asyncio.gather(finished, drain, return_exceptions=True)
 
 
 @asynccontextmanager
@@ -99,6 +143,7 @@ async def _run_server(
             env={**os.environ, "TLON_HOME": tlon_home, **(extra_env or {})},
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
         )
 
         async def _drain() -> None:
@@ -107,20 +152,29 @@ async def _run_server(
                 output.append(chunk.decode(errors="replace"))
 
         drain = asyncio.create_task(_drain())
+        phase = "health probe"
         try:
             base_url = f"http://127.0.0.1:{port}"
-            await _wait_ready(base_url, proc, _server_output)
-            await _initialize_identity(base_url)
+            async with asyncio.timeout(SERVER_STARTUP_TIMEOUT):
+                logger.info("tlon dream pid=%s: waiting for health at %s", proc.pid, base_url)
+                await _wait_ready(base_url, proc, _server_output)
+                phase = "identity initialization"
+                await _initialize_identity(base_url)
+            phase = "test body"
             yield base_url, Path(tlon_home)
+        except BaseException:
+            logger.error(
+                "tlon dream pid=%s failed during %s (returncode=%s):\n%s",
+                proc.pid,
+                phase,
+                proc.returncode,
+                _server_output(),
+            )
+            raise
         finally:
-            if proc.returncode is None:
-                proc.terminate()
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=10.0)
-                except TimeoutError:
-                    proc.kill()
-                    await proc.wait()
-            await drain
+            logger.info("tlon dream pid=%s: stopping process group", proc.pid)
+            await _stop_server_process(proc, drain, _server_output)
+            logger.info("tlon dream pid=%s: process group stopped and output drained", proc.pid)
 
 
 @pytest.fixture
@@ -141,7 +195,7 @@ async def _wait_ready_http(base_url: str, start_task: asyncio.Task[None]) -> Non
     the app serves. A dead start task fails fast instead of timing out.
     """
     deadline = asyncio.get_running_loop().time() + SERVER_STARTUP_TIMEOUT
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=2.0)) as session:
         while True:
             if start_task.done():
                 raise RuntimeError(
@@ -151,7 +205,7 @@ async def _wait_ready_http(base_url: str, start_task: asyncio.Task[None]) -> Non
                 async with session.get(f"{base_url}/health") as resp:
                     if resp.status == 200:
                         return
-            except aiohttp.ClientError:
+            except (aiohttp.ClientError, TimeoutError):
                 pass  # Server not listening yet
             if asyncio.get_running_loop().time() > deadline:
                 raise TimeoutError(
@@ -240,7 +294,9 @@ WEBUI_HEADERS = {"X-Tlon-WebUI": "1"}
 
 async def _initialize_identity(base_url: str) -> None:
     """Use the same instance setup as WebUI, then register its mailbox."""
-    async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
+    async with aiohttp.ClientSession(
+        headers=WEBUI_HEADERS, timeout=aiohttp.ClientTimeout(total=10.0)
+    ) as http:
         async with http.get(f"{base_url}/identity") as response:
             assert response.status == 200
             identity = await response.json()

@@ -25,11 +25,15 @@ class ReflectSpec:
 
 
 @dataclass(frozen=True)
-class MemberRule:
-    """Event subscription projected from one ordinary module handler."""
+class MemberHandler:
+    """One event subscription and its ordinary module entry."""
 
-    name: str
     on: EventType | None
+    entry: str
+
+    @property
+    def event_name(self) -> str:
+        return "boot" if self.on is None else self.on.name.lower().replace("_", "-")
 
 
 @dataclass(frozen=True)
@@ -37,17 +41,16 @@ class MemberSpec:
     """Event handlers and reviewed execution level for a source package."""
 
     version: int
-    rules: tuple[MemberRule, ...]
+    handlers: tuple[MemberHandler, ...]
     source_hash: str | None = None
     execution_level: str | None = None
-    handlers: tuple[tuple[str, str], ...] = ()
     fuel: int = DEFAULT_FUEL
     module_sources: dict[str, str] = field(default_factory=dict, compare=False, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "version": 2,
-            "handlers": {name: Symbol(entry) for name, entry in self.handlers},
+            "handlers": {handler.event_name: Symbol(handler.entry) for handler in self.handlers},
             "fuel": self.fuel,
             "execution": {"level": self.execution_level} if self.execution_level else None,
             "source_hash": self.source_hash,
@@ -63,21 +66,19 @@ class MemberSpec:
         handlers = data.get("handlers")
         if type(handlers) is not dict or not handlers:
             raise MemberSpecValidationError(":handlers must be a non-empty map")
-        parsed: list[tuple[str, str]] = []
-        rules: list[MemberRule] = []
+        parsed: list[MemberHandler] = []
         for event, entry in handlers.items():
             if not isinstance(event, str) or type(entry) is not Symbol:
                 raise MemberSpecValidationError(
                     ":handlers requires event keys and qualified symbols"
                 )
             name = str(event).replace("_", "-")
-            on = _on_from(name, name)
+            on = _handler_event(name)
             if "/" not in str(entry):
                 raise MemberSpecValidationError("handler must be a qualified module function")
-            if any(existing == name for existing, _ in parsed):
+            if any(existing.on == on for existing in parsed):
                 raise MemberSpecValidationError("duplicate handler event")
-            parsed.append((name, str(entry)))
-            rules.append(MemberRule(name=f"handler:{name}", on=on))
+            parsed.append(MemberHandler(on=on, entry=str(entry)))
         fuel = data.get("fuel", DEFAULT_FUEL)
         if type(fuel) is not int or not 0 < fuel <= MAX_FUEL:
             raise MemberSpecValidationError(f":fuel must be in 1..{MAX_FUEL}")
@@ -93,7 +94,7 @@ class MemberSpec:
             if not isinstance(level, str) or str(level) not in EXECUTION_LEVELS:
                 raise MemberSpecValidationError(":execution/:level must be one of :L0/:L1/:L2")
             level = str(level)
-        return cls(2, tuple(rules), source_hash, level, tuple(parsed), fuel)
+        return cls(2, tuple(parsed), source_hash, level, fuel)
 
     @classmethod
     def from_edn(cls, data: Any) -> "MemberSpec":
@@ -107,7 +108,9 @@ class MemberSpec:
     def to_edn_data(self) -> dict[Keyword, Any]:
         data: dict[Keyword, Any] = {
             Keyword("version"): 2,
-            Keyword("handlers"): {Keyword(name): Symbol(entry) for name, entry in self.handlers},
+            Keyword("handlers"): {
+                Keyword(handler.event_name): Symbol(handler.entry) for handler in self.handlers
+            },
             Keyword("fuel"): self.fuel,
         }
         if self.execution_level is not None:
@@ -145,28 +148,14 @@ def _normalize_key(key: Any) -> str:
     raise MemberSpecValidationError(f"spec keys must be keywords, got {_type_name(key)}: {key!r}")
 
 
-def _on_from(value: Any, rule_name: str) -> EventType | None:
+def _handler_event(name: str) -> EventType | None:
     """Map a handler event key to EventType; ``:boot`` has no bus event."""
-    if value is None or (isinstance(value, str) and str(value) == "boot"):
+    if name == "boot":
         return None
-    if not isinstance(value, str):
-        raise MemberSpecValidationError(
-            f"rule {rule_name!r}: :on must be an event keyword, got {_type_name(value)}: {value!r}"
-        )
-    event_name = str(value).replace("-", "_").upper()
     try:
-        return EventType[event_name]
+        return EventType[name.replace("-", "_").upper()]
     except KeyError:
-        raise MemberSpecValidationError(
-            f"rule {rule_name!r}: unknown event :{value} in :on"
-        ) from None
-
-
-def _on_to_str(on: EventType | None) -> str | None:
-    """Serialize an EventType to its EDN keyword name; None = :boot."""
-    if on is None:
-        return None
-    return on.name.lower().replace("_", "-")
+        raise MemberSpecValidationError(f"unknown handler event :{name}") from None
 
 
 def _type_name(value: Any) -> str:

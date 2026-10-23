@@ -54,6 +54,7 @@ from tlon.operations.mail import mail_operation_definitions
 from tlon.operations.memory import memory_operation_definitions
 from tlon.operations.model import model_operation_definitions
 from tlon.operations.observability import observability_operation_definitions
+from tlon.operations.registry import make_registry_query_operations
 from tlon.operations.shell import shell_operation_definitions
 from tlon.operations.state import state_operation_definitions
 from tlon.operations.tasks import task_operation_definitions
@@ -589,6 +590,7 @@ def operation_domains() -> dict[str, list[Operation]]:
         "observability": list(observability_operation_definitions()),
         "state": list(state_operation_definitions()),
         "lifecycle": list(lifecycle_operation_definitions()),
+        "registry": list(make_registry_query_operations()),
         "evolution": list(evolution_operation_definitions()),
         "model": list(model_operation_definitions()),
     }
@@ -674,14 +676,14 @@ def render_dsl_on_events() -> str:
     """Legal ``:on`` keywords for docs/reference/dsl-reference.md §2.1."""
     events = event_types()
     rows = [
-        "| `:boot` | — | 启动规则：映射 `None`，订阅就绪后运行一次，`msg` / `event` 均为 `nil` |"
+        "| `:boot` | — | 启动入口：映射 `None`，订阅就绪后运行一次，`msg` / `event` 均为 `nil` |"
     ]
     for e in events:
         keyword = ":" + e.member.lower().replace("_", "-")
         rows.append(f"| `{keyword}` | `{e.value}` | {_cell(e.comment)} |")
     header = (
         f"合法值共 {len(rows)} 个（`:boot` + 全部 `EventType` 成员，"
-        f"转换逻辑 `member_spec._on_from` / `_on_to_str`）：{GENERATED_NOTE}\n\n"
+        f"转换逻辑 `member_spec._handler_event` / `MemberHandler.event_name`）：{GENERATED_NOTE}\n\n"
         "| `:on` 关键字 | 事件值 | 说明 |\n"
         "|---|---|---|"
     )
@@ -793,114 +795,14 @@ def render_dsl_fuel_defaults() -> str:
     return header + "\n" + "\n".join(rows)
 
 
-@dataclass(frozen=True)
-class HostQueryPort:
-    word: str
-    method: str
-    doc: str
-
-
-def host_query_ports() -> list[HostQueryPort]:
-    """Closure-injected host queries: the ``builtins["<word>"] = Builtin(
-    lambda ..., pure=False)`` assignments inside ``make_member_builtins``,
-    joined with the method docstrings of the ``ScriptHostQueries``
-    protocol."""
-    tree = _parse(VOCABULARY_FILE)
-    fn = next(
-        (
-            n
-            for n in tree.body
-            if isinstance(n, ast.FunctionDef) and n.name == "make_member_builtins"
-        ),
-        None,
-    )
-    if fn is None:
-        raise GenerationError(f"{VOCABULARY_FILE}: make_member_builtins not found")
-    protocol = next(
-        (n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "ScriptHostQueries"),
-        None,
-    )
-    if protocol is None:
-        raise GenerationError(f"{VOCABULARY_FILE}: class ScriptHostQueries not found")
-    found: list[tuple[int, HostQueryPort]] = []
-    for node in ast.walk(fn):
-        if not (
-            isinstance(node, ast.Assign)
-            and len(node.targets) == 1
-            and isinstance(node.targets[0], ast.Subscript)
-            and isinstance(node.targets[0].value, ast.Name)
-            and node.targets[0].value.id == "builtins"
-        ):
-            continue
-        key = node.targets[0].slice
-        if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
-            raise GenerationError(
-                f"{VOCABULARY_FILE}:{node.lineno} builtins[...] key is not a string literal"
-            )
-        word = key.value
-        call = node.value
-        if not (
-            isinstance(call, ast.Call)
-            and isinstance(call.func, ast.Name)
-            and call.func.id == "Builtin"
-            and len(call.args) == 1
-            and isinstance(call.args[0], ast.Lambda)
-        ):
-            raise GenerationError(
-                f"{VOCABULARY_FILE}:{node.lineno} builtins[{word!r}] is not "
-                "Builtin(lambda ...) — teach the generator"
-            )
-        pure_kwargs = [kw for kw in call.keywords if kw.arg == "pure"]
-        if (
-            len(pure_kwargs) != 1
-            or _literal(pure_kwargs[0].value) is not False
-        ):
-            raise GenerationError(
-                f"{VOCABULARY_FILE}:{node.lineno} builtins[{word!r}] must declare "
-                "pure=False"
-            )
-        body = call.args[0].body
-        if not (
-            isinstance(body, ast.Call)
-            and isinstance(body.func, ast.Attribute)
-            and isinstance(body.func.value, ast.Name)
-            and body.func.value.id == "host"
-        ):
-            raise GenerationError(
-                f"{VOCABULARY_FILE}:{node.lineno} builtins[{word!r}] lambda body is not "
-                "host.<method>(...) — teach the generator"
-            )
-        method = body.func.attr
-        for stmt in protocol.body:
-            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)) and stmt.name == method:
-                doc = ast.get_docstring(stmt)
-                first_line = doc.splitlines()[0] if doc else ""
-                found.append((node.lineno, HostQueryPort(word, method, first_line)))
-                break
-        else:
-            raise GenerationError(
-                f"{VOCABULARY_FILE}: ScriptHostQueries.{method} not found "
-                f"(referenced by builtins[{word!r}])"
-            )
-    if not found:
-        raise GenerationError(
-            f"{VOCABULARY_FILE}: no builtins[...] host-query assignments in make_member_builtins"
-        )
-    return [port for _lineno, port in sorted(found)]
-
-
 def render_bridge_query_ports() -> str:
-    """Host query port table for dsl-reference.md §4.6."""
-    ports = host_query_ports()
-    rows = [f"| `{p.word}` | `host.{p.method}` | {_cell(p.doc)} |" for p in ports]
-    header = (
-        f"`make_member_builtins` 在调用方注入 `host` 时追加 {len(ports)} 个宿主查询"
-        f"（`pure=False`，在普通程序中调用，读取注册表或投递目录，调用结果受宿主持久回放；无宿主即不注册这些词；说明取自 "
-        f"`ScriptHostQueries` 协议方法的 docstring）：{GENERATED_NOTE}\n\n"
-        "| DSL 词 | 宿主方法 | 说明 |\n"
-        "|---|---|---|"
+    """Registry queries share ordinary operation contracts and receipts."""
+    return (
+        "注册表读取使用普通只读 Operation：`member-sleeping`、`member-running`、"
+        "`member-lazy` 接受 `{:agent_id \"…\"}`，`member-roster` 接受 `{}`。"
+        "调用结果经统一 invocation 回执采样与重放；不再注入独立宿主谓词或写入 effects 表。"
+        + GENERATED_NOTE
     )
-    return header + "\n" + "\n".join(rows)
 
 
 def _render_sections() -> dict[tuple[Path, str], str]:

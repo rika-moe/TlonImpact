@@ -63,7 +63,7 @@ async def test_member_program_and_model_share_file_contract(tmp_path: Path) -> N
         '(file-write {:file_path "shared.txt" :content "共享内容"}) (state-put {:key "seen" :value (get (file-read {:file_path "shared.txt"}) :content)})',
     )
     try:
-        await member._run_rule_body(member.spec.rules[0], None, run_id="device-run")
+        await member._run_handler_body(member.spec.handlers[0], None, run_id="device-run")
         assert member._program_store.state_get("seen") == "共享内容"
         executor = member._services.tool_executor
         result = await executor.execute(

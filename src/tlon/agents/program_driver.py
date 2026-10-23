@@ -16,7 +16,7 @@ from tlon.base.execution import (
 from tlon.operations.core import CallContext
 from tlon.operations.dsl import DSLAdapter
 from tlosure.builtins import Builtin, BuiltinCall, Closure, EvalError
-from tlosure.edn import Form, Symbol, dumps, loads
+from tlosure.edn import Form, Symbol
 from tlosure.eval import DEFAULT_MAX_DEPTH, Evaluator
 
 
@@ -64,7 +64,6 @@ class ProgramDriver:
     async def _call(self, call: BuiltinCall) -> Any:
         index = self.index
         self.index += 1
-        args_edn = dumps(call.args)
         if self.operations.owns(call):
             inputs = self.operations._arguments(call.args)
             self.operations.prepare(call)
@@ -88,19 +87,4 @@ class ProgramDriver:
                     self.on_operation()
                 result = await self.operations.handle(call, context)
             return result
-        found, result_edn = await asyncio.to_thread(
-            self.store.get_effect, self.run_id, index, call.name, args_edn
-        )
-        if found:
-            assert result_edn is not None
-            return loads(result_edn)
-        self.execution_scope.check()
-        try:
-            request = call.invoke()
-        except (TypeError, ValueError) as error:
-            raise EvalError(f"{call.name} invalid arguments: {error}") from error
-        result = request
-        await asyncio.to_thread(
-            self.store.record_effect, self.run_id, index, call.name, args_edn, dumps(result)
-        )
-        return result
+        raise EvalError(f"effectful builtin is not an operation: {call.name}")

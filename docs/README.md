@@ -15,6 +15,7 @@ Agent 编写模块时，用现有 `file-read` 读取 workspace 内 `tlon/docs/gu
 | 精确字段、格式、接口与配置 | 下方参考文档 |
 | 如何启动或完成一个具体任务 | 下方操作指南 |
 | P5 升级、旧原型处置与行为变化 | [P5 发布说明](releases/p5.md) |
+| stage/v1 退役后的删除项与历史保留边界 | [退役代码清理](design/workflow-retirement-cleanup.md) |
 
 architecture 区分规范与当前实现；design 负责当前领域模型和机制；ADR 保留历史理由。已接受但未实现的方向单独标注，不能当作当前能力。目录中的文件表示内容归属，不代表未经复核即可保证每句话与代码一致。
 

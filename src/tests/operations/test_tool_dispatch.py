@@ -1,5 +1,7 @@
 """The program batch is composition; only indexed leaf effects are durable."""
 
+import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -75,7 +77,13 @@ async def test_partial_batch_replays_before_cancellation_and_revocation(
     with bind_execution(scope), pytest.raises(UnknownOutcomeError):
         await dispatch.execute(batch(1, 2), context)
     assert calls == [1, 2]
-    assert store.get_effect("root", 3, "tool-execute", "{}")[0] is False
+    with sqlite3.connect(store.database) as connection:
+        rows = connection.execute("SELECT identity_json,outcome_json FROM invocations").fetchall()
+    assert [
+        (json.loads(identity)["name"], json.loads(identity)["path"]) for identity, _ in rows
+    ] == [("write", ["3", "tool", "0"]), ("write", ["3", "tool", "1"])]
+    assert json.loads(rows[0][1])["success"] is True
+    assert json.loads(rows[1][1])["success"] is False
 
 
 async def test_provider_ids_cannot_rewrite_partially_committed_batch(store: ProgramStore) -> None:
@@ -187,7 +195,12 @@ async def test_nested_program_dispatch_has_only_leaf_receipts_and_keeps_root_bud
     assert len(calls) == 1
     assert calls[0][0:2] == ("root", ("0", "tool", "0"))
     assert "from-model" not in calls[0][2]
-    assert store.get_effect("root", 0, "tool-execute", "{}")[0] is False
+    with sqlite3.connect(store.database) as connection:
+        rows = connection.execute("SELECT identity_json,outcome_json FROM invocations").fetchall()
+    assert len(rows) == 1
+    assert json.loads(rows[0][0])["path"] == ["0", "tool", "0"]
+    assert json.loads(rows[0][0])["name"] == "write"
+    assert json.loads(rows[0][1])["success"] is True
 
 
 async def test_invalid_changed_input_cannot_hide_previous_unknown(store: ProgramStore) -> None:

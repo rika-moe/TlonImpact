@@ -2,13 +2,19 @@
 
 import asyncio
 import json
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
+from tlon.base.events.event import Event, EventType
+from tlon.base.events.event_bus import EventBus
 from tlon.base.execution import ExecutionScope, current_execution
 from tlon.base.llm_client import LLMResponse
+from tlon.base.logger import get_logger
 from tlon.operations.invocation import InvocationOutcome
 from tlon.operations.schema import InputError, RecoveryMismatchError
+
+logger = get_logger(__name__)
 
 
 class ModelClient(Protocol):
@@ -45,10 +51,17 @@ class ModelService:
         client: ModelClient,
         system_prompt: Callable[[], Awaitable[str]],
         tool_definitions: Callable[[], list[dict[str, Any]]] = lambda: [],
+        *,
+        event_bus: EventBus | None = None,
+        member_id: str = "unknown",
+        model_name: str = "unknown",
     ) -> None:
         self.client = client
         self.system_prompt = system_prompt
         self.tool_definitions = tool_definitions
+        self.event_bus = event_bus
+        self.member_id = member_id
+        self.model_name = model_name
 
     async def host_context(self) -> dict[str, Any]:
         scope = current_execution()
@@ -97,7 +110,13 @@ class ModelService:
             current = self.select_tools(self.tool_definitions(), names)
             if current != selected:
                 raise RecoveryMismatchError("Model tool definitions differ from frozen catalog")
-        return await self.client.chat(
+        if history is None:
+            await self._publish(
+                EventType.AGENT_LLM_REQUEST,
+                {"messages_count": len(messages), "tools_count": len(selected)},
+            )
+        started = time.monotonic()
+        response = await self.client.chat(
             system_prompt=host["system_prompt"],
             messages=messages,
             tools=selected or None,
@@ -106,6 +125,37 @@ class ModelService:
             session_id=session_id,
             cache_prefix_len=cache_prefix_len,
         )
+        if history is None:
+            usage = response.usage or {}
+            raw_details = usage.get("prompt_tokens_details")
+            details: dict[str, Any] = raw_details if isinstance(raw_details, dict) else {}
+            await self._publish(
+                EventType.AGENT_LLM_RESPONSE,
+                {
+                    "duration_ms": (time.monotonic() - started) * 1000,
+                    "tool_call_count": len(response.tool_calls or []),
+                    "finish_reason": response.finish_reason,
+                    "prompt_tokens": usage.get("prompt_tokens", 0),
+                    "completion_tokens": usage.get("completion_tokens", 0),
+                    "cached_tokens": details.get("cached_tokens", 0),
+                    "cache_write_tokens": details.get("cache_write_tokens", 0),
+                },
+            )
+        return response
+
+    async def _publish(self, kind: EventType, payload: dict[str, Any]) -> None:
+        if self.event_bus is None:
+            return
+        try:
+            await self.event_bus.publish(
+                Event(
+                    type=kind,
+                    payload={"agent_id": self.member_id, "model": self.model_name, **payload},
+                    source=self.member_id,
+                )
+            )
+        except Exception as error:
+            logger.warning("model_observation_failed", error=str(error))
 
     async def recover(
         self, scope: ExecutionScope, arguments: dict[str, Any], call_id: str
