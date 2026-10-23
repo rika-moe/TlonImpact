@@ -4,13 +4,15 @@ from typing import Any
 
 from tlon.operations.core import CallContext, OperationExecutor
 from tlon.operations.schema import InputError, OperationError, edn_value, json_value, validate
+from tlon.operations.tool_dispatch import TOOL_EXECUTE, TOOL_EXECUTE_SCHEMA, ToolDispatch
 from tlosure.builtins import Builtin, BuiltinCall
 
 
 class DSLAdapter:
     """Bind identity in host closures, never in the user expression environment."""
 
-    def __init__(self, executor: OperationExecutor) -> None:
+    def __init__(self, executor: OperationExecutor, dispatcher: ToolDispatch | None = None) -> None:
+        self.dispatcher = dispatcher
         self._executor = executor
         self._builtins = {
             operation.name: self._builtin(
@@ -18,6 +20,20 @@ class DSLAdapter:
             )
             for operation in executor.registry.definitions()
         }
+
+        if dispatcher is not None:
+            self._builtins[TOOL_EXECUTE] = Builtin(fn=self._dispatch_only, pure=False)
+
+    @staticmethod
+    def _dispatch_only(_env: dict[str, Any], *args: Any) -> Any:
+        raise OperationError("tool-execute requires asynchronous program dispatch")
+
+    def is_dispatch(self, call: BuiltinCall) -> bool:
+        return call.name == TOOL_EXECUTE and self.owns(call) and self.dispatcher is not None
+
+    async def dispatch(self, call: BuiltinCall, context: CallContext) -> Any:
+        assert self.dispatcher is not None
+        return edn_value(await self.dispatcher.execute(self._arguments(call.args), context))
 
     def _builtin(self, name: str, *, pure: bool) -> Builtin:
         def invoke(_env: dict[str, Any], *args: Any) -> Any:
@@ -43,6 +59,9 @@ class DSLAdapter:
 
     def prepare(self, call: BuiltinCall) -> None:
         """Validate arguments before durable dispatch."""
+        if self.is_dispatch(call):
+            validate(TOOL_EXECUTE_SCHEMA, self._arguments(call.args))
+            return
         operation = self._executor.registry.get(call.name)
         validate(operation.input_schema, self._arguments(call.args))
 

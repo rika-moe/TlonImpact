@@ -390,7 +390,7 @@ class ScriptHostQueries(Protocol):
 
 
 #: Effects available to every rule, independent of its event or other actions.
-MEMBER_ACTION_NAMES = frozenset({"run-loop"}) | frozenset(
+MEMBER_ACTION_NAMES = frozenset({"run-loop", "tool-execute"}) | frozenset(
     operation.name for operation in host_operation_definitions()
 )
 
@@ -452,6 +452,7 @@ def make_member_builtins(
         },
         **SCRIPT_BUILTINS,
         "run-loop": Builtin(_run_loop, pure=False),
+        "tool-execute": Builtin(_unavailable_operation, pure=False),
     }
     if host is not None:
         builtins["sleeping?"] = Builtin(lambda env, aid: host.is_sleeping(aid), pure=False)

@@ -194,11 +194,11 @@ async def test_post_commit_exceptions_preserve_unknown_request_id(
         raise failure
 
     monkeypatch.setattr(office, "send", lose_response)
-    result = await OperationTool(executor, "mail-send").execute_context(
-        {"to": ["b"], "content": "committed"}
-    )
-    assert not result.success
-    assert result.data == {"outcome": "unknown", "request_id": "call-1"}
+    with pytest.raises(UnknownOutcomeError) as failure:
+        await OperationTool(executor, "mail-send").execute_context(
+            {"to": ["b"], "content": "committed"}
+        )
+    assert failure.value.data == {"outcome": "unknown", "request_id": "call-1"}
     monkeypatch.setattr(office, "send", original_send)
     await executor.call("mail-send", {"to": ["b"], "content": "committed"})
     assert len(office.store.mails("b")) == 1

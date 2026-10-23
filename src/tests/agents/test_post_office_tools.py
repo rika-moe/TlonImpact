@@ -25,6 +25,7 @@ from tlon.operations.adapters import OperationTool
 from tlon.operations.control import control_names
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
 from tlon.operations.mail import make_mail_operations
+from tlon.operations.schema import UnknownOutcomeError
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.mail.member_mail import MemberMailService
@@ -166,10 +167,10 @@ async def test_timeout_after_real_commit_preserves_key_and_safe_retry(
 
     monkeypatch.setattr(office, "_notify", blocked_notify)
     driver._tool_executor.get_tool("mail-send")._executor.default_timeout = 0.2
-    completed = await driver.execute_one_tool("session1", _call())
+    with pytest.raises(UnknownOutcomeError) as failure:
+        await driver.execute_one_tool("session1", _call())
     assert committed.is_set(), "timeout should occur after the real database commit"
-    assert not completed[1].success
-    assert completed[1].data == {
+    assert failure.value.data == {
         "request_id": "session:session1:round:0:tool1",
         "call_id": "session:session1:round:0:tool1",
         "outcome": "unknown",

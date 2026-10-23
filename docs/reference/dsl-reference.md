@@ -173,10 +173,13 @@
 ### 4.1 统一纯函数
 
 <!-- BEGIN GENERATED: dsl-builtins-pure -->
-`SCRIPT_BUILTINS`（27 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`SCRIPT_BUILTINS`（30 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 名称 | pure | 说明 |
 |---|---|---|
+| `assert` | 是 | Reject invalid data without introducing a host effect. |
+| `integer?` | 是 | Test for an integer value, excluding booleans. |
+| `json-encode` | 是 | Encode strict JSON data, accepting EDN keywords only as object keys. |
 | `assoc` | 是 | Return a map/vector copy with key-value pairs applied in order. |
 | `dissoc` | 是 | Return a map copy without the supplied keys; missing keys are harmless. |
 | `conj` | 是 | Append to a vector, or add two-element entry vectors to a map copy. |
@@ -491,10 +494,13 @@ MemberSpec 之外还有一种 DSL 文件：society 级政策文件 `policy.tlon`
 政策语境注册表是成员注册表的**纯子集**（语言核心通用词汇 + 算术）：无动作词、无宿主查询回调——求值副作用自由由构造保证。特殊形式（`if` / `let` / `and` / `or` / `defn` / `fn` / `map` / `filter` / `reduce` 等）由求值器提供，不在注册表内。
 
 <!-- BEGIN GENERATED: dsl-builtins-policy -->
-`POLICY_BUILTINS`（24 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`POLICY_BUILTINS`（27 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 名称 | pure | 说明 |
 |---|---|---|
+| `assert` | 是 | Reject invalid data without introducing a host effect. |
+| `integer?` | 是 | Test for an integer value, excluding booleans. |
+| `json-encode` | 是 | Encode strict JSON data, accepting EDN keywords only as object keys. |
 | `assoc` | 是 | Return a map/vector copy with key-value pairs applied in order. |
 | `dissoc` | 是 | Return a map copy without the supplied keys; missing keys are harmless. |
 | `conj` | 是 | Append to a vector, or add two-element entry vectors to a map copy. |
@@ -534,3 +540,9 @@ v2 模块可显式 `(:require [tlon.messages :as m])`。纯导出为 `(m/user co
 模块入口受理时冻结宿主系统词、工具定义与有效模型配置；嵌套函数共享根预算。已提交模型结果缺外层回执可从同一 ProgramStore 补回执，未提交结果的已派发请求仍为 unknown。内置 v1 run-loop/stage 暂留，P2 没有把它们包装成新函数。
 
 输入历史中的 assistant `tool_calls` 使用 provider 消息结构：`{:id "..." :type "function" :function {:name "..." :arguments "JSON字符串"}}`，tool 消息用 `tool_call_id` 关联。它与输出的规范化 `{id,name,arguments}` 不同，P2 不自动把建议执行成消息历史；工具执行和完整协议拼接在 P3 提供。
+
+## v2 工具编排与对话库（P3）
+
+`(tool-execute {:tools ["time-now"] :tool_calls [{:id "a" :name "time-now" :arguments {}}]})` 返回按声明顺序排列的 `{id,name,success,data,error}` 列表。它是宿主编排端口，不是模型 Tool 或带批量父回执的 Operation。每个叶子独立重放与执行。非法范围、重复 ID 和控制请求在效果前拒绝；当前撤权、定义失配和未知效果阻塞运行。
+
+`tlon.messages/response` 将 model-call 结果转换为完整 assistant 消息；`exchange` 接受旧 messages、模型响应及全部工具结果，严格校验 ID、名称、数量和顺序后一次追加。reasoning_content 保留。`tlon.conversation/run` 接受 messages、tools、max_tokens、正整数 max_rounds，返回 content、完整 messages、reason（complete/finish-turn/round-limit）。finish-turn 仅局部返回，不调度成员；不能与其他建议混合，参数必须为空 map。

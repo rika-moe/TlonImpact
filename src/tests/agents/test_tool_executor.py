@@ -1,10 +1,24 @@
 """Shared operation failures preserve the ToolExecutor tracing boundary."""
 
+import asyncio
 from typing import Any
+from unittest.mock import AsyncMock
+
+import pytest
 
 from tlon.agents.tool_executor import ToolExecutor
+from tlon.base.execution import BudgetExceededError, ExecutionDeadlineError
 from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
+from tlon.operations.schema import (
+    InputError,
+    OperationError,
+    OutputError,
+    RecoveryMismatchError,
+    RejectedError,
+    UnknownOutcomeError,
+)
+from tlosure.eval import EvalError
 
 
 def _executor() -> ToolExecutor:
@@ -24,19 +38,50 @@ def _executor() -> ToolExecutor:
     return executor
 
 
-async def test_tool_exception_becomes_execution_error_result() -> None:
-    result = await _executor().execute("explode", {})
-    assert result.success is False
-    assert result.data == {}
-    assert result.error == "Execution error: boom"
-
-
-async def test_tool_exception_does_not_break_sibling_calls() -> None:
+@pytest.mark.parametrize(
+    "error",
+    [
+        asyncio.CancelledError(),
+        BudgetExceededError("budget"),
+        ExecutionDeadlineError("deadline"),
+        RecoveryMismatchError("identity"),
+        UnknownOutcomeError("uncertain", {}),
+        OutputError("output"),
+        OperationError("operation"),
+        EvalError("evaluation"),
+        RuntimeError("infra"),
+        OSError("disk"),
+    ],
+)
+async def test_tool_blocking_failures_propagate(error: BaseException) -> None:
     executor = _executor()
-    failed = await executor.execute("explode", {})
-    missing = await executor.execute("nope", {})
-    assert failed.error.startswith("Execution error:")
-    assert missing.success is False
+    tool = executor.get_tool("explode")
+    tool._executor.call = AsyncMock(side_effect=error)  # type: ignore[method-assign]
+    with pytest.raises(type(error)) as failure:
+        await executor.execute("explode", {})
+    assert failure.value is error
+
+
+@pytest.mark.parametrize(
+    "error", [InputError("bad input"), RejectedError("denied", {"reason": "policy"})]
+)
+async def test_model_correctable_rejection_returns_result(error: Exception) -> None:
+    executor = _executor()
+    executor.get_tool("explode")._executor.call = AsyncMock(side_effect=error)  # type: ignore[method-assign]
+    result = await executor.execute("explode", {})
+    assert not result.success
+    assert result.error == f"{type(error).__name__}: {error}"
+    assert result.data == getattr(error, "data", None)
+
+
+async def test_real_infrastructure_failure_propagates() -> None:
+    with pytest.raises(RuntimeError, match="boom"):
+        await _executor().execute("explode", {})
+
+
+async def test_missing_tool_is_model_correctable() -> None:
+    missing = await _executor().execute("nope", {})
+    assert not missing.success
     assert missing.error == "Tool not found: nope"
 
 

@@ -1,6 +1,6 @@
 # 可编程工作流程：目标设计
 
-状态：已接受；P1 已合并（#208），P2 本阶段实现，P3–P5 尚未实施，2026-10-21。决策见 [ADR 0046](../decisions/0046-programmable-workflows.md)，施工与证据见 [实施计划](programmable-workflows-plan.md)。当前机制仍见 [DSL](dsl.md)、[runtime](runtime.md) 和 [调用恢复](invocation-recovery.md)。目标与实现边界以分阶段计划为准；当前语法/API 见[模块程序指南](../guides/writing-a-module-program.md)。
+状态：已接受；P1/P2 已合并（#208/#209），P3 本阶段实现，P4–P5 尚未实施，2026-10-23。决策见 [ADR 0046](../decisions/0046-programmable-workflows.md)，施工与证据见 [实施计划](programmable-workflows-plan.md)。当前机制仍见 [DSL](dsl.md)、[runtime](runtime.md) 和 [调用恢复](invocation-recovery.md)。目标与实现边界以分阶段计划为准；当前语法/API 见[模块程序指南](../guides/writing-a-module-program.md)。
 
 ## 1. 执行与分层
 
@@ -69,6 +69,12 @@ Operation 的恢复 hook 只读取同根、同稳定调用路径的已提交模�
 错误分类：输入/领域拒绝可以作为结构化工具失败供模型修正；取消、截止、预算、恢复失配交由运行器处理；未知外部结果阻塞相应运行并保留证据，不由 ToolExecutor 的兜底异常转换伪装可重试失败。重试只适用于明确拒绝或宿主声明可安全重试的操作。程序错误不回滚已提交效果。
 
 模型消息中一次完整 assistant 响应关联全部 tool_calls，随后附对应 tool 结果；普通会话库负责协议排列与校验。不要按完成一个工具就重复追加一份 assistant 响应，也不能向下一次模型请求提供缺失必要结果的非法消息。模型局部结束信号与宿主工具效果分开处理，不直接执行成员睡眠/退出。
+
+### P3 当前实现
+
+`tool-execute` 是 DSLAdapter 的编排端口，接受 tools 名称列表和规范化 tool_calls，返回按输入顺序排列的 `{id,name,success,data,error}`。批次不写父 intent；每个叶子都经 OperationExecutor 独立持久化，身份绑定完整批次与位置。先还原历史，再检查新效果的当前目录；撤权/定义变化阻塞，未知结果不能作为模型重试建议。
+
+`tlon.conversation/run` 是普通模块函数，参数含 messages/tools/max_tokens/max_rounds。max_rounds 为正整数，局部返回 reason 为 complete、finish-turn 或 round-limit。`tlon.messages/response` 与 exchange 转换和校验完整消息协议。仅显式依赖时装配 conversation；无需模型的模块继续独立运行。模型工具执行只接受宿主叶子，模块函数不注册为 Tool。
 
 ## 5. 状态、返回与调度
 

@@ -8,7 +8,7 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 
 - 调度、并发、持久化、LLM 调用、Docker 和权限检查留在宿主机制层；策略组合已有机制。
 - 查询只暴露受控视图，不向 DSL 开放任意 Python 属性或方法调用。
-- 宿主效果统一进入 Operation，仅 `run-loop` 保留 `ActionRequest` 配方声明；异步求值在调用处交给宿主执行，记录实际结果后继续表达式。参数形状在构造请求时校验；配额、信任和实时状态仍由执行侧检查。
+- 宿主叶子效果统一进入 Operation；tool-execute 是不保存父回执的编排端口，仅 `run-loop` 保留 `ActionRequest` 配方声明；异步求值在调用处交给宿主执行，记录实际结果后继续表达式。参数形状在构造请求时校验；配额、信任和实时状态仍由执行侧检查。
 - when、until、stage-if 共用纯函数准入，各自声明符号作用域与 fuel 预算；actions 才能调用效果。
 - 函数可以返回动作意图，也可以在函数体内调用效果词。动作位置不再靠语法分区枚举；纯语境通过可见词汇约束效果。
 - tlosure 核心保持宿主无关；领域端口位于 tlon。纯度标记描述效果权限，不能将“读取宿主状态”误解成可重放的常量计算。
@@ -19,7 +19,7 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 
 [agents/vocabulary.py](../../src/tlon/agents/vocabulary.py) 的 `ScriptHostQueries` 声明宿主查询协议，`make_member_builtins(host)` 通过闭包注入查询。实现由 [agent_registry.py](../../src/tlon/agents/agent_registry.py) 的 `RegistryQueries` 提供。注入由宿主装配决定，不构成纯条件准入。
 
-查询词登记为 `pure=False`：虽然不写外部状态，结果仍来自随时间变化的宿主视图。生产程序驱动器将这些动态查询作为需记录的读取，恢复时复用原结果。能力 artifact 不能直接引用这些依赖隐式上下文的查询，必须由调用方显式传入数据。
+查询词登记为 `pure=False`：虽然不写外部状态，结果仍来自随时间变化的宿主视图。生产程序驱动器将这些动态查询作为需记录的读取，恢复时复用原结果。模块需要这些查询时必须在效果位置显式读取。
 
 ### 效果
 
@@ -89,3 +89,9 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 响应固定包含 `content`（可为 nil）、`tool_calls`（`{:id ... :name ... :arguments {...}}` 列表）、`finish_reason`、`usage`、`reasoning_content`。程序可在调用后决定是否接受建议。纯 `tlon.messages` 仅构造消息；其源码由宿主显式提供并随运行冻结，作者不能覆盖 tlon 命名空间。
 
 v2 受理时原子冻结有效系统输入、工具定义和模型配置。恢复读取冻结值；新请求还校验当前工具目录。模型内层响应和预算已提交、外层 Operation 回执缺失时，从同一权威记录核对有效请求后补回执，不访问 provider 或再次扣额；未提交结果的已派发请求仍阻塞为 unknown。旧 stage 共同使用 ModelService，但 stage 执行、SessionJournal 恢复与工具循环仍按现行 v1 机制保留至后续阶段。
+
+## P3 工具编排端口
+
+`tool-execute` 接受 `{tools: [工具名], tool_calls: [{id,name,arguments}]}`。它是 DSLAdapter 的宿主编排端口，不是可暴露给模型的叶子 Operation，也不生成批量父 intent。ProgramDriver 的确定调用序号与输入索引派生每个叶子的身份；provider ID 只关联消息。叶子仍经同一 OperationExecutor、预算根和写 gate。
+
+`tlon.conversation` 是普通源码模块，可被其他函数调用；模型停止只返回给当前函数。纯 tlon.messages 负责一次完整 assistant 响应及其全部 tool 结果的关联。共享 ToolExecutor 只转换输入/领域拒绝，基础设施与未知效果向运行器传播。

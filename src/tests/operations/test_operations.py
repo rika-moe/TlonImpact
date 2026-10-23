@@ -140,8 +140,8 @@ async def test_bad_output_rejected_from_both_entrances() -> None:
         evaluate(DSLAdapter(execution), {"rows": [], "label": None})
     tools = ToolExecutor()
     tools.register_tool(OperationTool(execution, "sum-matrix"))
-    result = await tools.execute("sum-matrix", {"rows": [], "label": None})
-    assert not result.success and "OutputError" in result.error
+    with pytest.raises(OutputError):
+        await tools.execute("sum-matrix", {"rows": [], "label": None})
 
 
 async def test_scoped_ports_and_host_identity_are_isolated() -> None:

@@ -13,7 +13,7 @@ from tlon.base.config import DockerRuntimeConfig
 from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
 from tlon.operations.dsl import DSLAdapter
-from tlon.operations.schema import InputError, UnknownOutcomeError
+from tlon.operations.schema import InputError, OperationError, UnknownOutcomeError
 from tlon.operations.shell import make_shell_operations
 from tlon.operations.time import time_operation_definitions
 from tlon.sandbox.device import ExecutionResult
@@ -135,22 +135,20 @@ async def test_unknown_device_outcome_has_call_identity(failure):
         device.run.return_value = failure
     _, executor, adapter = bindings(device)
     context = CallContext("a", "run", "stable-call")
-    result = await OperationTool(executor, "shell-run").execute_context(
-        {"command": "effect"}, context
-    )
-    assert not result.success
-    assert result.data["call_id"] == "stable-call"
-    assert result.data["outcome"] == "unknown"
-    assert result.data["retry_safe"] is False
+    with pytest.raises(UnknownOutcomeError) as failure:
+        await OperationTool(executor, "shell-run").execute_context({"command": "effect"}, context)
+    assert failure.value.data["call_id"] == "stable-call"
+    assert failure.value.data["outcome"] == "unknown"
+    assert failure.value.data["retry_safe"] is False
 
 
 async def test_operation_context_cannot_cross_members():
     device = AsyncMock()
     _, executor, _ = bindings(device)
-    result = await OperationTool(executor, "shell-run").execute_context(
-        {"command": "effect"}, CallContext("other", "run", "c")
-    )
-    assert not result.success
+    with pytest.raises(OperationError, match="another member"):
+        await OperationTool(executor, "shell-run").execute_context(
+            {"command": "effect"}, CallContext("other", "run", "c")
+        )
     device.run.assert_not_called()
 
 
@@ -167,9 +165,9 @@ async def test_background_unknown_preserves_original_task_handle(failure):
     )
     task_id = started.data["task_id"]
     await asyncio.gather(service._tasks[task_id], return_exceptions=True)
-    result = await OperationTool(executor, "shell-check").execute_context({"task_id": task_id})
-    assert not result.success
-    assert result.data["outcome"] == "unknown"
-    assert result.data["retry_safe"] is False
-    assert result.data["task_id"] == task_id
+    with pytest.raises(UnknownOutcomeError) as failure:
+        await OperationTool(executor, "shell-check").execute_context({"task_id": task_id})
+    assert failure.value.data["outcome"] == "unknown"
+    assert failure.value.data["retry_safe"] is False
+    assert failure.value.data["task_id"] == task_id
     await service.shutdown()

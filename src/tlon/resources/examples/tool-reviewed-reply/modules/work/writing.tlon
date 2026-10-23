@@ -1,0 +1,22 @@
+(ns work.writing
+  (:require [tlon.messages :as messages] [tlon.conversation :as conversation])
+  (:export generate review revise))
+
+(defn generate [task]
+  (let [draft (conversation/run
+                {:messages [(messages/user (str "First call time-now to obtain the current time, then write a draft answering: " task))]
+                 :tools ["time-now"] :max_tokens 128 :max_rounds 4})]
+    (assert (not (= (get draft :reason) "round-limit")) "draft conversation reached its round limit")
+    (get draft :content)))
+
+(defn review [task draft]
+  (get (model-call {:messages [(messages/user (str "Review this draft against the task: " task))
+                              (messages/assistant draft)
+                              (messages/user "Identify unsupported claims and missing information.")]
+                    :tools [] :max_tokens 128}) :content))
+
+(defn revise [task draft review]
+  (get (model-call {:messages [(messages/user (str "Task: " task))
+                              (messages/assistant draft)
+                              (messages/user (str "Revise using this review: " review))]
+                    :tools [] :max_tokens 128}) :content))

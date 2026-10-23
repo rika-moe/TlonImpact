@@ -134,6 +134,10 @@ class ProgramDriver:
                     inputs, sort_keys=True, separators=(",", ":"), ensure_ascii=False
                 ),
             )
+            if self.operations.is_dispatch(call):
+                if self.on_operation is not None:
+                    self.on_operation()
+                return await self.operations.dispatch(call, context)
             found, result = await self.operations.replay(call, context)
             if not found:
                 if self.on_operation is not None:

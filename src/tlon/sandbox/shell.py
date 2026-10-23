@@ -5,18 +5,17 @@ import uuid
 from typing import Any
 
 from tlon.base.config import DockerRuntimeConfig
-from tlon.operations.schema import OperationError, UnknownOutcomeError
+from tlon.operations.schema import OperationError, RejectedError, UnknownOutcomeError
 from tlon.sandbox.device import ExecutionDevice, ExecutionResult
 
 DEFAULT_TIMEOUT = 60
 
 
-class ShellExecutionError(OperationError):
+class ShellExecutionError(RejectedError):
     """Command completed unsuccessfully; effects may already have occurred."""
 
     def __init__(self, message: str, data: dict[str, Any]) -> None:
-        super().__init__(message)
-        self.data = data
+        super().__init__(message, data)
 
 
 class MemberShellService:
@@ -27,7 +26,7 @@ class MemberShellService:
 
     def _device(self) -> ExecutionDevice:
         if self.config.level != "L2":
-            raise OperationError("shell requires execution level L2")
+            raise RejectedError("shell requires execution level L2", {})
         if self.device is None:
             raise OperationError("Declared execution device is unavailable")
         return self.device
@@ -66,7 +65,7 @@ class MemberShellService:
             return self._result(await self._run(device, command, timeout))
         self._trim()
         if sum(not task.done() for task in self._tasks.values()) >= 20:
-            raise OperationError("Background task limit (20) reached")
+            raise RejectedError("Background task limit (20) reached", {})
         task_id = f"bg-{uuid.uuid4().hex}"
         task = asyncio.create_task(self._run(device, command, timeout))
         self._tasks[task_id] = task
@@ -98,7 +97,7 @@ class MemberShellService:
         task_id = args["task_id"]
         task = self._tasks.get(task_id)
         if task is None:
-            raise OperationError("Task not found in this member's retained in-memory results")
+            raise RejectedError("Task not found in this member's retained in-memory results", {})
         if not task.done():
             return {
                 "task_id": task_id,
@@ -123,8 +122,9 @@ class MemberShellService:
             error.data["task_id"] = task_id
             raise
         except Exception as error:
-            raise ShellExecutionError(
-                f"Task failed: {error}", {"task_id": task_id, "status": "failed"}
+            raise UnknownOutcomeError(
+                f"Task failed with unknown execution outcome: {error}",
+                {"task_id": task_id, "status": "failed", "outcome": "unknown", "retry_safe": False},
             ) from error
         return self._result(result, task_id)
 

@@ -88,8 +88,8 @@ async def test_metrics_non_json_and_missing_known_output_rejected() -> None:
     executor = _bound(
         "alice", metrics_snapshot=lambda: {"metrics": {"bad": {"points": [], "value": object()}}}
     )
-    result = await OperationTool(executor, "metrics-read").execute_context({})
-    assert not result.success and "OutputError" in result.error
+    with pytest.raises(OutputError):
+        await OperationTool(executor, "metrics-read").execute_context({})
     executor = _bound("alice", mail_stats_provider=AsyncMock(return_value={"agent_id": "alice"}))
-    result = await OperationTool(executor, "mail-stats").execute_context({})
-    assert not result.success and "OutputError" in result.error
+    with pytest.raises(OutputError):
+        await OperationTool(executor, "mail-stats").execute_context({})

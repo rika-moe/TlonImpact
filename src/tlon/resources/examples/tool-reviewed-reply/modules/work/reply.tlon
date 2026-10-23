@@ -1,0 +1,11 @@
+(ns work.reply
+  (:require [work.writing :as writing])
+  (:export handle))
+
+(defn handle [event]
+  (let [task (get (get event :mail) :content)
+        draft (writing/generate task)
+        review (writing/review task draft)
+        answer (writing/revise task draft review)]
+    (mail-send {:to [(get event :sender)] :content answer})
+    {:result answer}))

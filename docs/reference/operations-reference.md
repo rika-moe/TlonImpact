@@ -95,3 +95,9 @@ spawn 的配额归属取冻结 CallContext.run_id：Tool 与恢复使用 session
 普通程序与旧 stage 共享 ModelService 和现有模型调用账本。v2 受理原子冻结 host（系统输入及工具定义）与 config（有效成员模型配置）；已有结果重放不受后来系统词或模型配置变化影响，新请求仍校验当前工具目录。已提交模型结果缺外层回执时，恢复 hook 核对稳定路径和有效请求，只读补回执；unknown 不自动重发。output 模式维持获准输出上限预留，total 模式维持现有实际用量结算与缺失用量的保守处理。
 
 输入历史中的 assistant `tool_calls` 使用 provider 消息结构：`{:id "..." :type "function" :function {:name "..." :arguments "JSON字符串"}}`，tool 消息用 `tool_call_id` 关联。它与输出的规范化 `{id,name,arguments}` 不同，P2 不自动把建议执行成消息历史；工具执行和完整协议拼接在 P3 提供。
+
+## 普通程序工具编排（P3）
+
+`tool-execute` 不是叶子 Operation，不进入模型 Tool 目录，也不记录批量父 intent。它接受受控工具名称列表和规范化建议，按程序调用位置、输入索引派生稳定叶子身份，逐项使用 OperationExecutor。完整批次参数参加身份校验，完成顺序不决定身份。已完成项先返回旧回执，新效果才检查当前工具目录；撤权和定义变化阻塞。
+
+OperationTool 与 ToolExecutor 只将 InputError/RejectedError 变为普通失败，其他错误向运行器传播。RejectedError 子类的持久分类统一为 RejectedError，保留领域数据。提交故障的 unknown 使用真实业务参数生成诊断，显式 request_id 不因批次身份元数据而丢失。

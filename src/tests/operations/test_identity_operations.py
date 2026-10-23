@@ -10,7 +10,7 @@ from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
 from tlon.operations.dsl import DSLAdapter
 from tlon.operations.identity import make_identity_operations
-from tlon.operations.schema import InputError, json_value
+from tlon.operations.schema import InputError, UnknownOutcomeError, json_value
 from tlosure.builtins import BuiltinCall
 from tlosure.edn import Keyword
 
@@ -69,12 +69,18 @@ async def test_persona_two_entrances_and_write_failure_receipt(tmp_path: Path) -
     )
     assert paths.agent_soul_file("alice").read_text() == "认真"
     assert not paths.agent_soul_file("bob").exists()
-    with patch.object(Path, "write_text", side_effect=OSError("disk failure")):
-        result = await OperationTool(alice, "persona-update").execute_context(
+    with (
+        patch.object(Path, "write_text", side_effect=OSError("disk failure")),
+        pytest.raises(UnknownOutcomeError) as failure,
+    ):
+        await OperationTool(alice, "persona-update").execute_context(
             {"file": "identity", "content": "自己"}
         )
-    assert not result.success
-    assert result.data == {"outcome": "unknown", "call_id": "call-alice", "retry_safe": False}
+    assert failure.value.data == {
+        "outcome": "unknown",
+        "call_id": "call-alice",
+        "retry_safe": False,
+    }
     invalid = await OperationTool(alice, "persona-update").execute_context(
         {"file": "rules", "content": "x"}
     )

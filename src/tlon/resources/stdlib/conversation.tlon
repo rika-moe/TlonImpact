@@ -1,0 +1,34 @@
+(ns tlon.conversation
+  (:require [tlon.messages :as messages])
+  (:export run))
+
+;; Linked only when an author explicitly requires tlon.conversation.
+;; This is an ordinary bounded function. All effects retain the caller's scope.
+(defn run [options]
+  (let [limit (get options :max_rounds)
+        tools (get options :tools [])]
+    (assert (and (integer? limit) (> limit 0)) "max_rounds must be a positive integer")
+    (while [history (get options :messages) round 0]
+      true
+      (if (>= round limit)
+        {:content nil :messages history :reason "round-limit"}
+        (let [result (model-call {:messages history :tools tools
+                                  :max_tokens (get options :max_tokens)})
+              calls (get result :tool_calls [])
+              ends (filter call (= (get call :name) "finish-turn") calls)]
+          (if (> (count ends) 0)
+            (let [single (assert (= (count calls) 1) "finish-turn cannot mix with other tools")
+                  offered (assert (contains? tools "finish-turn") "finish-turn was not offered")
+                  empty-args (assert (= (get (reduce previous call call nil calls) :arguments) {})
+                                     "finish-turn arguments must be empty")]
+              {:content (get result :content)
+               :messages (messages/exchange history result
+                            [{:id (get (reduce previous call call nil calls) :id) :name "finish-turn"
+                              :success true :data {:finished true} :error nil}])
+               :reason "finish-turn"})
+            (if (= (count calls) 0)
+              {:content (get result :content)
+               :messages (messages/append history (messages/response result))
+               :reason "complete"}
+              (let [results (tool-execute {:tools tools :tool_calls calls})]
+                (recur (messages/exchange history result results) (+ round 1))))))))))

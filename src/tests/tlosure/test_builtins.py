@@ -63,6 +63,9 @@ class TestContractTypes:
 class TestRegistries:
     def test_core_vocabulary_names(self):
         assert set(CORE_BUILTINS) == {
+            "assert",
+            "integer?",
+            "json-encode",
             "assoc",
             "dissoc",
             "conj",

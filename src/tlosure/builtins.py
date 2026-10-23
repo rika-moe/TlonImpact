@@ -28,11 +28,13 @@ This module is the leaf of the evaluator pair: it imports nothing from
 there is no import cycle.
 """
 
+import json
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from tlosure.edn import dumps
+from tlosure.edn import Keyword, dumps
 
 
 class EvalError(Exception):
@@ -345,10 +347,63 @@ def builtin_vals(env: dict[str, Any], target: Any) -> list[Any]:
     return list(target.values())
 
 
+def builtin_integer(env: dict[str, Any], value: Any) -> bool:
+    """Test for an integer value, excluding booleans."""
+    return type(value) is int
+
+
+def builtin_assert(env: dict[str, Any], condition: Any, message: str) -> Any:
+    """Reject invalid data without introducing a host effect."""
+    if not condition:
+        raise EvalError(str(message))
+    return condition
+
+
+def builtin_json_encode(env: dict[str, Any], value: Any) -> str:
+    """Encode strict JSON data, accepting EDN keywords only as object keys."""
+    active: set[int] = set()
+
+    def normalize(item: Any, depth: int) -> Any:
+        if depth > 100:
+            raise EvalError("JSON nesting exceeds 100")
+        if item is None or type(item) in (str, bool, int):
+            return item
+        if type(item) is float and math.isfinite(item):
+            return item
+        if type(item) not in (list, dict):
+            raise EvalError(f"not a JSON value: {type(item).__name__}")
+        identity = id(item)
+        if identity in active:
+            raise EvalError("cyclic JSON value")
+        active.add(identity)
+        try:
+            if type(item) is list:
+                return [normalize(child, depth + 1) for child in item]
+            result: dict[str, Any] = {}
+            for key, child in item.items():
+                if type(key) is Keyword:
+                    key = str(key)
+                if type(key) is not str:
+                    raise EvalError("JSON object keys must be strings or keywords")
+                if key in result:
+                    raise EvalError(f"duplicate normalized JSON key: {key}")
+                result[key] = normalize(child, depth + 1)
+            return result
+        finally:
+            active.remove(identity)
+
+    return json.dumps(
+        normalize(value, 0), ensure_ascii=False, allow_nan=False, separators=(",", ":")
+    )
+
+
 #: General-purpose pure vocabulary: host-agnostic building blocks any
 #: host registry may include verbatim. Pure only; evaluation against it
 #: is side-effect free by construction.
 CORE_BUILTINS: dict[str, Builtin] = {
+    "assert": Builtin(builtin_assert, pure=True),
+    "integer?": Builtin(builtin_integer, pure=True),
+    "json-encode": Builtin(builtin_json_encode, pure=True),
     "assoc": Builtin(builtin_assoc, pure=True),
     "dissoc": Builtin(builtin_dissoc, pure=True),
     "conj": Builtin(builtin_conj, pure=True),

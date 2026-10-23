@@ -13,6 +13,7 @@ from tlon.base.config import DockerRuntimeConfig, ToolConfig
 from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
 from tlon.operations.filesystem import make_filesystem_operations
+from tlon.operations.schema import OperationError
 from tlon.sandbox.filesystem import MemberFilesystemService
 from tlon.sandbox.path_guard import normalize_container_path, resolve_container_path
 
@@ -148,18 +149,14 @@ class TestReadFileTool:
     async def test_read_runtime_error(self, read_tool):
         read_tool._docker_runtime.read_file.side_effect = RuntimeError("container crashed")
 
-        result = await read_tool.execute_context({"file_path": "test.txt"})
-
-        assert result.success is False
-        assert "container crashed" in result.error.lower()
+        with pytest.raises(OperationError, match="container crashed"):
+            await read_tool.execute_context({"file_path": "test.txt"})
 
     async def test_read_runtime_not_initialized(self, read_tool):
         read_tool._docker_runtime = None
 
-        result = await read_tool.execute_context({"file_path": "test.txt"})
-
-        assert result.success is False
-        assert "not initialized" in result.error.lower()
+        with pytest.raises(OperationError, match="not initialized"):
+            await read_tool.execute_context({"file_path": "test.txt"})
 
 
 class TestWriteFileTool:
@@ -217,10 +214,8 @@ class TestWriteFileTool:
     async def test_write_runtime_not_initialized(self, write_tool):
         write_tool._docker_runtime = None
 
-        result = await write_tool.execute_context({"file_path": "test.txt", "content": "x"})
-
-        assert result.success is False
-        assert "not initialized" in result.error.lower()
+        with pytest.raises(OperationError, match="not initialized"):
+            await write_tool.execute_context({"file_path": "test.txt", "content": "x"})
 
 
 class TestEditFileTool:
@@ -293,12 +288,10 @@ class TestEditFileTool:
     async def test_edit_runtime_not_initialized(self, edit_tool):
         edit_tool._docker_runtime = None
 
-        result = await edit_tool.execute_context(
-            {"file_path": "test.py", "old_string": "old", "new_string": "new"}
-        )
-
-        assert result.success is False
-        assert "not initialized" in result.error.lower()
+        with pytest.raises(OperationError, match="not initialized"):
+            await edit_tool.execute_context(
+                {"file_path": "test.py", "old_string": "old", "new_string": "new"}
+            )
 
 
 class TestListDirectoryTool:
@@ -380,10 +373,8 @@ class TestListDirectoryTool:
     async def test_list_runtime_not_initialized(self, list_tool):
         list_tool._docker_runtime = None
 
-        result = await list_tool.execute_context({"path": "."})
-
-        assert result.success is False
-        assert "not initialized" in result.error.lower()
+        with pytest.raises(OperationError, match="not initialized"):
+            await list_tool.execute_context({"path": "."})
 
 
 class TestSearchFilesTool:
@@ -570,10 +561,8 @@ class TestSearchFilesTool:
     async def test_search_runtime_not_initialized(self, search_tool):
         search_tool._docker_runtime = None
 
-        result = await search_tool.execute_context({"pattern": "x"})
-
-        assert result.success is False
-        assert "not initialized" in result.error.lower()
+        with pytest.raises(OperationError, match="not initialized"):
+            await search_tool.execute_context({"pattern": "x"})
 
 
 class TestPathGuard:

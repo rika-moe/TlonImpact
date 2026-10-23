@@ -120,12 +120,15 @@ async def test_real_evolution_model_failure_is_identical_in_dsl_tool_and_replay(
         )
     # Recovery uses a fresh scope and the same frozen root/call, not a new allowance.
     with bind_execution(ExecutionScope(store, "root", scope.token_limit, "output")):
-        result = await OperationTool(bound, name).execute_context(arguments[name])
-    assert not result.success and expected.__name__ in result.error
-    if fault == "unknown":
-        assert result.data["outcome"] == "unknown"
-    else:
-        assert not result.data or result.data.get("outcome") != "unknown"
+        if fault in {"rejected", "context-rejected"}:
+            result = await OperationTool(bound, name).execute_context(arguments[name])
+            assert not result.success and expected.__name__ in result.error
+            assert not result.data or result.data.get("outcome") != "unknown"
+        else:
+            with pytest.raises(expected) as failure:
+                await OperationTool(bound, name).execute_context(arguments[name])
+            if fault == "unknown":
+                assert failure.value.data["outcome"] == "unknown"
     assert provider.await_count == (0 if fault == "budget" else 1)
     assert staging_snapshot(paths) == before
 
