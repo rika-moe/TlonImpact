@@ -146,7 +146,10 @@ async def test_module_generation_review_revision_share_root_model_budget(
             assert response.status == 200, body
             agent = body["agent_id"]
         await _send_mail(http, base_url, token, to=[agent])
-        async with asyncio.timeout(10):
+        # A first delivery also cold-loads the member while Adam starts the
+        # initial society. CI measured 9.47s in activation alone; this is a
+        # completion/budget test, not a ten-second startup benchmark.
+        async with asyncio.timeout(60):
             while not any(
                 mail["content"] == "revised" and mail["from_address"] == f"{agent}@tlon.internal"
                 for mail in _read_inbox(home, "human:alice")

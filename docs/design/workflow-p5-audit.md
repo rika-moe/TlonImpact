@@ -57,3 +57,5 @@ loader 在准入和初始化前以 SQLite mode=ro 扫描旧 session 与非入口
 初次包内原型冒烟因 model-context 使用 LiteLLM schema walker 不能处理布尔 schema 而超时；已统一为预算侧既有的工具 JSON 文本估算，并增加真实装配目录回归覆盖，重跑通过。所有冒烟服务和临时目录均清理；未操作真实成员生命周期。
 
 全量质量门：`scripts/check_all.sh` 14/14 全绿；单元 2413 passed / 15 skipped，集成 40 passed。静态检查含 Ruff、mypy、import-linter、生成 reference、TS 测试/构建与完整 wheel 资源检查。
+
+首次 CI 集成测试 39/40 通过；核验回信测试的 10 秒等待包含了初始社会并发启动及目标成员冷加载，日志显示仅目标唤醒已耗时 9.474 秒，三次模拟响应于等待结束后才完成。该测试验证完成与共享预算，不测启动性能，因此等待上限改为 60 秒，原调用次数、消息内容及预算断言完整保留。
