@@ -105,7 +105,7 @@ class DockerRuntimeConfig(BaseModel):
     """Docker runtime configuration."""
 
     # 执行装置能力阶梯（issue #26 声明落地、issue #40 L1 落地）：声明即
-    # 数据、随原型提案一起评审。L0 = 无执行装置——装配时不创建
+    # 数据、随原型提案一起评审。L0 = 无执行装置（仅开放内置作者资料的只读文件工具）——装配时不创建
     # DockerRuntime、不注册依赖装置的 shell/filesystem 工具；L1 = 文件层
     # ——archive-only，结构性零代码执行（装置容器从不启动、exec 单元从不
     # 存在，只注册 5 个 filesystem 工具）；L2 = Docker 完整 userland。

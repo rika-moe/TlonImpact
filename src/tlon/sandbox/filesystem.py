@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import fnmatch
+import posixpath
 import re
 import tarfile
 import time
+from pathlib import Path
 from typing import Any
 
 from tlon.base.config import DockerRuntimeConfig
@@ -13,8 +15,9 @@ from tlon.base.logger import get_logger
 from tlon.operations.core import CallContext
 from tlon.operations.schema import OperationError, RejectedError, UnknownOutcomeError
 from tlon.sandbox.archive import DirectoryArchive
+from tlon.sandbox.author_files import author_archive, author_path, author_root, is_author_path
 from tlon.sandbox.device import ExecutionDevice
-from tlon.sandbox.path_guard import resolve_container_path
+from tlon.sandbox.path_guard import normalize_container_path, resolve_container_path
 
 logger = get_logger(__name__)
 
@@ -50,6 +53,9 @@ class MemberFilesystemService:
         self._write_allowed_paths = list(write_allowed_paths)
 
     async def _path(self, path: str, *, write: bool = False) -> str:
+        normalized = normalize_container_path(posixpath.join(self._docker_config.working_dir, path))
+        if write and is_author_path(normalized, self._docker_config.working_dir):
+            raise RejectedError(f"{author_root(self._docker_config.working_dir)} is read-only", {})
         if self._docker_config.level == "L0":
             raise RejectedError("L0 members cannot access files", {})
         if self._docker_runtime is None:
@@ -65,6 +71,24 @@ class MemberFilesystemService:
         except (ValueError, FileNotFoundError) as exc:
             raise RejectedError(str(exc), {}) from exc
         return resolved
+
+    def _author_file(self, path: str) -> tuple[str, Path] | None:
+        try:
+            return author_path(path, self._docker_config.working_dir)
+        except (ValueError, FileNotFoundError) as exc:
+            raise RejectedError(str(exc), {}) from exc
+
+    async def _read_archive(self, path: str) -> tuple[str, bytes]:
+        mapped = self._author_file(path)
+        if mapped is not None:
+            container_path, local = mapped
+            try:
+                return container_path, author_archive(local)
+            except ValueError as exc:
+                raise RejectedError(str(exc), {}) from exc
+        container_path = await self._path(path)
+        assert self._docker_runtime is not None
+        return container_path, await self._docker_runtime.fetch_archive(container_path)
 
     async def _write(self, path: str, content: bytes, context: CallContext) -> None:
         assert self._docker_runtime is not None
@@ -89,12 +113,15 @@ class MemberFilesystemService:
         file_path: str = arguments["file_path"]
         offset: int = arguments.get("offset", 1)
         limit: int = arguments.get("limit", 100)
-        if self._docker_runtime is None:
-            raise OperationError("Docker runtime not initialized")
-        container_path = await self._path(file_path)
+        mapped = self._author_file(file_path)
+        container_path = await self._path(file_path) if mapped is None else mapped[0]
         try:
-            raw = await self._docker_runtime.read_file(container_path)
-        except FileNotFoundError:
+            if mapped is not None:
+                raw = mapped[1].read_bytes()
+            else:
+                assert self._docker_runtime is not None
+                raw = await self._docker_runtime.read_file(container_path)
+        except (FileNotFoundError, IsADirectoryError):
             raise RejectedError(f"File not found: {file_path}", {}) from None
         except RuntimeError as e:
             logger.error("file_read_failed", file_path=file_path, error=str(e), exc_info=True)
@@ -124,9 +151,8 @@ class MemberFilesystemService:
     async def write(self, arguments: dict[str, Any], context: CallContext) -> dict[str, Any]:
         file_path: str = arguments["file_path"]
         content: str = arguments["content"]
-        if self._docker_runtime is None:
-            raise OperationError("Docker runtime not initialized")
         container_path = await self._path(file_path, write=True)
+        assert self._docker_runtime is not None
         try:
             existed = await self._docker_runtime.file_exists(container_path)
         except RuntimeError as exc:
@@ -144,9 +170,8 @@ class MemberFilesystemService:
         file_path: str = arguments["file_path"]
         old_string: str = arguments["old_string"]
         new_string: str = arguments["new_string"]
-        if self._docker_runtime is None:
-            raise OperationError("Docker runtime not initialized")
         container_path = await self._path(file_path, write=True)
+        assert self._docker_runtime is not None
         try:
             raw = await self._docker_runtime.read_file(container_path)
         except FileNotFoundError:
@@ -183,12 +208,9 @@ class MemberFilesystemService:
     ) -> dict[str, Any]:
         path: str = arguments.get("path", ".")
         max_entries: int = arguments.get("max_entries", self._DEFAULT_MAX_ENTRIES)
-        if self._docker_runtime is None:
-            raise OperationError("Docker runtime not initialized")
-        container_path = await self._path(path)
         limit = min(max(1, max_entries), self._MAX_ENTRIES)
         try:
-            tar_bytes = await self._docker_runtime.fetch_archive(container_path)
+            container_path, tar_bytes = await self._read_archive(path)
         except FileNotFoundError:
             raise RejectedError(f"Directory not found: {path}", {}) from None
         except RuntimeError as e:
@@ -232,9 +254,6 @@ class MemberFilesystemService:
         max_results: int = arguments.get("max_results", self._DEFAULT_MAX_RESULTS)
         if mode not in ("content", "filename"):
             raise RejectedError(f"Invalid mode: {mode!r} (expected 'content' or 'filename')", {})
-        if self._docker_runtime is None:
-            raise OperationError("Docker runtime not initialized")
-        container_path = await self._path(path)
         regex: re.Pattern[str] | None = None
         if mode == "content":
             try:
@@ -243,7 +262,7 @@ class MemberFilesystemService:
                 raise RejectedError(f"Search failed: {e}", {}) from e
         limit = min(max(1, max_results), self._MAX_RESULTS)
         try:
-            tar_bytes = await self._docker_runtime.fetch_archive(container_path)
+            container_path, tar_bytes = await self._read_archive(path)
         except FileNotFoundError:
             raise RejectedError(f"Path not found: {path}", {}) from None
         except RuntimeError as e:

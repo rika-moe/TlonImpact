@@ -47,3 +47,5 @@ Capability 已由 ADR 0045 删除。当前 tlosure 已支持函数、闭包、�
 ## 实施记录：P4a
 
 Agent 机器起草与完整模块审阅接入既有 staging/批准/实例化机制；标准工作方式和上下文压缩以普通函数实现，宿主保留窗口估算、领域执行和失败通知。新库不依赖 scratch、StageOutcome 或 AgentSession。新交互投影与旧引擎退役仍按 P4b/P5 施工，不提前声称所有内置原型已切换。
+
+P4a 补齐采用简单文件映射：作者文档与标准库实际源码只读置于 workspace/tlon，复用 file-read/list/search。删除专用一次性起草调用，查阅、模型生成、program-check 校验与修订由普通 authoring 函数组合，发布另交 prototype-write。没有文档查询 API、手册正文注入或新的目录/版本管理层。

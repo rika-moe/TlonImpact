@@ -79,7 +79,6 @@ async def test_two_entrances_host_author_and_human_trust(tmp_path: Path) -> None
             "writer",
             {"behavior": BUNDLE_BEHAVIOR, "modules": BUNDLE_MODULES, "display_name": "x"},
         ),
-        ("behavior-propose", "behavior_proposer", {"intent": "x", "display_name": "x"}),
     ],
 )
 async def test_apprentice_denied_in_tool_and_dsl_before_service_call(

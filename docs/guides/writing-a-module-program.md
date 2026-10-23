@@ -113,7 +113,11 @@ v2 受理时原子冻结宿主系统提示词、模型配置及工具定义；�
 
 ## Agent 起草、审阅和派生（P4a）
 
-`prototype-write` 必须提交完整 v2 behavior 和非空 modules，不能只提交 rules 或模块 diff。`behavior-propose` 接受 intent/display_name，读取成员自己的 behavior、全部作者模块、记忆与教训，用自己的模型起草严格 JSON `{behavior,modules}`；至少包含入口及可复用工作函数两个模块。缺依赖、非法路径、私有访问与坏入口在 staging 发布前拒绝，模型错误不会触发旧 v1 起草回退。
+作者资料直接映射到 workspace：`tlon/docs/` 是当前文档，`tlon/stdlib/` 是实际标准库源码。用现有 file-read、file-list、file-search 查询；相对路径按当前 working_dir 解析，默认绝对路径为 `/workspace/tlon/...`。资料只读，L0 无 Docker 时也可读取；普通 workspace 和成员私有文件仍沿原权限，不能借资料映射越界读取。Docker 可用时同路径也是只读挂载。wheel 带入同一份仓库文档，不维护第二份内容副本。
+
+起草是普通 `tlon.authoring/draft` 函数：传入 messages、max_tokens、max_rounds，可按需显式选择 tools。默认工具是文件读取/列举/搜索与 program-check。提示仅提供入口路径，模型自行读取资料；没有宿主预读手册注入、专用一次性起草调用或隐藏候选缓存。模型通过 program-check 的结构化参数提交 behavior/modules，得到诊断后继续修订；draft 返回通过检查的候选，不负责发布。单模块程序也合法，两个可复用模块是验收场景而非强制门槛。
+
+program-check 是只读 Operation，复用发布时的完整包校验。返回 valid、digest、diagnostics；坏源码是普通校验报告，基础设施异常继续传播。它不执行候选，不证明终止、业务正确或拥有执行权限。`prototype-write` 最后仍重新验证完整 v2 包并提交 staging，不能只交模块 diff；不保留 behavior-propose 别名或旧机器起草入口。
 
 人工审批仍是必要步骤：在 WebUI 或原型详情读取全部源码、谱系每个文件的新增/删除/修改与依赖变更，再批准并创建成员。同伴 prototype-review 也读取完整作者包，评审不代替人类批准。审批 digest 绑定完整作者内容，改源码创建新包；已有实例与旧运行使用各自复制/冻结的源码。宿主标准库随运行冻结，不夹进作者审批内容。
 

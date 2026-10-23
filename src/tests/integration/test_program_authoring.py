@@ -37,27 +37,63 @@ async def test_agent_authors_reviewed_bundle_then_child_runs_frozen_sources(
     }
     author_modules = {
         "work/reply.tlon": """
-        (ns work.reply (:export handle))
+        (ns work.reply (:require [tlon.authoring :as authoring]) (:export handle))
         (defn handle [event]
-          (let [proposal (behavior-propose {:intent (get (get event :mail) :content)
-                                            :display_name "机器起草的完整回信程序"})]
+          (let [candidate (authoring/draft {:messages [{:role "user" :content (get (get event :mail) :content)}]
+                                            :max_tokens 512 :max_rounds 6})
+                proposal (prototype-write {:behavior (get candidate :behavior)
+                                           :modules (get candidate :modules)
+                                           :display_name "机器起草的完整回信程序"})]
             (mail-send {:to [(get event :sender)] :content (str "proposal:" (get proposal :name))})
             {:result (get proposal :name)}))
         """
     }
     calls: list[dict[str, Any]] = []
 
+    invalid_modules = {
+        **child_modules,
+        "work/text.tlon": "(ns work.text (:export reply)) (defn reply [task] (missing task))",
+    }
+    script = [
+        ("file-read", {"file_path": "/workspace/tlon/docs/README.md"}),
+        ("file-read", {"file_path": "/workspace/tlon/stdlib/messages.tlon"}),
+        ("program-check", {"behavior": behavior, "modules": invalid_modules}),
+        ("program-check", {"behavior": behavior, "modules": child_modules}),
+    ]
+
     async def complete(**kwargs: Any) -> Any:
+        index = len(calls)
         calls.append(kwargs)
+        assert index < len(script), "unexpected additional model request"
+        if index:
+            report = json.loads(kwargs["messages"][-1]["content"])
+            assert report["success"], report
+            if index == 1:
+                assert report["data"]["file_path"] == script[0][1]["file_path"]
+                assert "tlon" in report["data"]["content"].lower()
+            elif index == 2:
+                assert "(ns tlon.messages" in report["data"]["content"]
+            else:
+                assert report["data"]["valid"] is False
+                assert report["data"]["diagnostics"]
+        name, arguments = script[index]
         return SimpleNamespace(
             choices=[
                 SimpleNamespace(
                     message=SimpleNamespace(
-                        content=json.dumps({"behavior": behavior, "modules": child_modules}),
-                        tool_calls=None,
+                        content=None,
+                        tool_calls=[
+                            SimpleNamespace(
+                                id=f"author-{index}",
+                                type="function",
+                                function=SimpleNamespace(
+                                    name=name, arguments=json.dumps(arguments)
+                                ),
+                            )
+                        ],
                         reasoning_content=None,
                     ),
-                    finish_reason="stop",
+                    finish_reason="tool_calls",
                 )
             ],
             usage=SimpleNamespace(
@@ -108,19 +144,19 @@ async def test_agent_authors_reviewed_bundle_then_child_runs_frozen_sources(
         proposal_reply = await reply_from(author)
         assert proposal_reply.startswith("proposal:"), proposal_reply
         proposed = proposal_reply.removeprefix("proposal:")
-        assert len(calls) == 1
-        prompt = calls[0]["messages"][-1]["content"]
-        assert "work/reply.tlon" in prompt and token in prompt
+        assert len(calls) == 4
+        assert token in calls[0]["messages"][-2]["content"]
+        assert all(
+            "behavior-propose" not in {tool["function"]["name"] for tool in call["tools"]}
+            for call in calls
+        )
         assert calls[0]["max_tokens"] > 0
         async with http.get(f"{base_url}/admin/prototypes/staging/{proposed}") as response:
             detail = (await response.json())["prototype"]
             assert response.status == 200
             assert detail["trusted"] is False
             assert detail["modules"] == child_modules
-            assert detail["parent"] == parent
-            diff = detail["lineage"][-1]["diff_from_parent"]
-            assert "modules/work/text.tlon" in diff
-            assert "work.text :as text" in diff
+            assert detail["parent"] is None
         async with http.post(
             f"{base_url}/admin/config/agents",
             json={
@@ -184,4 +220,4 @@ async def test_agent_authors_reviewed_bundle_then_child_runs_frozen_sources(
                 ).fetchone()[0]
                 == frozen
             )
-    assert len(calls) == 1  # The child executes authored functions without another model call.
+    assert len(calls) == 4  # The child executes authored functions without another model call.

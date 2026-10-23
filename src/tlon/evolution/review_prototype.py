@@ -16,7 +16,7 @@ the human reads them on the detail endpoint when deciding.
 
 No retry inside the tool — an unparseable verdict comes back as
 a known rejection without writing a record, and the outer ReAct loop is
-the retry mechanism (the ``behavior-propose`` precedent).
+the retry mechanism.
 """
 
 from collections.abc import Callable

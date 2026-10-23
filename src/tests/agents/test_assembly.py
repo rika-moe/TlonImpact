@@ -175,7 +175,7 @@ class TestExecutionLevelAssembly:
             tlon_paths=tlon_paths,
         )
 
-    async def test_l0_skips_runtime_and_device_tools(
+    async def test_l0_keeps_reference_reads_without_runtime_or_device_writes(
         self, tlon_paths: TlonPaths, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         runtime_ctor = MagicMock(side_effect=AssertionError("L0 must not construct DockerRuntime"))
@@ -187,7 +187,7 @@ class TestExecutionLevelAssembly:
         assert caps.docker_runtime is None
         assert caps.memory.write_gate is caps.write_gate
         names = set(caps.tool_executor.list_tools()) | {op.name for op in caps.operations}
-        assert names.isdisjoint(DEVICE_TOOLS)
+        assert names & DEVICE_TOOLS == {"file-read", "file-list", "file-search"}
         # 其余工具照常装配
         assert {"time-now", "memory-remember"} <= names
         # Mail tools bind later in MemberRuntime, with its actual mailbox/PostOffice.
@@ -232,11 +232,9 @@ async def test_real_assembly_evolution_writes_use_injected_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Exercise the assembled writer bindings, not hand-built test partials."""
-    import json
     from unittest.mock import AsyncMock
 
     from tlon.agents.prototypes.staging import list_staging_prototypes
-    from tlon.base.llm_client import LLMResponse
     from tlon.operations.adapters import OperationTool
     from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
 
@@ -273,24 +271,9 @@ async def test_real_assembly_evolution_writes_use_injected_paths(
         {"behavior": spec, "modules": modules, "display_name": "direct"}
     )
     assert written.success, written.error
-    behavior_file = paths.agent_behavior_file(config.id)
-    behavior_file.parent.mkdir(parents=True, exist_ok=True)
-    behavior_file.write_text(spec)
-    monkeypatch.setattr(
-        caps.llm_client,
-        "chat",
-        AsyncMock(
-            return_value=LLMResponse(content=json.dumps({"behavior": spec, "modules": modules}))
-        ),
-    )
-    proposed = await OperationTool(executor, "behavior-propose").execute_context(
-        {"intent": "keep behavior", "display_name": "draft"}
-    )
-    assert proposed.success, proposed.error
     proposals = list_staging_prototypes(paths)
     assert {proposal.name for proposal in proposals} == {
         written.data["name"],
-        proposed.data["name"],
     }
     assert all(proposal.author == config.id and proposal.trusted is False for proposal in proposals)
     for proposal in proposals:

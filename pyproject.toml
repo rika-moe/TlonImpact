@@ -60,6 +60,9 @@ packages = ["src/tlon", "src/tlosure", "src/tlon_server", "src/tlon_client", "sr
 # 被 .gitignore 排除；artifacts 把它拉回文件选择，不存在时不报错
 artifacts = ["src/tlon_server/webui_dist/**"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"docs" = "tlon/resources/docs"
+
 [tool.hatch.build.targets.sdist]
 only-include = ["src", "scripts", "docs", "README.md", "LICENSE", "pyproject.toml", "uv.lock", ".python-version"]
 # 同 wheel：sdist 需携带 webui_dist，否则 uv build 的 wheel-from-sdist 拿不到

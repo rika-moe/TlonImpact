@@ -40,7 +40,7 @@ session 的 total 根由 recipe.max_tokens 建立，stage、压缩、model-call 
 
 ### 工具装配
 
-每个成员经 [assembly.py](../../src/tlon/agents/assembly.py) 绑定私有领域服务并产出操作定义；[MemberRuntime](../../src/tlon/agents/member_runtime.py) 构造共享 OperationRegistry，再为所有注册操作建立 OperationTool。L0 无装置操作，L1 提供文件操作，L2 增加 Shell；时间与成员领域操作不依赖装置。见习成员不装配 `member-spawn`、`prototype-write`、`behavior-propose`；其他操作仍按成员身份绑定。
+每个成员经 [assembly.py](../../src/tlon/agents/assembly.py) 绑定私有领域服务并产出操作定义；[MemberRuntime](../../src/tlon/agents/member_runtime.py) 构造共享 OperationRegistry，再为所有注册操作建立 OperationTool。L0 仅提供 workspace 内置文档/源码的文件只读查询，L1 提供普通文件操作，L2 增加 Shell；时间与成员领域操作不依赖装置。见习成员不装配 `member-spawn`、`prototype-write`；其他操作仍按成员身份绑定。
 
 模型调用、原型创作/评审、成员生命周期也使用同一注册表。`finish-turn`、`sleep-until`、`exit-agent` 的调度声明由控制元数据标识；会话引擎负责完成/睡眠/退出的应用，处理器本身不直接操作 session。
 
@@ -95,8 +95,8 @@ session 的 total 根由 recipe.max_tokens 建立，stage、压缩、model-call 
 | 42 | `finish-turn` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
 | 43 | `sleep-until` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
 | 44 | `exit-agent` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
-| 45 | `prototype-write` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 46 | `behavior-propose` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 45 | `program-check` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 46 | `prototype-write` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
 | 47 | `prototype-list` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
 | 48 | `prototype-staging-list` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
 | 49 | `prototype-lineage` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
@@ -105,7 +105,7 @@ session 的 total 根由 recipe.max_tokens 建立，stage、压缩、model-call 
 | 52 | `model-context` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
 <!-- END GENERATED: tool-registry -->
 
-上表是正式成员的满配。见习成员不注册 member-spawn、prototype-write、behavior-propose 三个生殖/演化工具；所有成员均可使用绑定自身的四个调度工具。L0 不注册 shell/filesystem 七个装置工具，L1 不注册 shell 两个工具。
+上表是正式成员的满配。见习成员不注册 member-spawn、prototype-write 两个生殖/演化工具；所有成员均可使用绑定自身的四个调度工具。L0 仅注册 file-read/list/search 查询内置只读资料，不注册 shell、file-write/edit，L1 不注册 shell 两个工具。
 
 依赖倒置：`tlon.tools` 不许反向依赖 `tlon.agents`/`tlon.prototypes`，agents 域与 prototypes 域工具的端口（`AgentLifecycle` Protocol、`SpawnRejectedError`、`StopRejectedError`）声明在 [lifecycle/ports.py](../../src/tlon/lifecycle/ports.py)，原型端口（`PrototypeError`、`PrototypeSummary`）声明在 [evolution/ports.py](../../src/tlon/evolution/ports.py)；装配时由 `AgentRegistry` 注入成员作用域领域服务，OperationTool 只投影相应操作。
 
@@ -1069,6 +1069,25 @@ adam请求启动所有声明boot规则的成员。
 <!-- BEGIN GENERATED: evolution-operations -->
 Operation 单一契约；输入与输出字段保留 snake_case。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
+### program-check
+
+静态校验完整 v2 Behavior 与 modules，不执行程序、不发布、不批准。错误以 diagnostics 返回；读取 tlon/docs/README.md 获取作者参考。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `behavior` | string | 是 | — |
+| `modules` | object | 是 | — |
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `valid` | boolean | 是 | — |
+| `digest` | string | 是 | — |
+| `diagnostics` | array[object] | 是 | — |
+
 ### prototype-write
 
 创作一个新的 behavior prototype（纯行为规约，无人格），写入 staging 区。完整 v2 Behavior+模块包；工作流程使用普通函数组合。新 prototype 默认不可信：需人类批准（ops/WebUI）后才能被 member-spawn 使用。behavior 是 v2 EDN handlers 入口，modules 是完整相对路径到源码映射（只描述程序，无法授予工具）。v2 完整模块包不接受参数模板。可选 parent 记录谱系（从哪个既有原型派生），generation 由服务端推导。
@@ -1095,28 +1114,6 @@ Operation 单一契约；输入与输出字段保留 snake_case。（本区块�
 | `trusted` | boolean | 是 | — |
 | `status` | string | 是 | enum=['pending_approval'] |
 | `display_name` | string | 是 | — |
-
-### behavior-propose
-
-基于自己的个体经验提出下一代行为原型（世代通道的经验入口）。只需给出变更意图与行为显示名：工具内部读你当前的 behavior.tlon 与记忆（claims 与蒸馏教训），由一次独立的起草调用产出完整的新 spec，并以你自己的 prototype 为父原型写入 staging 区（proposal_note 记意图、lessons 随包）。与 prototype-write 的区别：那是裸写通道（自带全文），这里由经验驱动起草。提案不可信：需人类批准（ops/WebUI）后才能 member-spawn 派生新世代。
-
-输入：
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `intent` | string | 是 | 变更意图：想改什么、为什么（自然语言，记为 proposal_note） |
-| `display_name` | string | 是 | 必填行为标签，描述怎样行动；不赋予职业、职位或社会身份 |
-| `description` | string | 否 | 一句话描述这个原型的行为定位 |
-
-输出：
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `name` | string | 是 | — |
-| `parent` | string / null | 是 | — |
-| `generation` | integer | 是 | — |
-| `trusted` | boolean | 是 | — |
-| `status` | string | 是 | enum=['pending_approval'] |
 
 ### prototype-list
 

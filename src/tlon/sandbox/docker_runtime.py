@@ -44,6 +44,7 @@ from docker.utils import parse_bytes
 from tlon.base.config import DockerRuntimeConfig
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
+from tlon.sandbox.author_files import author_mounts, author_root, is_author_path
 from tlon.sandbox.device import ExecutionResult
 from tlon.sandbox.docker_client import create_docker_client
 
@@ -295,6 +296,10 @@ class DockerRuntime:
             str(agent_home): {
                 "bind": AGENT_HOME_CONTAINER_PATH,
                 "mode": "ro",
+            },
+            **{
+                str(source): {"bind": target, "mode": "ro"}
+                for target, source in author_mounts(self.config.working_dir).items()
             },
         }
 
@@ -557,6 +562,8 @@ class DockerRuntime:
         from tlon.sandbox.path_guard import resolve_container_path
 
         resolved = resolve_container_path(path, self.config.working_dir, allowed_paths)
+        if write and is_author_path(resolved, self.config.working_dir):
+            raise ValueError(f"{author_root(self.config.working_dir)} is read-only")
         if write and (resolved == "/tlon-home" or resolved.startswith("/tlon-home/")):
             raise ValueError("/tlon-home is read-only")
         if not self.container:

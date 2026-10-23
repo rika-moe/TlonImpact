@@ -140,11 +140,11 @@ agent 侧入口是 `LifecycleService`（[lifecycle/service.py](../../src/tlon/li
 
 人类手写有直达入口（WebUI 的 PROTOTYPES 视图，`POST /admin/prototypes`（behavior + 必填 display_name）→ `write_trusted_prototype`）：直接写进正式库、`:trusted true`、无 `:author`——handwritten implies trusted，与元数据读取的默认方向一致；写前跑的是与 staging 完全相同的校验链（`_validate_behavior`），失败不落盘。编辑（`update_prototype`，`PATCH /admin/prototypes/{name}` 及 staging 变体）可改 `display-name`/`description`、`lessons`（重写 `LESSONS.md`，不传则保留）和/或重写 `behavior.tlon`：behavior 变更先跑校验链、失败则磁盘原样，元数据改写保留既有 `:trusted`/`:author`（于是 staging 原型可以在审批前被人类修正，晋级语义不变）。删除分两侧：正式库走 `delete_prototype`（`DELETE /admin/prototypes/{name}`，与 `reject_prototype` 同款路径穿越防护），staging 的删除即 reject。
 
-`prototype-write` 的机器创作入口只接受完整 v2 behavior/modules，不写人格文件；`behavior-propose` 从完整现有源码与经验起草至少两个模块，模型输出严格 JSON。发布复用完整包验证与 digest。人工旧 v1 原型仍按其原规约加载，旧机器 rules 起草路径已删除。
+`prototype-write` 的机器创作入口只接受完整 v2 behavior/modules，不写人格文件；普通 `tlon.authoring/draft` 根据传入任务/经验，用现有文件工具读取文档与标准源码，以 program-check 校验并修订候选；不再有专用一次性起草操作。发布复用完整包验证与 digest。人工旧 v1 原型仍按其原规约加载，旧机器 rules 起草路径已删除。
 
-提案资格还有第二道闸——血脉偿付门槛（agent 侧）：`prototype-write` / `behavior-propose` 在执行开头检查作者血脉的偿付能力（`agents/policy.py` 的 `solvent?` 政策 hook，ADR 0022——默认公式与阈值见 [society-policy.md](society-policy.md)，可由人类在 `~/.tlon/policy.tlon` 调整），失去偿付能力的血脉提案被直接拒绝（staging 无残留），指引是「先用手上成员做出被 endorse 的产出再提案」。这道闸不进 `write_staging_prototype` 域函数：admin REST 的人类直写不受闸——信任闸按影响半径分级，人类不受影响半径约束。闸本身 fail-open：偿付派生任何异常都放行。
+提案资格还有第二道闸——血脉偿付门槛（agent 侧）：`prototype-write` 在执行开头检查作者血脉的偿付能力（`agents/policy.py` 的 `solvent?` 政策 hook，ADR 0022——默认公式与阈值见 [society-policy.md](society-policy.md)，可由人类在 `~/.tlon/policy.tlon` 调整），失去偿付能力的血脉提案被直接拒绝（staging 无残留），指引是「先用手上成员做出被 endorse 的产出再提案」。这道闸不进 `write_staging_prototype` 域函数：admin REST 的人类直写不受闸——信任闸按影响半径分级，人类不受影响半径约束。闸本身 fail-open：偿付派生任何异常都放行。
 
-第三道闸是近亲拒绝（ADR 0014 的非收敛选择压，agent 侧）：提案完整作者源码与 trusted + staging 两区所有既有原型的作者包（behavior 和全部 modules） 做纯文本相似度比较（`find_near_kin`，`difflib.SequenceMatcher.ratio`，比较前规范化——去掉 `;` 注释行、折叠空白；不解析 EDN，模板原型的 `${var}` 占位符按原文比），最相似的一档 ≥ 阈值 0.9 就直接打回（staging 无残留），指引是「做出实质差异或改为提案改进既有原型」。阈值刻意定高、只拦换皮级雷同与**跨血脉**趋同：提案的声明父本在比较中豁免（NEAT 式物种形成保护——创新在自己血脉内被保护几代；prototype-write 的豁免名取显式 `parent`、缺省回退作者自身的 prototype，behavior-propose 的父本恒为成员自己的 prototype），于是沿血脉的代际微改可放行，而跨血脉的近似复制仍被拦。与偿付闸同款边界：不进 `write_staging_prototype`、不闸 admin REST 人类直写，fail-open——相似度扫描任何异常都放行。
+第三道闸是近亲拒绝（ADR 0014 的非收敛选择压，agent 侧）：提案完整作者源码与 trusted + staging 两区所有既有原型的作者包（behavior 和全部 modules） 做纯文本相似度比较（`find_near_kin`，`difflib.SequenceMatcher.ratio`，比较前规范化——去掉 `;` 注释行、折叠空白；不解析 EDN，模板原型的 `${var}` 占位符按原文比），最相似的一档 ≥ 阈值 0.9 就直接打回（staging 无残留），指引是「做出实质差异或改为提案改进既有原型」。阈值刻意定高、只拦换皮级雷同与**跨血脉**趋同：提案的声明父本在比较中豁免（NEAT 式物种形成保护——创新在自己血脉内被保护几代；prototype-write 的豁免名取显式 `parent`、缺省回退作者自身的 prototype），于是沿血脉的代际微改可放行，而跨血脉的近似复制仍被拦。与偿付闸同款边界：不进 `write_staging_prototype`、不闸 admin REST 人类直写，fail-open——相似度扫描任何异常都放行。
 
 三道闸之外是**同行评审记录**：任何成员可用 `prototype-review`（[evolution/review_prototype.py](../../src/tlon/evolution/review_prototype.py) 的 `PrototypeReviewer`）评审一个 staging 提案。调用方只点名——verdict 不由调用方当场给，工具内部用**评审者自己的** `llm_client` 做一次专项评审调用（`purpose="review"`、timeout 60s；采样参数不配置，供应商默认生效），材料是提案的 behavior 全文、随包 lessons、谱系链与每代 diff；响应首行必须是三个标记之一（`通过`/`不通过`/`弃权`），不合规则 `success=False` 且不写记录。通过的评审追加进提案目录的 `REVIEW.md`（每条含时间、评审者 id、评审者模型 `llm_client.config.model_name`、verdict、理由全文）。异质性来自评审者的模型血统（成员的模型在创建时经 WebUI/admin API 选定，随 spawn 沿血脉继承，ADR 0016——不同血脉各自绑定不同模型）——评审记录格式统一，判断却出自不同血统，这正是 ADR 0014 的非收敛选择压落在审批环节的形态。评审是**咨询性的**：不闸 approve，人类审批时在详情 payload 的 `reviews` 字段里读到全部记录再做决定；评审记录随 approve 的整目录 move 晋级 trusted，审计链不断。
 
@@ -171,13 +171,13 @@ agent 侧入口是 `LifecycleService`（[lifecycle/service.py](../../src/tlon/li
 
 装配层（`assemble_member_services`，[agents/assembly.py](../../src/tlon/agents/assembly.py)）将成员身份、注册表和 callable 绑定到 LifecycleService 与演化领域服务，Operation handler 负责共享契约投影。依赖方向由 `uv run lint-imports` 检查。异常类型放在领域端口中，使调用方与实现方共享同一个错误身份，无需反向导入实现模块。
 
-`behavior-propose` 和 `prototype-review` 中的模型请求使用当前 ExecutionScope。额度不足与已知截止错误保持原错误类型；provider 明确拒绝（包括上下文长度拒绝）投影为 RejectedError；已派发但未取得可靠回执仍为 unknown。同一调用恢复不重发未知模型请求，未通过模型步骤不会写入提案或评审。
+普通起草程序与 `prototype-review` 中的模型请求使用当前 ExecutionScope。额度不足与已知截止错误保持原错误类型；provider 明确拒绝（包括上下文长度拒绝）投影为 RejectedError；已派发但未取得可靠回执仍为 unknown。同一调用恢复不重发未知模型请求，未通过模型步骤不会写入提案或评审。
 
 ## 未实施方向
 
 与愿景的差距主要有两处：
 
-- **实例化是纯拷贝，无变异算子**——「新成员从社会内部生长」目前只有复制一种算子：完整源码拷贝（旧 v1 另可填模板槽位）。实例化不会自行变异、重组或交叉，派生成员的行为来自已有原型和模板参数。成员已经可以用 `behavior-propose` 起草变更后的完整 v2 模块包 并进入 staging；尚未实现的是实例化时的自动变异、重组和交叉。
+- **实例化是纯拷贝，无变异算子**——「新成员从社会内部生长」目前只有复制一种算子：完整源码拷贝（旧 v1 另可填模板槽位）。实例化不会自行变异、重组或交叉，派生成员的行为来自已有原型和模板参数。成员已经可以用普通 `tlon.authoring/draft` 起草变更后的完整 v2 模块包 并进入 staging；尚未实现的是实例化时的自动变异、重组和交叉。
 - **staging 审批是人工瓶颈**——Gatekeeper 模型里人类是每个 LLM 创作的原型的必经之路，这与愿景里「人类从审批者退为规则的守护者」相悖。审批社会化的第一步已落地：成员可用 `prototype-review` 对 staging 提案做异质同行评审，评审记录（含评审者模型血统）落盘 `REVIEW.md` 并随详情端点呈现给审批者——人类不再是唯一读提案的人。但**自动晋级仍不做**：评审是咨询性的，approve 依旧是人类决定；下一步才是「评议通过的原型按规则自动晋级」，人类退到「定评议规则」的位置。
 
 ## 技术标识与存量
@@ -186,6 +186,6 @@ agent 侧入口是 `LifecycleService`（[lifecycle/service.py](../../src/tlon/li
 
 ## P4a 完整模块审阅
 
-机器起草器读取自己的 behavior、作者模块、记忆和教训，产出完整包；依赖来自显式 require，缺源码、非法路径或入口在发布前拒绝。同伴评审 prompt 包含全部源码、教训和完整逐文件谱系 diff。原型详情提供同样材料，WebUI 显示新增、删除、修改及依赖代码变化。近亲比较不能只看相同的 handlers 壳。
+普通起草程序接收任务与调用方提供的材料，通过现有文件工具查阅 workspace 里的文档和标准库源码，模型提交候选给 program-check 后根据诊断修订。通过校验仅返回候选，prototype-write 再验证并写 staging。没有专用 behavior-propose 调用或隐式材料注入。依赖来自显式 require，缺源码、非法路径或入口在发布前拒绝。同伴评审仍包含全部源码、教训和逐文件谱系 diff，人工批准不变。
 
 批准绑定作者源码 digest，实例化复制完整包；篡改批准内容拒绝新实例，已有实例和冻结运行保持原源码。标准工作库由宿主显式链接，实际使用的依赖在运行时冻结；旧原型和交互消费者不因 P4a 提前切换。

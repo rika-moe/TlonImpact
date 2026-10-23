@@ -1,0 +1,28 @@
+(ns tlon.authoring
+  (:require [tlon.messages :as messages] [tlon.conversation :as conversation])
+  (:export draft))
+
+;; The model reads actual files with ordinary tools. No documentation is injected.
+;; A valid candidate is returned as data; publication remains the caller's choice.
+(defn draft [options]
+  (let [limit (get options :max_rounds)
+        tools (get options :tools ["file-read" "file-list" "file-search" "program-check"])
+        initial (messages/append (get options :messages)
+                  (messages/user "Read tlon/docs/README.md with file-read, and read relevant docs and tlon/stdlib sources. Write a complete v2 behavior/modules package. Submit candidate source as program-check arguments; repair diagnostics until valid. Do not publish."))]
+    (assert (and (integer? limit) (> limit 0)) "max_rounds must be a positive integer")
+    (assert (contains? tools "program-check") "draft requires program-check")
+    (while [history initial round 0]
+      true
+      (let [within-limit (assert (< round limit) "draft reached max_rounds without a valid program")]
+        (let [turn (conversation/step (assoc (assoc options :messages history) :tools tools))
+              calls (get (get turn :response) :tool_calls [])
+              results (get turn :results)
+              candidate (reduce found call
+                (if (= (get call :name) "program-check")
+                  (let [matching (filter result (= (get result :id) (get call :id)) results)
+                        checked (reduce previous result result nil matching)]
+                    (if (and (get checked :success) (get (get checked :data) :valid))
+                      (get call :arguments) found))
+                  found)
+                nil calls)]
+          (if candidate candidate (recur (get turn :messages) (+ round 1))))))))

@@ -14,7 +14,7 @@
 
 | 层级 | 当前实现 | 可用能力 |
 |---|---|---|
-| L0 | 无 Docker 装置 | tlosure 计量求值及非装置工具；不注册文件、Shell 工具 |
+| L0 | 无 Docker 装置 | tlosure 计量求值及非装置工具；仅注册作者资料的 file-read/list/search；普通文件与 Shell 不可访问 |
 | L1 | DockerRuntime 的 archive-only 文件柜 | 五个 filesystem 工具；无代码执行 |
 | L2 | 文件柜 + 一次性执行单元 | filesystem 工具及 `shell-run` / `shell-check` |
 
@@ -58,6 +58,8 @@ def close() -> None
 文件柜跨睡眠和进程重启保留，但不是永不重建。`ensure_running` 比对镜像、挂载、内存/CPU 限额、网络、只读 rootfs 和 tmpfs，发现配置漂移便移除重建；workspace 在宿主挂载上，重建不删除它。显式删除成员与演武场拆除另有生命周期，不由 `close()` 隐式完成。
 
 ## 挂载与文件通道
+
+workspace 下的 `tlon/docs` 与 `tlon/stdlib` 是 runtime 文档和标准库源码的只读映射。现有文件工具可在没有 Docker 时读取这两个资料目录；L0 的访问范围止于这些资料。L1/L2 的 Docker 也在同一位置只读挂载，写入或编辑被拒绝。目录随配置的 working_dir 定位，作者可使用相对路径。
 
 两种容器共用 `_container_kwargs` 与 `_bind_mounts`：
 

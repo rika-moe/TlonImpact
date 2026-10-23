@@ -5,6 +5,7 @@ import json
 from dataclasses import replace
 from importlib.resources import files
 from pathlib import Path
+from typing import Any
 
 from tlon.agents.member_spec import MemberSpec, MemberSpecValidationError, validate_member_spec
 from tlon.agents.vocabulary import make_member_builtins
@@ -45,6 +46,7 @@ def program_module_sources(sources: dict[str, str]) -> dict[str, str]:
                     "tlon.conversation",
                     "tlon.context",
                     "tlon.workflows",
+                    "tlon.authoring",
                 }:
                     name = namespace[5:]
                     if name not in names:
@@ -103,3 +105,17 @@ def program_digest(behavior: str, modules: dict[str, str]) -> str:
     """Bind approval to exact behavior and complete module content."""
     encoded = json.dumps([behavior, modules], sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def check_program_sources(behavior: str, modules: dict[str, Any]) -> dict[str, Any]:
+    """Return source diagnostics using staging admission without executing code."""
+    from tlon.evolution.write_prototype import require_bundle
+    from tlon.operations.schema import RejectedError
+
+    digest = program_digest(behavior, modules)
+    try:
+        behavior, sources = require_bundle(behavior, modules)
+        validate_program_sources(behavior, sources)
+    except (MemberSpecValidationError, RejectedError, EDNParseError, ModuleError) as error:
+        return {"valid": False, "digest": digest, "diagnostics": [{"message": str(error)}]}
+    return {"valid": True, "digest": digest, "diagnostics": []}

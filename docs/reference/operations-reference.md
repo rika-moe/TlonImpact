@@ -104,6 +104,6 @@ OperationTool 与 ToolExecutor 只将 InputError/RejectedError 变为普通失�
 
 ## 模块创作和窗口机制（P4a）
 
-prototype-write 必填完整 v2 behavior/modules，behavior-propose 从成员已有源码、记忆和教训起草严格 JSON `{behavior,modules}`，至少两个模块；返回 pending_approval。prototype-review 读取完整包，谱系 diff 覆盖每个作者文件，实际批准仍由人类执行。
+prototype-write 必填完整 v2 behavior/modules，发布后返回 pending_approval。program-check 是只读静态校验，返回 valid/digest/diagnostics，不执行候选；原 behavior-propose 操作已删除，起草改由普通 tlon.authoring/draft 使用文件工具、模型与校验反馈组合。prototype-review 读取完整包，谱系 diff 覆盖每个作者文件，实际批准仍由人类执行。
 
 model-context 接受与 model-call 相同的 messages/tools/max_tokens 受控输入，返回 input_tokens/context_window/output_tokens/fits。它是持久只读估算，不请求 provider 或消费模型额度，使用冻结系统/工具/模型配置；token 估算不保证 provider 实际计数。普通上下文库据此组织压缩，模型请求和额度仍由原回执负责。

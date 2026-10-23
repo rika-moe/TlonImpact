@@ -16,18 +16,7 @@ from tlon.operations.schema import RejectedError
 
 logger = get_logger(__name__)
 
-_BEHAVIOR_HINT = (
-    "输出完整 v2 程序包：behavior 为 EDN {:version 2 :handlers {:mail-delivered work.reply/handle} "
-    ':fuel 10000}；modules 为相对路径到完整源码的对象，例如 "work/reply.tlon"。'
-    "模块首句 (ns work.reply (:require [work.helpers :as h]) (:export handle))，"
-    "导出 (defn handle [event] ...)，入口参数 event 含 :sender 和 :mail（:content 等）。所有依赖必须随包提交；"
-    "宿主 tlon.* 不可重定义。可 require tlon.messages、tlon.conversation、tlon.context、tlon.workflows。"
-    '模型调用 (model-call {:messages [{:role "user" :content "任务"}] :tools [] :max_tokens 128})，'
-    "返回 :content/:tool_calls/:usage；模型不会自动执行工具。"
-    '对话 (conversation/run {:messages messages :tools ["time-now"] :max_tokens 128 :max_rounds 3}) '
-    '返回 :content/:messages/:reason。tlon.workflows 导出 short-turn、plan-then-act、evidence-check、reviewed、route，均接收与 conversation/run 相同的 options map。发信 (mail-send {:to ["human:alice"] :content text})。'
-    "不得使用 run-loop、stage、context section 或 v1 rules。"
-)
+_BEHAVIOR_HINT = "Read tlon/docs/README.md and use program-check before prototype-write."
 
 
 def bundle_text(behavior: str, modules: dict[str, str]) -> str:

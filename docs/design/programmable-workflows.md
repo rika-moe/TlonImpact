@@ -78,7 +78,7 @@ Operation 的恢复 hook 只读取同根、同稳定调用路径的已提交模�
 
 ### P4a 当前实现
 
-机器 prototype-write/propose 提交完整 v2 作者包；propose 严格 JSON 产出至少两个模块并带入已有源码及经验。同伴审阅和 WebUI 展示全部源码与逐文件谱系 diff，近亲比较覆盖作者包，批准继续绑定原 digest。没有自动批准或热更新成员。
+机器起草由普通 tlon.authoring/draft 组合文件查询、模型调用、静态检查和修订，返回完整 v2 作者包；调用方最后用 prototype-write 发布。同伴审阅和 WebUI 展示全部源码与逐文件谱系 diff，近亲比较覆盖作者包，批准继续绑定原 digest。没有自动批准或热更新成员。文档和实际标准库源码只读映射到 workspace 的 tlon/docs、tlon/stdlib，使用现有文件工具查询；不新增文档服务或查询 API，也不预注入手册。
 
 普通 tlon.workflows 实现短回合、计划执行、独立检索核验、评审修订、路由和原信转发。tlon.context 实现消息组装、窗口适配和逐完整交换的模型摘要；model-context 是宿主只读估算口，包含冻结系统和工具定义。完整组过大时拒绝；缓存前缀、草稿/已执行事实与模型账本保持。
 
