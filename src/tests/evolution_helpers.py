@@ -5,7 +5,6 @@ from typing import Any
 from tlon.evolution.get_lineage import PrototypeLineage
 from tlon.evolution.list_prototypes import PrototypeCatalog
 from tlon.evolution.list_staging import StagingCatalog
-from tlon.evolution.propose_behavior import BehaviorProposer
 from tlon.evolution.review_prototype import PrototypeReviewer
 from tlon.evolution.write_prototype import PrototypeWriter
 from tlon.operations.adapters import OperationTool
@@ -25,12 +24,6 @@ def project(
 
 def make_write_tool(**kwargs: Any) -> OperationTool:
     return project("prototype-write", PrototypeWriter(**kwargs), "writer", kwargs["author_id"])
-
-
-def make_behavior_tool(**kwargs: Any) -> OperationTool:
-    return project(
-        "behavior-propose", BehaviorProposer(**kwargs), "behavior_proposer", kwargs["agent_id"]
-    )
 
 
 def make_lineage_tool(**kwargs: Any) -> OperationTool:

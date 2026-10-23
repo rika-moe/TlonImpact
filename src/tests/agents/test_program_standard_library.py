@@ -14,6 +14,10 @@ from tlosure.modules import ModulePackage
 
 def run(entry: str, arguments: str, builtins: dict[str, Builtin] | None = None) -> Any:
     registry = program_builtins() if builtins is None else builtins
+    registry = {
+        **registry,
+        "model-context": Builtin(lambda env, request: loads("{:fits true}"), pure=False),
+    }
     package = ModulePackage.from_sources(
         program_module_sources({"test.tlon": "(ns test (:require [tlon.conversation :as c]))"}),
         registry,

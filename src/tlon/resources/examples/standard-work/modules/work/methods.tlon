@@ -1,0 +1,5 @@
+(ns work.methods (:require [tlon.workflows :as workflows]) (:export answer))
+;; Replace this composition freely; no Python stage or recipe registration.
+(defn answer [options]
+  (let [planned (workflows/plan-then-act options)]
+    (workflows/reviewed (assoc options :messages (get planned :messages)))))

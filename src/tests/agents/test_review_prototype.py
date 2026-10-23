@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from tests.evolution_helpers import make_review_tool
-from tlon.agents.prototypes.catalog import get_prototype_detail
+from tlon.agents.prototypes.catalog import get_prototype_detail, get_prototype_modules
 from tlon.agents.prototypes.lineage import get_prototype_lineage
 from tlon.agents.prototypes.management import write_trusted_prototype
 from tlon.agents.prototypes.staging import (
@@ -50,6 +50,7 @@ def _make_tool(p: TlonPaths, reviewer_id: str, llm: _FakeLLM) -> OperationTool:
         reviewer_id=reviewer_id,
         llm_client=llm,
         detail=lambda name: get_prototype_detail(name, staging=True, tlon_paths=p),
+        modules=lambda name: get_prototype_modules(name, staging=True, tlon_paths=p),
         lineage=lambda name: get_prototype_lineage(name, tlon_paths=p),
         append_review=lambda name, entry: append_staging_review(name, entry, tlon_paths=p),
     )
@@ -177,3 +178,29 @@ class TestReviewPrototype:
         result = await tool.execute_context({"name": created_1.name})
         assert not result.success
         assert llm.calls == []
+
+
+async def test_peer_review_contains_all_module_sources_and_dependency_diff(tmp_path: Path) -> None:
+    p = TlonPaths(home=tmp_path)
+    behavior = "{:version 2 :handlers {:mail-delivered work.reply/handle} :fuel 1000}"
+    modules = {
+        "work/reply.tlon": '(ns work.reply (:export handle)) (defn handle [event] {:result "old"})'
+    }
+    parent = write_trusted_prototype(behavior, modules=modules, display_name="父代", tlon_paths=p)
+    child_modules = {
+        "work/reply.tlon": "(ns work.reply (:require [work.check :as c]) (:export handle)) (defn handle [event] (c/result))",
+        "work/check.tlon": '(ns work.check (:export result)) (defn result [] {:result "checked"})',
+    }
+    child = write_staging_prototype(
+        behavior, modules=child_modules, parent=parent.name, display_name="核验", tlon_paths=p
+    )
+    llm = _FakeLLM("通过\n新模块进行核验")
+    result = await _make_tool(p, "reviewer", llm).execute_context({"name": child.name})
+    assert result.success, result.error
+    prompt = llm.calls[0]["messages"][0]["content"]
+    for path, source in child_modules.items():
+        assert path in prompt and source in prompt
+    assert "--- /dev/null" in prompt
+    assert "+(ns work.check" in prompt
+    assert "work.check :as c" in prompt
+    assert "old" in prompt

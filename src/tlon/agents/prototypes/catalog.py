@@ -115,3 +115,18 @@ def get_prototype_detail(
     reviews_file = proto_dir / REVIEWS_FILE
     reviews = reviews_file.read_text(encoding="utf-8") if reviews_file.exists() else None
     return info, behavior, lessons, reviews
+
+
+def get_prototype_modules(
+    name: str, *, staging: bool = False, tlon_paths: TlonPaths
+) -> dict[str, str]:
+    """Read all author sources through the same validated prototype lookup."""
+    from tlon.agents.program_package import read_module_sources
+
+    _validate_name(name)
+    get_prototype_detail(name, staging=staging, tlon_paths=tlon_paths)
+    root = tlon_paths.prototypes_staging_dir() if staging else tlon_paths.prototypes_dir()
+    try:
+        return read_module_sources(root / name / "modules")
+    except ValueError as error:
+        raise PrototypeError(str(error)) from error

@@ -5,6 +5,7 @@ import json
 from dataclasses import replace
 from importlib.resources import files
 from pathlib import Path
+from typing import Any
 
 from tlon.agents.member_spec import MemberSpec, MemberSpecValidationError, validate_member_spec
 from tlon.agents.vocabulary import make_member_builtins
@@ -27,32 +28,35 @@ def program_module_sources(sources: dict[str, str]) -> dict[str, str]:
     if any(path == "tlon.tlon" or path.startswith("tlon/") for path in sources):
         raise MemberSpecValidationError("module namespace tlon is reserved for host libraries")
     library = files("tlon").joinpath("resources", "stdlib")
-    names = ["messages"]
-    # Only link the effectful library when an author explicitly imports it.
-    # Pure programs must not acquire an undeclared model/tool dependency.
-    for source in sources.values():
-        forms = loads_all(source)
-        if not forms:
+    names = {"messages"}
+    pending = list(sources.values())
+    while pending:
+        forms = loads_all(pending.pop())
+        if not forms or not isinstance(forms[0], list):
             continue
-        declaration = forms[0]
-        if not isinstance(declaration, list):
-            continue
-        for clause in declaration[2:]:
+        for clause in forms[0][2:]:
             if not isinstance(clause, list) or not clause or clause[0] != Keyword("require"):
                 continue
-            if any(
-                isinstance(binding, list)
-                and binding
-                and type(binding[0]) is Symbol
-                and str(binding[0]) == "tlon.conversation"
-                for binding in clause[1:]
-            ):
-                names = ["messages", "conversation"]
+            for binding in clause[1:]:
+                if not isinstance(binding, list) or not binding or type(binding[0]) is not Symbol:
+                    continue
+                namespace = str(binding[0])
+                if namespace in {
+                    "tlon.messages",
+                    "tlon.conversation",
+                    "tlon.context",
+                    "tlon.workflows",
+                    "tlon.authoring",
+                }:
+                    name = namespace[5:]
+                    if name not in names:
+                        names.add(name)
+                        pending.append(library.joinpath(f"{name}.tlon").read_text(encoding="utf-8"))
     return {
         **sources,
         **{
             f"tlon/{name}.tlon": library.joinpath(f"{name}.tlon").read_text(encoding="utf-8")
-            for name in names
+            for name in sorted(names)
         },
     }
 
@@ -101,3 +105,17 @@ def program_digest(behavior: str, modules: dict[str, str]) -> str:
     """Bind approval to exact behavior and complete module content."""
     encoded = json.dumps([behavior, modules], sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def check_program_sources(behavior: str, modules: dict[str, Any]) -> dict[str, Any]:
+    """Return source diagnostics using staging admission without executing code."""
+    from tlon.evolution.write_prototype import require_bundle
+    from tlon.operations.schema import RejectedError
+
+    digest = program_digest(behavior, modules)
+    try:
+        behavior, sources = require_bundle(behavior, modules)
+        validate_program_sources(behavior, sources)
+    except (MemberSpecValidationError, RejectedError, EDNParseError, ModuleError) as error:
+        return {"valid": False, "digest": digest, "diagnostics": [{"message": str(error)}]}
+    return {"valid": True, "digest": digest, "diagnostics": []}

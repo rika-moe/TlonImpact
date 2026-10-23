@@ -1,5 +1,7 @@
 # Tlon 文档地图
 
+Agent 编写模块时，用现有 `file-read` 读取 workspace 内 `tlon/docs/guides/writing-a-module-program.md`，用 `file-list`/`file-read` 查阅 `tlon/stdlib/` 的真实源码。两个目录只读，随 runtime 发布；不需要 Docker，也没有专门的文档查询 API。普通 `tlon.authoring/draft` 通过这些工具查阅资料，用 `program-check` 校验并修订，最后由调用方决定是否 `prototype-write`。
+
 新开发者从 [architecture](architecture.md) 开始，再阅读自己负责领域的 design；无需先遍历决策记录。目标与价值判断见 [vision](vision.md)，文档归属和更新流程见 [开发文档维护规则](documentation.md)。
 
 ## 按问题找文档
@@ -38,7 +40,7 @@ architecture 区分规范与当前实现；design 负责当前领域模型和机
 | 人类接入 | [WebUI](design/webui.md) | 页面状态、邮箱同步、线程展示与管理交互 |
 | 人类接入 | [Telegram](design/telegram.md) | SDK 接入、回复关联与失败处理 |
 
-## 工作程序的分阶段替换（P1/P2 已合并，P3 本阶段实现）
+## 工作程序的分阶段替换（P1–P3 已合并，P4a 本阶段实现）
 
 - [ADR 0046](decisions/0046-programmable-workflows.md)：选择普通函数工作程序，明确替代与非目标。
 - [可编程工作流程](design/programmable-workflows.md)：module、Behavior、模型、工具、状态、调度和恢复边界。

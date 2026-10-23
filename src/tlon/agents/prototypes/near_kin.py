@@ -4,9 +4,11 @@ stdlib text similarity.
 
 import difflib
 
+from tlon.agents.program_package import read_module_sources
 from tlon.agents.prototypes.info import BEHAVIOR_FILE
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
+from tlon.evolution.write_prototype import bundle_text
 
 logger = get_logger(__name__)
 
@@ -87,8 +89,13 @@ def find_near_kin(
             if proto_dir.name == exclude:
                 continue
             try:
-                existing = _normalize_behavior_text(behavior_file.read_text(encoding="utf-8"))
-            except OSError as e:
+                existing = _normalize_behavior_text(
+                    bundle_text(
+                        behavior_file.read_text(encoding="utf-8"),
+                        read_module_sources(proto_dir / "modules"),
+                    )
+                )
+            except (OSError, ValueError) as e:
                 logger.warning("near_kin_unreadable", path=str(behavior_file), error=str(e))
                 continue
             if not existing:

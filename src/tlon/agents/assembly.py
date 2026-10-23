@@ -16,8 +16,10 @@ from tlon.agents.health import orphan_mail_provider
 from tlon.agents.mail_stats import mail_stats_provider
 from tlon.agents.member_runtime import MemberServices
 from tlon.agents.policy import policy_solvency_provider, policy_trust_provider
+from tlon.agents.program_package import check_program_sources
 from tlon.agents.prototypes.catalog import (
     get_prototype_detail,
+    get_prototype_modules,
     list_prototypes,
 )
 from tlon.agents.prototypes.lineage import get_prototype_lineage
@@ -40,7 +42,6 @@ from tlon.base.tracing.trace_store import TraceStore
 from tlon.evolution.get_lineage import PrototypeLineage
 from tlon.evolution.list_prototypes import PrototypeCatalog
 from tlon.evolution.list_staging import StagingCatalog
-from tlon.evolution.propose_behavior import BehaviorProposer
 from tlon.evolution.review_prototype import PrototypeReviewer
 from tlon.evolution.write_prototype import PrototypeWriter
 from tlon.memory.manager import MemoryManager
@@ -75,7 +76,7 @@ logger = get_logger(__name__)
 #: deliberately absent: reviewing a staging proposal is advisory (approve
 #: stays human).
 REPRODUCTION_TOOLS: frozenset[str] = frozenset(
-    {"member-spawn", "prototype-write", "behavior-propose"}
+    {"member-spawn", "prototype-write"}
 )
 
 
@@ -238,14 +239,19 @@ async def assemble_member_services(
     # Assemble operation definitions from member-owned domain services.
     operations = list(time_operation_definitions())
     shell_service = None
-    if config.docker.level != "L0":
-        filesystem = MemberFilesystemService(
-            config.docker,
-            docker_runtime,
-            [*config.tool.allowed_paths, AGENT_HOME_CONTAINER_PATH],
-            config.tool.allowed_paths,
-        )
-        operations.extend(make_filesystem_operations(filesystem))
+    filesystem = MemberFilesystemService(
+        config.docker,
+        docker_runtime,
+        [*config.tool.allowed_paths, AGENT_HOME_CONTAINER_PATH],
+        config.tool.allowed_paths,
+    )
+    filesystem_operations = make_filesystem_operations(filesystem)
+    operations.extend(
+        operation
+        for operation in filesystem_operations
+        if config.docker.level != "L0"
+        or operation.name in {"file-read", "file-list", "file-search"}
+    )
     if config.docker.level == "L2":
         shell_service = MemberShellService(config.docker, docker_runtime)
         operations.extend(make_shell_operations(shell_service))
@@ -255,6 +261,7 @@ async def assemble_member_services(
         make_evolution_operations(
             config.id,
             is_full,
+            program_checker=check_program_sources,
             catalog=PrototypeCatalog(lister=partial(list_prototypes, tlon_paths=tlon_paths)),
             staging=StagingCatalog(lister=partial(list_staging_prototypes, tlon_paths=tlon_paths)),
             lineage=PrototypeLineage(lineage=partial(get_prototype_lineage, tlon_paths=tlon_paths)),
@@ -262,6 +269,7 @@ async def assemble_member_services(
                 reviewer_id=config.id,
                 llm_client=llm_client,
                 detail=partial(get_prototype_detail, staging=True, tlon_paths=tlon_paths),
+                modules=partial(get_prototype_modules, staging=True, tlon_paths=tlon_paths),
                 lineage=partial(get_prototype_lineage, tlon_paths=tlon_paths),
                 append_review=partial(append_staging_review, tlon_paths=tlon_paths),
             ),
@@ -269,18 +277,6 @@ async def assemble_member_services(
                 author_id=config.id,
                 writer=partial(write_staging_prototype, tlon_paths=tlon_paths),
                 prototype=config.prototype,
-                solvency=proposal_solvency,
-                near_kin=near_kin_check,
-            ),
-            behavior_proposer=BehaviorProposer(
-                agent_id=config.id,
-                prototype=config.prototype,
-                author_id=config.id,
-                llm_client=llm_client,
-                memory=memory,
-                logs=SessionJournal(config.id, tlon_paths),
-                writer=partial(write_staging_prototype, tlon_paths=tlon_paths),
-                tlon_paths=tlon_paths,
                 solvency=proposal_solvency,
                 near_kin=near_kin_check,
             ),

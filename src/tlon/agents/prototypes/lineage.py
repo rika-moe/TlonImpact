@@ -6,6 +6,7 @@ import difflib
 from pathlib import Path
 from typing import Any
 
+from tlon.agents.program_package import read_module_sources
 from tlon.agents.prototypes.info import (
     BEHAVIOR_FILE,
     _find_prototype_dir,
@@ -65,7 +66,13 @@ def get_prototype_lineage(name: str, tlon_paths: TlonPaths) -> list[dict[str, An
             "trusted": info.trusted,
             "parent": info.parent,
             "broken": False,
-            "_behavior": (current / BEHAVIOR_FILE).read_text(encoding="utf-8"),
+            "_sources": {
+                BEHAVIOR_FILE: (current / BEHAVIOR_FILE).read_text(encoding="utf-8"),
+                **{
+                    f"modules/{path}": source
+                    for path, source in read_module_sources(current / "modules").items()
+                },
+            },
         }
         chain.append(entry)
         visited.add(info.name)
@@ -83,14 +90,22 @@ def get_prototype_lineage(name: str, tlon_paths: TlonPaths) -> list[dict[str, An
         if i == 0:
             entry["diff_from_parent"] = None
         else:
+            previous = chain[i - 1]
             entry["diff_from_parent"] = "".join(
-                difflib.unified_diff(
-                    chain[i - 1]["_behavior"].splitlines(keepends=True),
-                    entry["_behavior"].splitlines(keepends=True),
-                    fromfile=f"{chain[i - 1]['name']}/{BEHAVIOR_FILE}",
-                    tofile=f"{entry['name']}/{BEHAVIOR_FILE}",
+                "".join(
+                    difflib.unified_diff(
+                        previous["_sources"].get(path, "").splitlines(keepends=True),
+                        entry["_sources"].get(path, "").splitlines(keepends=True),
+                        fromfile=f"{previous['name']}/{path}"
+                        if path in previous["_sources"]
+                        else "/dev/null",
+                        tofile=f"{entry['name']}/{path}"
+                        if path in entry["_sources"]
+                        else "/dev/null",
+                    )
                 )
+                for path in sorted(set(previous["_sources"]) | set(entry["_sources"]))
             )
     for entry in chain:
-        del entry["_behavior"]
+        del entry["_sources"]
     return chain

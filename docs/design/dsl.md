@@ -1,6 +1,6 @@
 # DSL 设计：行为即数据
 
-> 已接受目标（P1 已合并，P2 本阶段实现，其余待实施）：[ADR 0046](../decisions/0046-programmable-workflows.md) 与 [可编程工作流程](programmable-workflows.md) 将以模块函数替代 stage 引擎，施工见[分阶段计划](programmable-workflows-plan.md)。当前用法见 [模块程序指南](../guides/writing-a-module-program.md)。本文的 stage 描述仅适用于 v1。
+> 已接受目标（P1–P3 已合并，P4a 本阶段实现，P4b/P5 待实施）：[ADR 0046](../decisions/0046-programmable-workflows.md) 与 [可编程工作流程](programmable-workflows.md) 将以模块函数替代 stage 引擎，施工见[分阶段计划](programmable-workflows-plan.md)。当前用法见 [模块程序指南](../guides/writing-a-module-program.md)。本文的 stage 描述仅适用于 v1。
 
 
 > 当前状态：[ADR 0045](../decisions/0045-remove-capabilities.md) 已删除 Capability 与复合 Operation；保留宿主 Operation 和现有 Behavior。

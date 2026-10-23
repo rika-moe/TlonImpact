@@ -1,6 +1,20 @@
 (ns tlon.conversation
-  (:require [tlon.messages :as messages])
-  (:export run))
+  (:require [tlon.messages :as messages] [tlon.context :as context])
+  (:export run step))
+
+(defn step [options]
+  (let [tools (get options :tools [])
+        prepared (context/fit options)
+        response (model-call {:messages (get prepared :messages) :tools tools
+                              :cache_prefix_len (get options :cache_prefix_len 0)
+                              :max_tokens (get options :max_tokens)})
+        calls (get response :tool_calls [])
+        results (if (= (count calls) 0) []
+                  (tool-execute {:tools tools :tool_calls calls}))]
+    {:response response :results results
+     :messages (if (= (count calls) 0)
+                 (messages/append (get prepared :messages) (messages/response response))
+                 (messages/exchange (get prepared :messages) response results))}))
 
 ;; Linked only when an author explicitly requires tlon.conversation.
 ;; This is an ordinary bounded function. All effects retain the caller's scope.
@@ -12,7 +26,9 @@
       true
       (if (>= round limit)
         {:content nil :messages history :reason "round-limit"}
-        (let [result (model-call {:messages history :tools tools
+        (let [prepared (context/fit (assoc options :messages history))
+              result (model-call {:messages (get prepared :messages) :tools tools
+                                  :cache_prefix_len (get options :cache_prefix_len 0)
                                   :max_tokens (get options :max_tokens)})
               calls (get result :tool_calls [])
               ends (filter call (= (get call :name) "finish-turn") calls)]
@@ -22,13 +38,13 @@
                   empty-args (assert (= (get (reduce previous call call nil calls) :arguments) {})
                                      "finish-turn arguments must be empty")]
               {:content (get result :content)
-               :messages (messages/exchange history result
+               :messages (messages/exchange (get prepared :messages) result
                             [{:id (get (reduce previous call call nil calls) :id) :name "finish-turn"
                               :success true :data {:finished true} :error nil}])
                :reason "finish-turn"})
             (if (= (count calls) 0)
               {:content (get result :content)
-               :messages (messages/append history (messages/response result))
+               :messages (messages/append (get prepared :messages) (messages/response result))
                :reason "complete"}
               (let [results (tool-execute {:tools tools :tool_calls calls})]
-                (recur (messages/exchange history result results) (+ round 1))))))))))
+                (recur (messages/exchange (get prepared :messages) result results) (+ round 1))))))))))

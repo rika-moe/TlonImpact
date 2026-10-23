@@ -43,7 +43,7 @@ finish-turn 结束自己的本次工作；sleep-until 定时睡眠；exit-agent 
 
 ### 经验传到下一代
 
-成员反思和长期记忆为提案提供材料。`behavior-propose` 读取自身行为、记忆 digest 和教训，根据变更意图起草完整 spec，写入 staging 并记录父原型与变更说明；它不直接更新自身。
+成员反思和长期记忆为提案提供材料。普通 tlon.authoring/draft 接收任务/经验，用文件工具读取作者资料，经模型编写、program-check 校验与修订返回完整模块候选，调用方再 prototype-write 写入 staging 并记录父原型与变更说明；它不直接更新自身。
 
 永久退休会触发 `LessonsDistiller` 离线蒸馏归档记忆，产出 `memory/lessons.md`；`RetirementCeremony` 记录交接清点事件，不再发送死亡后的告别信。教训可作为原型 `LESSONS.md` 随包传递，实例化后落入新成员 `config/LESSONS.md`，由 spec 的 `(lessons)` section 显式注入。这是受控的教训继承，不是任意跨成员私有记忆读取，也不是原型携带完整知识库。
 
@@ -55,7 +55,7 @@ finish-turn 结束自己的本次工作；sleep-until 定时睡眠；exit-agent 
 
 见习成员有三项收紧：
 
-1. 不注册 `member-spawn` / `prototype-write` / `behavior-propose` 三个工具；`prototype-review` 保留为咨询工具。
+1. 不注册 `member-spawn` / `prototype-write` 两个工具；`prototype-review` 保留为咨询工具。
 2. DSL spawn 仍经 SpawnManager，按 spawner id 判定见习，最终每会话配额收紧到最多 1；完整预算定义见 [prototypes.md](prototypes.md#spawn-预算落盘账本)。
 3. 撰写发信抄送 mentor（`spawned_by` 对应地址）；已在收件人或抄送中时不重复加入。MemberRuntime 与 EffectExecutor 两条发信路径均应用，转发不抄送。
 

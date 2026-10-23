@@ -101,3 +101,9 @@ spawn 的配额归属取冻结 CallContext.run_id：Tool 与恢复使用 session
 `tool-execute` 不是叶子 Operation，不进入模型 Tool 目录，也不记录批量父 intent。它接受受控工具名称列表和规范化建议，按程序调用位置、输入索引派生稳定叶子身份，逐项使用 OperationExecutor。完整批次参数参加身份校验，完成顺序不决定身份。已完成项先返回旧回执，新效果才检查当前工具目录；撤权和定义变化阻塞。
 
 OperationTool 与 ToolExecutor 只将 InputError/RejectedError 变为普通失败，其他错误向运行器传播。RejectedError 子类的持久分类统一为 RejectedError，保留领域数据。提交故障的 unknown 使用真实业务参数生成诊断，显式 request_id 不因批次身份元数据而丢失。
+
+## 模块创作和窗口机制（P4a）
+
+prototype-write 必填完整 v2 behavior/modules，发布后返回 pending_approval。program-check 是只读静态校验，返回 valid/digest/diagnostics，不执行候选；原 behavior-propose 操作已删除，起草改由普通 tlon.authoring/draft 使用文件工具、模型与校验反馈组合。prototype-review 读取完整包，谱系 diff 覆盖每个作者文件，实际批准仍由人类执行。
+
+model-context 接受与 model-call 相同的 messages/tools/max_tokens 受控输入，返回 input_tokens/context_window/output_tokens/fits。它是持久只读估算，不请求 provider 或消费模型额度，使用冻结系统/工具/模型配置；token 估算不保证 provider 实际计数。普通上下文库据此组织压缩，模型请求和额度仍由原回执负责。

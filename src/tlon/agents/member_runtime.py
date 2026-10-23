@@ -501,6 +501,7 @@ class MemberRuntime(Member):
         while True:
             try:
                 await self._restore_entry_scheduling()
+                await self._restore_entry_failures()
             except Exception as error:
                 self._logger.error("entry_scheduling_recovery_failed", error=str(error))
                 await asyncio.sleep(1)
@@ -924,6 +925,52 @@ class MemberRuntime(Member):
         for record in await asyncio.to_thread(self._program_store.pending_scheduling):
             await self._apply_entry_scheduling(record)
 
+    async def _restore_entry_failures(self) -> None:
+        for record in await asyncio.to_thread(self._program_store.failed_entries):
+            await self._notify_entry_failure(record)
+
+    async def _notify_entry_failure(self, record: ProgramRun) -> None:
+        """Reconcile a host courtesy mail through the ordinary durable mail receipt.
+
+        A separate stable maintenance root leaves program budgets and cancelled
+        controls intact. Original mail, draft responses and failure are retained.
+        """
+        if self._paths is None or self._mailbox is None or self._post_office is None:
+            return
+        try:
+            snapshot = loads(record.input_edn)
+            payload = snapshot.get("payload")
+            frozen = payload.get("mail") if isinstance(payload, dict) else None
+            mail = frozen.get("__tlon_mail__") if isinstance(frozen, dict) else None
+            if not isinstance(mail, dict):
+                return
+            humans = await asyncio.to_thread(
+                MailStore(self._paths.mail_database_file()).known_human_ids
+            )
+            if mail["from_address"] not in {address_for_member(human) for human in humans}:
+                return
+            root = f"{record.run_id}:failure-notification"
+            scope = ExecutionScope(self._program_store, root, 0, "output")
+            context = CallContext(
+                self._member_id, root, "failure-mail", call_path=("failure-mail",), execution=scope
+            )
+            with bind_execution(scope):
+                await self._operation_executor.call(
+                    "mail-send",
+                    {
+                        "to": [mail["from_address"]],
+                        "content": "处理未能完成，工作程序已停止。原始来信与执行记录已保留，请检查后重试。",
+                        "subject": "运行时通知：工作程序停止",
+                        "in_reply_to": mail["id"],
+                        "request_id": root,
+                    },
+                    context,
+                )
+        except Exception as error:
+            self._logger.warning(
+                "member_entry_failure_notification_failed", run_id=record.run_id, error=str(error)
+            )
+
     async def _run_entry_record(self, record: ProgramRun) -> bool:
         self._active_actions += 1
         try:
@@ -933,6 +980,7 @@ class MemberRuntime(Member):
 
     async def _execute_entry_record(self, record: ProgramRun) -> bool:
         if record.error is not None:
+            await self._notify_entry_failure(record)
             return True
         if record.completed:
             await self._apply_entry_scheduling(record)
@@ -977,15 +1025,21 @@ class MemberRuntime(Member):
                 self._program_store.complete_entry, record.run_id, result, scheduling
             )
         except (EvalError, ValueError) as error:
-            if blocks_recovery(error):
-                await asyncio.to_thread(
-                    self._program_store.fail, record.run_id, blocked_reason(error)
-                )
+            if isinstance(error, UnknownOutcomeError) and not blocks_recovery(error):
+                # Idempotent mail delivery can still reconcile its original key.
+                # It remains pending rather than claiming permanent failure.
                 raise
-            if isinstance(error, UnknownOutcomeError):
-                raise
-            await asyncio.to_thread(self._program_store.fail, record.run_id, str(error))
+            await asyncio.to_thread(
+                self._program_store.fail,
+                record.run_id,
+                blocked_reason(error) if blocks_recovery(error) else str(error),
+            )
+            failed = await asyncio.to_thread(self._program_store.get_run, record.run_id)
+            assert failed is not None
+            await self._notify_entry_failure(failed)
             self._logger.warning("member_entry_failed", run_id=record.run_id, error=str(error))
+            if blocks_recovery(error) or isinstance(error, UnknownOutcomeError):
+                raise
             return True
         await self._apply_entry_scheduling(committed)
         return True

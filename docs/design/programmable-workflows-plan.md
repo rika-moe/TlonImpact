@@ -1,6 +1,6 @@
 # 可编程工作流程：分阶段实施计划
 
-状态：2026-10-23，设计已接受，P0 为本次文档与 issue 建立；P1 已合并（#208），P2 本阶段实现待 PR 审核合并，P3–P5 未实施。设计基线 `9fe00817bd75944e49a05cfd8e0149fa240dc757`（#198）；P1 施工基线 `0650c9d`（#207），P2 以已合并 #208 为基线。设计权威：[目标设计](programmable-workflows.md)；选择理由：[ADR 0046](../decisions/0046-programmable-workflows.md)。当前能力以各阶段实施记录及 reference 为准。
+状态：2026-10-23，设计已接受；P0 文档与任务已建立，P1–P3 已合并（#208/#209/#210），P4a 本阶段实现待合并，P4b/P5 未实施。设计基线 `9fe00817bd75944e49a05cfd8e0149fa240dc757`（#198），P4a 施工基线 `a65088f`（#210）。设计权威：[目标设计](programmable-workflows.md)；选择理由：[ADR 0046](../decisions/0046-programmable-workflows.md)。当前能力以各阶段实施记录及 reference 为准。
 
 ## 施工与共同完成标准
 
@@ -137,7 +137,7 @@ issue 用于进度、PR 与证据，目标契约仍以本设计为准。阶段�
 - [ ] [EPIC A：可编程工作流程——模块、模型与工具的统一持久执行](https://github.com/rika-moe/TlonImpact/issues/199)
 - [x] [P1 — 模块、入口、冻结程序包与最小发信链路](https://github.com/rika-moe/TlonImpact/issues/201)
 - [x] [P2 — 完整模型 Operation 与函数式核验](https://github.com/rika-moe/TlonImpact/issues/202)
-- [ ] [P3 — 受控工具分派与可复用对话循环](https://github.com/rika-moe/TlonImpact/issues/203)
+- [x] [P3 — 受控工具分派与可复用对话循环](https://github.com/rika-moe/TlonImpact/issues/203)
 - [ ] [EPIC B：可编程工作流程——标准程序、交互投影与 stage 退役](https://github.com/rika-moe/TlonImpact/issues/200)
 - [ ] [P4a — Agent 编写模块与标准工作方式](https://github.com/rika-moe/TlonImpact/issues/204)
 - [ ] [P4b — 单一恢复权威与交互消费者](https://github.com/rika-moe/TlonImpact/issues/205)
@@ -173,3 +173,13 @@ P2 本地最终验证：`scripts/check_all.sh` 15/15 全绿，单元 2754 passed
 共享适配层删除兜底普通失败转换，只有 InputError/RejectedError 可反馈；明确文件/路径/命令非零等领域错误同步分类，设备丢失、IO、unknown、输出违约、预算、截止和恢复失配传播。提交回执失败使用真实业务输入保留 request_id，不将含批次元数据的身份快照误当业务参数。内置 stage/旧收集器保留至 P5，P4 的自动起草和交互投影尚未实现。
 
 P3 最终本地验证：`scripts/check_all.sh` 15/15 全绿；单元 2825 passed / 15 skipped，集成 38 passed。真实 dream + SDK + DeepSeek 工具对话、核验、修订和回信通过：4 次模型调用、1 次 time-now、同根 output 占用 512、一封回信。服务和隔离目录已清理。P3 待人类合并后勾选。
+
+## P4a 实施细化
+
+起草过程由普通 tlon.authoring/draft 运行：模型使用已有 file-read/list/search 查阅 workspace 的 tlon/docs 与 tlon/stdlib，以 program-check 提交候选并按诊断修订；通过后返回候选，外层自行 prototype-write 发布。删除 Python BehaviorProposer、behavior-propose Operation 和长篇语法提示，没有别名回退。资料使用真实仓库文档和标准库源码，随 wheel 发布、只读映射，自定义 working_dir 使用相对路径；L0 仅得到资料只读访问，不扩大普通文件权限。
+
+program-check 复用现有完整包验证，不执行或发布候选；报告持久重放，基础设施异常不当作源码诊断。候选直接保留为普通值，没有新草稿数据库、目录服务或版本管理层。conversation/step 暴露一轮结构化响应、工具结果和完整消息，起草函数据此循环。两个可复用模块用于验收，不强迫所有程序拆成两个模块。
+
+完整模块审批、复制和冻结沿 P1 机制；近亲比较和逐代 diff 覆盖全部作者文件。普通 context/workflows 库、窗口估算、消息压缩与失败通知保留；旧引擎和新交互消费者仍待 P5/P4b。原初版的一次性起草验收记录见 #211 历史，本次以能实际读取文件、发现源码错误并修订的普通程序链路重新验收。
+
+本次简化链路的真实验收：独立 dream + SDK + DeepSeek 实际读取文档入口、编写指南和标准库源码，收到缺少 work.text 的诊断后补齐第二个模块，再完成发布、全源码评审、人工批准和派生成员回信。起草 3 次模型调用、评审 1 次，派生成员零模型调用；隔离目录和服务已清理。恢复测试验证内层模型提交后缺外层回执时不重复模型、工具或预算收费。

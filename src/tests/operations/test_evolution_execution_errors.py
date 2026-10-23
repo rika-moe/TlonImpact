@@ -11,7 +11,6 @@ from litellm import BadRequestError
 from tlon.agents.program_store import ProgramStore
 from tlon.agents.prototypes.catalog import get_prototype_detail
 from tlon.agents.prototypes.staging import append_staging_review, write_staging_prototype
-from tlon.agents.session_journal import SessionJournal
 from tlon.base.config import LLMConfig
 from tlon.base.execution import (
     BudgetExceededError,
@@ -21,10 +20,7 @@ from tlon.base.execution import (
 )
 from tlon.base.llm_client import LLMClient
 from tlon.base.paths import TlonPaths
-from tlon.evolution.propose_behavior import BehaviorProposer
 from tlon.evolution.review_prototype import PrototypeReviewer
-from tlon.memory.manager import MemoryManager
-from tlon.memory.models import MemoryConfig
 from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
 from tlon.operations.dsl import DSLAdapter
@@ -51,26 +47,15 @@ def executor(
     behavior = paths.agent_behavior_file("alice")
     behavior.parent.mkdir(parents=True, exist_ok=True)
     behavior.write_text(_SPEC)
-    memory = MemoryManager("alice", MemoryConfig(), paths.agent_dir("alice"), tlon_paths=paths)
-    logs = SessionJournal("alice", paths)
     info = write_staging_prototype(_SPEC, display_name="existing", tlon_paths=paths)
     services = make_evolution_operations(
         "alice",
         True,
-        behavior_proposer=BehaviorProposer(
-            "alice",
-            None,
-            "alice",
-            client,
-            memory,
-            logs,
-            partial(write_staging_prototype, tlon_paths=paths),
-            paths,
-        ),
         reviewer=PrototypeReviewer(
             "alice",
             client,
             partial(get_prototype_detail, staging=True, tlon_paths=paths),
+            lambda _name: {},
             lambda _name: [],
             partial(append_staging_review, tlon_paths=paths),
         ),
@@ -78,12 +63,11 @@ def executor(
     return OperationExecutor(
         OperationRegistry(services), CallContext("alice", "root", "call"), store
     ), {
-        "behavior-propose": {"intent": "improve", "display_name": "next"},
         "prototype-review": {"name": info.name},
     }
 
 
-@pytest.mark.parametrize("name", ["behavior-propose", "prototype-review"])
+@pytest.mark.parametrize("name", ["prototype-review"])
 @pytest.mark.parametrize("fault", ["budget", "rejected", "context-rejected", "unknown"])
 async def test_real_evolution_model_failure_is_identical_in_dsl_tool_and_replay(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, fault: str
@@ -136,7 +120,6 @@ async def test_real_evolution_model_failure_is_identical_in_dsl_tool_and_replay(
 @pytest.mark.parametrize(
     "name,slot,args",
     [
-        ("behavior-propose", "behavior_proposer", {"intent": "x", "display_name": "x"}),
         ("prototype-review", "reviewer", {"name": "proposal"}),
     ],
 )

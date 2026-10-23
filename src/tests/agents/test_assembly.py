@@ -175,7 +175,7 @@ class TestExecutionLevelAssembly:
             tlon_paths=tlon_paths,
         )
 
-    async def test_l0_skips_runtime_and_device_tools(
+    async def test_l0_keeps_reference_reads_without_runtime_or_device_writes(
         self, tlon_paths: TlonPaths, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         runtime_ctor = MagicMock(side_effect=AssertionError("L0 must not construct DockerRuntime"))
@@ -187,7 +187,7 @@ class TestExecutionLevelAssembly:
         assert caps.docker_runtime is None
         assert caps.memory.write_gate is caps.write_gate
         names = set(caps.tool_executor.list_tools()) | {op.name for op in caps.operations}
-        assert names.isdisjoint(DEVICE_TOOLS)
+        assert names & DEVICE_TOOLS == {"file-read", "file-list", "file-search"}
         # 其余工具照常装配
         assert {"time-now", "memory-remember"} <= names
         # Mail tools bind later in MemberRuntime, with its actual mailbox/PostOffice.
@@ -235,13 +235,16 @@ async def test_real_assembly_evolution_writes_use_injected_paths(
     from unittest.mock import AsyncMock
 
     from tlon.agents.prototypes.staging import list_staging_prototypes
-    from tlon.base.llm_client import LLMResponse
     from tlon.operations.adapters import OperationTool
     from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
 
     paths = TlonPaths(home=tmp_path / "member-home")
     other_paths = TlonPaths(home=tmp_path / "other-home")
-    spec = '{:version 1 :rules [{:name "boot" :on :boot :actions []}]}'
+    spec = "{:version 2 :handlers {:mail-delivered work.reply/handle} :fuel 1000}"
+    modules = {
+        "work/reply.tlon": "(ns work.reply (:require [work.helpers :as h]) (:export handle)) (defn handle [event] (h/result))",
+        "work/helpers.tlon": '(ns work.helpers (:export result)) (defn result [] {:result "ok"})',
+    }
     config = AgentConfig(
         id="author",
         name="author",
@@ -265,23 +268,19 @@ async def test_real_assembly_evolution_writes_use_injected_paths(
         OperationRegistry(caps.operations), CallContext(config.id, "run", "call")
     )
     written = await OperationTool(executor, "prototype-write").execute_context(
-        {"behavior": spec, "display_name": "direct"}
+        {"behavior": spec, "modules": modules, "display_name": "direct"}
     )
     assert written.success, written.error
-    behavior_file = paths.agent_behavior_file(config.id)
-    behavior_file.parent.mkdir(parents=True, exist_ok=True)
-    behavior_file.write_text(spec)
-    monkeypatch.setattr(caps.llm_client, "chat", AsyncMock(return_value=LLMResponse(content=spec)))
-    proposed = await OperationTool(executor, "behavior-propose").execute_context(
-        {"intent": "keep behavior", "display_name": "draft"}
-    )
-    assert proposed.success, proposed.error
     proposals = list_staging_prototypes(paths)
     assert {proposal.name for proposal in proposals} == {
         written.data["name"],
-        proposed.data["name"],
     }
     assert all(proposal.author == config.id and proposal.trusted is False for proposal in proposals)
+    for proposal in proposals:
+        for relative, source in modules.items():
+            assert (
+                paths.prototypes_staging_dir() / proposal.name / "modules" / relative
+            ).read_text() == source
     assert list_staging_prototypes(other_paths) == []
     assert not other_paths.prototypes_staging_dir().exists()
     assert not paths.prototypes_dir().exists()

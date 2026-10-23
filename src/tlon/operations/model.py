@@ -11,8 +11,56 @@ from tlon.base.execution import (
 )
 from tlon.operations.core import CallContext, Operation
 from tlon.operations.invocation import InvocationOutcome
+from tlon.operations.model_context import context_operation
 from tlon.operations.model_service import ModelClient, ModelService, response_data
 from tlon.operations.schema import OperationError, RejectedError, UnknownOutcomeError
+
+MODEL_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "messages": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "role": {"type": "string", "enum": ["user", "assistant", "tool"]},
+                    "content": {"type": ["string", "null"]},
+                    "tool_calls": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "type": {"type": "string", "enum": ["function"]},
+                                "function": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name": {"type": "string"},
+                                        "arguments": {"type": "string"},
+                                    },
+                                    "required": ["name", "arguments"],
+                                    "additionalProperties": False,
+                                },
+                            },
+                            "required": ["id", "type", "function"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "tool_call_id": {"type": "string"},
+                    "reasoning_content": {"type": ["string", "null"]},
+                },
+                "required": ["role", "content"],
+                "additionalProperties": False,
+            },
+        },
+        "tools": {"type": "array", "items": {"type": "string"}, "uniqueItems": True},
+        "max_tokens": {"type": "integer", "minimum": 1},
+        "cache_prefix_len": {"type": "integer", "minimum": 0},
+    },
+    "required": ["messages", "max_tokens"],
+    "additionalProperties": False,
+}
 
 
 def make_model_operations(
@@ -73,52 +121,7 @@ def make_model_operations(
         Operation(
             "model-call",
             "使用自己的模型与系统提示词生成结构化响应；不执行工具调用。",
-            {
-                "type": "object",
-                "properties": {
-                    "messages": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "role": {"type": "string", "enum": ["user", "assistant", "tool"]},
-                                "content": {"type": ["string", "null"]},
-                                "tool_calls": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "properties": {
-                                            "id": {"type": "string"},
-                                            "type": {"type": "string", "enum": ["function"]},
-                                            "function": {
-                                                "type": "object",
-                                                "properties": {
-                                                    "name": {"type": "string"},
-                                                    "arguments": {"type": "string"},
-                                                },
-                                                "required": ["name", "arguments"],
-                                                "additionalProperties": False,
-                                            },
-                                        },
-                                        "required": ["id", "type", "function"],
-                                        "additionalProperties": False,
-                                    },
-                                },
-                                "tool_call_id": {"type": "string"},
-                                "reasoning_content": {"type": ["string", "null"]},
-                            },
-                            "required": ["role", "content"],
-                            "additionalProperties": False,
-                        },
-                    },
-                    "tools": {"type": "array", "items": {"type": "string"}, "uniqueItems": True},
-                    "max_tokens": {"type": "integer", "minimum": 1},
-                    "cache_prefix_len": {"type": "integer", "minimum": 0},
-                },
-                "required": ["messages", "max_tokens"],
-                "additionalProperties": False,
-            },
+            MODEL_INPUT_SCHEMA,
             {
                 "type": "object",
                 "properties": {
@@ -163,6 +166,7 @@ def make_model_operations(
             effects=frozenset({"write"}),
             recover=recover,
         ),
+        context_operation(service, MODEL_INPUT_SCHEMA),
     )
 
 

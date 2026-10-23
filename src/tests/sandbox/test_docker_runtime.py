@@ -59,10 +59,15 @@ class TestCreateContainerMounts:
         volumes = runtime.client.containers.create.call_args.kwargs["volumes"]
         workspace = tlon_paths.agent_workspace_dir("dev-001")
         home = tlon_paths.agent_dir("dev-001")
-        assert volumes == {
-            str(workspace): {"bind": "/workspace", "mode": "rw"},
-            str(home): {"bind": AGENT_HOME_CONTAINER_PATH, "mode": "ro"},
+        assert volumes[str(workspace)] == {"bind": "/workspace", "mode": "rw"}
+        assert volumes[str(home)] == {"bind": AGENT_HOME_CONTAINER_PATH, "mode": "ro"}
+        assert {value["bind"] for value in volumes.values()} == {
+            "/workspace",
+            AGENT_HOME_CONTAINER_PATH,
+            "/workspace/tlon/docs",
+            "/workspace/tlon/stdlib",
         }
+        assert all(value["mode"] == "ro" for key, value in volumes.items() if key != str(workspace))
 
     async def test_cabinet_is_created_never_started(self, tmp_path, monkeypatch):
         """The file cabinet serves archive I/O only — created, never started."""

@@ -8,6 +8,7 @@ from tlon.base.execution import (
     ModelRequestRejectedError,
 )
 from tlon.operations.core import AsyncHandler, CallContext, Operation
+from tlon.operations.program import ProgramChecker, program_check_operation
 from tlon.operations.schema import InputError, OperationError, RejectedError, UnknownOutcomeError
 
 
@@ -67,7 +68,6 @@ _PROPOSAL = {
 }
 _OUTPUTS = {
     "prototype-write": _object({**_PROPOSAL, "display_name": _STRING}),
-    "behavior-propose": _object(_PROPOSAL),
     "prototype-list": {"type": "array", "items": _SUMMARY},
     "prototype-staging-list": {"type": "array", "items": _STAGING},
     "prototype-lineage": _object({"lineage": {"type": "array", "items": _LINEAGE}}),
@@ -83,13 +83,20 @@ _OUTPUTS = {
 
 _CONTRACTS: dict[str, tuple[str, dict[str, Any]]] = {
     "prototype-write": (
-        "创作一个新的 behavior prototype（纯行为规约，无人格），写入 staging 区。规则统一使用 on、when、actions；会话通过 run-loop 动作调用。新 prototype 默认不可信：需人类批准（ops/WebUI）后才能被 member-spawn 使用。behavior 是 v1 schema 的纯数据 EDN（只描述行为，无法授予工具）。可声明 :parameters 以支持 spawn 时参数化。可选 parent 记录谱系（从哪个既有原型派生），generation 由服务端推导。",
+        "创作一个新的 behavior prototype（纯行为规约，无人格），写入 staging 区。完整 v2 Behavior+模块包；工作流程使用普通函数组合。新 prototype 默认不可信：需人类批准（ops/WebUI）后才能被 member-spawn 使用。behavior 是 v2 EDN handlers 入口，modules 是完整相对路径到源码映射（只描述程序，无法授予工具）。v2 完整模块包不接受参数模板。可选 parent 记录谱系（从哪个既有原型派生），generation 由服务端推导。",
         {
             "type": "object",
             "properties": {
                 "behavior": {
                     "type": "string",
-                    "description": "行为规约（EDN 字符串）。统一 on/when/actions；会话使用 run-loop 动作。可选 :parameters，引用变量用 ${name}。",
+                    "description": "完整 v2 EDN，handlers 指向导出模块函数。",
+                },
+                "modules": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                    "additionalProperties": True,
+                    "description": "完整模块包：相对 .tlon 路径到源码字符串",
                 },
                 "display_name": {
                     "type": "string",
@@ -109,25 +116,7 @@ _CONTRACTS: dict[str, tuple[str, dict[str, Any]]] = {
                     "description": "随包教训：退休成员蒸馏出的经验，落盘为原型的 LESSONS.md；实例化时拷贝给新成员，由 spec 的 (lessons) context section 注入对话",
                 },
             },
-            "required": ["behavior", "display_name"],
-        },
-    ),
-    "behavior-propose": (
-        "基于自己的个体经验提出下一代行为原型（世代通道的经验入口）。只需给出变更意图与行为显示名：工具内部读你当前的 behavior.tlon 与记忆（claims 与蒸馏教训），由一次独立的起草调用产出完整的新 spec，并以你自己的 prototype 为父原型写入 staging 区（proposal_note 记意图、lessons 随包）。与 prototype-write 的区别：那是裸写通道（自带全文），这里由经验驱动起草。提案不可信：需人类批准（ops/WebUI）后才能 member-spawn 派生新世代。",
-        {
-            "type": "object",
-            "properties": {
-                "intent": {
-                    "type": "string",
-                    "description": "变更意图：想改什么、为什么（自然语言，记为 proposal_note）",
-                },
-                "display_name": {
-                    "type": "string",
-                    "description": "必填行为标签，描述怎样行动；不赋予职业、职位或社会身份",
-                },
-                "description": {"type": "string", "description": "一句话描述这个原型的行为定位"},
-            },
-            "required": ["intent", "display_name"],
+            "required": ["behavior", "modules", "display_name"],
         },
     ),
     "prototype-list": (
@@ -172,7 +161,7 @@ def make_evolution_operations(
     is_full: bool,
     *,
     writer: EvolutionService | None = None,
-    behavior_proposer: EvolutionService | None = None,
+    program_checker: ProgramChecker | None = None,
     catalog: EvolutionService | None = None,
     staging: EvolutionService | None = None,
     lineage: EvolutionService | None = None,
@@ -181,13 +170,12 @@ def make_evolution_operations(
     """Bind member identity and authority independently of tool exposure."""
     services = {
         "prototype-write": writer,
-        "behavior-propose": behavior_proposer,
         "prototype-list": catalog,
         "prototype-staging-list": staging,
         "prototype-lineage": lineage,
         "prototype-review": reviewer,
     }
-    writes = {"prototype-write", "behavior-propose", "prototype-review"}
+    writes = {"prototype-write", "prototype-review"}
 
     def handler(name: str) -> AsyncHandler:
         async def execute(context: CallContext, args: dict[str, Any]) -> Any:
@@ -195,7 +183,6 @@ def make_evolution_operations(
                 raise InputError("evolution service belongs to another member")
             if not is_full and name in {
                 "prototype-write",
-                "behavior-propose",
             }:
                 raise RejectedError("evolution operations require a full member", {})
             service = services[name]
@@ -219,7 +206,7 @@ def make_evolution_operations(
 
         return execute
 
-    operations = []
+    operations = [program_check_operation(program_checker)]
     for name, (description, schema) in _CONTRACTS.items():
         schema = {**schema, "additionalProperties": False}
         operations.append(

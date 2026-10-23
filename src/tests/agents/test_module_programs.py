@@ -14,7 +14,7 @@ from tlon.agents.program_package import read_module_sources, validate_program_so
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.paths import TlonPaths
-from tlon.organization.mail.mail import Mail
+from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 from tlosure.edn import loads
 
@@ -370,3 +370,87 @@ def test_host_messages_library_is_linked_without_becoming_author_source() -> Non
 def test_authors_cannot_replace_host_module_namespace(path: str) -> None:
     with pytest.raises(MemberSpecValidationError, match="reserved"):
         validate_program_sources(BEHAVIOR, {**MODULES, path: "(ns tlon)"})
+
+
+@pytest.mark.parametrize("registered_human", [True, False])
+async def test_entry_failure_courtesy_mail_is_durable_and_human_only(
+    tmp_path: Path, registered_human: bool
+) -> None:
+    from tlon.organization.mail.store import MailStore
+
+    modules = {
+        "work/reply.tlon": """
+        (ns work.reply (:export handle))
+        (defn handle [event] {:result 1 :next {:kind "bogus"}})
+        """
+    }
+    member = _member(tmp_path, modules)
+    sender = "human:alice" if registered_human else "sender"
+    if registered_human:
+        MailStore(TlonPaths(home=tmp_path).mail_database_file()).register_member(sender)
+    mail = Mail.create(
+        from_address=address_for_member(sender), to=["member@tlon.internal"], content="keep this"
+    )
+    event = Event(
+        type=EventType.MAIL_DELIVERED,
+        payload={"mail": mail, "recipient": "member"},
+        source="test",
+    )
+    MailStore(TlonPaths(home=tmp_path).mail_database_file()).add_to_inbox(mail, "member")
+    run_id = f"{mail.id}:handler:mail-delivered"
+    await member.initialize()
+    try:
+        await member._run_rule_body(member.spec.rules[0], event, run_id=run_id)
+        saved = member._program_store.get_run(run_id)
+        assert saved is not None and saved.error and not saved.completed
+        assert "keep this" in saved.input_edn
+        await member._restore_entry_failures()
+        assert member._program_store.get_run(run_id) == saved
+    finally:
+        await member.shutdown()
+    restored = _member(tmp_path, modules)
+    await restored.initialize()
+    try:
+        await restored._restore_entry_failures()
+        inbox = await Mailbox(TlonPaths(home=tmp_path).mail_database_file(), sender).unread()
+        assert len(inbox) == int(registered_human)
+        if inbox:
+            assert inbox[0].in_reply_to == mail.id
+            assert "工作程序已停止" in inbox[0].content
+        failed = restored._program_store.failed_entries()
+        assert len(failed) == 1 and failed[0].run_id == run_id
+    finally:
+        await restored.shutdown()
+
+
+async def test_failure_courtesy_lookup_error_preserves_original_program_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tlon.organization.mail.store import MailStore
+
+    member = _member(
+        tmp_path,
+        {
+            "work/reply.tlon": """
+        (ns work.reply (:export handle))
+        (defn handle [event] {:result 1 :next {:kind "bogus"}})
+        """
+        },
+    )
+    event = _event()
+    lookup = MagicMock(side_effect=OSError("courtesy database unavailable"))
+    monkeypatch.setattr(MailStore, "known_human_ids", lookup)
+    member._operation_executor.call = AsyncMock()
+    await member.initialize()
+    try:
+        await member._run_rule_body(member.spec.rules[0], event, run_id="lookup-failed")
+        record = member._program_store.get_run("lookup-failed")
+        assert record is not None and record.error == "invalid entry scheduling request"
+        assert not record.completed
+        assert "hello" in record.input_edn
+        await member._restore_entry_failures()
+        assert member._program_store.get_run("lookup-failed") == record
+        assert lookup.call_count >= 2
+        member._operation_executor.call.assert_not_awaited()
+    finally:
+        await member.shutdown()

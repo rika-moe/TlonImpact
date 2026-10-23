@@ -106,7 +106,7 @@ agent 通过 [src/tlon/operations/memory.py](../../src/tlon/operations/memory.py
 
 `delete_claim` 的删除按 claim id 定点执行：prompt 里 claim 以 id 前 8 位列出，模型回传的 `claim_id` 交给 `MemoryManager.delete_claim`，先精确匹配、再退到唯一前缀解析，未命中或歧义都记 warning、不删任何东西——删除失败必须可见，不允许静默 no-op。模型只给 `description` 时回退到 `forget` 的关键词匹配路径。
 
-值得注意的是反思能改的只有记忆：它可以记 claim、删 claim，但碰不到 spec——行为变更走的是另一条通道：成员经 `behavior-propose` 把经验交给独立的起草调用产出新 spec，落到 staging 信任闸等人类批准，反思本身仍不直接改写行为。
+值得注意的是反思能改的只有记忆：它可以记 claim、删 claim，但碰不到 spec——行为变更走的是另一条通道：成员把经验显式交给普通 `tlon.authoring/draft`，通过查文档、编写与校验修订产出完整模块包，落到 staging 信任闸等人类批准，反思本身仍不直接改写行为。
 
 ## 退休蒸馏：记忆的代际出口
 
@@ -168,6 +168,6 @@ ADR 0017 的业界调研结论：主流现成 memory 产品无可直接引入者
 
 ## 演化接口与未实施方向
 
-记忆到行为的回流经 `behavior-propose`：以当前行为、记忆 digest 与教训起草原型提案，经 staging 和人类批准后由新世代采用。它不直接修改当前成员的行为。代际教训与同代交接的边界见上文及 [prototypes.md](./prototypes.md)。
+记忆到行为的回流由普通起草程序组合：调用方提供当前行为、记忆和教训，经资料查询与校验修订得到原型候选，再用 prototype-write 提交，经 staging 和人类批准后由新世代采用。它不直接修改当前成员的行为。代际教训与同代交接的边界见上文及 [prototypes.md](./prototypes.md)。
 
 社会级公共记忆仍未实施：当前每个成员各自蒸馏和检索，邮件提供共享原材料，但没有社会级存档提炼、共享摘要和公共知识检索机制。
