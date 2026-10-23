@@ -512,6 +512,12 @@ async def test_program_maintenance_failure_never_replays_completed_entry(
 async def test_v2_background_reflection_prevents_idle_drain(tmp_path: Path) -> None:
     member = _member(tmp_path)
     await member.initialize()
+    # Isolate reflection activity from the worker's periodic maintenance.
+    assert member._program_task is not None
+    member._program_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await member._program_task
+    member._program_task = None
     entered = asyncio.Event()
     release = asyncio.Event()
     manager = MemoryManager("member", MemoryConfig(reflection_min_interactions=1), data_dir=tmp_path)
