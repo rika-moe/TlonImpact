@@ -586,3 +586,46 @@ def test_missing_corpus_and_run_json_still_generates(tmp_path: Path) -> None:
     assert report.red_flags == []
     assert (archive / "report.json").exists()
     assert (tmp_path / "proto" / "ARENA.md").exists()
+
+
+def test_program_projection_reports_real_fuel_exhaustion() -> None:
+    import pytest
+
+    from tlon.agents.program_history import program_events
+    from tlon.agents.program_store import ProgramStore
+    from tlon.arena.report import _summarize_session
+    from tlosure.builtins import FuelExhaustedError
+    from tlosure.edn import loads
+    from tlosure.eval import eval_form
+
+    with pytest.raises(FuelExhaustedError) as failure:
+        eval_form(loads("(while [n 0] true (recur n))"), {}, {}, fuel=10)
+    store = ProgramStore(None)
+    store.ensure_entry("limited", "{}", "{}", {})
+    store.fail("limited", str(failure.value))
+    events = program_events(store.entry_history("limited")[0], "member")
+    summary, flags = _summarize_session(list(enumerate(events, 1)))
+    assert summary["end_reason"] == "failed" and summary["fuel_exhausted"]
+    assert [flag.kind for flag in flags] == [FLAG_FUEL_EXHAUSTION]
+    assert flags[0].evidence.endswith("#seq-1")
+
+
+def test_other_failed_program_is_not_reported_as_fuel_exhaustion() -> None:
+    from tlon.arena.report import _summarize_session
+
+    summary, flags = _summarize_session(
+        [
+            (
+                1,
+                {
+                    "type": "session/end",
+                    "reason": "failed",
+                    "error": "unknown tool result; quoted text: fuel exhausted (budget 10)",
+                    "session_id": "program:other",
+                    "seq": 1,
+                },
+            )
+        ]
+    )
+    assert not summary["fuel_exhausted"]
+    assert [flag.kind for flag in flags] == [FLAG_SESSION_INCOMPLETE]

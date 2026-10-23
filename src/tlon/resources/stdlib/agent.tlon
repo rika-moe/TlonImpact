@@ -47,7 +47,7 @@
     (while [history (get planned :messages) round 0 exchanges []]
       true
       (if (>= round (get request :max_rounds))
-        {:content nil :messages history :exchanges exchanges :reason "round-limit"}
+        (assert false "agent work round-limit reached before completion")
         (let [prepared (context/fit (assoc planned :messages history))
               response (model-call {:messages (get prepared :messages) :tools (get planned :tools)
                                     :max_tokens (get planned :max_tokens)})

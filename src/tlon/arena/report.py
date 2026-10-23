@@ -1,38 +1,15 @@
-"""演武场报告生成器（docs/design/arena.md 「报告」）。
+"""Read archived program interaction views and historical sessions into arena reports.
 
-输入是 run 的**归档目录**（staging 原型目录内 ``arena/<run-id>/``）——
-报告生成时隔离家园已拆，这里只读归档原料，纯函数式、无 runtime 依赖：
+Archives contain corpus/run metadata, SessionJournal JSONL exports, mailbox
+facts and an optional token ledger. New interaction IDs are program:<run-id>;
+legacy session IDs remain readable. Neither projection nor reporting executes
+or restores a program. Responsibility comes from session/start projections.
 
-- ``corpus.json``：语料原文（喂了什么）
-- ``run.json``：run 元数据 + ``fed`` 映射（mail_id ↔ 语料）+ ``drained``
-  （ADR 0028 收工语义：投递确认 + 未读排空 + 无存活 session）
-- ``sessions/*.jsonl``：从 session SQLite 导出的事件原文（ADR 0032）
-- ``sent.jsonl`` / ``inbox.jsonl``：临时成员邮箱
-- ``ledger.jsonl``：token 账本（ADR 0014，缺失记 null 不报错）
-
-产出两份：``report.json``（结构化，写回归档目录）与 ``ARENA.md``
-（人读，归档目录 + staging 原型根目录各一份——根目录那份是最新 run
-的人读入口，评审界面第一眼看到的，覆盖旧版）。
-
-报告按 session 组织（ADR 0028 收件箱驱动单 session 模型：session id 是
-``{agent_id}-{uuid12}``，与语料无一一对应，一个 session 可批处理多封
-语料）——每个 session 一节（触发语 / 责任集 / 迭代 / 工具 / 回复），
-语料邮件作为责任集条目挂在收编它的 session 下（归属从各 journal
-``session/start`` 的 ``responsibility`` 反解，一封语料归第一个收编它
-的 session）；未被任何 session 收编的语料单列 ``unmatched_mails`` 并记
-session-incomplete 红旗。
-
-报告是证据不是判决：红旗是读侧派生的事实呈现（每条带证据指针：
-session 文件 + seq 或 sent.jsonl 行号），评估结论永远是人下的。
-误报宁可少不可多——错的红旗会毒化评审信任，所以每个特征都锚定一
-行具体的报错文案出处（见各特征常量的注释）。
-
-可观测性边界（与设计文档同步）：DSL 规则的 ``:actions``
-（spawn/stop/emit/forward）求值只进 structlog 日志，不落 session
-journal——spawn 意图只能从工具调用（member-spawn）
-观测，emit/forward 从 sent.jsonl 观测；DSL fuel 耗尽同理不落
-journal，journal 上可观测的预算耗尽信号是引擎迭代硬顶
-（``session/end`` reason ``max_iterations``）。
+Flags are evidence, not verdicts. Fuel exhaustion is recognized from the
+committed evaluator failure in a new program's session/end error; historical
+max_iterations remains a read-only archive marker. Pointers identify archived
+files and event sequence numbers. Missing or damaged input is reported without
+inventing successful completion or tool results.
 """
 
 import json
@@ -71,6 +48,8 @@ _SPAWN_TOOL_NAME = "member-spawn"
 
 #: Historical journal marker retained for read-only arena reports.
 _FUEL_EXHAUSTION_END_REASON = "max_iterations"
+# tlosure.eval.Evaluator._eval emits this exact failure prefix.
+_FUEL_EXHAUSTION_ERROR_PREFIX = "fuel exhausted (budget "
 
 #: Completed module entries and historical terminal reasons accepted by reports.
 _NORMAL_END_REASONS = frozenset({"complete", "completed", "until"})
@@ -218,6 +197,7 @@ def _summarize_session(
     token_usage: int | None = None
     end_reason: str | None = None
     end_seq: int | None = None
+    end_error = ""
     replies: list[str] = []
     thinking: list[str] = []
     # name -> {calls, succeeded, failed}：dispatch 计数 + result 成败
@@ -294,13 +274,16 @@ def _summarize_session(
         elif event_type == "session/end":
             end_reason = str(event.get("reason") or "unknown")
             end_seq = seq
+            end_error = str(event.get("error") or "")
 
-    fuel_exhausted = end_reason == _FUEL_EXHAUSTION_END_REASON
+    fuel_exhausted = end_reason == _FUEL_EXHAUSTION_END_REASON or (
+        end_reason == "failed" and end_error.startswith(_FUEL_EXHAUSTION_ERROR_PREFIX)
+    )
     if fuel_exhausted:
         flags.append(
             RedFlag(
                 FLAG_FUEL_EXHAUSTION,
-                f"引擎迭代硬顶耗尽（session/end reason={end_reason}）",
+                f"求值燃料或历史迭代上限耗尽（reason={end_reason}）：{_clip(end_error, 200)}",
                 f"sessions/{filename or (session_id + '.jsonl')}#seq-{end_seq}",
             )
         )
@@ -632,7 +615,9 @@ def generate_report(archive_dir: Path) -> ArenaReport:
     sessions: list[dict[str, Any]] = []
     red_flags: list[RedFlag] = []
     for session_file in session_files:
-        session_summary, flags = _summarize_session(session_file.events, filename=session_file.filename)
+        session_summary, flags = _summarize_session(
+            session_file.events, filename=session_file.filename
+        )
         red_flags.extend(flags)
         sessions.append(
             {

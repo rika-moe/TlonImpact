@@ -156,7 +156,6 @@ class TestWritePrototypeNearKin:
         result = await tool.execute_context({**_RESKIN_BUNDLE, "display_name": "定址转发"})
         assert not result.success
         assert created_1.name in result.error
-        assert created_1.name in result.error
         assert not p.prototypes_staging_dir().exists()
 
     async def test_own_parent_exempted(self, tmp_path: Path) -> None:

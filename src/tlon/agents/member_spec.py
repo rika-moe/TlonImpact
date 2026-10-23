@@ -139,14 +139,14 @@ def _normalize_data(value: Any) -> Any:
 
 
 def _normalize_key(key: Any) -> str:
-    """Map an EDN key (``:max-iterations``) to a snake_case field name."""
+    """Map an EDN key (``:source-hash``) to a snake_case field name."""
     if isinstance(key, (Keyword, str)):
         return str(key).replace("-", "_")
     raise MemberSpecValidationError(f"spec keys must be keywords, got {_type_name(key)}: {key!r}")
 
 
 def _on_from(value: Any, rule_name: str) -> EventType | None:
-    """Map an ``:on`` keyword to an EventType; ``:boot``/nil becomes None."""
+    """Map a handler event key to EventType; ``:boot`` has no bus event."""
     if value is None or (isinstance(value, str) and str(value) == "boot"):
         return None
     if not isinstance(value, str):

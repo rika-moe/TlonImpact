@@ -1,6 +1,6 @@
 # 原型与 spawn 体系设计
 
-> 后续方案（尚未实施）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
+> 当前实现采用 [普通模块工作程序](programmable-workflows.md)：只接收完整 v2 behavior/modules 包；stage 引擎与 v1 运行路径已删除。
 
 > 本文定义原型目录、实例化、提案审批、spawn 预算和谱系。成员模型、信任阶梯与默认生命周期政策见 [unified-member-model.md](unified-member-model.md)。当前 stop 为永久退休，idle drain 为可唤醒休眠；二者均不隐式删除历史。历史来源：[ADR 0006](../decisions/0006-unified-member-model.md)、[ADR 0030](../decisions/0030-sqlite-post-office.md)。
 
@@ -8,46 +8,47 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 ## 原型是什么
 
-原型是一个**纯数据目录**，不含任何代码。判定标准只有一条：目录里有 `behavior.tlon`（[agents/prototypes/info.py](../../src/tlon/agents/prototypes/info.py) 的 `_is_prototype_dir`）。目录内容：
+原型是一个**源码包目录**，包含受限 DSL 模块与元数据。判定标准只有一条：目录里有 `behavior.tlon`（[agents/prototypes/info.py](../../src/tlon/agents/prototypes/info.py) 的 `_is_prototype_dir`）。目录内容：
 
 - `prototype.tlon`——元数据 map：`:name`、`:display-name`、`:description`、`:trusted`、`:author`，以及谱系字段 `:parent`（父原型名，根缺省）、`:generation`（int，根=1，子=父+1，服务端推导）、`:proposal-note`（本代变更说明，自由文本，可缺省）。缺省时以目录名兜底（`_read_metadata`）；无谱系字段的旧文件读取时按根处理（parent=None、generation=1），不做落盘迁移。
-- `behavior.tlon`——一份**完整**的 MemberSpec（统一 rules 形态 `{:version 1 :rules [...]}`）。文件即全部行为，没有第二个来源。
+- `behavior.tlon`——v2 入口声明 `{:version 2 :handlers {...} :fuel ...}`。
+- `modules/`——完整 `.tlon` 模块源码，工作流程由普通函数实现。behavior 与 modules 的精确内容共同形成 `program-digest`；已发布程序包不可原地修改，变更需创建带 parent 的新原型。
 - `LESSONS.md`——**可选**：随包传递的教训文本——退休成员记忆的蒸馏产物（见 [memory.md](./memory.md)「退休蒸馏」），经 `prototype-write` / `write_trusted_prototype` / `update_prototype` 的 `lessons` 参数（或 admin REST 的 `lessons` 字段）写入；详情端点（`get_prototype_detail`）把文本带回，评审提案时可见。
 - `REVIEW.md`——**可选**：staging 提案的同行评审记录，`prototype-review` 工具每次评审追加一条（时间、评审者 id、评审者模型、verdict、理由）；元数据读取不碰它（listing 零成本），approve 的整目录 `shutil.move` 把它免费带进 trusted 库；详情端点以 `reviews` 字段带回文本。
 
-统一成员模型（ADR 0006）：原型**不带人格文件**——原型是行为的基因型，成员的人格文件可在创建时播种，之后 IDENTITY.md / SOUL.md 可由成员自主修改，RULES.md 由人类维护，见 [identity.md](identity.md)；这些文件不是基因型的一部分。这也让进化的单位保持纯粹：能安全进化的只有受限 DSL（behavior.tlon），自由文本人格不进基因库。
+统一成员模型（ADR 0006）：原型**不带人格文件**——原型是行为的基因型，成员的人格文件可在创建时播种，之后 IDENTITY.md / SOUL.md 可由成员自主修改，RULES.md 由人类维护，见 [identity.md](identity.md)；这些文件不是基因型的一部分。这也让进化的单位保持纯粹：进化单位是受限 DSL 入口与完整模块包，自由文本人格不进基因库。
 
 两个「不声明」值得注意：
 
-- **不声明运行时类型**。原型是行为程序模板，元数据不含 `:runtime`；条件、传统循环、模型会话都通过统一 actions 组合，不能按某个动作的有无给成员分类。
-- **不提供任意行为 overrides**。规则、循环和上下文来自完整 spec，模板只能填声明过的常量槽位。`:execution` 声明实例化时投影为 `docker.level`；运行时权限还受装置配置、挂载和工具注册约束，不能把 spec 称为所有权限的唯一来源。
+- **不声明运行时类型**。原型是行为程序模板，元数据不含 `:runtime`；条件、循环、模型会话都通过普通函数组合，不能按某个动作的有无给成员分类。
+- **不提供任意行为 overrides**。入口、函数和上下文组合来自完整模块包，模板只能填声明过的常量槽位。`:execution` 声明实例化时投影为 `docker.level`；运行时权限还受装置配置、挂载和工具注册约束，不能把 spec 称为所有权限的唯一来源。
 
-元数据里 `trusted` 的默认值是 true：读不到 `:trusted` 键的目录视为可信。这不是疏忽而是信任模型的编码——能往 `~/.tlon/prototypes/` 写文件的是人类（或包内播种），手写即可信；只有 staging 区的写入路径会显式写 `:trusted false`。可信是默认，不可信必须显式声明，方向不能反——反过来的话，一次元数据读取失败就会把可信原型降级成不可用。
+原型列表对缺失元数据提供展示缺省值，但实例化必须读取有效的 `prototype.tlon`，确认 `trusted=true` 且 `program-digest` 与 behavior/modules 的精确内容一致。staging 写入显式标为不可信；人类批准后才允许从该包派生成员。
 
 [src/tlon/prototypes/](../../src/tlon/prototypes) 随包携带 8 个行为原型（[ADR 0035](../decisions/0035-generated-ids-and-behavior-prototypes.md)、[ADR 0038](../decisions/0038-distinct-behavior-prototypes.md)）。目录及元数据 `name` 使用一次生成并固定的 `p-<uuid4 hex>`，播种不会重新编号。显示名与描述说明实际行为，不赋予职业：
 
 | 行为显示名 | 执行层 | 实际差异 |
 |---|---|---|
-| 计划后执行 | L2 | 首轮生成最多 5 步计划；30 次迭代、1000000 token；交付前自评 |
-| 标准工具迭代 | L2 | 标准 ReAct、10 次迭代、1000000 token |
-| 标准文件迭代 | L1 | 标准 ReAct；合并原 pm/product 的相同行为 |
-| 标准无执行迭代 | L0 | 标准 ReAct，无执行装置 |
-| 短回合交流 | L0 | 3 次迭代、32000 token；人格、协议、当前任务、最近 5 封邮件和最近会话摘要；无额外自评 |
+| 计划后执行 | L2 | 首轮生成最多 5 步计划；10 轮工具迭代，每次输出上限 512 token；交付前自评 |
+| 标准工具迭代 | L2 | 普通工具循环，最多 10 轮 |
+| 标准文件迭代 | L1 | 同一普通工具循环，具备文件操作 |
+| 标准无执行迭代 | L0 | 同一普通工具循环，L0 无执行装置 |
+| 短回合交流 | L0 | 最多 3 轮，最近 5 封邮件与上下文材料；无额外交付自评 |
 | 定址转发 | L0 | 按程序直接转发，`to` 参数指定转发目标 |
-| 证据核验 | L2 | 交付前专项核验来源、计算或工具结果；明确 PASS 才放行完成动作 |
+| 证据核验 | L2 | 交付前专项核验来源、计算或工具结果；通过普通函数先修订交付文本再投递 |
 | 条件路由 | L0 | 按条件直接转发；投递给自己，且指定发件人和正文正则同时匹配才转发 |
 
-这里的预算是会话累计 stage token，不是单次上下文窗口长度，也不包含压缩调用；预算耗尽通知为确定性报告，不调用模型（ADR 0040）。计划后执行在首次迭代尝试规划，规划失败沿用 stage 的软失败语义；不自动重规划。证据核验通过通用 critique `:instructions` 指定标准，属于模型对现有材料的核验，不等于独立查证或自动运行测试；没有来源时应明确未核实，不能伪称验证成功。其邮件派发仅在本轮明确通过时执行，未知结果与异常均不作为通过。
+轮数是程序上界，实际还受共享 fuel 与模型额度约束。达到工具轮数上限会明确失败并保留原邮件与执行记录，不伪报成功或自动标读。入口的总模型额度来自成员 `llm.max_tokens`，覆盖规划、模型工具轮次、交付修订和上下文压缩；每次请求另受程序指定的输出上限约束。计划后执行先调用模型生成最多五步计划，再进入工具循环。证据核验在投递前调用普通修订函数；这属于模型依据已有材料自评，不等于独立事实验证。效果是否发生以已提交回执为准，不能把模型草稿当作执行证据。
 
 条件路由的创建参数为 `sender`（精确发件地址）、`pattern`（正文正则）与 `to`（转发地址列表），仅在事件的 recipient 为自己时处理，不匹配则不执行转发；其他收件人的投递事件不会触发转发。路由本身不调用 LLM。它仍受普通邮件通信机制约束，不提供路由网络的全局去环保证。
 
-当前 prototype 是成员相对稳定的行动习惯：实例化后按自己的 spec 运行。按任务动态编排上下文与阶段、从结果自动更新习惯属于远期方向，见 [ADR 0037](../decisions/0037-adaptive-working-methods.md) 与 [Issue #173](https://github.com/rika-moe/TlonImpact/issues/173)，尚未实施。
+当前 prototype 是成员相对稳定的行动习惯：实例化后按自己的 spec 运行。程序已可按任务组合上下文与函数；自动更新长期习惯属于远期方向，见 [ADR 0037](../decisions/0037-adaptive-working-methods.md) 与 [Issue #173](https://github.com/rika-moe/TlonImpact/issues/173)，尚未实施。
 
 原型只回答「怎样行动」。系统不从原型名或显示名推导成员职业、组织、能力认证或人格。创建原型必须提供非空行为显示名；技术 ID 由写入函数生成，调用方不得指定。成员显示名和人格种子仍可自主表达社会身份。
 
-`:execution` 层是执行装置能力声明（宪法一，[execution-device.md](./execution-device.md)「能力阶梯」——内置原型的定层表与「最低够用」原则记录在那里）：实例化时一次性投影进 agent.yaml 的 `docker.level`。「标准 ReAct 模板」指同一套 stage 程序（think + 交卷前 critique + act + revise）与 `:max-iterations 10 :max-tokens 1000000`（ADR 0023）。
+`:execution` 是执行装置声明（见 [execution-device.md](./execution-device.md)），实例化时投影为 `agent.yaml` 的 `docker.level`。内置程序通过 `tlon.agent/respond` 组合上下文、模型请求、工具调用和交付修订，方法与轮次参数在模块源码中可见；没有 Python stage 名称表。
 
-所有原型的差异全部写在 spec 数据里：迭代上限、token 预算、stage 程序、上下文段、反思频率、规则形态。没有一行 Python 区分它们——这正是「行为即数据」的演示：行为差异 = 数据差异，新成员形态就是新的一份 spec。原型不带人格（ADR 0006）：成员的人格（IDENTITY/SOUL/RULES.md）在创建成员时经 WebUI / admin API 播种写入，之后 IDENTITY/SOUL 是成员自主数据（成员可经 `persona-update` 自改，ADR 0024），RULES 仍由人类编辑——都不是基因型。
+原型不带人格。IDENTITY.md / SOUL.md / RULES.md 在创建成员时播种；前两者可由成员自主修改，RULES 由人类维护。人格、模型部署与执行权限各自保留权威边界。
 
 ## 生命周期：播种 → 列出 → 实例化
 
@@ -57,14 +58,14 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 ### 为什么原型是目录而不是单文件
 
-原型需要打包异质内容：EDN 元数据、EDN 行为 spec、可选的 Markdown 教训文本（`LESSONS.md`）。单文件方案要么发明新的打包格式，要么把元数据塞进行为文本。目录是零发明的答案：每种内容保持自己的格式与工具链，`behavior.tlon` 的存在与否天然成为判定谓词，「加一个原型」就是「拷一个目录」——approve 的整目录 `shutil.move` 也因此免费带走一切随包文件。
+原型需要打包异质内容：EDN 元数据、EDN 入口声明、DSL 模块源码、可选的 Markdown 教训文本（`LESSONS.md`）。单文件方案要么发明新的打包格式，要么把元数据塞进行为文本。目录是零发明的答案：每种内容保持自己的格式与工具链，`behavior.tlon` 的存在与否天然成为判定谓词，「加一个原型」就是「拷一个目录」——approve 的整目录 `shutil.move` 也因此免费带走一切随包文件。
 
 ### 列出与实例化
 
 `prototype-list` 工具（[evolution/list_prototypes.py](../../src/tlon/evolution/list_prototypes.py) 的 `PrototypeCatalog`）把库的元数据暴露给 agent（名称、显示名、描述、trusted 标志）。`instantiate` 做真正的派生，语义是**拷贝，不是引用**：
 
 1. 读原型的 `behavior.tlon`；声明了 `:parameters` 则先用调用方给的 `params` 渲染（见下节），未声明则必须为空 params——参数门是双向的：该给的没给拒绝，不该给的给了也拒绝（`render_template` 对未知参数直接报错）。模板契约是精确的，没有「多给了就忽略」的宽松。
-2. 行为文件逐字写入新 agent 的 `~/.tlon/{agent_id}/config/`——行为在创建时刻**冻结**，此后改原型不影响已派生的 agent。原型携带 `LESSONS.md` 时同样逐字拷贝到同一目录（与 behavior.tlon 为邻），新成员的 spec 用 `(lessons)` context section 显式声明才会把它注入对话；原型没有该文件则成员侧也不产生。
+2. 完整行为与渲染后的模块源码写入新 agent 的 `~/.tlon/{agent_id}/config/`——行为在创建时刻**冻结**，此后改原型不影响已派生的 agent。原型携带 `LESSONS.md` 时同样逐字拷贝到同一目录（与 behavior.tlon 为邻），普通程序可通过 `member-context` 读取这些教训后自行构造对话；原型没有该文件则成员侧也不产生。
 3. `agent.yaml` 走 `yaml_save` 标准路径写出，`prototype` 字段记录来源。`llm.model_name` 来自 `instantiate` 的必填 `model` 参数（ADR 0016——模型选择是部署策略，不是基因型；spec 语法已删除顶层 `:llm` 键，残留即加载报错）；没有进程级兜底，未声明模型的成员装配期硬报错。
 4. 无需重启生效：调用方（ops 管理 API 或注册表 spawn）热收养（`POST /admin/config/agents/{id}/reload` → `AgentRegistry.adopt_agent`）。
 
@@ -74,9 +75,9 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 ## 模板：写侧专属的参数化
 
-`behavior.tlon` 可以在顶层声明 `:parameters` map（如 relay 的 `{:to {:type :string-list :required true}}`），并在规则表单里用 `${to}` 引用。这层机制在 [agents/behavior_template.py](../../src/tlon/agents/behavior_template.py)，核心性质是**写侧专属**：
+`behavior.tlon` 可以在顶层声明 `:parameters` map（如 relay 的 `{:to {:type :string-list :required true}}`），并在模块源码中用 `${to}` 引用。这层机制在 [agents/behavior_template.py](../../src/tlon/agents/behavior_template.py)，核心性质是**写侧专属**：
 
-- 运行时加载器看到 `:parameters` 只按未知键告警，从不解释 `${var}`——实例化在落盘前就把占位符渲染掉了，运行时永远见不到模板语法。
+- 实例化在落盘前渲染占位符并删除 `:parameters` 声明。运行时只接收具体 v2 包，遇到残留模板声明直接拒绝。
 - `analyze` 解析声明并做结构校验：把 `${var}` 替换为类型对应的 stand-in（`""` 或 `[""]`）后试解析 EDN，得到 `standin_text`。这保证模板在**不执行任何东西**的前提下可被结构验证——校验器看到的是一份具体得足以过 schema 的文本。
 - `render_template` 做真正的替换：必填缺失、未知参数、类型错误全部拒绝；值经 EDN `dumps` 序列化后替换进文本，产出合法 EDN。
 - 声明与引用必须闭合：每个 `${var}` 都要在 `:parameters` 里声明，每个声明都要被引用。
@@ -84,25 +85,25 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 「写侧专属」是安全设计：模板语法只存在于 authoring 时刻，不进入 DSL 的运行时语义。DSL 保持受限、可停机，参数化没有给它增加任何表达能力——只是让同一份行为可以带着不同常量被拷贝多次。
 
-以 relay 为完整例：它的 `behavior.tlon` 声明 `:parameters {:to {:type :string-list :required true}}`，规则体里是 `(mail-forward {:mail_id (mail-field msg :id) :to ${to}})`。spawn 时传 `params={"to": ["a@tlon.internal", "b@tlon.internal"]}`，渲染后落盘的实例文件里是 `(mail-forward {:mail_id (mail-field msg :id) :to ["a@tlon.internal" "b@tlon.internal"]})`——占位符消失，值已是序列化好的 EDN 字面量。同一个转发原型由此可以派生出转发目标各异的任意多个 relay 实例，而原型本身保持一份。
+以 relay 为完整例：它的 `behavior.tlon` 声明 `:parameters {:to {:type :string-list :required true}}`，模块函数内是 `(mail-forward {:mail_id (mail-field (get event :mail) :id) :to ${to}})`。spawn 时传 `params={"to": ["a@tlon.internal", "b@tlon.internal"]}`，渲染后落盘的实例文件里是 `(mail-forward {:mail_id (mail-field (get event :mail) :id) :to ["a@tlon.internal" "b@tlon.internal"]})`——占位符消失，值已是序列化好的 EDN 字面量。同一个转发原型由此可以派生出转发目标各异的任意多个 relay 实例，而原型本身保持一份。
 
 ## spawn：从原型派生新成员
 
-agent 侧入口是 `LifecycleService`（[lifecycle/service.py](../../src/tlon/lifecycle/service.py)，工具名 `member-spawn`）：指定原型名、显示名、可选模板参数，从原型派生一个新 agent 并立即启动。session 归属经 structlog contextvars 绑定——agent 的 session span 把 `session_id` 注入上下文变量，工具执行时取出作为配额桶；脱离 session 的直接调用（如测试）落入 spawner 的单一桶。这意味着配额记账不需要工具签名里多一个参数，session 是隐式上下文，LLM 看不见也伪造不了。
+agent 侧入口是 `LifecycleService`（[lifecycle/service.py](../../src/tlon/lifecycle/service.py)，工具名 `member-spawn`）：指定原型名、显示名、可选模板参数，从原型派生一个新 agent 并立即启动。配额归属取自宿主 `CallContext.run_id`，普通程序与工具分派共享冻结执行根；日志 contextvars 不决定配额桶，模型不能自行指定执行根。
 
 真正的管线在 `AgentRegistry.spawn_member`（[agents/agent_registry.py](../../src/tlon/agents/agent_registry.py)），顺序是刻意安排的：**信任门先于一切预算检查**——`untrusted_prototype` 的拒绝在计数之前，staging 里的原型连预算都消耗不到。随后：
 
 1. **预算检查**（见下节）。
 2. **生成 id**——`m-<uuid4 hex>`，由注册表生成、调用方无法指定，字符集收敛在 AgentConfig 允许的范围内（原型名先做字符清洗）。`c-` 前缀一眼可辨，uuid 后缀防碰撞，没有任何语义可供依赖。
 3. **`instantiate`**——拷贝落盘（行为冻结）。
-4. **血缘审计**——`spawned_by` 记录 spawner、`spawn_depth` 继承递增（成员侧血缘；原型侧谱系见「谱系」一节）。不设任何角色标记：lazy/常驻由原型 spec 的 `:on :boot` 规则派生。
+4. **血缘审计**——`spawned_by` 记录 spawner、`spawn_depth` 继承递增（成员侧血缘；原型侧谱系见「谱系」一节）。不设任何角色标记：lazy/常驻由入口声明中的 `:boot` handler派生。
 5. **注册并启动**，发布 `AGENT_SPAWNED`。
 
 孤儿策略是**reparent 而非 kill**：新成员独立于 spawner 注册，spawner 睡眠或停止不影响它，回收只由它自己的空闲策略决定（sleep，不删）。理由：成员可能在为多个委托方工作（邮件寻址是开放的，任何人都能 @ 它），spawner 只是它的出生证明，不是它的所有者；所有权归注册表，生命周期归空闲事实——这与全系统「idle 是事实、drain 是策略」的分工一致。
 
 ### spawn 预算：落盘账本
 
-三道防失控闸门（注册表构造参数，硬编码默认值）：全局同时运行上限 `max_activations = 8`、spawn 链深度 `max_spawn_depth = 3`、每 (spawner, session) 配额 `session_spawn_quota = 2`。三者只有 (spawner, session) 配额是账本，落盘 `~/.tlon/shared/spawn-quota.json`（原子替换写入，损坏时告警并从头开始，绝不阻碍启动），跨重启存活——session 本身经 journal 重放跨重启存活（ADR 0007），纯内存账本会让 spawner 靠重启刷满配额，防失控闸失效。三个维度分别防三种失控：总量防资源耗尽，深度防无限递归 spawn，会话配额防单个任务循环里刷成员。`max_activations` 从当前运行表计数，重启后重新形成；`max_spawn_depth` 从成员持久化的 `spawn_depth` 递增派生，两者不另建账本。
+三道防失控闸门（注册表构造参数，硬编码默认值）：全局同时运行上限 `max_activations = 8`、spawn 链深度 `max_spawn_depth = 3`、每 (spawner, session) 配额 `session_spawn_quota = 2`。三者只有 (spawner, session) 配额是账本，落盘 `~/.tlon/shared/spawn-quota.json`（原子替换写入，损坏时告警并从头开始，绝不阻碍启动），跨重启存活——执行根及回执通过 ProgramStore 跨重启存活，纯内存账本会让 spawner 靠重启刷满配额，防失控闸失效。三个维度分别防三种失控：总量防资源耗尽，深度防无限递归 spawn，会话配额防单个任务循环里刷成员。`max_activations` 从当前运行表计数，重启后重新形成；`max_spawn_depth` 从成员持久化的 `spawn_depth` 递增派生，两者不另建账本。
 
 每次 spawn 在基础配额上应用两个独立维度：
 
@@ -140,7 +141,7 @@ agent 侧入口是 `LifecycleService`（[lifecycle/service.py](../../src/tlon/li
 
 人类手写有直达入口（WebUI 的 PROTOTYPES 视图，`POST /admin/prototypes`（behavior + 必填 display_name）→ `write_trusted_prototype`）：直接写进正式库、`:trusted true`、无 `:author`——handwritten implies trusted，与元数据读取的默认方向一致；写前跑的是与 staging 完全相同的校验链（`_validate_behavior`），失败不落盘。编辑（`update_prototype`，`PATCH /admin/prototypes/{name}` 及 staging 变体）可改 `display-name`/`description`、`lessons`（重写 `LESSONS.md`，不传则保留）和/或重写 `behavior.tlon`：behavior 变更先跑校验链、失败则磁盘原样，元数据改写保留既有 `:trusted`/`:author`（于是 staging 原型可以在审批前被人类修正，晋级语义不变）。删除分两侧：正式库走 `delete_prototype`（`DELETE /admin/prototypes/{name}`，与 `reject_prototype` 同款路径穿越防护），staging 的删除即 reject。
 
-`prototype-write` 的机器创作入口只接受完整 v2 behavior/modules，不写人格文件；普通 `tlon.authoring/draft` 根据传入任务/经验，用现有文件工具读取文档与标准源码，以 program-check 校验并修订候选；不再有专用一次性起草操作。发布复用完整包验证与 digest。人工旧 v1 原型仍按其原规约加载，旧机器 rules 起草路径已删除。
+`prototype-write` 的机器创作入口只接受完整 v2 behavior/modules，不写人格文件；普通 `tlon.authoring/draft` 根据传入任务/经验，用现有文件工具读取文档与标准源码，以 program-check 校验并修订候选；不再有专用一次性起草操作。发布复用完整包验证与 digest。人工和机器提案采用同一完整包验证；v1 原型与旧 rules 起草、执行路径均已删除。
 
 提案资格还有第二道闸——血脉偿付门槛（agent 侧）：`prototype-write` 在执行开头检查作者血脉的偿付能力（`agents/policy.py` 的 `solvent?` 政策 hook，ADR 0022——默认公式与阈值见 [society-policy.md](society-policy.md)，可由人类在 `~/.tlon/policy.tlon` 调整），失去偿付能力的血脉提案被直接拒绝（staging 无残留），指引是「先用手上成员做出被 endorse 的产出再提案」。这道闸不进 `write_staging_prototype` 域函数：admin REST 的人类直写不受闸——信任闸按影响半径分级，人类不受影响半径约束。闸本身 fail-open：偿付派生任何异常都放行。
 
@@ -177,7 +178,7 @@ agent 侧入口是 `LifecycleService`（[lifecycle/service.py](../../src/tlon/li
 
 与愿景的差距主要有两处：
 
-- **实例化是纯拷贝，无变异算子**——「新成员从社会内部生长」目前只有复制一种算子：完整源码拷贝（旧 v1 另可填模板槽位）。实例化不会自行变异、重组或交叉，派生成员的行为来自已有原型和模板参数。成员已经可以用普通 `tlon.authoring/draft` 起草变更后的完整 v2 模块包 并进入 staging；尚未实现的是实例化时的自动变异、重组和交叉。
+- **实例化是纯拷贝，无变异算子**——「新成员从社会内部生长」目前只有复制一种算子：完整源码拷贝（可填入声明过的模板参数）。实例化不会自行变异、重组或交叉，派生成员的行为来自已有原型和模板参数。成员已经可以用普通 `tlon.authoring/draft` 起草变更后的完整 v2 模块包 并进入 staging；尚未实现的是实例化时的自动变异、重组和交叉。
 - **staging 审批是人工瓶颈**——Gatekeeper 模型里人类是每个 LLM 创作的原型的必经之路，这与愿景里「人类从审批者退为规则的守护者」相悖。审批社会化的第一步已落地：成员可用 `prototype-review` 对 staging 提案做异质同行评审，评审记录（含评审者模型血统）落盘 `REVIEW.md` 并随详情端点呈现给审批者——人类不再是唯一读提案的人。但**自动晋级仍不做**：评审是咨询性的，approve 依旧是人类决定；下一步才是「评议通过的原型按规则自动晋级」，人类退到「定评议规则」的位置。
 
 ## 技术标识与存量

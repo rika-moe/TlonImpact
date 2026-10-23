@@ -16,7 +16,7 @@
 uv tool install tlon-impact
 ```
 
-升级：`uv tool upgrade tlon-impact`。
+升级：`uv tool upgrade tlon-impact`。P5 的旧 v1 原型处置与内置包更新见 [P5 升级说明](../releases/p5.md)；播种不会覆盖已有目录。
 
 ## 2. 配置环境变量
 

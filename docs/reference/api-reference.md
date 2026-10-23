@@ -283,7 +283,7 @@ Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相
 | `sleep` | JSON `{"wake_at": "2030-01-01T12:00:00+08:00"}` | 未来且带时区，归一 UTC；当前工作排空后睡眠，也可调整已有期限 |
 | `terminate` | 无请求参数 | 排空当前工作后永久死亡，拒收新邮件并保留历史；不可撤销 |
 
-200 表示请求已完成；202 表示已接受，仍在等待当前工作结束，此时成员仍可显示 active。响应包含 `status: success|pending`、`agent_id`、`stop_pending` 和权威 `agent` 快照；wake/wait/sleep 另带 `scheduling_pending`。SSE `agent.state_changed` 推送相同状态。不存在强制设置 active 的接口。202 中的管理等待/睡眠请求若遇服务重启会清除，应重新发起；已正式入睡后的期限跨重启保留，未结束会话按 journal 恢复。
+200 表示请求已完成；202 表示已接受，仍在等待当前工作结束，此时成员仍可显示 active。响应包含 `status: success|pending`、`agent_id`、`stop_pending` 和权威 `agent` 快照；wake/wait/sleep 另带 `scheduling_pending`。SSE `agent.state_changed` 推送相同状态。不存在强制设置 active 的接口。202 中的管理等待/睡眠请求若遇服务重启会清除，应重新发起；已正式入睡后的期限跨重启保留，未结束模块程序按 ProgramStore 的冻结记录恢复。
 
 无效睡眠时间、非对象 JSON、额外字段或格式错误返回 400；未知成员 404；死亡、永久退出中或冲突的转换请求返回 409。普通来信不提前唤醒。唤醒或修改期限会撤销旧计时器；死亡不会因旧回调、管理员唤醒或服务重启复活。
 
@@ -490,14 +490,12 @@ Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相
 | `agent.retired` | `RetirementCeremony`（source `retirement_ceremony`） | `agent_id`、`name`、`stopped_by`、`open_tasks`（标题数组）、`open_threads`（thread_id/subject/from 对象数组）、`memory_digest` |
 | `agent.waking` / `agent.woken` / `agent.wake_failed` / `agent.sleeping` | `AgentRegistry` | `agent_id` 等（woken 带 `wake_duration_seconds`） |
 | `agent.start_request` / `agent.stop_request` / `agent.idle` | Adam / `AgentRegistry` | `agent_id`、`reason` / `agent_id`、`idle_seconds` |
+| `agent.state_changed` | `AgentRegistry.publish_scheduling_state` | `get_agent_status` 返回的权威成员快照（含 id/state/wake_at 等） |
 | `agent.spawned` | `AgentRegistry` | `agent_id`、`name`、`prototype`、`spawner_id`、`spawn_depth`、`started` |
-| `agent.thinking_start` / `agent.thinking_end` / `agent.llm_request` | 成员运行时（`agents/stages/services.py`） | 各发布点自定义 dict |
-| `agent.llm_response` | 成员运行时（`agents/stages/services.py`） | `agent_id`、`model`、`duration_ms`、`finish_reason`、`has_tool_calls`、`tool_call_count`、`prompt_tokens`、`completion_tokens`、`cached_tokens`、`cache_write_tokens`（token 字段在 usage 缺失时为 0） |
-| `tool.execute_start` / `tool.execute_end` / `tool.error` | 工具执行层（`agents/loop_driver.py`、`agents/stages/act.py`） | 各发布点自定义 dict |
 | `system.startup` / `system.shutdown` | `ServerApp`（source `server`） | 如 `{"agents": n}` |
 | `config.updated` | 配置层（`ConfigManager.reload_agent`） | `{"agent_id", "action"}` |
 
-以下 9 个事件类型已在枚举中定义，但全代码库**当前无发布点**——订阅它们不会收到任何事件：`agent.join`、`agent.leave`、`agent.thinking`、`agent.response`、`agent.state_changed`、`agent.error`、`tool.execute`、`tool.result`、`system.error`。
+以下事件名仍保留在 `EventType`，当前生产代码没有发布点：`agent.join`、`agent.leave`、`agent.thinking`、`agent.response`、`agent.error`、`tool.execute`、`tool.result`、`system.error`，以及已退役 stage 引擎曾发布的 `agent.thinking_start`、`agent.thinking_end`、`agent.llm_request`、`agent.llm_response`、`tool.execute_start`、`tool.execute_end`、`tool.error`。订阅它们不会收到新事件。模型与工具的持久执行证据读取 ProgramStore/交互历史；保留事件枚举不表示存在同名观测发布能力。
 
 ### mode 与 filters
 

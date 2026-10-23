@@ -1,6 +1,6 @@
 # Operation 统一与旧机制审计
 
-> Capability 及复合 Operation 已由 [ADR 0045](../decisions/0045-remove-capabilities.md) 删除。本文保留历史实施记录，不再描述现行能力；宿主 Operation、Tool 与 Behavior 继续保留。
+> 历史审计档案：下文的“当前”均指 main `f5a8faf`（#194），不代表现行运行时。Capability/复合 Operation 已由 ADR 0045 删除；P5 进一步删除 v1 rules、条件作用域、Operation.control 与 stage 引擎。现行接口见 [DSL reference](../reference/dsl-reference.md)、[Operation reference](../reference/operations-reference.md) 和 [普通工作程序](programmable-workflows.md)。本页保留当时证据及决策背景。
 
 状态：P8a 的独立审计，基线为 main `f5a8faf`（#194）。P1–P6 已合并；P7 暂停，原 P8 未整体完成。本文件记录源码证据与已知边界，不把符号搜索当成功能验证。本次完整质量门及真实邮件冒烟结果在实施计划和 PR 记录。
 

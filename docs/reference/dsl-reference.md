@@ -145,7 +145,7 @@
 <!-- END GENERATED: dsl-builtins-policy -->
 
 <!-- BEGIN GENERATED: bridge-query-ports -->
-`make_member_builtins` 在调用方注入 `host` 时追加 4 个宿主查询（`pure=False`，只可在 actions 调用，读取注册表或投递目录；无宿主即不注册这些词；说明取自 `ScriptHostQueries` 协议方法的 docstring）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`make_member_builtins` 在调用方注入 `host` 时追加 4 个宿主查询（`pure=False`，在普通程序中调用，读取注册表或投递目录，调用结果受宿主持久回放；无宿主即不注册这些词；说明取自 `ScriptHostQueries` 协议方法的 docstring）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | DSL 词 | 宿主方法 | 说明 |
 |---|---|---|

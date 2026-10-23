@@ -13,10 +13,18 @@ from tlosure.modules import ModulePackage
 
 
 def execute(
-    responses: list[dict[str, Any]], *, succeeds: bool = True, method: str = "reviewed"
+    responses: list[dict[str, Any]],
+    *,
+    succeeds: bool = True,
+    method: str = "reviewed",
+    max_rounds: int = 3,
+    trace: dict[str, Any] | None = None,
 ) -> tuple[list, list]:
     requests: list[dict[str, Any]] = []
     deliveries: list[dict[str, Any]] = []
+    marked: list[dict[str, Any]] = []
+    if trace is not None:
+        trace.update(requests=requests, deliveries=deliveries, marked=marked, tool_calls=[])
 
     def model(env: dict[str, Any], options: dict[str, Any]) -> dict[str, Any]:
         requests.append(options)
@@ -25,6 +33,8 @@ def execute(
     def tools(env: dict[str, Any], options: dict[str, Any]) -> list[dict[str, Any]]:
         results = []
         for call in options["tool_calls"]:
+            if trace is not None:
+                trace["tool_calls"].append(call)
             if succeeds and call["name"] == "mail-send":
                 deliveries.append(call["arguments"])
             results.append(
@@ -56,7 +66,7 @@ def execute(
             "model-context": Builtin(lambda env, options: {"fits": True}, pure=False),
             "tool-execute": Builtin(tools, pure=False),
             "mail-send": Builtin(send, pure=False),
-            "mail-mark-read": Builtin(lambda env, options: {}, pure=False),
+            "mail-mark-read": Builtin(lambda env, options: marked.append(options), pure=False),
             "member-context": Builtin(
                 lambda env, options: {
                     "knowledge": "known fact",
@@ -76,7 +86,7 @@ def execute(
             "test.tlon": """
       (ns test (:require [tlon.agent :as agent]) (:export handle))
       (defn handle [event]
-        (agent/respond event {:method (get event :method) :max_tokens 512 :max_rounds 3}))
+        (agent/respond event {:method (get event :method) :max_tokens 512 :max_rounds (get event :max_rounds)}))
     """
         }
     )
@@ -85,6 +95,7 @@ def execute(
         "mail": {"id": "mail", "content": "hello", "to": ["member@tlon.internal"]},
         "sender": "sender@tlon.internal",
         "method": method,
+        "max_rounds": max_rounds,
         "self": {"address": "member@tlon.internal"},
     }
     eval_form(
@@ -256,3 +267,28 @@ def test_plan_is_computed_once_before_tool_execution() -> None:
     assert "Plan at most five steps" in requests[0]["messages"][-1]["content"]
     assert "Execute the plan" in requests[1]["messages"][-1]["content"]
     assert len(deliveries) == 1
+
+
+@pytest.mark.parametrize("method", ["reviewed", "plan-then-act"])
+def test_round_limit_fails_without_marking_mail_read_or_delivering(method: str) -> None:
+    from tlosure.eval import EvalError
+
+    trace: dict[str, Any] = {}
+    rounds = [
+        {
+            "content": None,
+            "tool_calls": [
+                {"id": f"round-{round_number}-tool-{index}", "name": "time-now", "arguments": {}}
+                for index in range(5)
+            ],
+        }
+        for round_number in range(10)
+    ]
+    if method == "plan-then-act":
+        rounds.insert(0, {"content": "plan", "tool_calls": []})
+    with pytest.raises(EvalError, match="agent work round-limit reached before completion"):
+        execute(rounds, max_rounds=10, method=method, trace=trace)
+    assert len(trace["requests"]) == 10 + int(method == "plan-then-act")
+    assert len(trace["tool_calls"]) == 50
+    assert trace["marked"] == []
+    assert trace["deliveries"] == []

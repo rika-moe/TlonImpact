@@ -1,6 +1,6 @@
 # 演武场（arena）：staging 原型的动态行为评估
 
-演武场把 staging 原型放入独立 runtime，用合成邮件运行真实会话循环，归档行为证据供人类审批。一个 session 可处理多封语料；收工以 drained 判定，报告按 session 组织。演武结果不会自动批准原型。
+演武场把 staging 模块包放入独立 runtime，用合成邮件运行普通程序，归档行为证据供人类审批。收工以未读邮件及只读 pending 查询排空判定；报告沿用 session 读取词汇，新的来源身份为 program:<run-id>，也可读取历史归档。新程序的 fuel-exhaustion 红旗来自已提交求值失败，历史 max_iterations 标记仅用于旧归档读取。演武结果不会自动批准原型。
 
 ## 问题：静态可读 ≠ 行为可测
 
