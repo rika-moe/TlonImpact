@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from tlon.agents.member_spec import MemberSpec
 from tlon.agents.program_driver import ProgramDriver
 from tlon.agents.program_store import ProgramStore
 from tlon.base.config import DockerRuntimeConfig
@@ -18,8 +17,10 @@ from tlon.operations.shell import make_shell_operations
 from tlon.operations.time import time_operation_definitions
 from tlon.sandbox.device import ExecutionResult
 from tlon.sandbox.shell import MemberShellService, ShellExecutionError
+from tlosure.builtins import Closure
 from tlosure.edn import Keyword, loads
 from tlosure.eval import Evaluator
+from tlosure.modules import ModulePackage
 
 
 def bindings(device, store: ProgramStore | None = None):
@@ -32,12 +33,11 @@ def bindings(device, store: ProgramStore | None = None):
     return service, executor, DSLAdapter(executor)
 
 
-def program():
-    return MemberSpec.from_edn(
-        loads(
-            '{:version 1 :rules [{:name "shell" :on :boot :actions [(shell-run {:command "touch once"})]}]}'
-        )
-    ).rules[0]
+def program(adapter: DSLAdapter, source: str = '(shell-run {:command "touch once"})') -> Closure:
+    return ModulePackage.from_sources(
+        {"work.tlon": "(ns work (:export handle)) (defn handle [event] " + source + ")"},
+        adapter.builtins(),
+    ).entry("work/handle")
 
 
 @pytest.mark.parametrize("disk", [False, True])
@@ -57,18 +57,16 @@ async def test_unknown_intent_never_reexecutes(tmp_path: Path, disk, after_submi
         device.run.side_effect = asyncio.CancelledError()
 
     def driver():
-        return ProgramDriver(
-            store, "run", adapter.builtins(), AsyncMock(), operations=adapter, member_id="a"
-        )
+        return ProgramDriver(store, "run", adapter.builtins(), operations=adapter, member_id="a")
 
     with pytest.raises(asyncio.CancelledError):
-        await driver().run(program(), {})
+        await driver().run_entry(program(adapter), {}, fuel=1000)
     calls = device.run.await_count
     if disk:
         store = ProgramStore(tmp_path / "program.db", build_id="test")
         _, executor, adapter = bindings(device, store)
     with pytest.raises(UnknownOutcomeError) as error:
-        await driver().run(program(), {})
+        await driver().run_entry(program(adapter), {}, fuel=1000)
     assert error.value.data["retry_safe"] is False
     assert device.run.await_count == calls == 1
 
@@ -80,8 +78,8 @@ async def test_recorded_result_replays_without_device():
     _, _, adapter = bindings(device, store)
     for _ in range(2):
         await ProgramDriver(
-            store, "r", adapter.builtins(), AsyncMock(), operations=adapter, member_id="a"
-        ).run(program(), {})
+            store, "r", adapter.builtins(), operations=adapter, member_id="a"
+        ).run_entry(program(adapter), {}, fuel=1000)
     assert device.run.await_count == 1
 
 
@@ -89,15 +87,11 @@ async def test_invalid_input_does_not_claim_intent():
     device = AsyncMock()
     store = ProgramStore(None, build_id="test")
     _, _, adapter = bindings(device, store)
-    bad = MemberSpec.from_edn(
-        loads(
-            '{:version 1 :rules [{:name "bad" :on :boot :actions [(shell-run {:command "x" :timeout 0})]}]}'
-        )
-    ).rules[0]
+    bad = program(adapter, '(shell-run {:command "x" :timeout 0})')
     with pytest.raises(InputError):
         await ProgramDriver(
-            store, "r", adapter.builtins(), AsyncMock(), operations=adapter, member_id="a"
-        ).run(bad, {})
+            store, "r", adapter.builtins(), operations=adapter, member_id="a"
+        ).run_entry(bad, {}, fuel=1000)
     assert not store._invocations
     device.run.assert_not_called()
 

@@ -1,26 +1,11 @@
-"""Context assembly for Agent.
+"""Member-owned data reads and cached persona material for ordinary programs.
 
-Builds the LLM conversation context (memory knowledge blocks + inherited
-lessons + skills index + current doing task + session recap + mailbox
-history + wake trigger text) and the system prompt (persona files with
-mtime-keyed caching). Extracted from the Agent god class; complements
-prompt_builder's pure SystemPromptBuilder with the agent-bound
-fetching/caching side.
-
-ADR 0028: there is no trigger mail — the context ends with the fixed
-wake template ("你有 N 封未读邮件"); mail bodies enter via mail-history
-(ambient) and the mail-check-inbox tool results (append-only).
-
-P4: the builder receives its dependencies (config, team members,
-mailbox, memory, task manager, rule, address) explicitly and owns the
-system prompt cache — no back-reference to the Agent.
+No recipe, section selection or conversation execution is interpreted here.
 """
 
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from tlon.agents.member_spec import SessionRecipe, has_section
 from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
 from tlon.agents.session_journal import SessionJournal
@@ -74,17 +59,6 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
-def _memory_query(mails: list[Mail]) -> str:
-    """The JIT memory-retrieval query: subject plus body of every
-    responsibility-set mail (ADR 0028 — there is no single current mail).
-
-    The subject carries intent the body often omits (short replies like
-    "那改成多少？"), so both go into the embedding query.
-    """
-    parts = [part for mail in mails for part in (mail.subject, mail.content)]
-    return "\n\n".join(p for p in parts if p).strip()
-
-
 def _render_thread_recap(events: list[dict[str, Any]]) -> str:
     """Render one completed session's journal events as a bounded digest.
 
@@ -105,7 +79,9 @@ def _render_thread_recap(events: list[dict[str, Any]]) -> str:
     )
 
     lines = ["[最近会话摘要]"]
-    source = next((event.get("session_id") for event in events if event["type"] == "session/start"), None)
+    source = next(
+        (event.get("session_id") for event in events if event["type"] == "session/start"), None
+    )
     if source:
         lines.append(f"来源：{source}")
     if trigger:
@@ -125,23 +101,6 @@ def _render_thread_recap(events: list[dict[str, Any]]) -> str:
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
-@dataclass(frozen=True)
-class BuiltContext:
-    """The assembled context plus its compaction-anchor boundary (ADR 0008).
-
-    ``anchor_len`` counts the messages that form the anchor — every section
-    except ``knowledge`` plus the wake trigger text. The ``knowledge``
-    message (JIT-retrieved per session, ADR 0017) is deliberately placed
-    *after* the anchor as the very last message: frozen into the anchor it
-    made the anchor grow unboundedly, leaving context pressure with nothing
-    to relieve (ADR 0017); outside the anchor it is ordinary compressible
-    middle, and the cache prefix (ADR 0015) shrinks and stabilizes.
-    """
-
-    messages: list[dict[str, Any]] = field(default_factory=list)
-    anchor_len: int = 0
-
-
 class ContextBuilder:
     """Builds conversation context and the cached system prompt for an agent.
 
@@ -156,7 +115,6 @@ class ContextBuilder:
         mailbox: Mailbox | None,
         memory: MemoryManager,
         task_manager: TaskManager,
-        recipe: SessionRecipe,
         address: str,
         journal: SessionJournal | None = None,
         *,
@@ -166,7 +124,6 @@ class ContextBuilder:
         self._mailbox = mailbox
         self._memory = memory
         self._task_manager = task_manager
-        self._loop = recipe
         self._address = address
         # Session journal (ADR 0007): read-only, feeds the thread-recap
         # section; None degrades that section to empty.
@@ -255,7 +212,7 @@ class ContextBuilder:
         broken task store must never block context assembly.
 
         Anchor caveat: the context is built once per session (the first
-        ``LoopDriver`` step), so a task started or completed mid-session
+        program call), so a task started or completed mid-session
         is only reflected from the next session on.
         """
         try:
@@ -271,94 +228,19 @@ class ContextBuilder:
             logger.warning("current_task_build_failed", exc_info=True)
             return ""
 
-    async def build_context(self, trigger_text: str, responsibility: list[Mail]) -> BuiltContext:
-        """Build conversation context for LLM (sections interpreted in order).
-
-        The ``:context`` section vector (phase 7b) is a program: each
-        conversational section appends its messages in vector order.
-        ``persona``/``protocol`` feed the system prompt instead and are
-        skipped here. The wake trigger text (ADR 0028 — the fixed "你有
-        N 封未读邮件" template, no mail body) is always appended last —
-        the engine owns this; the DSL only describes what comes before it.
-
-        ``knowledge`` is the one exception to vector order (ADR 0017 stage
-        4): its declaration only controls *whether* knowledge is injected,
-        not *where*. The knowledge message is pulled out of the section
-        sequence and appended as the very last message, after the trigger
-        text — outside the compaction anchor, whose length the returned
-        :class:`BuiltContext` carries. Its JIT retrieval query is the
-        responsibility set's subject+content concatenation.
-        """
-        knowledge_declared = False
-        context: list[dict[str, Any]] = []
-        for form in self._loop.context_sections:
-            name = str(form[0])
-            if name == "knowledge":
-                knowledge_declared = True
-            elif name == "lessons":
-                lessons = self.build_lessons()
-                if lessons:
-                    context.append({"role": "user", "content": lessons})
-            elif name == "skills":
-                index = await self.build_skills_index()
-                if index:
-                    context.append({"role": "user", "content": index})
-            elif name == "current-task":
-                current_task = self.build_current_task()
-                if current_task:
-                    context.append({"role": "user", "content": current_task})
-            elif name == "mail-history":
-                context.extend(await self._build_mail_history(form[1:]))
-            elif name == "thread-recap":
-                recap = await self.build_thread_recap()
-                if recap:
-                    context.append({"role": "user", "content": recap})
-
-        context.append({"role": "user", "content": trigger_text})
-        anchor_len = len(context)
-        if knowledge_declared:
-            knowledge = await self.build_knowledge_context(_memory_query(responsibility))
-            if knowledge:
-                context.append({"role": "user", "content": f"[已知信息]\n\n{knowledge}"})
-        return BuiltContext(messages=context, anchor_len=anchor_len)
-
-    async def _build_mail_history(self, counts: list[int]) -> list[dict[str, Any]]:
-        """Render mailbox history mails as context messages.
-
-        One count is the sliding window of the most recent mails; two
-        counts (ADR 0025) add a frozen segment — the earliest ``F`` mails
-        of the merged timeline — ahead of the sliding window of the
-        recent ``R``, deduplicated by mail id so each mail renders once
-        when the total is below ``F + R``. The frozen segment is
-        byte-stable once filled, so a new mail only breaks the provider
-        cache prefix at the sliding tail. The history is the agent's own
-        correspondence (mailbox inbox + sent), never a shared room log:
-        my own mail maps to the assistant role, everyone else's to the
-        user role.
-        """
-        if self._mailbox is None:
-            logger.warning("mailbox_missing")
+    async def build_mail_history(self, limit: int) -> list[dict[str, Any]]:
+        """Read the member's recent correspondence as ordinary message data."""
+        if self._mailbox is None or limit == 0:
             return []
-        if len(counts) == 1:
-            if counts[0] <= 0:
-                return []
-            history = await self._mailbox.recent(limit=counts[0])
-        else:
-            frozen_count, recent_count = counts
-            if frozen_count <= 0 and recent_count <= 0:
-                return []
-            frozen = await self._mailbox.earliest(limit=frozen_count) if frozen_count > 0 else []
-            frozen_ids = {mail.id for mail in frozen}
-            recent = await self._mailbox.recent(limit=recent_count) if recent_count > 0 else []
-            history = frozen + [mail for mail in recent if mail.id not in frozen_ids]
-        logger.debug("context_history_retrieved", mail_count=len(history))
-        messages: list[dict[str, Any]] = []
-        for mail in history:
-            if not mail.content:
-                continue
-            role = "assistant" if mail.from_address == self._address else "user"
-            messages.append({"role": role, "content": _render_mail(mail)})
-        return messages
+        history = await self._mailbox.recent(limit=limit)
+        return [
+            {
+                "role": "assistant" if mail.from_address == self._address else "user",
+                "content": _render_mail(mail),
+            }
+            for mail in history
+            if mail.content
+        ]
 
     async def build_thread_recap(self) -> str:
         """Build the ``(thread-recap)`` section: a digest of the member's
@@ -441,11 +323,7 @@ class ContextBuilder:
         signature = self.persona_mtime_signature(self.persona_files())
         if self._system_prompt_cache is None or signature != self._system_prompt_mtime:
             context = await self.build_prompt_context()
-            builder = SystemPromptBuilder(
-                context,
-                include_persona=has_section(self._loop.context_sections, "persona"),
-                include_protocol=has_section(self._loop.context_sections, "protocol"),
-            )
+            builder = SystemPromptBuilder(context)
             self._system_prompt_cache = builder.build()
             self._system_prompt_mtime = signature
         return self._system_prompt_cache

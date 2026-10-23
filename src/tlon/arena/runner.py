@@ -26,7 +26,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
 
-from tlon.agents.prototypes.info import BEHAVIOR_FILE
+from tlon.agents.prototypes.info import BEHAVIOR_FILE, METADATA_FILE
 from tlon.agents.prototypes.instantiate import instantiate
 from tlon.agents.prototypes.staging import list_staging_prototypes
 from tlon.agents.session_journal import SessionJournal
@@ -50,6 +50,7 @@ from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.mail.store import MailStore, StoredPost
 from tlon.sandbox.docker_client import create_docker_client
+from tlosure.edn import Keyword, dumps, loads
 
 logger = get_logger(__name__)
 
@@ -183,7 +184,7 @@ class SessionJournalLike(Protocol):
 
     async def count_completed(self, started_after: datetime | None = None) -> int: ...
 
-    async def find_unfinished(self) -> list[str]: ...
+    async def list_pending(self) -> list[str]: ...
 
 
 RuntimeFactory = Callable[[TlonPaths], Awaitable[IsolatedRuntime]]
@@ -388,6 +389,10 @@ class ArenaRunner:
             trusted_dir = arena_paths.prototypes_dir() / run.prototype_name
             trusted_dir.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(staging_dir, trusted_dir, ignore=shutil.ignore_patterns("arena"))
+            metadata_file = trusted_dir / METADATA_FILE
+            metadata = loads(metadata_file.read_text(encoding="utf-8"))
+            metadata[Keyword("trusted")] = True
+            metadata_file.write_text(dumps(metadata) + "\n", encoding="utf-8")
 
             # 归档目录（生产 staging，证据随提案走）尽早建好——in-flight 失败
             # 也留 run.json 在磁盘上。
@@ -450,8 +455,11 @@ class ArenaRunner:
         finally:
             run.finished_at = _utc_now()
             final_status = (
-                RunStatus.FAILED if run.error is not None
-                else RunStatus.DONE if run.drained else RunStatus.TIMED_OUT
+                RunStatus.FAILED
+                if run.error is not None
+                else RunStatus.DONE
+                if run.drained
+                else RunStatus.TIMED_OUT
             )
             run.status = RunStatus.COLLECTING
             # Archive the intended terminal status, but expose completion only
@@ -573,7 +581,7 @@ class ArenaRunner:
             drained = (
                 fed_ids <= inbox_ids
                 and not await mailbox.unread()
-                and not await journal.find_unfinished()
+                and not await journal.list_pending()
             )
             drained_streak = drained_streak + 1 if drained else 0
             if drained_streak >= 2 or self._clock() >= deadline:
@@ -596,9 +604,7 @@ class ArenaRunner:
         failure here must not skip teardown.
         """
         try:
-            await SessionJournal(agent_id, arena_paths).export_jsonl(
-                archive_dir / "sessions"
-            )
+            await SessionJournal(agent_id, arena_paths).export_jsonl(archive_dir / "sessions")
             ledger_src = arena_paths.agent_ledger_file(agent_id)
             if ledger_src.is_file():
                 shutil.copy2(ledger_src, archive_dir / "ledger.jsonl")

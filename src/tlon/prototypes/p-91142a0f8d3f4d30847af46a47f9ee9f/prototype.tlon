@@ -1,4 +1,1 @@
-{:name :p-91142a0f8d3f4d30847af46a47f9ee9f
- :display-name "条件路由"
- :description "L0 执行能力；仅处理投递给自己的邮件，将发件地址等于 :sender 且正文匹配正则 :pattern 的邮件原样转发给 :to 地址列表，不调用 LLM。三个参数均必填，适合组织信箱和订阅分发。"
- :trusted true}
+{:name :p-91142a0f8d3f4d30847af46a47f9ee9f :display-name "条件路由" :description "L0 执行能力；仅处理投递给自己的邮件，将发件地址等于 :sender 且正文匹配正则 :pattern 的邮件原样转发给 :to 地址列表，不调用 LLM。三个参数均必填，适合组织信箱和订阅分发。" :trusted true :program-digest "25de0c3d21da2708430fdc7ac466ecca87628110ba4113b2c937a9366f8b59a5"}

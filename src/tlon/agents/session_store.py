@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -243,7 +244,9 @@ class SessionStore:
                 if first is None:
                     continue
                 directory.mkdir(parents=True, exist_ok=True)
-                with (directory / f"{session_id}.jsonl").open("w", encoding="utf-8") as file:
+                with (directory / f"{quote(session_id, safe='')}.jsonl").open(
+                    "w", encoding="utf-8"
+                ) as file:
                     file.write(f"{first[0]}\n")
                     for row in rows:
                         file.write(f"{row[0]}\n")

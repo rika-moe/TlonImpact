@@ -25,7 +25,7 @@ File shape (``POLICY_VERSION``)::
 
 The ``:policy`` vector is a form sequence evaluated in one shared env
 (the ADR 0021 defn-threading discipline, validated by
-``validate_member_actions`` against the policy registry). The env starts
+the ordinary sequence validator against the policy registry). The env starts
 from the *default* policy's definitions, so a society file overrides
 hooks à la carte — a hook it does not redefine keeps the default
 implementation — and may reuse the default helpers. The hook contract is
@@ -50,7 +50,6 @@ from tlon.agents.vocabulary import (
     LineageMemberStats,
     LineageStats,
     PolicyMemberInfo,
-    validate_member_actions,
 )
 from tlon.base.config import yaml_load_all
 from tlon.base.ledger import collect_lineage_ledgers
@@ -60,6 +59,7 @@ from tlon.organization.mail.store import MailStore
 from tlosure.builtins import EvalError
 from tlosure.edn import EDNParseError, Form, Keyword, Symbol, loads
 from tlosure.eval import DEFAULT_MAX_DEPTH, MAX_FUEL, Evaluator
+from tlosure.validate import _validate_seq
 
 logger = get_logger(__name__)
 
@@ -193,7 +193,7 @@ def _eval_policy_forms(forms: tuple[Form, ...], env: dict[str, Any]) -> None:
 def _load_default() -> SocietyPolicy:
     """The default policy env; raises only on a code bug (the EDN is ours)."""
     forms = _parse_policy(DEFAULT_POLICY_EDN)
-    validate_member_actions(forms, registry=POLICY_BUILTINS, scope=set())
+    _validate_seq(list(forms), POLICY_BUILTINS, set(), None)
     env: dict[str, Any] = {}
     _eval_policy_forms(forms, env)
     return SocietyPolicy(env)
@@ -218,7 +218,7 @@ def load_policy(tlon_paths: TlonPaths) -> SocietyPolicy:
     try:
         default_forms = _parse_policy(DEFAULT_POLICY_EDN)
         forms = _parse_policy(path.read_text(encoding="utf-8"))
-        validate_member_actions(default_forms + forms, registry=POLICY_BUILTINS, scope=set())
+        _validate_seq(list(default_forms + forms), POLICY_BUILTINS, set(), None)
         policy = _load_default()
         _eval_policy_forms(forms, policy.env)
         return policy

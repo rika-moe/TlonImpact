@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.history_helpers import append_history
 from tlon.agents.program_store import ProgramStore
 from tlon.agents.session_journal import SessionJournal
 from tlon.base.paths import TlonPaths
@@ -33,8 +34,8 @@ async def test_rebuild_mixed_history_without_execution(tmp_path: Path, disk: boo
     paths = TlonPaths(home=tmp_path)
     store = ProgramStore(paths.agent_program_database_file("a") if disk else None, build_id="old")
     journal = SessionJournal("a", paths, program_store=store)
-    await journal.append("legacy", "session/start", trigger_content="old", context=[])
-    await journal.append("legacy", "session/end", reason="done")
+    await append_history(journal, "legacy", "session/start", trigger_content="old", context=[])
+    await append_history(journal, "legacy", "session/end", reason="done")
     _entry(store, "early")
     _entry(store, "late")
     _commit(store, "early", "_model-request", {"content": "answer", "tool_calls": []})
@@ -53,7 +54,7 @@ async def test_rebuild_mixed_history_without_execution(tmp_path: Path, disk: boo
     assert await journal.list_completed(watermark) == ["program:early", "program:failed"]
     assert await journal.count_completed() == 4
     assert await journal.latest_completed() == "program:failed"
-    assert await journal.find_unfinished() == []
+    assert await journal.list_pending() == []
     events = await journal.read_events("program:early")
     assert events == await journal.read_events("program:early")
     projection = build_session_projection(events, "program:early")
@@ -63,8 +64,7 @@ async def test_rebuild_mixed_history_without_execution(tmp_path: Path, disk: boo
     assert projection.end_reason == "completed"
     assert (await journal.derive_context("program:early"))[0]["content"] == "question"
     assert await journal.end_reason("program:failed") == "failed"
-    with pytest.raises(ValueError, match="cannot be resumed"):
-        await journal.resume("program:early")
+    assert not hasattr(journal, "resume")
     if disk:
         # Re-open with another build: history reading must not authorize recovery.
         recovered = SessionJournal("a", paths)
@@ -92,7 +92,7 @@ async def test_undated_existing_entries_and_safe_exports(tmp_path: Path) -> None
     assert not (tmp_path / "unsafe.jsonl").exists()
     pending = await journal.read_events("program:pending")
     assert len(pending) == 1 and pending[0]["type"] == "session/start"
-    assert await journal.find_unfinished() == []
+    assert await journal.list_pending() == ["program:pending"]
 
 
 async def test_empty_reader_does_not_create_program_authority(tmp_path: Path) -> None:
@@ -131,8 +131,7 @@ async def test_partial_failure_keeps_committed_and_pending_facts(tmp_path: Path)
     digest = render_session_digest(events)
     assert "未决调用" in digest and "unsafe invocation outcome unknown" in digest
     assert await journal.read_events("program:interrupted") == events
-    with pytest.raises(ValueError, match="reserved"):
-        await journal.append("program:interrupted", "session/start")
+    assert not hasattr(journal, "append")
 
 
 async def test_old_authority_without_clock_table_is_read_only(tmp_path: Path) -> None:

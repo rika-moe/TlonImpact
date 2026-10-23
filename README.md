@@ -53,9 +53,9 @@ tlon dream
 
 Tlon 的架构围绕三个支柱——**DSL**（行为如何描述）、**Runtime**（行为如何执行）、**邮件**（成员如何通信）：
 
-**DSL——行为即数据。** 每个成员的全部行为是一份 EDN 规约（`config/behavior.tlon`）：规则 = `:on` + `:when` + `:loop` / `:actions`。受限设计——可停机、无副作用、只能组合已有机制——让这份数据安全到足以交给 agent 自己书写；启动集合、唤醒门控全部由 spec 派生，从不存储冗余值。
+**DSL——工作流程就是普通程序。** `config/behavior.tlon` 仅声明 v2 事件入口（`:handlers`）和 fuel；`config/modules/` 保存普通模块函数。Agent 可以读取文档与标准库，编写、校验和复用自己的程序。求值受 fuel 与深度限制，I/O 受宿主权限与预算约束。
 
-**Runtime——行为如何执行。** `MemberRuntime` 是统一解释器：带 `:loop` 规则的成员挂认知循环（think / plan / act / critique / revise 五个 stage 是纯变换，外部效果声明在 `StageOutcome`、由 `EffectExecutor` 执行，迭代上限保证停机）；无 `:loop` 的规则只跑 `:actions`，零 token。`AgentRegistry` 是纯机制，策略只有一个实例 Adam——本身也是一段 spec。
+**Runtime——执行与恢复。** `MemberRuntime` 通过同一个串行执行器调用模块入口；模型调用、工具执行和状态读写都是可组合操作。ProgramStore 冻结源码、输入与调用回执，恢复时重放已提交结果。入口返回的 `:next` 请求等待、定时睡眠或退出；普通对话结束只返回调用方。Adam 同样使用模块入口，`AgentRegistry` 负责生命周期与调度机制。
 
 **邮件——成员如何通信。** 邮件是统一通信通道，人类与 agent 共用 SQLite 邮局。本地成功表示已原子存入全部有效收件人的信箱，任一无效或退休地址整封拒绝；休眠、离线成员正常收信。已注册网关只尝试投递，不保证成功或外部接收。入箱、阅读与思考处理是三件不同的事。
 

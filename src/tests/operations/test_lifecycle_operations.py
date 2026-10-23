@@ -100,25 +100,12 @@ async def test_caller_cannot_override_bound_owner() -> None:
         await executor.call("finish-turn", {}, CallContext("adam", "run", "call"))
 
 
-@pytest.mark.parametrize(
-    "name,arguments,action",
-    [
-        ("finish-turn", {}, "finish"),
-        ("exit-agent", {"reason": "done"}, "exit"),
-        ("sleep-until", {"wake_at": "2099-01-01T00:00:00Z"}, "sleep"),
-    ],
-)
-async def test_control_is_metadata_and_declaration_only(
-    name: str, arguments: dict, action: str
-) -> None:
-    registry = MagicMock()
+async def test_finish_is_local_pure_data_without_lifecycle_requests() -> None:
     publish = AsyncMock()
-    executor = _executor(LifecycleService("worker", registry=registry, publish_request=publish))
-    assert executor.registry.get(name).control
-    result = await executor.call(name, arguments)
-    assert result["scheduling_request"]["action"] == action
+    executor = _executor(LifecycleService("worker", publish_request=publish))
+    assert not executor.registry.get("finish-turn").effects
+    assert await executor.call("finish-turn", {}) == {"finished": True}
     publish.assert_not_awaited()
-    assert not registry.mock_calls
 
 
 async def test_lifecycle_lost_commit_receipt_keeps_unknown_identity() -> None:
@@ -147,8 +134,8 @@ async def test_real_spawn_quota_uses_frozen_root_for_normal_and_recovered_calls(
 ) -> None:
     from types import SimpleNamespace
 
-    from tests.agents.test_session_journal import _make_driver, _tc
     from tests.agents.test_spawn import _FakeRegistry, _write_prototype
+    from tlon.agents.program_store import ProgramStore
     from tlon.agents.spawn import SpawnManager
     from tlon.base.paths import TlonPaths
     from tlon.operations.adapters import OperationTool
@@ -159,8 +146,7 @@ async def test_real_spawn_quota_uses_frozen_root_for_normal_and_recovered_calls(
     paths = TlonPaths(home=tmp_path)
     _write_prototype(paths, "worker")
     manager = SpawnManager(_FakeRegistry(paths), 8, 3, 2)
-    driver, _, _, _ = _make_driver(tmp_path, [])
-    store = driver._tool_executor.get_tool("someTool")._executor.store
+    store = ProgramStore(tmp_path / "program.sqlite")
     executor = OperationExecutor(
         OperationRegistry(
             make_lifecycle_operations(
@@ -173,7 +159,6 @@ async def test_real_spawn_quota_uses_frozen_root_for_normal_and_recovered_calls(
         store,
     )
     tool = OperationTool(executor, "member-spawn")
-    driver._tool_executor.register_tool(tool)
     for index in range(2):
         context = CallContext("agent1", "frozen-root", f"spawn:{index}", origin=origin)
         with bound_contextvars(session_id=f"untrusted-log-{index}"):
@@ -184,13 +169,11 @@ async def test_real_spawn_quota_uses_frozen_root_for_normal_and_recovered_calls(
     assert manager._quota == {("agent1", "frozen-root"): 2}
     args = {"prototype": "worker", "name": "Must be rejected"}
     if origin == "tool":
-        normal = _tc("normal-third", "member-spawn", args)
-        with bound_contextvars(session_id="another-log-id"):
-            result = (await driver.execute_one_tool("frozen-root", normal))[1]
+        context = CallContext("agent1", "frozen-root", "tool-third", origin="tool")
+        result = await tool.execute_context(args, context)
         assert not result.success and "session_quota" in result.error
-        recovered = _tc("unsubmitted-crash", "member-spawn", args)
-        metadata = driver._operation_recovery("frozen-root", recovered, 0, None)
-        result = await driver.resolve_dispatch("frozen-root", recovered, metadata)
+        # Durable rejection replays with the same identity without consuming quota.
+        result = await tool.execute_context(args, context)
         assert not result.success and "session_quota" in result.error
     elif origin == "program":
         adapter = DSLAdapter(executor)

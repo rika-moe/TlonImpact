@@ -39,15 +39,14 @@ async def test_checker_does_not_disguise_infrastructure_type_error() -> None:
     import pytest
 
     operation = program_check_operation(check_program_sources)
-    with patch(
-        "tlon.agents.program_package.validate_program_sources", side_effect=TypeError("bug")
-    ), pytest.raises(TypeError, match="bug"):
+    with (
+        patch("tlon.agents.program_package.validate_program_sources", side_effect=TypeError("bug")),
+        pytest.raises(TypeError, match="bug"),
+    ):
         await operation.handler(
             CallContext("alice", "run", "call"),
             {
                 "behavior": "{:version 2 :handlers {:mail-delivered work/handle} :fuel 1000}",
-                "modules": {
-                    "work.tlon": "(ns work (:export handle)) (defn handle [event] event)"
-                },
+                "modules": {"work.tlon": "(ns work (:export handle)) (defn handle [event] event)"},
             },
         )

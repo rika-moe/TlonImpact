@@ -2,7 +2,7 @@
 
 tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言核心**：一个 EDN 子集（Clojure 兼容子集，[ADR 0001](../decisions/0001-edn-as-dsl.md)、[ADR 0011](../decisions/0011-sci-compatible-subset.md)）加一个燃料计费的受限求值器——每个求值步消耗燃料，任何表达式必然终止（ADR 0011）。它是一门**纯语言**：不依赖任何宿主代码，自身不含任何业务概念（核心命名检验：一个构造能不提及宿主业务概念就解释清楚才配进 tlosure，[ADR 0018 修订](../decisions/0018-dsl-extraction-tlosure.md)）；tlon 是它的第一宿主。
 
-宿主接入模型：宿主调用 `eval_form(form, env, builtins, fuel=..., max_depth=...)`（[src/tlosure/eval.py](../../src/tlosure/eval.py)）时**注入两样东西**——`builtins` 注册表（词汇表，可并入本文第 3 节的通用词汇）与 `env` 环境绑定（符号 → 值的 map）。env 里放什么、求值结果与产出的 `ActionRequest` 怎么落地，都是宿主契约，不属于本语言规范。tlon 宿主的领域词汇与 MemberSpec schema 见 [dsl-reference.md](./dsl-reference.md)。
+宿主接入模型：宿主调用 `eval_form(form, env, builtins, fuel=..., max_depth=...)`（[src/tlosure/eval.py](../../src/tlosure/eval.py)）时**注入两样东西**——`builtins` 注册表（词汇表，可并入本文第 3 节的通用词汇）与 `env` 环境绑定（符号 → 值的 map）。env 里放什么、求值结果与暂停的 `BuiltinCall` 如何执行和恢复，都是宿主契约，不属于本语言规范。tlon 宿主的领域词汇与 MemberSpec schema 见 [dsl-reference.md](./dsl-reference.md)。
 
 ## 1. EDN 语法速览
 
@@ -68,7 +68,7 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 - **递归**：直接自引用（`(defn fact [n] (if (< n 2) 1 (* n (fact (dec n)))))`）。深层递归撞 `max_depth`（`EvalDepthError`），指数扇出撞 fuel（`FuelExhaustedError`）——终止性仍由两道闸保证。
 - **`recur` 不跨函数边界**（Clojure 语义）：进入函数应用时保存并清空 enclosing loop 上下文，退出时恢复；函数体内的 `recur` 报「recur outside while」，外层 `while` 在函数返回后继续正常工作。静态校验镜像同一规则（fn/defn body 以无 enclosing loop 校验）。
 - **静态校验的作用域规则是「先定义后使用」**：body 按序穿线，`defn` 的名字只对其后的兄弟 form 可见；`defn` 体内引用后定义的兄弟函数在加载期被拒（尽管按引用捕获在运行期能解析）。
-- **函数体不受纯度限制**：动作 builtin 在函数体内被调用时照常产出 `ActionRequest` 数据（effects-as-data 不变），同步驱动返回请求数据；异步驱动在调用处交给宿主，拿到实际结果后继续求值。
+- **函数体可组合效果调用**：异步驱动在非纯宿主 builtin 的调用处暂停并交出 `BuiltinCall`，宿主返回实际结果后继续求值。闭包和普通表达式使用相同的调用边界。
 
 ### 2.1.2 注册表里的闭包词（closure-backed builtin）
 
@@ -77,7 +77,7 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 - **宿主形**（`fn`）：Python 函数，收 `(env, *求值后参数)`；其内部计算**不计费**——宿主词汇自己的开销属于宿主资源域。
 - **闭包形**（`closure`，经 `Builtin.from_closure` 构造）：条目携带一个 `Closure` 而非宿主代码——**数据定义的词**。求值器命中该条目时走与 `defn`/`fn` 闭包完全相同的应用路径（`_apply`）：元数检查、参数绑定、body 逐 form 经求值器递归——**body 的每一步计入调用方的 fuel 与深度预算**。这是与宿主形的实质语义差：数据定义的词留在 fuel 纪律内，不会成为预算黑洞。
 
-闭包形条目的捕获 env 就是注册时给定的那个：宿主注册**空 env** 意味着 body 只见自己的参数绑定（零注入），调用方 env 里的符号对 body 不可见；body 内的词（form 头）照常经**调用方的注册表**解析。`.pure` 标记两种形状通用，宿主的纯度分区（如 tlon 的 `:when` 门控只用纯子集）不经区分地工作。静态校验无需特殊处理：词名在注册表里即通过，元数由运行时的闭包应用兜住（与宿主 builtin 同）。这属于通用语言能力；Tlon 的 Capability 目录机制已删除。
+闭包形条目的捕获 env 就是注册时给定的那个：宿主注册**空 env** 意味着 body 只见自己的参数绑定（零注入），调用方 env 里的符号对 body 不可见；body 内的词（form 头）照常经**调用方的注册表**解析。`.pure` 标记两种形状通用，宿主的纯度分区（如社会政策使用纯注册表）不经区分地工作。静态校验无需特殊处理：词名在注册表里即通过，元数由运行时的闭包应用兜住（与宿主 builtin 同）。这属于通用语言能力；Tlon 的 Capability 目录机制已删除。
 
 ### 2.2 计量与终止
 
@@ -96,15 +96,15 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 - `max_depth` 至少为 1，否则同样 `ValueError`；
 - 耗尽抛 `FuelExhaustedError`，异常携带 `budget` 属性（本次求值的启动预算）供宿主结构化记日志/打点；嵌套超顶抛 `EvalDepthError`。
 
-**预算分摊**：一个 `Evaluator` 实例 = 一个预算计数器。单表达式走 `eval_form`；宿主若要让多个表达式共用一个总预算（如 tlon 规则的 `:when` 门控 + `:actions` 共享 `:fuel`），直接构造 `Evaluator` 连续 `eval`——每次调用从同一个计数器扣。共享还是分段由宿主决定。
+**预算分摊**：一个 `Evaluator` 实例 = 一个预算计数器。单表达式走 `eval_form`；宿主若要让多个表达式共用一个总预算（如一个模块入口及其调用的函数共享 `:fuel`），直接构造 `Evaluator` 连续 `eval`——每次调用从同一个计数器扣。共享还是分段由宿主决定。
 
-计量常量（[src/tlosure/eval.py](../../src/tlosure/eval.py) 顶部）：默认预算 `DEFAULT_FUEL = 1000`；`DEFAULT_WHEN_FUEL = 200`（供宿主给门控类求值用的更紧默认值）；硬顶 `MAX_FUEL = 10000`；嵌套深度硬顶 `DEFAULT_MAX_DEPTH = 100`。
+计量常量（[src/tlosure/eval.py](../../src/tlosure/eval.py) 顶部）：默认预算 `DEFAULT_FUEL = 1000`；硬顶 `MAX_FUEL = 10000`；嵌套深度硬顶 `DEFAULT_MAX_DEPTH = 100`。
 
-### 2.3 效果调用与 `ActionRequest`
+### 2.3 效果调用与 `BuiltinCall`
 
 语言内核不直接执行 I/O。宿主注册的效果 builtin 标记 `pure=False`；同一个 generator 内核供 `Evaluator.eval` 同步驱动和 `Evaluator.eval_async` 异步驱动使用，两者共享燃料与深度计量。
 
-同步驱动直接调用 builtin，返回其数据；宿主可由此分析 `ActionRequest` 意图。异步驱动在每个效果调用处产出 `BuiltinCall`，宿主执行并将实际结果送回表达式，因此 `let`、`if`、函数和循环都能组合 I/O 返回值。未选分支不触发调用。纯 registry 不含效果词，仍按构造保证不发生外部效果。
+同步驱动直接调用 builtin，返回其结果。异步驱动在每个效果调用处产出 `BuiltinCall`，宿主执行并将实际结果送回表达式，因此 `let`、`if`、函数和循环都能组合 I/O 返回值。未选分支不触发调用。纯 registry 不含效果词，仍按构造保证不发生外部效果。
 
 环境对象没有属性/方法访问语法，只能经宿主注册的 builtin 读取；map 的键保持字面量，值会被求值。
 
@@ -172,12 +172,12 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 | `FuelExhaustedError` | 同上 | fuel 预算耗尽（携带 `budget` 属性 = 本次启动预算） |
 | `EvalDepthError` | 同上 | form 嵌套深度超顶 |
 
-静态校验器 `validate_form(form, builtins, scope)`（[src/tlosure/validate.py](../../src/tlosure/validate.py)）不执行地走遍 form：每个 form 头必须是白名单特殊形式、已注册 builtin 或 `scope` 内的用户函数名，每个符号须在 `scope`（含 `let` / 循环绑定、`defn`/`fn` 参数与按序穿线的 `defn` 名字扩展）内可解析，特殊形式的形状必须合法，`recur` 的尾位置规则与「不跨函数边界」一并检查；首个违例抛 `EvalError`。**动作位置的校验是宿主业务**（它要点名宿主的动作词汇），不在语言核心里。
+静态校验器 `validate_form(form, builtins, scope)`（[src/tlosure/validate.py](../../src/tlosure/validate.py)）不执行地走遍 form：每个 form 头必须是白名单特殊形式、已注册 builtin 或 `scope` 内的用户函数名，每个符号须在 `scope`（含 `let` / 循环绑定、`defn`/`fn` 参数与按序穿线的 `defn` 名字扩展）内可解析，特殊形式的形状必须合法，`recur` 的尾位置规则与「不跨函数边界」一并检查；首个违例抛 `EvalError`。宿主负责提供本次可用的 builtin 注册表；Tlon 的模块加载器对完整函数体进行静态校验，没有额外的动作位置语法。
 
 ## 5. 宿主接入
 
 - 求值入口：`eval_form(form, env, builtins, fuel=DEFAULT_FUEL, max_depth=DEFAULT_MAX_DEPTH)`；加载期先跑 `validate_form` 静态拒绝非法表达式。多表达式共享一个总预算时用公开的 `Evaluator`（见 §2.2 预算分摊）。
-- 宿主职责：组装 `builtins`（并入第 3 节通用词汇 + 自有领域词汇）、构造 `env`、按场景给 `fuel`（不得越过 `MAX_FUEL` 硬顶）、执行求值产出的 `ActionRequest`。
+- 宿主职责：组装 `builtins`（并入第 3 节通用词汇 + 自有领域词汇）、构造 `env`、按场景给 `fuel`（不得越过 `MAX_FUEL` 硬顶）、执行暂停的 `BuiltinCall` 并返回调用结果。
 - tlon 宿主的领域词汇（谓词、动作族、宿主查询注入）与 MemberSpec schema 见 [dsl-reference.md](./dsl-reference.md)。
 
 ## 源码模块（P1）

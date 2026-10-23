@@ -1,5 +1,7 @@
 # ADR 0004：stage 纯度——状态变更一律声明为 StageOutcome 数据
 
+> P5 状态：本文的 stage/recipe/旧规则机制已退役；历史决策保留，当前实现由 [ADR 0046](0046-programmable-workflows.md) 替代。
+
 > 阅读定位：本文保留当时的选择与理由；当前设计见 [runtime](../design/runtime.md)。当前适用范围：Stage 纯度与效果数据化。完整关系见 [决策索引](README.md)。
 
 状态：已接受（回溯记录，2026-08-15）

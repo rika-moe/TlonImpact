@@ -1,4 +1,1 @@
-{:name :p-dfb3a5ccdcf84d749c9d075182f12888
- :display-name "标准工具迭代"
- :description "L2 执行能力；最多 10 次迭代、1000000 token，完整上下文与交卷前自评审，每 15 分钟反思。"
- :trusted true}
+{:name :p-dfb3a5ccdcf84d749c9d075182f12888 :display-name "标准工具迭代" :description "L2 执行能力；最多 10 次迭代、每次模型输出最多 512 token，完整上下文与交卷前自评审，后台维护按成员配置反思。" :trusted true :program-digest "f3199cfb6ad61672638030f74deff9765968c1ff6e8b30c4f606b6c460a659bc"}

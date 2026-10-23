@@ -39,7 +39,9 @@ async def test_memory_read_recap_and_retirement_include_undistilled_program(tmp_
     events = await journal.read_events(source)
     recap = _render_thread_recap(events)
     assert source in recap and "核验部署" in recap and "已核验" in recap
-    operation = next(op for op in make_memory_operations(memory, journal) if op.name == "session-read")
+    operation = next(
+        op for op in make_memory_operations(memory, journal) if op.name == "session-read"
+    )
     result = await operation.handler(CallContext("a", "root", "read"), {"session_id": source})
     assert result["session_id"] == source
     assert "已核验" in result["digest"]
@@ -47,13 +49,15 @@ async def test_memory_read_recap_and_retirement_include_undistilled_program(tmp_
     assert digest is not None and digest["claim_count"] == 0
     assert digest["recent_interactions"][0]["session_id"] == source
     assert digest["undistilled_session_count"] == 1
-    assert await journal.find_unfinished() == []
+    assert not hasattr(journal, "find_unfinished")
 
 
 async def test_retirement_lessons_replay_model_for_same_source(tmp_path: Path) -> None:
     paths = TlonPaths(home=tmp_path)
     _completed(paths)
-    client = LLMClient(LLMConfig(model_name="openai/test", max_tokens=128), agent_id="a", tlon_paths=paths)
+    client = LLMClient(
+        LLMConfig(model_name="openai/test", max_tokens=128), agent_id="a", tlon_paths=paths
+    )
     provider = AsyncMock(return_value=LLMResponse(content="- 发布前核验部署\n"))
     client._chat_with_retries = provider
     distiller = LessonsDistiller(EventBus(), paths, llm_client_factory=lambda agent: client)
@@ -70,13 +74,14 @@ async def test_arena_export_preserves_source_ids_and_resolvable_evidence(tmp_pat
     paths = TlonPaths(home=tmp_path)
     _completed(paths)
     store = ProgramStore(paths.agent_program_database_file("a"))
-    store.ensure_entry("failed/entry", "{}", '{}', {})
+    store.ensure_entry("failed/entry", "{}", "{}", {})
     store.fail("failed/entry", "fuel exhausted")
     archive = tmp_path / "archive"
     await SessionJournal("a", paths).export_jsonl(archive / "sessions")
     sources = _load_sessions(archive)
     assert {item.session_id for item in sources} == {
-        "program:mail-1:handler:mail-delivered", "program:failed/entry"
+        "program:mail-1:handler:mail-delivered",
+        "program:failed/entry",
     }
     for item in sources:
         summary, flags = _summarize_session(item.events, filename=item.filename)

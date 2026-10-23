@@ -51,3 +51,8 @@ Agent 机器起草与完整模块审阅接入既有 staging/批准/实例化机�
 P4a 补齐采用简单文件映射：作者文档与标准库实际源码只读置于 workspace/tlon，复用 file-read/list/search。删除专用一次性起草调用，查阅、模型生成、program-check 校验与修订由普通 authoring 函数组合，发布另交 prototype-write。没有文档查询 API、手册正文注入或新的目录/版本管理层。
 
 P4b 将交互投影落实为读取时从 ProgramStore 重建，来源为 program:<run_id>；不增加第二份投影数据库或新恢复循环。SessionJournal 仅联合旧历史和新来源的阅读接口，新来源由旧 resume 明确拒绝。蒸馏和反思的进度改为稳定来源集合及固定维护批次，避免开始时间水位遗漏迟完成运行。旧数据与旧恢复保留到 P5，客户端连接会话不属于此次替换。
+
+
+## P5 实施状态
+
+P4b 已经 #212 合并；P5 当前分支完成旧执行链删除和内置模块切换，待人类合并。现行执行边界见 [Runtime](../design/runtime.md)，旧记录处置及验证见 [P5 审计](../design/workflow-p5-audit.md)。历史阶段文字保留为各阶段当时的状态，不代表旧机制仍可执行。

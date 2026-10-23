@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from tests.program_helpers import write_program
 from tlon.agents.lessons import LessonsDistiller
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
@@ -23,9 +24,8 @@ from tlon.base.paths import TlonPaths
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
 
-_SESSION_PROGRAM = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona)]} :stages [(think)] :until (>= (get state :iteration) (get limits :max_iterations)) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'
-
-_RELAY_PROGRAM = '{:version 1\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
+_SESSION_PROGRAM = "{:version 2 :handlers {:mail-delivered work/handle}}"
+_RELAY_PROGRAM = "{:version 2 :handlers {:boot work/handle}}"
 
 
 class _FakeLLM:
@@ -48,9 +48,7 @@ class _FailingLLM:
 
 
 def _write_behavior(p: TlonPaths, agent_id: str, spec: str) -> None:
-    behavior_file = p.agent_behavior_file(agent_id)
-    behavior_file.parent.mkdir(parents=True, exist_ok=True)
-    behavior_file.write_text(spec, encoding="utf-8")
+    write_program(p.agent_behavior_file(agent_id), spec)
 
 
 async def _remember(p: TlonPaths, agent_id: str, fact: str) -> None:

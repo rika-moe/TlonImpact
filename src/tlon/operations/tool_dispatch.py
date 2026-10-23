@@ -73,8 +73,6 @@ class ToolDispatch:
             name = item["name"]
             if name not in names or name not in definitions:
                 raise InputError(f"tool-execute tool is outside the requested member scope: {name}")
-            if definitions[name].control:
-                raise InputError("tool-execute cannot dispatch control operations")
         results: list[dict[str, Any]] = []
         # Batch metadata participates in every leaf identity, but has no effect intent.
         # A partial replay cannot silently change later calls or provider correlation IDs.
@@ -115,7 +113,9 @@ class ToolDispatch:
                         entry["function"]["name"]: entry for entry in self.tool_definitions()
                     }
                     if name not in current:
-                        raise RecoveryMismatchError(f"tool-execute tool is no longer authorized: {name}")
+                        raise RecoveryMismatchError(
+                            f"tool-execute tool is no longer authorized: {name}"
+                        )
                     if current[name] != frozen[name]:
                         raise RecoveryMismatchError(
                             "Tool definition differs from frozen member catalog"

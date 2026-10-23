@@ -1,6 +1,6 @@
 # 可编程工作流程：目标设计
 
-状态：已接受；P1–P4a 已合并（#208/#209/#210/#211），P4b 本阶段实现，P5 尚未实施，2026-10-23。决策见 [ADR 0046](../decisions/0046-programmable-workflows.md)，施工与证据见 [实施计划](programmable-workflows-plan.md)。当前机制仍见 [DSL](dsl.md)、[runtime](runtime.md) 和 [调用恢复](invocation-recovery.md)。目标与实现边界以分阶段计划为准；当前语法/API 见[模块程序指南](../guides/writing-a-module-program.md)。
+状态：已接受；P1–P4b 已合并（#208/#209/#210/#211/#212），P5 本阶段实现待合并，2026-10-23。决策见 [ADR 0046](../decisions/0046-programmable-workflows.md)，施工与证据见 [实施计划](programmable-workflows-plan.md)。当前机制仍见 [DSL](dsl.md)、[runtime](runtime.md) 和 [调用恢复](invocation-recovery.md)。目标与实现边界以分阶段计划为准；当前语法/API 见[模块程序指南](../guides/writing-a-module-program.md)。
 
 ## 1. 执行与分层
 
@@ -54,7 +54,7 @@ Behavior 目标示意为 `{:handlers {:mail-delivered work.reply/handle-mail}}`�
 
 ### P2 当前实现
 
-`model-call` 必填 `messages`、`max_tokens`，可选 `tools`（工具名列表，默认空）与 `cache_prefix_len`。返回 content（可为 null）、规范化的 `{id,name,arguments}` tool_calls、finish_reason、usage 和 reasoning_content。输入拒绝旧 prompt 字段、system 消息及任意工具 schema。普通程序与旧 StageServices 共同使用 ModelService；旧 stage 引擎保留至 P5。
+`model-call` 必填 `messages`、`max_tokens`，可选 `tools`（工具名列表，默认空）与 `cache_prefix_len`。返回 content（可为 null）、规范化的 `{id,name,arguments}` tool_calls、finish_reason、usage 和 reasoning_content。输入拒绝旧 prompt 字段、system 消息及任意工具 schema。所有普通程序使用 ModelService；P5 已删除旧 StageServices 与 stage 引擎。
 
 宿主提供纯模块 `tlon.messages`（user/assistant/append），保留 tlon 命名空间；链接时合并标准源码，运行快照包含完整标准源码，作者模块与审批 API 保持原作者内容。v2 受理事务同时冻结 host（系统词、工具定义）与 config（有效非秘密模型配置，包括运行时重试/超时参数）；同一根运行复用它们。模型的工具选择只影响本次声明，不执行工具。
 
@@ -111,7 +111,7 @@ SessionJournal/SessionStore 为旧历史保留读取，新运行的消息和完�
 
 ## 7. 退役与非目标
 
-最终删除 run-loop ActionRequest、SessionRecipe、stage/section 专属解释器、LoopDriver、StageOutcome、AgentSession 的执行状态及 SessionScheduler 的旧恢复循环。通用 PromptBuilder、provider 适配、预算、OperationExecutor、领域服务与交互历史读取保留或按职责拆出。
+P5 已删除 run-loop ActionRequest、SessionRecipe、stage/section 专属解释器、LoopDriver、StageOutcome、AgentSession 的执行状态及 SessionScheduler 的旧恢复循环。通用 PromptBuilder、provider 适配、预算、OperationExecutor、领域服务与交互历史读取保留或按职责拆出。
 
 建设期只按明确入口选择新旧执行路径，无“新失败尝试旧”。最终切换先排空旧运行；无法排空的 unfinished session 明确阻塞并列出处置，不清库、不静默当作成功、不让新执行器解释旧日志。
 

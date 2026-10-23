@@ -10,14 +10,8 @@ seeding (``seed_skills``), and the repo-carried
 
 from pathlib import Path
 
-import pytest
 import yaml
 
-from tlon.agents.member_spec import (
-    MemberSpec,
-    MemberSpecValidationError,
-    validate_member_spec,
-)
 from tlon.agents.skills import (
     render_skills_index,
     scan_signature,
@@ -25,7 +19,6 @@ from tlon.agents.skills import (
     seed_skills,
 )
 from tlon.base.paths import TlonPaths
-from tlosure.edn import loads
 
 AGENT = "agent1"
 
@@ -191,30 +184,6 @@ def test_render_index_format(tmp_path: Path) -> None:
 
 def test_render_index_empty(tmp_path: Path) -> None:
     assert render_skills_index([]) == ""
-
-
-# ===== DSL section =====
-
-
-def _spec_with_sections(sections: str) -> MemberSpec:
-    return MemberSpec.from_edn(
-        loads(
-            '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections SECTIONS} :stages [(think)] :until (>= (get state :iteration) (get limits :max_iterations)) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'.replace(
-                "SECTIONS", sections
-            )
-        )
-    )
-
-
-def test_skills_section_accepted() -> None:
-    spec = _spec_with_sections("[(persona) (skills) (mail-history 5)]")
-    validate_member_spec(spec)
-
-
-def test_skills_section_rejects_arguments() -> None:
-    spec = _spec_with_sections("[(skills 3)]")
-    with pytest.raises(MemberSpecValidationError, match="takes no arguments"):
-        validate_member_spec(spec)
 
 
 # ===== 内置 skill 播种与 pin =====

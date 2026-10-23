@@ -15,10 +15,6 @@ class OperationTool:
         self._operation = executor.registry.get(name)
 
     @property
-    def control(self) -> bool:
-        return self._operation.control
-
-    @property
     def effects(self) -> frozenset[Effect]:
         return self._operation.effects
 

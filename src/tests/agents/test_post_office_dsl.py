@@ -7,31 +7,24 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from tests.mail_helpers import make_office
+from tests.program_helpers import make_program
 from tlon.agents.member_runtime import MemberRuntime
-from tlon.agents.member_spec import MemberSpec, validate_member_spec
 from tlon.agents.vocabulary import make_member_builtins
 from tlon.base.events.event_bus import EventBus
 from tlon.base.paths import TlonPaths
 from tlon.operations.schema import UnknownOutcomeError
 from tlon.organization.mail.mailbox import Mailbox
-from tlosure.edn import loads
 
 
 def runtime_at(tmp_path: Path, recipient: str = "missing@tlon.internal") -> MemberRuntime:
     bus = EventBus()
     bus.publish = AsyncMock()  # type: ignore[method-assign]
-    spec = MemberSpec.from_edn(
-        loads(
-            """{:version 1 :rules [
-      {:name "notify" :on :boot :actions [
-        (mail-send {:to ["RECIPIENT"] :content "first"})
-        (mail-send {:to ["b@tlon.internal"] :content "second"})]}]}""".replace(
-                "RECIPIENT", recipient
-            )
-        )
+    spec = make_program(
+        '(mail-send {:to ["'
+        + recipient
+        + '"] :content "first"}) (mail-send {:to ["b@tlon.internal"] :content "second"})'
     )
     builtins = make_member_builtins()
-    validate_member_spec(spec, builtins=builtins)
     paths = TlonPaths(home=tmp_path)
     return MemberRuntime(
         member_id="a",

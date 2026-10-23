@@ -1,5 +1,7 @@
 # 统一宿主操作
 
+> P5：Operation.control 及 sole/direct/literal 限制、旧 stage 执行链已删除；函数中的 Operation 可以普通组合。根入口结果负责调度。下文旧阶段方案保留为历史，现行契约见 [Operation reference](../reference/operations-reference.md)。
+
 当前决定见 [ADR 0045](../decisions/0045-remove-capabilities.md)：Capability、复合 Operation、提案审批与目录加载已删除，不提供兼容入口或迁移。本次未引入 module，也未改变现有会话配方。
 
 Operation 是宿主操作的单一契约：名称、描述、输入输出 schema、效果、控制标记与 Python 实现。DSLAdapter 与 OperationTool 分别提供语言和模型入口，共享 OperationExecutor，不重复维护业务实现。

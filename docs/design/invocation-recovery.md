@@ -1,5 +1,7 @@
 # 调用记录与恢复权威（P4a）
 
+> P5：执行与恢复仅有普通模块路径；旧 stage、run-loop、SessionScheduler 和 SessionJournal.resume 已删除。本文的 P4/P6 等旧操作统一阶段记录保留为历史，当前调用权威仍为 ProgramStore；边界以 [Runtime](runtime.md) 为准。
+
 > 已接受目标（P1–P3 已合并，P4a 本阶段实现，P4b/P5 待实施）：[ADR 0046](../decisions/0046-programmable-workflows.md) 与 [可编程工作流程](programmable-workflows.md) 将以模块函数替代 stage 引擎，施工见[分阶段计划](programmable-workflows-plan.md)。P1 的当前用法见 [模块程序指南](../guides/writing-a-module-program.md)。本文的 stage 描述仅适用于 v1。
 
 

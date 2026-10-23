@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from tests.program_helpers import write_program
 from tlon.agents.agent_registry import AgentRegistry
 from tlon.agents.scheduling_store import SchedulingStore
 from tlon.base.config import AgentConfig, AgentInfoProvider
@@ -34,9 +35,7 @@ async def registry(tmp_path: Path) -> AsyncGenerator[AgentRegistry, None]:
     paths = TlonPaths(home=tmp_path)
     home = paths.tlon_home() / "member" / "config"
     home.mkdir(parents=True)
-    (home / "behavior.tlon").write_text(
-        '{:version 1 :rules [{:name "mail" :on :mail-delivered :actions []}]}',
-    )
+    write_program(home / "behavior.tlon", "{:version 2 :handlers {:mail-delivered work/handle}}")
     runtime = AgentRegistry(event_bus=bus, agent_info_provider=Configs(), tlon_paths=paths)
     await runtime.initialize()
     runtime.register("member")

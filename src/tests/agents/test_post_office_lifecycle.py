@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.program_helpers import write_program
 from tlon.agents.agent_registry import AgentRegistry
 from tlon.agents.lifecycle import StartRequest
 from tlon.base.config import AgentConfig, AgentInfoProvider
@@ -34,7 +35,7 @@ def registry_at(tmp_path: Path) -> AgentRegistry:
     paths = TlonPaths(home=tmp_path)
     behavior = paths.agent_behavior_file("worker")
     behavior.parent.mkdir(parents=True)
-    behavior.write_text('{:version 1 :rules [{:name "mail" :on :mail-delivered :actions []}]}')
+    write_program(behavior, "{:version 2 :handlers {:mail-delivered work/handle}}")
     bus = EventBus()
     bus.publish = AsyncMock()
     registry = AgentRegistry(event_bus=bus, agent_info_provider=Provider(), tlon_paths=paths)

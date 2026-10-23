@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from tests.history_helpers import append_history
 from tlon.agents.session_journal import SessionJournal
 from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.base.paths import TlonPaths
@@ -44,7 +45,8 @@ async def _completed_session(
     """Journal one minimal completed session: start, one LLM round, one
     tool result, end."""
     tc = ToolCall(id=f"{session_id}-c1", function_name="shell-run", arguments={})
-    await journal.append(
+    await append_history(
+        journal,
         session_id,
         "session/start",
         agent_id="agent1",
@@ -53,15 +55,18 @@ async def _completed_session(
         carrier=None,
         context=[{"role": "user", "content": trigger}],
     )
-    await journal.append(session_id, "llm/response", response=LLMResponse(content=reply).to_dict())
-    await journal.append(session_id, "tool/dispatch", tool_calls=[tc.to_dict()])
-    await journal.append(
+    await append_history(
+        journal, session_id, "llm/response", response=LLMResponse(content=reply).to_dict()
+    )
+    await append_history(journal, session_id, "tool/dispatch", tool_calls=[tc.to_dict()])
+    await append_history(
+        journal,
         session_id,
         "tool/result",
         tool_call=tc.to_dict(),
         result=ToolResult(success=True, data={}, message="ran ok").to_dict(),
     )
-    await journal.append(session_id, "session/end", reason="complete")
+    await append_history(journal, session_id, "session/end", reason="complete")
 
 
 # ── list_completed enumeration ─────────────────────────────────────────
@@ -72,7 +77,8 @@ class TestListCompleted:
         journal = _journal(tmp_path)
         await _completed_session(journal, "agent1-a", "q1")
         # An unfinished session (no session/end) is not completed.
-        await journal.append(
+        await append_history(
+            journal,
             "agent1-live",
             "session/start",
             agent_id="agent1",
@@ -408,13 +414,17 @@ async def test_late_earlier_completion_and_legacy_claim_receipts(tmp_path: Path)
         json.dumps({"last_distilled_at": "2999-01-01T00:00:00+00:00"})
     )
     await _completed_session(journal, "legacy-consumed", "already consumed")
-    await journal.append(
-        "early", "session/start", ts="2000-01-01T00:00:00+00:00", trigger_content="late completion"
+    await append_history(
+        journal,
+        "early",
+        "session/start",
+        ts="2000-01-01T00:00:00+00:00",
+        trigger_content="late completion",
     )
     await _completed_session(journal, "newer", "newer completion")
     restarted = _manager(tmp_path, distillation_window=1)
     assert await restarted.maybe_distill_completed_sessions(journal) == 1
-    await journal.append("early", "session/end", reason="complete")
+    await append_history(journal, "early", "session/end", reason="complete")
     assert await restarted.maybe_distill_completed_sessions(journal) == 1
     claims = await restarted.claims.get_all_claims()
     assert len(claims) == 3
@@ -466,8 +476,8 @@ async def test_progress_commit_failure_replays_fixed_batch_without_model_or_clai
 
 async def test_empty_source_is_consumed_without_endless_retries(tmp_path: Path) -> None:
     journal = _journal(tmp_path)
-    await journal.append("empty", "session/start", trigger_content="")
-    await journal.append("empty", "session/end", reason="complete")
+    await append_history(journal, "empty", "session/start", trigger_content="")
+    await append_history(journal, "empty", "session/end", reason="complete")
     manager = _manager(tmp_path, distillation_window=1)
     assert await manager.maybe_distill_completed_sessions(journal) == 0
     assert await manager.maybe_distill_completed_sessions(journal) is None

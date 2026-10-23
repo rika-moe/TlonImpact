@@ -5,7 +5,7 @@ human approval flow.
 import shutil
 from typing import Any
 
-from tlon.agents.behavior_template import BehaviorTemplateError, analyze
+from tlon.agents.behavior_template import BehaviorTemplateError, analyze, render_module_templates
 from tlon.agents.program_package import (
     program_digest,
     read_module_sources,
@@ -57,8 +57,11 @@ def _validate_behavior(
     """
     spec_text = behavior_edn if behavior_edn.endswith("\n") else behavior_edn + "\n"
     try:
-        template = analyze(spec_text)
-        validate_program_sources(template.standin_text, modules or {})
+        template = analyze(spec_text, modules)
+        validate_program_sources(
+            template.standin_text,
+            render_module_templates(spec_text, modules or {}, {}, standins=True),
+        )
     except (BehaviorTemplateError, ValueError) as e:
         raise PrototypeError(f"behavior program validation failed: {e}") from e
     return spec_text
@@ -80,8 +83,7 @@ def write_staging_prototype(
 
     Validation happens **before** anything touches disk.
 
-    All rules share the same program format; the output is a unified
-    rules-form ``behavior.tlon`` — prototypes carry no persona (unified
+    The output is a complete module program: ``behavior.tlon`` and module sources — prototypes carry no persona (unified
     member model, ADR 0006); a member's persona files are seeded at
     creation and member-owned afterwards (self-editable via
     ``persona-update``, ADR 0024), never part of the behavior genome.

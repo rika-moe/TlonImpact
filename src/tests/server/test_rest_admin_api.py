@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from tests.identity_helpers import make_identity
+from tests.program_helpers import MINIMAL_MODULES, fixture_modules
 from tests.prototype_helpers import builtin_id
 from tlon.agents.prototypes.catalog import (
     get_prototype_detail,
@@ -38,7 +39,9 @@ class StubRequest:
     def __init__(
         self, body: dict | None = None, agent_id: str | None = None, name: str | None = None
     ):
-        self._body = body or {}
+        self._body = dict(body or {})
+        if "behavior" in self._body:
+            self._body.setdefault("modules", fixture_modules(self._body["behavior"]))
         self.match_info = {}
         if agent_id is not None:
             self.match_info["agent_id"] = agent_id
@@ -215,14 +218,22 @@ class TestAdminUpdateAgent:
             tlon_paths=paths,
         )
         config_dir = paths.agent_config_dir(agent_id)
-        before = {file.name: file.read_bytes() for file in config_dir.iterdir()}
+        before = {
+            str(file.relative_to(config_dir)): file.read_bytes()
+            for file in config_dir.rglob("*")
+            if file.is_file()
+        }
 
         response = await handler.handle_update_agent(StubRequest(body=body, agent_id=agent_id))
 
         assert response.status == 409
         assert json.loads(response.text)["reason"] == "identity_conflict"
         registry.adopt_agent.assert_not_awaited()
-        assert {file.name: file.read_bytes() for file in config_dir.iterdir()} == before
+        assert {
+            str(file.relative_to(config_dir)): file.read_bytes()
+            for file in config_dir.rglob("*")
+            if file.is_file()
+        } == before
 
     async def test_update_persona_and_llm(self, tmp_path: Path):
         handler, reg, p = _handler(tmp_path)
@@ -281,11 +292,12 @@ class TestAdminStaging:
         p = TlonPaths(home=tmp_path)
         seed_prototypes(p)
         info = write_staging_prototype(
-            '{:version 1 :rules [{:name "r" :on :boot :actions []}]}\n',
+            "{:version 2 :handlers {:boot work/handle}}",
             display_name="LLM 创意",
             description="由 agent 创作",
             author_id="gu-yanxi",
             tlon_paths=p,
+            modules=MINIMAL_MODULES,
         )
         return p, info.name
 
@@ -325,12 +337,9 @@ class TestAdminPrototypeManagement:
     """Prototype management endpoints (WebUI PROTOTYPES view): detail,
     human-authored create, edit, delete."""
 
-    _BEHAVIOR = '{:version 1 :rules [{:name "r" :on :boot :actions []}]}\n'
-    _TEMPLATED = '{:version 1\n :parameters {:to {:type :string-list :required true}}\n :rules [{:name "relay" :on :mail-delivered :actions [(mail-forward {:mail_id (mail-field msg :id) :to ${to}})]}]}\n'
-    _INVALID = (
-        '{:version 1 :rules [{:name "w" :on :mail-delivered'
-        ' :actions [(jump {:to ["x@tlon.internal"]})]}]}\n'
-    )
+    _BEHAVIOR = "{:version 2 :handlers {:boot work/handle}}"
+    _TEMPLATED = "{:version 2 :parameters {:to {:type :string-list :required true}} :handlers {:mail-delivered work/handle}}"
+    _INVALID = "{:version 2 :handlers {:boot missing/handle}}"
 
     def _handler(self, tmp_path: Path) -> tuple[RESTAPIHandler, TlonPaths]:
         p = TlonPaths(home=tmp_path)
@@ -418,7 +427,7 @@ class TestAdminPrototypeManagement:
 
         assert resp.status == 200
         proto = json.loads(resp.text)["prototype"]
-        assert proto["behavior"] == self._TEMPLATED
+        assert proto["behavior"] == self._TEMPLATED.rstrip() + "\n"
         assert proto["parameters"] == [{"name": "to", "type": "string-list", "required": True}]
 
     async def test_detail_unknown_404(self, tmp_path: Path):
@@ -432,7 +441,11 @@ class TestAdminPrototypeManagement:
     async def test_staging_detail_is_untrusted(self, tmp_path: Path):
         handler, p = self._handler(tmp_path)
         staged_id = write_staging_prototype(
-            self._BEHAVIOR, author_id="adam", tlon_paths=p, display_name="staged"
+            self._BEHAVIOR,
+            author_id="adam",
+            tlon_paths=p,
+            display_name="staged",
+            modules=MINIMAL_MODULES,
         ).name
 
         resp = await handler.handle_get_staging_prototype(StubRequest(name=staged_id))
@@ -442,12 +455,8 @@ class TestAdminPrototypeManagement:
         assert proto["trusted"] is False
         assert proto["author"] == "adam"
 
-    _L2_BEHAVIOR = (
-        '{:version 1 :execution {:level :L2} :rules [{:name "r" :on :boot :actions []}]}\n'
-    )
-    _L1_BEHAVIOR = (
-        '{:version 1 :execution {:level :L1} :rules [{:name "r" :on :boot :actions []}]}\n'
-    )
+    _L2_BEHAVIOR = "{:version 2 :execution {:level :L2} :handlers {:boot work/handle}}"
+    _L1_BEHAVIOR = "{:version 2 :execution {:level :L1} :handlers {:boot work/handle}}"
 
     async def test_staging_l2_detail_raises_red_flag(self, tmp_path: Path):
         """Constitution 1: a staging proposal declaring L2 (full Linux
@@ -455,7 +464,11 @@ class TestAdminPrototypeManagement:
         payload for the human approver."""
         handler, p = self._handler(tmp_path)
         staged_id = write_staging_prototype(
-            self._L2_BEHAVIOR, author_id="adam", tlon_paths=p, display_name="staged"
+            self._L2_BEHAVIOR,
+            author_id="adam",
+            tlon_paths=p,
+            display_name="staged",
+            modules=MINIMAL_MODULES,
         ).name
 
         resp = await handler.handle_get_staging_prototype(StubRequest(name=staged_id))
@@ -482,7 +495,11 @@ class TestAdminPrototypeManagement:
     async def test_staging_l1_detail_has_no_red_flag(self, tmp_path: Path):
         handler, p = self._handler(tmp_path)
         staged_id = write_staging_prototype(
-            self._L1_BEHAVIOR, author_id="adam", tlon_paths=p, display_name="staged"
+            self._L1_BEHAVIOR,
+            author_id="adam",
+            tlon_paths=p,
+            display_name="staged",
+            modules=MINIMAL_MODULES,
         ).name
 
         resp = await handler.handle_get_staging_prototype(StubRequest(name=staged_id))
@@ -497,10 +514,14 @@ class TestAdminPrototypeManagement:
         degrades the derived fields, never the endpoint."""
         handler, p = self._handler(tmp_path)
         staged_id = write_staging_prototype(
-            self._BEHAVIOR, author_id="adam", tlon_paths=p, display_name="staged"
+            self._BEHAVIOR,
+            author_id="adam",
+            tlon_paths=p,
+            display_name="staged",
+            modules=MINIMAL_MODULES,
         ).name
         (p.prototypes_staging_dir() / staged_id / "behavior.tlon").write_text(
-            "{:version 1 :rules [", encoding="utf-8"
+            "{:version 2 :handlers {", encoding="utf-8"
         )
 
         resp = await handler.handle_get_staging_prototype(StubRequest(name=staged_id))
@@ -510,7 +531,7 @@ class TestAdminPrototypeManagement:
         assert proto["execution_level"] is None
         assert proto["red_flags"] == []
 
-    async def test_update_metadata_and_behavior(self, tmp_path: Path):
+    async def test_update_program_requires_new_derived_prototype(self, tmp_path: Path):
         handler, p = self._handler(tmp_path)
         hand_id_response = await handler.handle_create_prototype(
             StubRequest(body={"display_name": "hand", "behavior": self._BEHAVIOR})
@@ -521,12 +542,10 @@ class TestAdminPrototypeManagement:
             StubRequest(name=hand_id, body={"description": "新描述", "behavior": self._TEMPLATED})
         )
 
-        assert resp.status == 200
-        proto = json.loads(resp.text)["prototype"]
-        assert proto["description"] == "新描述"
-        assert proto["trusted"] is True
+        assert resp.status == 400
+        assert "immutable" in json.loads(resp.text)["error"]
         _info, behavior, _, _reviews = get_prototype_detail(hand_id, tlon_paths=p)
-        assert behavior == self._TEMPLATED
+        assert behavior == self._BEHAVIOR.rstrip() + "\n"
 
     async def test_update_empty_body_400(self, tmp_path: Path):
         handler, _p = self._handler(tmp_path)
@@ -554,7 +573,7 @@ class TestAdminPrototypeManagement:
         assert resp.status == 400
         assert json.loads(resp.text)["reason"] == "invalid_prototype"
         _info, behavior, _, _reviews = get_prototype_detail(hand_id, tlon_paths=p)
-        assert behavior == self._BEHAVIOR
+        assert behavior == self._BEHAVIOR.rstrip() + "\n"
 
     async def test_update_unknown_404(self, tmp_path: Path):
         handler, _p = self._handler(tmp_path)
@@ -569,7 +588,11 @@ class TestAdminPrototypeManagement:
     async def test_update_staging_preserves_author(self, tmp_path: Path):
         handler, p = self._handler(tmp_path)
         staged_id = write_staging_prototype(
-            self._BEHAVIOR, author_id="adam", tlon_paths=p, display_name="staged"
+            self._BEHAVIOR,
+            author_id="adam",
+            tlon_paths=p,
+            display_name="staged",
+            modules=MINIMAL_MODULES,
         ).name
 
         resp = await handler.handle_update_staging_prototype(
@@ -631,7 +654,7 @@ class TestAdminPrototypeLessons:
     an optional ``lessons`` body field; the detail payload carries the text
     back so a reviewer sees the packaged lessons."""
 
-    _BEHAVIOR = '{:version 1 :rules [{:name "r" :on :boot :actions []}]}\n'
+    _BEHAVIOR = "{:version 2 :handlers {:boot work/handle}}"
 
     def _handler(self, tmp_path: Path) -> tuple[RESTAPIHandler, TlonPaths]:
         p = TlonPaths(home=tmp_path)
@@ -687,7 +710,11 @@ class TestAdminPrototypeLessons:
     async def test_patch_lessons_staging(self, tmp_path: Path):
         handler, p = self._handler(tmp_path)
         staged_id = write_staging_prototype(
-            self._BEHAVIOR, author_id="adam", tlon_paths=p, display_name="staged"
+            self._BEHAVIOR,
+            author_id="adam",
+            tlon_paths=p,
+            display_name="staged",
+            modules=MINIMAL_MODULES,
         ).name
 
         resp = await handler.handle_update_staging_prototype(
@@ -708,6 +735,7 @@ class TestAdminPrototypeLessons:
             lessons="- 随包\n",
             tlon_paths=p,
             display_name="staged",
+            modules=MINIMAL_MODULES,
         ).name
 
         resp = await handler.handle_get_staging_prototype(StubRequest(name=staged_id))
@@ -722,7 +750,7 @@ class TestAdminPrototypeReviews:
     the human
     approver sees the heterogeneous reviews; absent file = no field."""
 
-    _BEHAVIOR = '{:version 1 :rules [{:name "r" :on :boot :actions []}]}\n'
+    _BEHAVIOR = "{:version 2 :handlers {:boot work/handle}}"
 
     def _handler(self, tmp_path: Path) -> tuple[RESTAPIHandler, TlonPaths]:
         p = TlonPaths(home=tmp_path)
@@ -733,7 +761,11 @@ class TestAdminPrototypeReviews:
     async def test_staging_detail_carries_reviews(self, tmp_path: Path):
         handler, p = self._handler(tmp_path)
         staged_id = write_staging_prototype(
-            self._BEHAVIOR, author_id="adam", tlon_paths=p, display_name="staged"
+            self._BEHAVIOR,
+            author_id="adam",
+            tlon_paths=p,
+            display_name="staged",
+            modules=MINIMAL_MODULES,
         ).name
         append_staging_review(staged_id, "## t — r-1（fake/model）：通过\n\n理由\n", tlon_paths=p)
 
@@ -762,8 +794,8 @@ class TestAdminPrototypeLineage:
     parent/generation/proposal_note, detail endpoints embed the derived
     lineage chain with per-generation diffs."""
 
-    _BEHAVIOR = '{:version 1 :rules [{:name "r" :on :boot :actions []}]}\n'
-    _BEHAVIOR_V2 = '{:version 1 :rules [{:name "r2" :on :boot :actions []}]}\n'
+    _BEHAVIOR = "{:version 2 :handlers {:boot work/handle}}"
+    _BEHAVIOR_V2 = "{:version 2 :handlers {:boot work/r2}}"
 
     def _handler(self, tmp_path: Path) -> tuple[RESTAPIHandler, TlonPaths]:
         p = TlonPaths(home=tmp_path)
@@ -839,7 +871,11 @@ class TestAdminPrototypeLineage:
     async def test_staging_detail_includes_lineage(self, tmp_path: Path):
         handler, p = self._handler(tmp_path)
         staged_id = write_staging_prototype(
-            self._BEHAVIOR, author_id="adam", tlon_paths=p, display_name="staged"
+            self._BEHAVIOR,
+            author_id="adam",
+            tlon_paths=p,
+            display_name="staged",
+            modules=MINIMAL_MODULES,
         ).name
 
         resp = await handler.handle_get_staging_prototype(StubRequest(name=staged_id))

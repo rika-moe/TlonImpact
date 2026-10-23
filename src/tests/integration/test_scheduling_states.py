@@ -1,4 +1,4 @@
-"""Real HTTP → mailbox → session request → scheduling → mailbox integration."""
+"""Real HTTP → ordinary program → scheduling result → mailbox integration."""
 
 import asyncio
 from datetime import UTC, datetime, timedelta
@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, patch
 
 import aiohttp
 
-from tests.prototype_helpers import builtin_id
 from tlon.agents.scheduling_store import SchedulingStore
 from tlon.base.llm_client import LLMClient, LLMResponse, ToolCall
 
@@ -18,7 +17,7 @@ from .test_post_office import _server
 
 async def test_real_tools_sleep_wake_finish_and_permanent_exit(tmp_path: Path) -> None:
     """Only inference is mocked; delivery, tools, journal and timers are real."""
-    second_think = asyncio.Event()
+    second_model_call = asyncio.Event()
     allow_sleep = asyncio.Event()
     woke = asyncio.Event()
     member_id = ""
@@ -35,23 +34,19 @@ async def test_real_tools_sleep_wake_finish_and_permanent_exit(tmp_path: Path) -
 
     async def infer(**kwargs: Any) -> LLMResponse:
         nonlocal calls
-        if kwargs.get("purpose", "think") != "think":
+        if kwargs.get("purpose") != "program":
             return LLMResponse(content="[]")
         calls += 1
         if calls == 1:
             return response("mail-send", {"to": ["alice@tlon.internal"], "content": "收到"})
         if calls == 2:
-            second_think.set()
+            second_model_call.set()
             await allow_sleep.wait()
             unread = store.mails(member_id, "unread")
             return response("mail-mark-read", {"mail_ids": [mail.id for mail in unread]})
         if calls == 3:
-            return response(
-                "sleep-until",
-                {
-                    "wake_at": (datetime.now(UTC) + timedelta(seconds=2)).isoformat(),
-                    "reason": "稍后继续",
-                },
+            return LLMResponse(
+                content="sleep:" + (datetime.now(UTC) + timedelta(seconds=2)).isoformat()
             )
         if calls == 4:
             woke.set()
@@ -60,7 +55,7 @@ async def test_real_tools_sleep_wake_finish_and_permanent_exit(tmp_path: Path) -
         if calls == 5:
             return response("finish-turn", {})
         if calls == 6:
-            return response("exit-agent", {"reason": "测试完成"})
+            return LLMResponse(content="exit")
         raise AssertionError(f"Unexpected inference after call {calls}: {kwargs}")
 
     async with _server(tmp_path) as (url, app):
@@ -68,15 +63,33 @@ async def test_real_tools_sleep_wake_finish_and_permanent_exit(tmp_path: Path) -
         runtime = app._runtime
         store = runtime.post_office.store
         registry = runtime.agent_registry
-        prototype = builtin_id("短回合交流")
-        behavior = tmp_path / "prototypes" / prototype / "behavior.tlon"
-        behavior.write_text(
-            behavior.read_text()
-            .replace(":max-iterations 3", ":max-iterations 10")
-            .replace(":enabled true", ":enabled false"),
-            encoding="utf-8",
-        )
         async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
+            modules = {
+                "work.tlon": """
+            (ns work (:require [tlon.conversation :as conversation]) (:export boot handle))
+            (defn boot [event] {:result nil})
+            (defn handle [event]
+              (let [turn (conversation/run {:messages [{:role "user" :content (get (get event :mail) :content)}]
+                            :tools ["mail-send" "mail-mark-read" "finish-turn"]
+                            :max_tokens 256 :max_rounds 10})
+                    content (get turn :content)]
+                (if (= content "exit") {:result (get turn :reason) :next {:kind "exit"}}
+                  (if (and content (content-matches? content "^sleep:"))
+                    {:result (get turn :reason) :next {:kind "sleep-until" :at (substring content 6)}}
+                    {:result (get turn :reason)}))))
+            """
+            }
+            async with http.post(
+                url + "/admin/prototypes",
+                json={
+                    "display_name": "普通程序调度测试",
+                    "behavior": "{:version 2 :handlers {:boot work/boot :mail-delivered work/handle} :fuel 10000}",
+                    "modules": modules,
+                },
+            ) as proposal:
+                body = await proposal.json()
+                assert proposal.status == 201, body
+                prototype = body["prototype"]["name"]
             async with http.post(
                 f"{url}/admin/config/agents",
                 json={
@@ -100,7 +113,7 @@ async def test_real_tools_sleep_wake_finish_and_permanent_exit(tmp_path: Path) -
             with patch.object(LLMClient, "chat", new=AsyncMock(side_effect=infer)):
                 await _send_mail(http, url, "先回复，再休息", to=[member_id])
                 async with asyncio.timeout(10):
-                    await second_think.wait()
+                    await second_model_call.wait()
                 assert calls == 2
                 assert (await registry.get_agent_status(member_id))["state"] == "active"
                 assert [mail.content for mail in store.mails("human:alice")] == ["收到"]

@@ -1,5 +1,6 @@
 """Window inspection uses frozen host inputs without sampling or spending tokens."""
 
+import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, Mock
@@ -24,7 +25,7 @@ async def test_context_inspection_counts_frozen_system_and_tools_and_replays(
         "r", "config", {"model_name": "openai/original", "max_tokens": 20, "context_window": 100}
     )
     client = AsyncMock()
-    counter = Mock(return_value=input_tokens)
+    counter = Mock(side_effect=[input_tokens - 10, 10])
     monkeypatch.setattr("litellm.token_counter", counter)
     executor = OperationExecutor(
         OperationRegistry(make_model_operations(client, AsyncMock(side_effect=AssertionError()))),
@@ -44,11 +45,13 @@ async def test_context_inspection_counts_frozen_system_and_tools_and_replays(
         "context_window": 100,
         "fits": fits,
     }
-    counter.assert_called_once_with(
-        model="openai/original",
-        messages=[{"role": "system", "content": "original"}, *arguments["messages"]],
-        tools=catalog,
-    )
+    assert counter.call_count == 2
+    assert counter.call_args_list[0].kwargs == {
+        "model": "openai/original",
+        "messages": [{"role": "system", "content": "original"}, *arguments["messages"]],
+    }
+    assert counter.call_args_list[1].kwargs["model"] == "openai/original"
+    assert json.loads(counter.call_args_list[1].kwargs["text"]) == catalog
     counter.side_effect = AssertionError("history must not be resampled")
     with bind_execution(ExecutionScope(store, "r", 100, "output")):
         assert await executor.call("model-context", arguments) == result

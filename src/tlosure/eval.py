@@ -85,7 +85,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from tlosure.builtins import (
-    ActionRequest,
     Builtin,
     BuiltinCall,
     Closure,
@@ -99,10 +98,8 @@ from tlosure.validate import _binding_names, _params, validate_form
 __all__ = [
     "DEFAULT_FUEL",
     "DEFAULT_MAX_DEPTH",
-    "DEFAULT_WHEN_FUEL",
     "MAX_FUEL",
     "SPECIAL_FORMS",
-    "ActionRequest",
     "Builtin",
     "BuiltinCall",
     "Closure",
@@ -115,7 +112,6 @@ __all__ = [
 ]
 
 DEFAULT_FUEL = 1000
-DEFAULT_WHEN_FUEL = 200
 DEFAULT_MAX_DEPTH = 100
 MAX_FUEL = 10000
 

@@ -4,8 +4,7 @@
 calls ``Builtin.fn(env, *args)`` directly to pin each function's full
 contract — the totality of ``get``, the type-distinct equality of ``=``,
 the ``_num`` coercion rules (bool is rejected even though it is an int
-subclass), and the frozen dataclass contracts of :class:`Builtin` and
-:class:`ActionRequest`.
+subclass), and the frozen dataclass contracts of :class:`Builtin`.
 """
 
 import dataclasses
@@ -16,7 +15,6 @@ import pytest
 from tlosure.builtins import (
     ARITHMETIC_BUILTINS,
     CORE_BUILTINS,
-    ActionRequest,
     Builtin,
     EvalDepthError,
     EvalError,
@@ -42,13 +40,6 @@ class TestContractTypes:
 
     def test_builtin_impure_marker(self):
         assert Builtin(fn=lambda env: None, pure=False).pure is False
-
-    def test_action_request_is_frozen(self):
-        request = ActionRequest(kind="send", data={"to": "x"})
-        assert request.kind == "send"
-        assert request.data == {"to": "x"}
-        with pytest.raises(dataclasses.FrozenInstanceError):
-            request.kind = "other"  # type: ignore[misc]
 
     def test_error_hierarchy(self):
         assert issubclass(FuelExhaustedError, EvalError)

@@ -1,20 +1,13 @@
-"""Relay — a forwarding program carried by a prototype.
-
-relay's ``script.tlon`` became a rules-form ``behavior.tlon`` with a
-write-side ``:parameters`` template. Pins: the derived ``runtime == "script"``
-(no loop rule), instantiation rendering the ``${to}`` placeholder into a
-concrete ``(forward ...)``, and the required-params gate.
-"""
+"""Relay parameter declarations render into a copied ordinary module package."""
 
 import pytest
 
 from tests.prototype_helpers import builtin_id
-from tlon.agents.member_spec import MemberSpec
+from tlon.agents.program_package import read_module_sources, validate_program_sources
 from tlon.agents.prototypes.catalog import get_prototype_info, seed_prototypes
 from tlon.agents.prototypes.instantiate import instantiate
 from tlon.base.paths import TlonPaths
 from tlon.evolution.ports import PrototypeError
-from tlosure.edn import loads
 
 
 def _paths(tmp_path) -> TlonPaths:
@@ -46,12 +39,14 @@ class TestRelayPrototype:
         assert cfg.id == "relay-1"
 
         text = p.agent_behavior_file("relay-1").read_text(encoding="utf-8")
-        assert "${to}" not in text  # placeholder rendered away
-        assert "a@tlon.internal" in text and "b@tlon.internal" in text
-
-        spec = MemberSpec.from_edn(loads(text))
-        assert spec.rules[0].name == "relay"
-        assert len(spec.rules[0].actions) == 2
+        modules = read_module_sources(p.agent_config_dir("relay-1") / "modules")
+        source = modules["work/main.tlon"]
+        assert "${to}" not in text + source
+        assert ":parameters" not in text
+        assert "a@tlon.internal" in source and "b@tlon.internal" in source
+        spec = validate_program_sources(text, modules)
+        assert dict(spec.handlers)["mail-delivered"] == "work.main/handle"
+        assert "mail-forward" in source and "mail-mark-read" in source
 
     def test_missing_params_refused(self, tmp_path):
         p = _paths(tmp_path)

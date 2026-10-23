@@ -28,16 +28,39 @@ from tlon.base.config import yaml_load_file
 from tlon.base.paths import TlonPaths
 from tlon.evolution.ports import PrototypeError
 
-VALID_BEHAVIOR = '{:version 1\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
-VALID_BEHAVIOR_V2 = '{:version 1\n :rules [{:name "relay-v2"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["y@tlon.internal"]})]}]}\n'
-INVALID_BEHAVIOR = '{:version 1\n :rules [{:name "wild"\n          :on :mail-delivered\n          :actions [(jump {:to ["x@tlon.internal"]})]}]}\n'
+_FIXTURE_MODULES = {
+    "{:version 2 :handlers {:mail-delivered work.fixturee7336d73/handle0}}\n": {
+        "work/fixturee7336d73.tlon": '(ns work.fixturee7336d73 (:export handle0))\n(defn handle0 [event] (let [msg (get event :mail) self (get event :self)] (let [action0 (mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})] {:result nil})))\n'
+    },
+    "{:version 2 :handlers {:mail-delivered work.fixture7e2a3552/handle0}}\n": {
+        "work/fixture7e2a3552.tlon": '(ns work.fixture7e2a3552 (:export handle0))\n(defn handle0 [event] (let [msg (get event :mail) self (get event :self)] (let [action0 (mail-forward {:mail_id (mail-field msg :id) :to ["y@tlon.internal"]})] {:result nil})))\n'
+    },
+    "{:version 2 :handlers {:mail-delivered work.fixture8abb1c6f/handle0}}\n": {
+        "work/fixture8abb1c6f.tlon": '(ns work.fixture8abb1c6f (:export handle0))\n(defn handle0 [event] (let [msg (get event :mail) self (get event :self)] (let [action0 (jump {:to ["x@tlon.internal"]})] {:result nil})))\n'
+    },
+    '{:version 2 :handlers {:mail-delivered work.fixtured59e2318/handle0} :llm {:model "deepseek/deepseek-chat"}}\n': {
+        "work/fixtured59e2318.tlon": '(ns work.fixtured59e2318 (:export handle0))\n(defn handle0 [event] (let [msg (get event :mail) self (get event :self)] (let [action0 (mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})] {:result nil})))\n'
+    },
+    "{:version 2 :handlers {:mail-delivered work.fixturec79a4a08/handle0} :execution {:level :L1}}\n": {
+        "work/fixturec79a4a08.tlon": '(ns work.fixturec79a4a08 (:export handle0))\n(defn handle0 [event] (let [msg (get event :mail) self (get event :self)] (let [action0 (mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})] {:result nil})))\n'
+    },
+}
+
+
+VALID_BEHAVIOR = "{:version 2 :handlers {:mail-delivered work.fixturee7336d73/handle0}}\n"
+VALID_BEHAVIOR_V2 = "{:version 2 :handlers {:mail-delivered work.fixture7e2a3552/handle0}}\n"
+INVALID_BEHAVIOR = "{:version 2 :handlers {:mail-delivered work.fixture8abb1c6f/handle0}}\n"
 
 
 class TestWriteTrustedPrototype:
     def test_creates_trusted_without_author(self, tmp_path):
         p = TlonPaths(home=tmp_path)
         info = write_trusted_prototype(
-            VALID_BEHAVIOR, display_name="手写", description="d", tlon_paths=p
+            VALID_BEHAVIOR,
+            display_name="手写",
+            description="d",
+            tlon_paths=p,
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
         )
         assert info.name == info.name
         assert info.display_name == "手写"
@@ -53,40 +76,73 @@ class TestWriteTrustedPrototype:
     def test_invalid_behavior_nothing_on_disk(self, tmp_path):
         p = TlonPaths(home=tmp_path)
         with pytest.raises(PrototypeError, match="validation failed"):
-            write_trusted_prototype(INVALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+            write_trusted_prototype(
+                INVALID_BEHAVIOR,
+                tlon_paths=p,
+                display_name="定址转发",
+                modules=_FIXTURE_MODULES.get(INVALID_BEHAVIOR),
+            )
         assert not p.prototypes_dir().exists()
 
     def test_name_conflict_rejected(self, tmp_path, monkeypatch):
         p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        created_1 = write_trusted_prototype(
+            VALID_BEHAVIOR,
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
+        )
         monkeypatch.setattr(
             "tlon.agents.prototypes.management.new_prototype_id", lambda: created_1.name
         )
         with pytest.raises(PrototypeError, match="already exists"):
-            write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+            write_trusted_prototype(
+                VALID_BEHAVIOR,
+                tlon_paths=p,
+                display_name="定址转发",
+                modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
+            )
 
     def test_staging_name_conflict_rejected(self, tmp_path, monkeypatch):
         p = TlonPaths(home=tmp_path)
         created_1 = write_staging_prototype(
-            VALID_BEHAVIOR, author_id="adam", tlon_paths=p, display_name="定址转发"
+            VALID_BEHAVIOR,
+            author_id="adam",
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
         )
         monkeypatch.setattr(
             "tlon.agents.prototypes.management.new_prototype_id", lambda: created_1.name
         )
         with pytest.raises(PrototypeError, match="already exists"):
-            write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+            write_trusted_prototype(
+                VALID_BEHAVIOR,
+                tlon_paths=p,
+                display_name="定址转发",
+                modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
+            )
 
     def test_empty_behavior_label_rejected(self, tmp_path):
         p = TlonPaths(home=tmp_path)
         with pytest.raises(PrototypeError, match="display_name"):
-            write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="  ")
+            write_trusted_prototype(
+                VALID_BEHAVIOR,
+                tlon_paths=p,
+                display_name="  ",
+                modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
+            )
 
 
 class TestGetPrototypeDetail:
     def test_trusted_detail_returns_metadata_and_behavior(self, tmp_path):
         p = TlonPaths(home=tmp_path)
         created_1 = write_trusted_prototype(
-            VALID_BEHAVIOR, description="d", tlon_paths=p, display_name="定址转发"
+            VALID_BEHAVIOR,
+            description="d",
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
         )
         info, behavior, lessons, _reviews = get_prototype_detail(created_1.name, tlon_paths=p)
         assert lessons is None
@@ -97,7 +153,11 @@ class TestGetPrototypeDetail:
     def test_staging_detail(self, tmp_path):
         p = TlonPaths(home=tmp_path)
         created_1 = write_staging_prototype(
-            VALID_BEHAVIOR, author_id="adam", tlon_paths=p, display_name="定址转发"
+            VALID_BEHAVIOR,
+            author_id="adam",
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
         )
         info, _behavior, _lessons, _reviews = get_prototype_detail(
             created_1.name, staging=True, tlon_paths=p
@@ -121,7 +181,11 @@ class TestStagingReviewFile:
     def test_detail_without_reviews_returns_none(self, tmp_path):
         p = TlonPaths(home=tmp_path)
         created_1 = write_staging_prototype(
-            VALID_BEHAVIOR, author_id="adam", tlon_paths=p, display_name="定址转发"
+            VALID_BEHAVIOR,
+            author_id="adam",
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
         )
         _info, _behavior, _lessons, reviews = get_prototype_detail(
             created_1.name, staging=True, tlon_paths=p
@@ -131,7 +195,11 @@ class TestStagingReviewFile:
     def test_append_roundtrip_and_accumulate(self, tmp_path):
         p = TlonPaths(home=tmp_path)
         created_1 = write_staging_prototype(
-            VALID_BEHAVIOR, author_id="adam", tlon_paths=p, display_name="定址转发"
+            VALID_BEHAVIOR,
+            author_id="adam",
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
         )
         append_staging_review(created_1.name, "## t1 — r-1（m-1）：通过\n\n理由甲\n", tlon_paths=p)
         append_staging_review(created_1.name, "## t2 — r-2（m-2）：弃权\n\n理由乙\n", tlon_paths=p)
@@ -155,7 +223,11 @@ class TestUpdatePrototype:
     def test_metadata_update_preserves_trust_and_author(self, tmp_path):
         p = TlonPaths(home=tmp_path)
         created_1 = write_staging_prototype(
-            VALID_BEHAVIOR, author_id="adam", tlon_paths=p, display_name="定址转发"
+            VALID_BEHAVIOR,
+            author_id="adam",
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
         )
         info = update_prototype(
             created_1.name, display_name="新名字", description="新描述", staging=True, tlon_paths=p
@@ -171,19 +243,38 @@ class TestUpdatePrototype:
 
     def test_behavior_update_rewrites_file(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
-        update_prototype(created_1.name, behavior_edn=VALID_BEHAVIOR_V2, tlon_paths=p)
+        created_1 = write_trusted_prototype(
+            VALID_BEHAVIOR,
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
+        )
+        with pytest.raises(PrototypeError, match="immutable"):
+            update_prototype(
+                created_1.name,
+                behavior_edn=VALID_BEHAVIOR_V2,
+                tlon_paths=p,
+                modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR_V2),
+            )
         _info, behavior, _, _reviews = get_prototype_detail(created_1.name, tlon_paths=p)
-        assert behavior == VALID_BEHAVIOR_V2
+        assert behavior == VALID_BEHAVIOR
 
     def test_invalid_behavior_update_leaves_disk_untouched(self, tmp_path):
         p = TlonPaths(home=tmp_path)
         created_1 = write_trusted_prototype(
-            VALID_BEHAVIOR, description="orig", tlon_paths=p, display_name="定址转发"
+            VALID_BEHAVIOR,
+            description="orig",
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
         )
         with pytest.raises(PrototypeError, match="validation failed"):
             update_prototype(
-                created_1.name, description="changed", behavior_edn=INVALID_BEHAVIOR, tlon_paths=p
+                created_1.name,
+                description="changed",
+                behavior_edn=INVALID_BEHAVIOR,
+                tlon_paths=p,
+                modules=_FIXTURE_MODULES.get(INVALID_BEHAVIOR),
             )
         _info, behavior, _, _reviews = get_prototype_detail(created_1.name, tlon_paths=p)
         assert behavior == VALID_BEHAVIOR
@@ -194,7 +285,12 @@ class TestUpdatePrototype:
 
     def test_nothing_to_update_rejected(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        created_1 = write_trusted_prototype(
+            VALID_BEHAVIOR,
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
+        )
         with pytest.raises(PrototypeError, match="nothing to update"):
             update_prototype(created_1.name, tlon_paths=p)
 
@@ -210,7 +306,12 @@ class TestApprovePreservesLineage:
 
     def test_approve_keeps_parent_generation_note(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        created_1 = write_trusted_prototype(
+            VALID_BEHAVIOR,
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
+        )
         created_2 = write_staging_prototype(
             VALID_BEHAVIOR_V2,
             author_id="adam",
@@ -218,6 +319,7 @@ class TestApprovePreservesLineage:
             proposal_note="改转发目标",
             tlon_paths=p,
             display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR_V2),
         )
         info = approve_prototype(created_2.name, tlon_paths=p)
         assert info.trusted is True
@@ -233,7 +335,12 @@ class TestApprovePreservesLineage:
 
     def test_update_keeps_lineage_fields(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        created_1 = write_trusted_prototype(
+            VALID_BEHAVIOR,
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
+        )
         created_2 = write_staging_prototype(
             VALID_BEHAVIOR_V2,
             author_id="adam",
@@ -241,6 +348,7 @@ class TestApprovePreservesLineage:
             proposal_note="改转发目标",
             tlon_paths=p,
             display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR_V2),
         )
         info = update_prototype(created_2.name, display_name="新名字", staging=True, tlon_paths=p)
         assert info.parent == created_1.name
@@ -249,12 +357,25 @@ class TestApprovePreservesLineage:
 
     def test_update_can_relink_parent(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        created_1 = write_trusted_prototype(
+            VALID_BEHAVIOR,
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
+        )
         created_2 = write_trusted_prototype(
-            VALID_BEHAVIOR, parent=created_1.name, tlon_paths=p, display_name="定址转发"
+            VALID_BEHAVIOR,
+            parent=created_1.name,
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
         )
         created_3 = write_staging_prototype(
-            VALID_BEHAVIOR_V2, author_id="adam", tlon_paths=p, display_name="定址转发"
+            VALID_BEHAVIOR_V2,
+            author_id="adam",
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR_V2),
         )
         info = update_prototype(
             created_3.name,
@@ -269,7 +390,12 @@ class TestApprovePreservesLineage:
 
     def test_update_unknown_parent_rejected_disk_untouched(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        created_1 = write_trusted_prototype(
+            VALID_BEHAVIOR,
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
+        )
         with pytest.raises(PrototypeError, match="parent prototype 'ghost' not found"):
             update_prototype(created_1.name, parent="ghost", tlon_paths=p)
         info, behavior, _, _reviews = get_prototype_detail(created_1.name, tlon_paths=p)
@@ -289,6 +415,7 @@ class TestLessonsFile:
             lessons="- 教训甲\n",
             tlon_paths=p,
             display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
         )
         lessons_file = p.prototypes_staging_dir() / created_1.name / "LESSONS.md"
         assert lessons_file.read_text(encoding="utf-8") == "- 教训甲\n"
@@ -300,7 +427,11 @@ class TestLessonsFile:
     def test_trusted_write_persists_lessons(self, tmp_path):
         p = TlonPaths(home=tmp_path)
         created_1 = write_trusted_prototype(
-            VALID_BEHAVIOR, lessons="- 教训乙\n", tlon_paths=p, display_name="定址转发"
+            VALID_BEHAVIOR,
+            lessons="- 教训乙\n",
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
         )
         lessons_file = p.prototypes_dir() / created_1.name / "LESSONS.md"
         assert lessons_file.read_text(encoding="utf-8") == "- 教训乙\n"
@@ -309,14 +440,24 @@ class TestLessonsFile:
 
     def test_no_lessons_no_file(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        created_1 = write_trusted_prototype(
+            VALID_BEHAVIOR,
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
+        )
         assert not (p.prototypes_dir() / created_1.name / "LESSONS.md").exists()
         _info, _behavior, lessons, _reviews = get_prototype_detail(created_1.name, tlon_paths=p)
         assert lessons is None
 
     def test_update_writes_lessons(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        created_1 = write_trusted_prototype(
+            VALID_BEHAVIOR,
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
+        )
         update_prototype(created_1.name, lessons="- 新教训\n", tlon_paths=p)
         lessons_file = p.prototypes_dir() / created_1.name / "LESSONS.md"
         assert lessons_file.read_text(encoding="utf-8") == "- 新教训\n"
@@ -325,7 +466,11 @@ class TestLessonsFile:
         """None = keep (same semantics as parent/proposal_note)."""
         p = TlonPaths(home=tmp_path)
         created_1 = write_trusted_prototype(
-            VALID_BEHAVIOR, lessons="- 保留我\n", tlon_paths=p, display_name="定址转发"
+            VALID_BEHAVIOR,
+            lessons="- 保留我\n",
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
         )
         update_prototype(created_1.name, description="只改描述", tlon_paths=p)
         lessons_file = p.prototypes_dir() / created_1.name / "LESSONS.md"
@@ -340,6 +485,7 @@ class TestLessonsFile:
             lessons="- 随包\n",
             tlon_paths=p,
             display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
         )
         approve_prototype(created_1.name, tlon_paths=p)
         assert (p.prototypes_dir() / created_1.name / "LESSONS.md").exists()
@@ -352,11 +498,16 @@ class TestInstantiateModel:
     member's agent.yaml as ``llm.model_name``; a spec's top-level
     ``:llm`` key is rejected by the grammar."""
 
-    BEHAVIOR_WITH_LLM = '{:version 1\n :llm {:model "deepseek/deepseek-chat"}\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
+    BEHAVIOR_WITH_LLM = '{:version 2 :handlers {:mail-delivered work.fixtured59e2318/handle0} :llm {:model "deepseek/deepseek-chat"}}\n'
 
     def test_model_param_lands_in_agent_yaml(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        created_1 = write_trusted_prototype(
+            VALID_BEHAVIOR,
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
+        )
         cfg = instantiate(created_1.name, "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
         assert cfg.llm is not None
         assert cfg.llm.model_name == "openai/gpt-5"
@@ -370,12 +521,22 @@ class TestInstantiateModel:
         sees one (ADR 0016: the key is gone from the grammar, a load
         error rather than silently ignored)."""
         p = TlonPaths(home=tmp_path)
-        with pytest.raises(PrototypeError, match=":llm"):
-            write_trusted_prototype(self.BEHAVIOR_WITH_LLM, tlon_paths=p, display_name="定址转发")
+        with pytest.raises(PrototypeError, match="llm"):
+            write_trusted_prototype(
+                self.BEHAVIOR_WITH_LLM,
+                tlon_paths=p,
+                display_name="定址转发",
+                modules=_FIXTURE_MODULES.get(self.BEHAVIOR_WITH_LLM),
+            )
 
     def test_missing_model_raises(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        created_1 = write_trusted_prototype(
+            VALID_BEHAVIOR,
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
+        )
         with pytest.raises(PrototypeError, match="model is required"):
             instantiate(created_1.name, "agent1", "新成员", model="", tlon_paths=p)
 
@@ -387,7 +548,11 @@ class TestInstantiateLessons:
     def test_copies_lessons_next_to_behavior(self, tmp_path):
         p = TlonPaths(home=tmp_path)
         created_1 = write_trusted_prototype(
-            VALID_BEHAVIOR, lessons="- 前辈教训\n", tlon_paths=p, display_name="定址转发"
+            VALID_BEHAVIOR,
+            lessons="- 前辈教训\n",
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
         )
         instantiate(created_1.name, "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
         lessons_file = p.agent_lessons_file("agent1")
@@ -395,7 +560,12 @@ class TestInstantiateLessons:
 
     def test_no_lessons_no_file(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        created_1 = write_trusted_prototype(
+            VALID_BEHAVIOR,
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
+        )
         instantiate(created_1.name, "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
         assert not (tmp_path / "agent1" / "config" / "LESSONS.md").exists()
 
@@ -406,11 +576,16 @@ class TestInstantiateExecutionLevel:
     docs/design/execution-device.md); without the section the config
     default ("L1") applies unchanged."""
 
-    L1_BEHAVIOR = '{:version 1\n :execution {:level :L1}\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
+    L1_BEHAVIOR = "{:version 2 :handlers {:mail-delivered work.fixturec79a4a08/handle0} :execution {:level :L1}}\n"
 
     def test_execution_section_projects_docker_level(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(self.L1_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        created_1 = write_trusted_prototype(
+            self.L1_BEHAVIOR,
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(self.L1_BEHAVIOR),
+        )
         cfg = instantiate(created_1.name, "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
         assert cfg.docker.level == "L1"
         on_disk = yaml_load_file(p.agent_config_file("agent1"))
@@ -419,7 +594,12 @@ class TestInstantiateExecutionLevel:
 
     def test_absent_section_keeps_default(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        created_1 = write_trusted_prototype(
+            VALID_BEHAVIOR,
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
+        )
         cfg = instantiate(created_1.name, "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
         assert cfg.docker.level == "L1"
 
@@ -427,7 +607,12 @@ class TestInstantiateExecutionLevel:
 class TestDeletePrototype:
     def test_deletes_trusted_directory(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        created_1 = write_trusted_prototype(
+            VALID_BEHAVIOR,
+            tlon_paths=p,
+            display_name="定址转发",
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
+        )
         delete_prototype(created_1.name, tlon_paths=p)
         assert not (p.prototypes_dir() / created_1.name).exists()
 
@@ -450,8 +635,18 @@ def test_generated_ids_are_stable_opaque_and_unique(
     from uuid import UUID
 
     p = TlonPaths(home=tmp_path)
-    first = writer(VALID_BEHAVIOR, display_name="定址转发", tlon_paths=p)
-    second = writer(VALID_BEHAVIOR, display_name="定址转发", tlon_paths=p)
+    first = writer(
+        VALID_BEHAVIOR,
+        modules=_FIXTURE_MODULES[VALID_BEHAVIOR],
+        display_name="定址转发",
+        tlon_paths=p,
+    )
+    second = writer(
+        VALID_BEHAVIOR,
+        modules=_FIXTURE_MODULES[VALID_BEHAVIOR],
+        display_name="定址转发",
+        tlon_paths=p,
+    )
     assert first.name != second.name
     assert first.name.startswith("p-")
     assert UUID(hex=first.name.removeprefix("p-")).version == 4
@@ -485,7 +680,12 @@ def test_empty_label_fails_before_id_allocation(
     monkeypatch.setattr(f"{writer.__module__}.new_prototype_id", allocator)
     p = TlonPaths(home=tmp_path)
     with pytest.raises(PrototypeError, match="display_name"):
-        writer(VALID_BEHAVIOR, display_name=label, tlon_paths=p)
+        writer(
+            VALID_BEHAVIOR,
+            modules=_FIXTURE_MODULES[VALID_BEHAVIOR],
+            display_name=label,
+            tlon_paths=p,
+        )
     allocator.assert_not_called()
     assert not p.prototypes_dir().exists()
     assert not p.prototypes_staging_dir().exists()
@@ -493,9 +693,20 @@ def test_empty_label_fails_before_id_allocation(
 
 def test_update_cannot_clear_behavior_label_or_write_other_fields(tmp_path: Path) -> None:
     p = TlonPaths(home=tmp_path)
-    info = write_trusted_prototype(VALID_BEHAVIOR, display_name="定址转发", tlon_paths=p)
+    info = write_trusted_prototype(
+        VALID_BEHAVIOR,
+        display_name="定址转发",
+        tlon_paths=p,
+        modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
+    )
     with pytest.raises(PrototypeError, match="display_name"):
-        update_prototype(info.name, display_name="  ", behavior_edn=VALID_BEHAVIOR_V2, tlon_paths=p)
+        update_prototype(
+            info.name,
+            display_name="  ",
+            behavior_edn=VALID_BEHAVIOR_V2,
+            tlon_paths=p,
+            modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR_V2),
+        )
     stored, behavior, _, _ = get_prototype_detail(info.name, tlon_paths=p)
     assert stored.display_name == "定址转发"
     assert behavior == VALID_BEHAVIOR

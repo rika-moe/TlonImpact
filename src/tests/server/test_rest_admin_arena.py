@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from tests.identity_helpers import make_identity
+from tests.program_helpers import MINIMAL_MODULES
 from tlon.agents.prototypes.staging import write_staging_prototype
 from tlon.api.arena import ArenaError, ArenaFacade
 from tlon.api.prototypes import PrototypesFacade
@@ -19,7 +20,7 @@ from tlon.base.paths import TlonPaths
 from tlon.base.settings import Settings
 from tlon_server.api.rest import RESTAPIHandler
 
-_BEHAVIOR = '{:version 1 :rules [{:name "r" :on :boot :actions []}]}\n'
+_BEHAVIOR = "{:version 2 :handlers {:boot work/handle}}"
 
 
 class StubRequest:
@@ -124,7 +125,7 @@ def _handler(
 
 def _stage(p: TlonPaths) -> str:
     return write_staging_prototype(
-        _BEHAVIOR, display_name="定址测试", author_id="adam", tlon_paths=p
+        _BEHAVIOR, display_name="定址测试", author_id="adam", tlon_paths=p, modules=MINIMAL_MODULES
     ).name
 
 

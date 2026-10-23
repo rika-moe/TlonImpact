@@ -55,14 +55,14 @@ async def test_compaction_recovers_inner_commit_without_new_budget(tmp_path: Pat
 
     executor._commit = interrupt
     first = ProgramDriver(
-        store, "root", builtins, AsyncMock(), operations=adapter, member_id="a", token_budget=64
+        store, "root", builtins, operations=adapter, member_id="a", token_budget=64
     )
     with pytest.raises(asyncio.CancelledError):
         await first.run_entry(package.entry("work/handle"), {}, fuel=10000)
     used = store.budget_usage("root")
     executor._commit = commit
     resumed = ProgramDriver(
-        store, "root", builtins, AsyncMock(), operations=adapter, member_id="a", token_budget=64
+        store, "root", builtins, operations=adapter, member_id="a", token_budget=64
     )
     result = await resumed.run_entry(package.entry("work/handle"), {}, fuel=10000)
     assert "preserved fact" in result[Keyword("messages")][0][Keyword("content")]

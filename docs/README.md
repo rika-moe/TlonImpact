@@ -14,6 +14,7 @@ Agent 编写模块时，用现有 `file-read` 读取 workspace 内 `tlon/docs/gu
 | 某次选择的背景、备选与代价 | [决策索引](decisions/README.md) |
 | 精确字段、格式、接口与配置 | 下方参考文档 |
 | 如何启动或完成一个具体任务 | 下方操作指南 |
+| P5 升级、旧原型处置与行为变化 | [P5 发布说明](releases/p5.md) |
 
 architecture 区分规范与当前实现；design 负责当前领域模型和机制；ADR 保留历史理由。已接受但未实现的方向单独标注，不能当作当前能力。目录中的文件表示内容归属，不代表未经复核即可保证每句话与代码一致。
 
@@ -28,7 +29,7 @@ architecture 区分规范与当前实现；design 负责当前领域模型和机
 | 成员与演化 | [原型](design/prototypes.md) | 提案、准入、实例化、spawn 与谱系 |
 | 行为与执行 | [DSL](design/dsl.md) | 行为表达、语言安全与规则权威 |
 | 行为与执行 | [Bridge API](design/bridge-api.md) | 宿主查询、效果、环境与语境边界 |
-| 行为与执行 | [运行时](design/runtime.md) | 唤醒、session、会话循环、journal 与效果执行 |
+| 行为与执行 | [运行时](design/runtime.md) | 唤醒、模块入口、ProgramStore、历史回读与效果执行 |
 | 行为与执行 | [基础设施](design/infrastructure.md) | 装配、EventBus、路径、配置与进程级观测 |
 | 行为与执行 | [执行装置](design/execution-device.md) | L0/L1/L2、容器、文件和代码执行边界 |
 | 通信与知识 | [邮件](design/mail.md) | 地址、邮局事务、邮箱、线程与已读语义 |
@@ -44,7 +45,7 @@ architecture 区分规范与当前实现；design 负责当前领域模型和机
 
 - [ADR 0046](decisions/0046-programmable-workflows.md)：选择普通函数工作程序，明确替代与非目标。
 - [可编程工作流程](design/programmable-workflows.md)：module、Behavior、模型、工具、状态、调度和恢复边界。
-- [分阶段实施计划](design/programmable-workflows-plan.md)：两个串行 EPIC，P1–P3 的[用法](guides/writing-a-module-program.md)与各阶段范围、验收、删除项与 issue 跟踪。
+- [分阶段实施计划](design/programmable-workflows-plan.md)：两个串行 EPIC，P1–P5 的[用法](guides/writing-a-module-program.md)与各阶段范围、验收、删除项与 issue 跟踪。
 
 ## 共享操作的当前机制与后续范围
 

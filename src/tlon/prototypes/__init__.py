@@ -1,7 +1,5 @@
-"""Built-in behavior prototype package data.
+"""Eight built-in module programs, copied into a new society's prototype library.
 
-Each subdirectory is a prototype: ``behavior.tlon`` (a complete, total
-rules-form MemberSpec file) + ``IDENTITY.md`` / ``SOUL.md`` / ``RULES.md``
-persona templates + ``prototype.tlon`` metadata. Seeded to
-``~/.tlon/prototypes/`` on server startup by :mod:`tlon.agents.prototypes`.
+Each package contains behavior.tlon, modules/ source and prototype.tlon approval
+metadata. Existing user-owned files are never overwritten during seeding.
 """

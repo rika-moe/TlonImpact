@@ -1,16 +1,16 @@
 # Operation 调用契约（P1–P6）
 
-当前状态：EPIC A #184–#192、P5 #193 与 P6 #194 已合并。两入口共用调用记录、预算、写序及恢复边界，Capability 与复合操作已删除，三处纯条件保留。P7 暂停，tools 尽量保持固定；本次 P8a 只收口独立文档与旧机制审计。当前恢复契约见 [invocation-recovery](../design/invocation-recovery.md)，设计决策见 [operations](../design/operations.md)，实施状态见 [operations-plan](../design/operations-plan.md)。
+当前状态：EPIC A #184–#192、P5 #193 与 P6 #194 已合并。两入口共用调用记录、预算、写序及恢复边界，Capability 与复合操作已删除；P5 工作流程退役旧规则与 stage 条件。P7 暂停，tools 尽量保持固定；本次 P8a 只收口独立文档与旧机制审计。当前恢复契约见 [invocation-recovery](../design/invocation-recovery.md)，设计决策见 [operations](../design/operations.md)，实施状态见 [operations-plan](../design/operations-plan.md)。
 
 ## 定义和执行
 
-`tlon.operations.core.Operation` 接收 name、description、input_schema、output_schema、handler、effects、retry_safe、default_timeout、control。schema 在准入时自检并保存为不可变 JSON 字符串；公开属性每次返回独立副本。名称满足 `[A-Za-z_][A-Za-z0-9_-]*`，最长 64 字符，不得使用 nil/true/false 或覆盖语言特殊形式、通用内置函数。
+`tlon.operations.core.Operation` 接收 name、description、input_schema、output_schema、handler、effects、retry_safe、default_timeout。schema 在准入时自检并保存为不可变 JSON 字符串；公开属性每次返回独立副本。名称满足 `[A-Za-z_][A-Za-z0-9_-]*`，最长 64 字符，不得使用 nil/true/false 或覆盖语言特殊形式、通用内置函数。
 
 空 effects 表示纯计算：handler 是同步 `(CallContext, dict[str, Any]) -> Any`。非空 effects 是 read/write 集合：handler 必须是 async，并由异步执行边界等待结果。纯 handler 返回 awaitable 会被拒绝，不能把异步 IO 谎报为纯计算。注册表固定定义集合，同名拒绝；宿主给不同成员构造 scoped handler 和 `CallContext(member_id, run_id, call_id)`，上下文不在业务参数或 DSL env 内。
 
 `OperationExecutor.call_pure` 仅执行纯操作；`call` 支持两类操作。纯操作直接执行；宿主效果操作依次执行输入严格 JSON 复制与 schema 校验、稳定身份与历史核对、持久化 intent、handler、输出校验及回执提交。已有回执在进入当前 handler 前还原；参数错误不写 intent。修改 handler 参数、返回值或 Tool schema 投影都不能污染原调用数据或权威 schema。
 
-尚不提供通用授权名单或动态工具视图；共享执行作用域已覆盖现有模型调用入口。真实 runtime 为两入口注入同一成员 ProgramStore；session journal 保留会话协议历史，PostOffice 保留邮件领域幂等回执，不另建第三权威日志。四个 DSL 宿主查询由程序驱动单独记录重放，受限宿主终止通知亦不经过普通 Operation invocation；两项例外见 [审计](../design/operations-audit.md)。上下文隔离不是完整授权系统。输出不合约报 `OutputError`，不得据此假定效果未发生或自动重试。
+尚不提供通用授权名单或动态工具视图；共享执行作用域已覆盖现有模型调用入口。真实 runtime 为两入口注入同一成员 ProgramStore；SessionJournal 提供历史及程序交互只读投影，PostOffice 保留邮件领域幂等回执，不另建第三权威日志。四个 DSL 宿主查询由程序驱动单独记录重放，受限宿主失败通知亦不经过普通 Operation invocation；两项例外见 [审计](../design/operations-audit.md)。上下文隔离不是完整授权系统。输出不合约报 `OutputError`，不得据此假定效果未发生或自动重试。
 
 ## 调用记录与指纹 P4a
 
@@ -72,27 +72,25 @@ state-put 将状态与该次调用结果放在 ProgramStore 的同一事务；�
 
 [lifecycle](../../src/tlon/operations/lifecycle.py)、[evolution](../../src/tlon/operations/evolution.py)、[model](../../src/tlon/operations/model.py) 共用成员注册表。旧 camelCase 名称删除；模型调用为 `(model-call {:messages [{:role "user" :content "任务"}] :tools [] :max_tokens 256})`，输出使用 snake_case，session recipe 的 `:max-tokens` 配置保持原有含义。
 
-`control` 是 Operation 的控制声明元数据，和 read/write 效果分开。完成、睡眠、退出由同一契约返回声明，LoopDriver 或程序根执行器应用调度；DSL 嵌套组合拒绝控制操作，模型的一轮也只允许独立控制调用，不能夹带普通工具。P7 动态 ToolView 暂停。
+Operation 没有 control 分类或 sole/direct/literal 嵌套限制。`finish-turn` 返回普通局部信号，调度由根入口结果及宿主生命周期决定。
 
-程序直接模型调用使用持久 output 根，额度来自成员 llm.max_tokens；获准的输出预留成功后不退款，实际输出上限还受请求值和剩余额度限制。run-loop 显式创建 recipe.max_tokens 的 total 根，session 内 stage、上下文压缩和 Tool/提案/评审内部模型调用共享它。total 成功按可靠的实际 usage 结算；缺少 usage 或提交未知时保留预留，实际超额如实记账并阻止后续请求，token 估算不是硬上界。
+程序直接模型调用使用持久 output 根，额度来自成员 llm.max_tokens；获准的输出预留成功后不退款，实际输出上限还受请求值和剩余额度限制。旧 run-loop/recipe total 根入口已删除。既有 total 预算账本语义仍供相关宿主调用使用；普通程序及其压缩、提案、评审共享冻结根。total 成功按可靠的实际 usage 结算；缺少 usage 或提交未知时保留预留，实际超额如实记账并阻止后续请求，token 估算不是硬上界。
 
 模型响应与额度结算原子提交，已提交历史只还原，不重新扣额或请求 provider；未知提交不自动重发。后台反思和蒸馏另建维护根。宿主 ContextVar 传播作用域，业务参数不能重置额度；取消只作用于当前进程任务树，冻结 deadline 和预算跨重启保留。详情见 [执行作用域](../design/execution-scope.md)。
 
 ## EPIC A 审计收尾边界
 
-spawn 的配额归属取冻结 CallContext.run_id：Tool 与恢复使用 session 根，直接 DSL 使用程序根，日志 ContextVar 不参与授权。演化和记忆的领域包装透传确定的预算/截止拒绝，provider 明确拒绝为 rejected，未知提交仍为 unknown。成员同一 write gate 显式注入 OperationExecutor 与 MemoryManager，反思/蒸馏与普通调用共享写边界。超时先返回已提交回执；未派发的新调用明确拒绝，不把旧未知 intent 覆写为失败。
+spawn 的配额归属取冻结 CallContext.run_id：Tool 与 DSL 使用所属冻结程序根，日志 ContextVar 不参与授权。演化和记忆的领域包装透传确定的预算/截止拒绝，provider 明确拒绝为 rejected，未知提交仍为 unknown。成员同一 write gate 显式注入 OperationExecutor 与 MemoryManager，反思/蒸馏与普通调用共享写边界。超时先返回已提交回执；未派发的新调用明确拒绝，不把旧未知 intent 覆写为失败。
 
-## 纯条件（P6）
+## 纯计算与调用
 
-`when`、`until`、stage 的 `:if` 都通过 `condition_builtins` 从同一成员目录选择 pure 函数，以 `validate_condition` 和 `evaluate_condition` 统一校验与求值。`when` 接收显式 `msg/event/self`，`until` 接收 `self/state/limits`，stage 条件接收 `state/scratch/round`；缺少必需绑定或数据不是严格 JSON 会明确报错。
-
-核心纯函数与纯宿主 Operation 共用此入口。外部只读操作仍不是纯操作；局部函数不能隐藏时钟、模型、邮箱或状态读写。原分裂的条件词表和依赖隐式环境的谓词已删除，不提供旧名别名。审计证据与未实施边界见[操作机制审计](../design/operations-audit.md)。
+模块初始化及社会策略只接受纯计算；普通工作程序通过显式调用采样外部数据，再用普通条件和函数组合。旧 when/until/stage-if 语境与条件求值接口已删除。
 
 ## 可编程工作流程 P2：模型请求与恢复
 
-`model-call` 必填 `messages` 和 `max_tokens`；`tools` 是工具名列表（默认空），可选 `cache_prefix_len`。输入消息允许 user/assistant/tool，system 由宿主绑定；prompt 与任意工具 schema 拒绝。返回 content（可为 null）、tool_calls（id/name/arguments）、finish_reason、usage、reasoning_content，不执行工具建议。工具执行接口待 P3。
+`model-call` 必填 `messages` 和 `max_tokens`；`tools` 是工具名列表（默认空），可选 `cache_prefix_len`。输入消息允许 user/assistant/tool，system 由宿主绑定；prompt 与任意工具 schema 拒绝。返回 content（可为 null）、tool_calls（id/name/arguments）、finish_reason、usage、reasoning_content，不执行工具建议。工具执行由 tool-execute 显式完成。
 
-普通程序与旧 stage 共享 ModelService 和现有模型调用账本。v2 受理原子冻结 host（系统输入及工具定义）与 config（有效成员模型配置）；已有结果重放不受后来系统词或模型配置变化影响，新请求仍校验当前工具目录。已提交模型结果缺外层回执时，恢复 hook 核对稳定路径和有效请求，只读补回执；unknown 不自动重发。output 模式维持获准输出上限预留，total 模式维持现有实际用量结算与缺失用量的保守处理。
+普通程序通过 ModelService 使用统一模型调用账本。v2 受理原子冻结 host（系统输入及工具定义）与 config（有效成员模型配置）；已有结果重放不受后来系统词或模型配置变化影响，新请求仍校验当前工具目录。已提交模型结果缺外层回执时，恢复 hook 核对稳定路径和有效请求，只读补回执；unknown 不自动重发。output 模式维持获准输出上限预留，total 模式维持现有实际用量结算与缺失用量的保守处理。
 
 输入历史中的 assistant `tool_calls` 使用 provider 消息结构：`{:id "..." :type "function" :function {:name "..." :arguments "JSON字符串"}}`，tool 消息用 `tool_call_id` 关联。它与输出的规范化 `{id,name,arguments}` 不同，P2 不自动把建议执行成消息历史；工具执行和完整协议拼接在 P3 提供。
 

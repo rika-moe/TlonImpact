@@ -1,4 +1,1 @@
-{:name :p-0b82dbda6014485b9da87c242f2dd9e9
- :display-name "标准文件迭代"
- :description "L1 执行能力；最多 10 次迭代、1000000 token，完整上下文与交卷前自评审，每 15 分钟反思。"
- :trusted true}
+{:name :p-0b82dbda6014485b9da87c242f2dd9e9 :display-name "标准文件迭代" :description "L1 执行能力；最多 10 次迭代、每次模型输出最多 512 token，完整上下文与交卷前自评审，后台维护按成员配置反思。" :trusted true :program-digest "d220b444e1863011637092420dc52131de9ac6c5fb7cb31a6e3b4169894f86cc"}

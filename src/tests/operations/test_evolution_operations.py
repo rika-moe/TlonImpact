@@ -24,7 +24,8 @@ BUNDLE_MODULES = {
     "work/helper.tlon": '(ns work.helper (:export result)) (defn result [] {:result "ok"})',
 }
 
-_SPEC = '{:version 1 :rules [{:name "boot" :on :boot :actions []}]}'
+_SPEC = "{:version 2 :handlers {:boot work/handle}}"
+_MODULES = {"work.tlon": "(ns work (:export handle)) (defn handle [event] {})"}
 
 
 def _bound(paths: TlonPaths, *, full: bool = True) -> OperationExecutor:
@@ -110,7 +111,7 @@ def test_staging_fsync_failure_leaves_no_partial_package(tmp_path: Path) -> None
         patch("tlon.evolution.publication.os.fsync", side_effect=OSError("disk failure")),
         pytest.raises(OSError, match="disk failure"),
     ):
-        write_staging_prototype(_SPEC, display_name="x", tlon_paths=paths)
+        write_staging_prototype(_SPEC, modules=_MODULES, display_name="x", tlon_paths=paths)
     assert list_staging_prototypes(paths) == []
     assert list(tmp_path.glob(".proposal-*")) == []
     assert not any(p.name == "behavior.tlon" for p in tmp_path.rglob("behavior.tlon"))
@@ -209,7 +210,7 @@ async def test_probation_can_read_catalogs_lineage_and_review(tmp_path: Path) ->
 
     paths = TlonPaths(home=tmp_path)
     proposal = write_staging_prototype(
-        _SPEC, display_name="x", author_id="author", tlon_paths=paths
+        _SPEC, modules=_MODULES, display_name="x", author_id="author", tlon_paths=paths
     )
     llm = SimpleNamespace(
         config=SimpleNamespace(model_name="test/reviewer"),
