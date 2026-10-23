@@ -8,6 +8,7 @@ import pytest
 from tlon.base.paths import TlonPaths
 from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.schema import UnknownOutcomeError
 from tlon.operations.tasks import make_task_operations
 from tlon.tasks.manager import TaskManager
 
@@ -135,9 +136,9 @@ async def test_write_failure_is_unknown(manager: TaskManager, action: str, metho
         manager.complete_task("t-001")
     setattr(manager, method, Mock(side_effect=OSError("disk full")))
     args = {"title": "A"} if action == "create" else {"task_id": "t-001"}
-    result = await tool(manager, action).execute_context({**args})
-    assert not result.success and "disk full" in result.error
-    assert result.data == {"outcome": "unknown", "call_id": "call", "retry_safe": False}
+    with pytest.raises(UnknownOutcomeError, match="disk full") as failure:
+        await tool(manager, action).execute_context({**args})
+    assert failure.value.data == {"outcome": "unknown", "call_id": "call", "retry_safe": False}
 
 
 @pytest.mark.parametrize("action,method", [("list", "list_tasks"), ("current", "get_current_task")])

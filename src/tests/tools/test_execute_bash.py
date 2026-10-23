@@ -8,6 +8,7 @@ import pytest
 from tlon.base.config import DockerRuntimeConfig
 from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.schema import OperationError
 from tlon.operations.shell import make_shell_operations
 from tlon.sandbox.device import ExecutionResult
 from tlon.sandbox.shell import MemberShellService
@@ -88,7 +89,11 @@ async def test_running_quota_and_finished_retention():
 @pytest.mark.parametrize("level,device", [("L0", AsyncMock()), ("L1", AsyncMock()), ("L2", None)])
 async def test_level_and_unavailable_device_rejected(level, device):
     _, run, _ = service_and_tools(device, level)
-    assert not (await run.execute_context({"command": "true"})).success
+    if device is None:
+        with pytest.raises(OperationError, match="unavailable"):
+            await run.execute_context({"command": "true"})
+    else:
+        assert not (await run.execute_context({"command": "true"})).success
     if device is not None:
         device.run.assert_not_called()
 

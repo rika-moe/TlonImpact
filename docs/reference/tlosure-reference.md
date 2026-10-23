@@ -117,10 +117,13 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 ### 3.1 `CORE_BUILTINS`（通用谓词与访问器）
 
 <!-- BEGIN GENERATED: dsl-builtins-core -->
-`CORE_BUILTINS`（14 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`CORE_BUILTINS`（17 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 名称 | pure | 说明 |
 |---|---|---|
+| `assert` | 是 | Reject invalid data without introducing a host effect. |
+| `integer?` | 是 | Test for an integer value, excluding booleans. |
+| `json-encode` | 是 | Encode strict JSON data, accepting EDN keywords only as object keys. |
 | `assoc` | 是 | Return a map/vector copy with key-value pairs applied in order. |
 | `dissoc` | 是 | Return a map copy without the supplied keys; missing keys are harmless. |
 | `conj` | 是 | Append to a vector, or add two-element entry vectors to a map copy. |
@@ -180,3 +183,7 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 ## 源码模块（P1）
 
 `edn.loads_all` 解析多个顶层 form；`ModulePackage.from_sources(sources, builtins)` 只接受宿主提供的 `.tlon` 源码映射，不自行读盘。`ns` 声明与文件路径一一对应，`:require [namespace :as alias]` 导入导出函数，`:export` 显式导出；`defn` 为普通函数，顶层 `def` 只接受字面常量。模块加载不运行函数体或宿主调用。`exports` 为限定名到闭包的映射，`entry` 要求固定单参数；闭包在当前求值器共享 fuel/depth。完整示例见[指南](../guides/writing-a-module-program.md)。
+
+## 纯数据校验与 JSON 编码
+
+`(integer? value)` 仅对整数返回 true，布尔和浮点数返回 false。`(assert condition message)` 在条件为假时抛 EvalError，否则返回条件值。`(json-encode value)` 用标准 JSON 编码严格数据，接受字符串/有限数字/布尔/nil、列表和 map，Keyword 仅可用作 map key；拒绝符号、代码 Form、NaN、归一化冲突键、循环和超过 100 层的嵌套。这些词没有宿主效果，不能用来执行字符串代码。

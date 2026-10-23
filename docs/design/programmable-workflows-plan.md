@@ -1,6 +1,6 @@
 # 可编程工作流程：分阶段实施计划
 
-状态：2026-10-21，设计已接受，P0 为本次文档与 issue 建立；P1 已合并（#208），P2 本阶段实现待 PR 审核合并，P3–P5 未实施。设计基线 `9fe00817bd75944e49a05cfd8e0149fa240dc757`（#198）；P1 施工基线 `0650c9d`（#207），P2 以已合并 #208 为基线。设计权威：[目标设计](programmable-workflows.md)；选择理由：[ADR 0046](../decisions/0046-programmable-workflows.md)。当前能力以各阶段实施记录及 reference 为准。
+状态：2026-10-23，设计已接受，P0 为本次文档与 issue 建立；P1 已合并（#208），P2 本阶段实现待 PR 审核合并，P3–P5 未实施。设计基线 `9fe00817bd75944e49a05cfd8e0149fa240dc757`（#198）；P1 施工基线 `0650c9d`（#207），P2 以已合并 #208 为基线。设计权威：[目标设计](programmable-workflows.md)；选择理由：[ADR 0046](../decisions/0046-programmable-workflows.md)。当前能力以各阶段实施记录及 reference 为准。
 
 ## 施工与共同完成标准
 
@@ -136,7 +136,7 @@ issue 用于进度、PR 与证据，目标契约仍以本设计为准。阶段�
 - [x] P0：ADR、目标设计、计划及 issue 已建立；发布与合并状态见文档 PR。
 - [ ] [EPIC A：可编程工作流程——模块、模型与工具的统一持久执行](https://github.com/rika-moe/TlonImpact/issues/199)
 - [x] [P1 — 模块、入口、冻结程序包与最小发信链路](https://github.com/rika-moe/TlonImpact/issues/201)
-- [ ] [P2 — 完整模型 Operation 与函数式核验](https://github.com/rika-moe/TlonImpact/issues/202)
+- [x] [P2 — 完整模型 Operation 与函数式核验](https://github.com/rika-moe/TlonImpact/issues/202)
 - [ ] [P3 — 受控工具分派与可复用对话循环](https://github.com/rika-moe/TlonImpact/issues/203)
 - [ ] [EPIC B：可编程工作流程——标准程序、交互投影与 stage 退役](https://github.com/rika-moe/TlonImpact/issues/200)
 - [ ] [P4a — Agent 编写模块与标准工作方式](https://github.com/rika-moe/TlonImpact/issues/204)
@@ -163,3 +163,13 @@ v2 在入口受理事务冻结 host/config，标准库源码和作者源码一�
 确定性验收覆盖普通函数三请求共享根预算、空工具与带工具响应、宿主输入冻结、拒绝/未知/超时/取消及回执提交窗口。全量质量门与真实 provider 冒烟的最终证据记录在本阶段 PR 和 #202；未合并前不勾选 P2。
 
 P2 本地最终验证：`scripts/check_all.sh` 15/15 全绿，单元 2754 passed / 15 skipped，集成 37 passed。真实 dream + staging/approve + SDK submit_mail + DeepSeek 三次调用完成生成/核验/修订，同根 output 占用 384，SQLite 收件箱一封回信，运行成功结束。服务与隔离目录清理完成。初次冒烟脚本误等待不存在的调度意图，修正后重跑通过；沙箱限制 Node 管道的检查批次停止后，在具备本地通信权限的环境重新全量验证。
+
+## P3 实施细化
+
+新增 tool-execute 编排端口和普通 tlon.conversation/run；逐叶按程序位置和批次索引派生身份，整个批次参数参与身份核对，provider ID 仅作协议关联。端口本身不创建父 intent 或 effects；当前采用声明顺序逐叶 await，复用现有写 gate，不增加语言并发。历史回执先返回，新效果才检查当前工具目录；撤权或定义变化阻塞运行，不能作为未记录的普通失败继续请求模型。
+
+纯 tlon.messages 将规范化工具建议转换为 provider 消息，一次追加完整 assistant 响应，再严格配对全部结果；保留 reasoning_content 和可空 content。conversation/run 要求正整数 max_rounds，返回 content/messages/reason；无工具建议、单独 finish-turn 或轮数上限仅结束子函数，外层仍可核验/修订/发信。finish-turn 不执行宿主控制操作，混合控制请求和非空参数拒绝。conversation 仅在作者显式 require 时链接，纯程序无需模型服务。
+
+共享适配层删除兜底普通失败转换，只有 InputError/RejectedError 可反馈；明确文件/路径/命令非零等领域错误同步分类，设备丢失、IO、unknown、输出违约、预算、截止和恢复失配传播。提交回执失败使用真实业务输入保留 request_id，不将含批次元数据的身份快照误当业务参数。内置 stage/旧收集器保留至 P5，P4 的自动起草和交互投影尚未实现。
+
+P3 最终本地验证：`scripts/check_all.sh` 15/15 全绿；单元 2825 passed / 15 skipped，集成 38 passed。真实 dream + SDK + DeepSeek 工具对话、核验、修订和回信通过：4 次模型调用、1 次 time-now、同根 output 占用 512、一封回信。服务和隔离目录已清理。P3 待人类合并后勾选。

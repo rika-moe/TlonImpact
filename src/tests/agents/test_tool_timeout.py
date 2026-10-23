@@ -118,12 +118,8 @@ async def test_same_default_timeout_applies_to_both_entries(
         store,
         default_timeout=0.01,
     )
-    if entry == "dsl":
-        with pytest.raises(UnknownOutcomeError, match="after dispatch"):
-            await invoke(entry, executor, tmp_path)
-    else:
-        result = await invoke(entry, executor, tmp_path)
-        assert not result.success and result.data["outcome"] == "unknown"
+    with pytest.raises(UnknownOutcomeError, match="after dispatch"):
+        await invoke(entry, executor, tmp_path)
 
 
 @pytest.mark.parametrize("entry", ["dsl", "tool"])
@@ -188,10 +184,8 @@ async def test_waiting_writer_timeout_is_definite_not_unknown(
     task = asyncio.create_task(owner())
     await entered.wait()
     try:
-        result = await invoke("tool", executor, tmp_path)
-        assert not result.success
-        assert "ExecutionDeadlineError" in result.error
-        assert not result.data or result.data.get("outcome") != "unknown"
+        with pytest.raises(ExecutionDeadlineError):
+            await invoke("tool", executor, tmp_path)
         assert calls == 0
     finally:
         release.set()
@@ -348,10 +342,10 @@ async def test_no_store_dsl_and_tool_share_post_dispatch_timeout_classification(
             0,
             adapter.handle,
         )
-    result = await OperationTool(executor, "slow-operation").execute_context({})
-    assert not result.success
-    assert result.error == f"UnknownOutcomeError: {failure.value}"
-    assert result.data == failure.value.data
+    with pytest.raises(UnknownOutcomeError) as tool_failure:
+        await OperationTool(executor, "slow-operation").execute_context({})
+    assert str(tool_failure.value) == str(failure.value)
+    assert tool_failure.value.data == failure.value.data
 
 
 async def test_no_store_waiting_writer_timeout_is_definite() -> None:
@@ -385,11 +379,37 @@ async def test_no_store_waiting_writer_timeout_is_definite() -> None:
                 0,
                 adapter.handle,
             )
-        result = await OperationTool(executor, "slow-operation").execute_context({})
-        assert not result.success
-        assert result.error == f"ExecutionDeadlineError: {failure.value}"
-        assert not result.data
+        with pytest.raises(ExecutionDeadlineError) as tool_failure:
+            await OperationTool(executor, "slow-operation").execute_context({})
+        assert str(tool_failure.value) == str(failure.value)
         assert calls == 0
     finally:
         release.set()
         await task
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        UnknownOutcomeError("uncertain", {}),
+        BudgetExceededError("budget"),
+        ExecutionDeadlineError("expired"),
+        RuntimeError("infrastructure"),
+    ],
+)
+async def test_loop_driver_propagates_blocking_error_without_tool_result(
+    tmp_path: Path,
+    error: Exception,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    execution = OperationExecutor(
+        OperationRegistry([operation(AsyncMock())]), CallContext("a", "r", "c")
+    )
+    loop = driver(tmp_path, execution)
+    loop._tool_executor.execute = AsyncMock(side_effect=error)  # type: ignore[method-assign]
+    loop._journal.append = AsyncMock()  # type: ignore[method-assign]
+    with pytest.raises(type(error)) as failure:
+        await loop.execute_one_tool("session", ToolCall("tool", "slow-operation", {}))
+    assert failure.value is error
+    loop._journal.append.assert_not_awaited()

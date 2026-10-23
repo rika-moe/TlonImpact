@@ -14,7 +14,7 @@ from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
 from tlon.operations.dsl import DSLAdapter
 from tlon.operations.evolution import make_evolution_operations
-from tlon.operations.schema import OperationError, RejectedError, json_value
+from tlon.operations.schema import OperationError, RejectedError, UnknownOutcomeError, json_value
 from tlosure.builtins import BuiltinCall
 from tlosure.edn import Keyword
 
@@ -114,12 +114,18 @@ def test_publication_rejects_existing_even_empty_target(tmp_path: Path) -> None:
 
 async def test_write_io_failure_is_unknown_with_host_call_id(tmp_path: Path) -> None:
     executor = _bound(TlonPaths(home=tmp_path))
-    with patch("tlon.evolution.publication.os.fsync", side_effect=OSError("disk failure")):
-        result = await OperationTool(executor, "prototype-write").execute_context(
+    with (
+        patch("tlon.evolution.publication.os.fsync", side_effect=OSError("disk failure")),
+        pytest.raises(UnknownOutcomeError) as failure,
+    ):
+        await OperationTool(executor, "prototype-write").execute_context(
             {"behavior": _SPEC, "display_name": "x"}
         )
-    assert not result.success
-    assert result.data == {"outcome": "unknown", "call_id": "call-alice", "retry_safe": False}
+    assert failure.value.data == {
+        "outcome": "unknown",
+        "call_id": "call-alice",
+        "retry_safe": False,
+    }
 
 
 async def test_error_after_publication_reports_unknown_and_keeps_committed_proposal(
@@ -135,12 +141,18 @@ async def test_error_after_publication_reports_unknown_and_keeps_committed_propo
             raise OSError("acknowledgment failed")
         return result
 
-    with patch.object(Path, "rename", committed_then_failed):
-        result = await OperationTool(executor, "prototype-write").execute_context(
+    with (
+        patch.object(Path, "rename", committed_then_failed),
+        pytest.raises(UnknownOutcomeError) as failure,
+    ):
+        await OperationTool(executor, "prototype-write").execute_context(
             {"behavior": _SPEC, "display_name": "x"}
         )
-    assert not result.success
-    assert result.data == {"outcome": "unknown", "call_id": "call-alice", "retry_safe": False}
+    assert failure.value.data == {
+        "outcome": "unknown",
+        "call_id": "call-alice",
+        "retry_safe": False,
+    }
     proposals = list_staging_prototypes(paths)
     assert len(proposals) == 1 and proposals[0].trusted is False
     assert (

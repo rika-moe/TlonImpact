@@ -2,10 +2,9 @@
 
 from typing import Any
 
-from tlon.base.execution import BudgetExceededError, ExecutionDeadlineError
 from tlon.operations.core import CallContext, Effect, OperationExecutor
+from tlon.operations.schema import InputError, RejectedError
 from tlon.tools.base import ToolResult
-from tlosure.builtins import EvalError
 
 
 class OperationTool:
@@ -54,7 +53,7 @@ class OperationTool:
     ) -> ToolResult:
         try:
             result = await self._executor.call(self._operation.name, arguments, context)
-        except (EvalError, BudgetExceededError, ExecutionDeadlineError) as error:
+        except (InputError, RejectedError) as error:
             return ToolResult(
                 success=False,
                 data=getattr(error, "data", None),

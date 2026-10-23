@@ -1,6 +1,43 @@
-(ns tlon.messages (:export user assistant append))
+(ns tlon.messages (:export user assistant append response exchange))
 
-;; Message helpers are pure data constructors. They never call the host.
+;; Pure message constructors and protocol conversion; no host calls.
 (defn user [content] {:role "user" :content content})
 (defn assistant [content] {:role "assistant" :content content})
 (defn append [messages message] (conj messages message))
+
+(defn call-wire [call]
+  (let [argument-keys (keys (get call :arguments))]
+    {:id (get call :id) :type "function"
+     :function {:name (get call :name) :arguments (json-encode (get call :arguments))}}))
+
+(defn unique-calls [calls]
+  (reduce ids call
+    (let [id (get call :id) name (get call :name)]
+      (assert (and (= id (str id)) (not (= id ""))) "tool call requires a string id")
+      (assert (and (= name (str name)) (not (= name ""))) "tool call requires a string name")
+      (assert (not (contains? ids id)) "duplicate tool call id")
+      (conj ids id))
+    [] calls))
+
+(defn response [result]
+  (let [calls (get result :tool_calls [])
+        ids (unique-calls calls)
+        message {:role "assistant" :content (get result :content)
+                 :reasoning_content (get result :reasoning_content)}]
+    (if (= (count ids) 0) message
+      (assoc message :tool_calls (map call (call-wire call) calls)))))
+
+;; Require one result per declared call in declaration order, including failures.
+(defn exchange [messages result results]
+  (let [calls (get result :tool_calls [])
+        ids (unique-calls calls)]
+    (assert (= (count calls) (count results)) "tool result count does not match calls")
+    (assert (= ids (map item (get item :id) results)) "tool result id or order mismatch")
+    (assert (= (map call (get call :name) calls) (map item (get item :name) results))
+            "tool result name mismatch")
+    (reduce history item
+      (conj history {:role "tool" :tool_call_id (get item :id)
+                     :content (json-encode {:success (get item :success)
+                                            :data (get item :data)
+                                            :error (get item :error)})})
+      (conj messages (response result)) results)))

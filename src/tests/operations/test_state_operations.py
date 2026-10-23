@@ -16,6 +16,7 @@ from tlon.operations.schema import (
     DefinitionError,
     InputError,
     OperationError,
+    RecoveryMismatchError,
     UnknownOutcomeError,
     admit_schema,
     edn_value,
@@ -262,9 +263,9 @@ async def test_tool_executor_recovers_committed_receipt_and_safe_same_call_retry
     replay = await replay_tools.execute("state-put", arguments, context)
     assert replay.success and replay.data == 1
     assert restarted.state_get("x") == 2
-    conflict = await replay_tools.execute("state-put", {"key": "x", "value": 3}, context)
-    assert not conflict.success and not conflict.data
-    assert "RecoveryMismatchError" in conflict.error and "unknown" not in conflict.error
+    with pytest.raises(RecoveryMismatchError):
+        await replay_tools.execute("state-put", {"key": "x", "value": 3}, context)
+    assert restarted.state_get("x") == 2
 
 
 async def test_value_error_after_commit_recovers_authoritative_receipt(

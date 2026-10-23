@@ -334,7 +334,7 @@ class OperationExecutor:
             raise OperationError("Recovery hook must return a committed success or known rejection")
         if recovered.success:
             validate(operation.output_schema, recovered.value, output=True)
-        await self._commit(invocation, recovered)
+        await self._commit(invocation, recovered, inputs)
         return recovered
 
     @staticmethod
@@ -508,6 +508,7 @@ class OperationExecutor:
                                     error_type=type(error).__name__,
                                     error_message=str(error),
                                 ),
+                                inputs,
                             )
                             raise
                         except OperationError as error:
@@ -519,7 +520,9 @@ class OperationExecutor:
                                 return self._restore(committed)
                             outcome = InvocationOutcome(
                                 False,
-                                error_type=type(error).__name__
+                                error_type="RejectedError"
+                                if isinstance(error, RejectedError)
+                                else type(error).__name__
                                 if type(error)
                                 in (
                                     OperationError,
@@ -538,7 +541,7 @@ class OperationExecutor:
                                 if isinstance(error, UnknownOutcomeError)
                                 else getattr(error, "data", None),
                             )
-                            await self._commit(invocation, outcome)
+                            await self._commit(invocation, outcome, inputs)
                             return self._restore(outcome)
                         except Exception as error:
                             committed = await self._committed(invocation)
@@ -559,6 +562,7 @@ class OperationExecutor:
                                     error_message=str(unknown),
                                     error_data=unknown.data,
                                 ),
+                                inputs,
                             )
                             raise unknown from error
                         try:
@@ -576,9 +580,10 @@ class OperationExecutor:
                                     error_message=str(error),
                                     raw_result=raw,
                                 ),
+                                inputs,
                             )
                             raise
-                        await self._commit(invocation, InvocationOutcome(True, value=value))
+                        await self._commit(invocation, InvocationOutcome(True, value=value), inputs)
                         return value
         except asyncio.CancelledError:
             # Cancellation still reaches the task owner. Reconcile any domain-atomic
@@ -618,6 +623,7 @@ class OperationExecutor:
                         InvocationOutcome(
                             False, error_type="ExecutionDeadlineError", error_message=str(rejected)
                         ),
+                        inputs,
                     )
                 raise rejected from error
             unknown = UnknownOutcomeError(
@@ -632,6 +638,7 @@ class OperationExecutor:
                     error_message=str(unknown),
                     error_data=unknown.data,
                 ),
+                inputs,
             )
             raise unknown from error
 
@@ -655,7 +662,9 @@ class OperationExecutor:
             # An unavailable receipt does not establish failure or undo an effect.
             return None
 
-    async def _commit(self, invocation: Invocation, outcome: InvocationOutcome) -> None:
+    async def _commit(
+        self, invocation: Invocation, outcome: InvocationOutcome, inputs: dict[str, Any]
+    ) -> None:
         assert self.store is not None
         try:
             await asyncio.to_thread(self.store.commit_invocation, invocation, outcome)
@@ -667,7 +676,7 @@ class OperationExecutor:
                 "Operation result could not be durably recorded",
                 self._unknown_data(
                     self.registry.get(invocation.name),
-                    json.loads(invocation.arguments_json),
+                    inputs,
                     invocation.call_id,
                 ),
             ) from error

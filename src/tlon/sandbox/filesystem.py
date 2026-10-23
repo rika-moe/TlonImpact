@@ -11,7 +11,7 @@ from typing import Any
 from tlon.base.config import DockerRuntimeConfig
 from tlon.base.logger import get_logger
 from tlon.operations.core import CallContext
-from tlon.operations.schema import OperationError, UnknownOutcomeError
+from tlon.operations.schema import OperationError, RejectedError, UnknownOutcomeError
 from tlon.sandbox.archive import DirectoryArchive
 from tlon.sandbox.device import ExecutionDevice
 from tlon.sandbox.path_guard import resolve_container_path
@@ -51,19 +51,19 @@ class MemberFilesystemService:
 
     async def _path(self, path: str, *, write: bool = False) -> str:
         if self._docker_config.level == "L0":
-            raise OperationError("L0 members cannot access files")
+            raise RejectedError("L0 members cannot access files", {})
         if self._docker_runtime is None:
             raise OperationError("Execution device not initialized")
         roots = self._write_allowed_paths if write else self._read_allowed_paths
         if write and (path == "/tlon-home" or path.startswith("/tlon-home/")):
-            raise OperationError("/tlon-home is read-only")
+            raise RejectedError("/tlon-home is read-only", {})
         try:
             resolved = resolve_container_path(path, self._docker_config.working_dir, roots)
             if write and (resolved == "/tlon-home" or resolved.startswith("/tlon-home/")):
                 raise ValueError("/tlon-home is read-only")
             await self._docker_runtime.check_path(resolved, roots, write=write)
-        except (ValueError, RuntimeError) as exc:
-            raise OperationError(str(exc)) from exc
+        except (ValueError, FileNotFoundError) as exc:
+            raise RejectedError(str(exc), {}) from exc
         return resolved
 
     async def _write(self, path: str, content: bytes, context: CallContext) -> None:
@@ -95,14 +95,14 @@ class MemberFilesystemService:
         try:
             raw = await self._docker_runtime.read_file(container_path)
         except FileNotFoundError:
-            raise OperationError(f"File not found: {file_path}") from None
+            raise RejectedError(f"File not found: {file_path}", {}) from None
         except RuntimeError as e:
             logger.error("file_read_failed", file_path=file_path, error=str(e), exc_info=True)
             raise OperationError(f"Failed to read file: {e}") from e
         try:
             text = raw.decode("utf-8")
         except UnicodeDecodeError:
-            raise OperationError(f"File is not UTF-8 text: {file_path}") from None
+            raise RejectedError(f"File is not UTF-8 text: {file_path}", {}) from None
         lines = text.splitlines()
         total_lines = len(lines)
         start = max(0, offset - 1)
@@ -150,21 +150,23 @@ class MemberFilesystemService:
         try:
             raw = await self._docker_runtime.read_file(container_path)
         except FileNotFoundError:
-            raise OperationError(f"File not found: {file_path}") from None
+            raise RejectedError(f"File not found: {file_path}", {}) from None
         except RuntimeError as e:
             raise OperationError(f"Failed to read file: {e}") from e
         try:
             content = raw.decode("utf-8")
         except UnicodeDecodeError:
-            raise OperationError(f"File is not UTF-8 text: {file_path}") from None
+            raise RejectedError(f"File is not UTF-8 text: {file_path}", {}) from None
         occurrences = content.count(old_string)
         if occurrences == 0:
-            raise OperationError(
-                f"old_string not found in {file_path}. The text you provided does not appear in the file."
+            raise RejectedError(
+                f"old_string not found in {file_path}. The text you provided does not appear in the file.",
+                {},
             )
         if occurrences > 1:
-            raise OperationError(
-                f"old_string is ambiguous ({occurrences} matches in {file_path}). Please provide a more specific string with more context."
+            raise RejectedError(
+                f"old_string is ambiguous ({occurrences} matches in {file_path}). Please provide a more specific string with more context.",
+                {},
             )
         new_content = content.replace(old_string, new_string, 1)
         await self._write(container_path, new_content.encode("utf-8"), context)
@@ -188,13 +190,13 @@ class MemberFilesystemService:
         try:
             tar_bytes = await self._docker_runtime.fetch_archive(container_path)
         except FileNotFoundError:
-            raise OperationError(f"Directory not found: {path}") from None
+            raise RejectedError(f"Directory not found: {path}", {}) from None
         except RuntimeError as e:
             logger.error("dir_list_failed", path=path, error=str(e))
             raise OperationError(f"Failed to list directory: {e}") from e
         archive = self._archive(tar_bytes, container_path)
         if not archive.root_is_dir:
-            raise OperationError(f"Not a directory: {path}")
+            raise RejectedError(f"Not a directory: {path}", {})
         children = sorted(
             [e for e in archive.entries if "/" not in e.rel], key=lambda e: (not e.is_dir, e.name)
         )
@@ -229,7 +231,7 @@ class MemberFilesystemService:
         mode: str = arguments.get("mode", "content")
         max_results: int = arguments.get("max_results", self._DEFAULT_MAX_RESULTS)
         if mode not in ("content", "filename"):
-            raise OperationError(f"Invalid mode: {mode!r} (expected 'content' or 'filename')")
+            raise RejectedError(f"Invalid mode: {mode!r} (expected 'content' or 'filename')", {})
         if self._docker_runtime is None:
             raise OperationError("Docker runtime not initialized")
         container_path = await self._path(path)
@@ -238,18 +240,18 @@ class MemberFilesystemService:
             try:
                 regex = re.compile(pattern)
             except re.error as e:
-                raise OperationError(f"Search failed: {e}") from e
+                raise RejectedError(f"Search failed: {e}", {}) from e
         limit = min(max(1, max_results), self._MAX_RESULTS)
         try:
             tar_bytes = await self._docker_runtime.fetch_archive(container_path)
         except FileNotFoundError:
-            raise OperationError(f"Path not found: {path}") from None
+            raise RejectedError(f"Path not found: {path}", {}) from None
         except RuntimeError as e:
             logger.error("search_failed", pattern=pattern, path=path, error=str(e))
             raise OperationError(f"Search failed: {e}") from e
         archive = self._archive(tar_bytes, container_path)
         if mode == "filename" and (not archive.root_is_dir):
-            raise OperationError(f"Path not found: {path}")
+            raise RejectedError(f"Path not found: {path}", {})
         matches: list[Any]
         truncated: bool
         if mode == "filename":

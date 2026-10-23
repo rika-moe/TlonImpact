@@ -308,8 +308,8 @@ async def test_tool_span_failure(memory_spans: InMemorySpanExporter) -> None:
     executor = ToolExecutor()
     executor.register_tool(_projection("boom"))
 
-    result = await executor.execute("boom", {})
-    assert not result.success
+    with pytest.raises(RuntimeError, match="kaboom"):
+        await executor.execute("boom", {})
 
     spans = memory_spans.get_finished_spans()
     tool_span = next(s for s in spans if s.name == "tool.boom")

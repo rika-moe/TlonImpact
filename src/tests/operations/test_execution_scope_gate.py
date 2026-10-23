@@ -227,9 +227,13 @@ async def test_deadline_after_write_dispatch_preserves_unknown_key_and_refuses_r
 
     executor, store = make_executor(handler)
     ctx = context(store, "timed-write", deadline=time.time() + 0.05)
-    result = await OperationTool(executor, "write").execute_context({"label": "effect"}, ctx)
-    assert not result.success
-    assert result.data == {"call_id": "timed-write", "outcome": "unknown", "retry_safe": False}
+    with pytest.raises(UnknownOutcomeError) as failure:
+        await OperationTool(executor, "write").execute_context({"label": "effect"}, ctx)
+    assert failure.value.data == {
+        "call_id": "timed-write",
+        "outcome": "unknown",
+        "retry_safe": False,
+    }
     with pytest.raises(UnknownOutcomeError):
         await executor.call("write", {"label": "effect"}, ctx)
     assert calls == 1

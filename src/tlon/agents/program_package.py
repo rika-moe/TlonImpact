@@ -9,7 +9,7 @@ from pathlib import Path
 from tlon.agents.member_spec import MemberSpec, MemberSpecValidationError, validate_member_spec
 from tlon.agents.vocabulary import make_member_builtins
 from tlosure.builtins import Builtin
-from tlosure.edn import EDNParseError, loads
+from tlosure.edn import EDNParseError, Keyword, Symbol, loads, loads_all
 from tlosure.modules import ModuleError, ModulePackage
 
 
@@ -26,8 +26,35 @@ def program_module_sources(sources: dict[str, str]) -> dict[str, str]:
     """Link host libraries explicitly; authors cannot replace the tlon namespace."""
     if any(path == "tlon.tlon" or path.startswith("tlon/") for path in sources):
         raise MemberSpecValidationError("module namespace tlon is reserved for host libraries")
-    library = files("tlon").joinpath("resources", "stdlib", "messages.tlon")
-    return {**sources, "tlon/messages.tlon": library.read_text(encoding="utf-8")}
+    library = files("tlon").joinpath("resources", "stdlib")
+    names = ["messages"]
+    # Only link the effectful library when an author explicitly imports it.
+    # Pure programs must not acquire an undeclared model/tool dependency.
+    for source in sources.values():
+        forms = loads_all(source)
+        if not forms:
+            continue
+        declaration = forms[0]
+        if not isinstance(declaration, list):
+            continue
+        for clause in declaration[2:]:
+            if not isinstance(clause, list) or not clause or clause[0] != Keyword("require"):
+                continue
+            if any(
+                isinstance(binding, list)
+                and binding
+                and type(binding[0]) is Symbol
+                and str(binding[0]) == "tlon.conversation"
+                for binding in clause[1:]
+            ):
+                names = ["messages", "conversation"]
+    return {
+        **sources,
+        **{
+            f"tlon/{name}.tlon": library.joinpath(f"{name}.tlon").read_text(encoding="utf-8")
+            for name in names
+        },
+    }
 
 
 def validate_program_sources(

@@ -63,6 +63,8 @@ check "tlon/base/_locked_dependencies.py" "wheel 含锁定依赖指纹"
 check "tlon/base/runtime_identity.py" "wheel 含恢复构建身份实现"
 check "behavior.tlon" "wheel 含原型 DSL 数据文件"
 check "tlon/resources/stdlib/messages.tlon" "wheel 含纯消息标准模块"
+check "tlon/resources/stdlib/conversation.tlon" "wheel 含普通对话标准模块"
+check "tlon/resources/examples/tool-reviewed-reply/modules/work/writing.tlon" "wheel 含工具核验回信示例"
 check "tlon/resources/examples/reviewed-reply/modules/work/writing.tlon" "wheel 含生成核验修订示例"
 # Verify the complete catalog rather than merely one matching Markdown file.
 if uv run python - "$wheel" <<'PYCODE'

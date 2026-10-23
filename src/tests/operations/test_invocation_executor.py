@@ -190,8 +190,9 @@ async def test_failed_result_commit_is_unknown_and_does_not_repeat_effect(
         raise OSError("disk failed")
 
     monkeypatch.setattr(store, "commit_invocation", fail)
-    result = await OperationTool(executor, "sample").execute_context({})
-    assert not result.success and result.data["call_id"] == "call"
+    with pytest.raises(UnknownOutcomeError) as failure:
+        await OperationTool(executor, "sample").execute_context({})
+    assert failure.value.data["call_id"] == "call"
     monkeypatch.setattr(store, "commit_invocation", original)
     with pytest.raises(UnknownOutcomeError, match="automatic retry refused"):
         await executor.call("sample", {})
@@ -281,12 +282,11 @@ async def test_store_wait_does_not_block_event_loop(
 
 
 async def test_domain_error_subclass_normalizes_identically_on_replay(store: ProgramStore) -> None:
-    from tlon.operations.schema import OperationError
+    from tlon.operations.schema import RejectedError
 
-    class DomainError(OperationError):
+    class DomainError(RejectedError):
         def __init__(self) -> None:
-            super().__init__("device exited unsuccessfully")
-            self.data = {"exit_code": 7, "stdout": "partial"}
+            super().__init__("device exited unsuccessfully", {"exit_code": 7, "stdout": "partial"})
 
     calls = 0
 
@@ -300,7 +300,7 @@ async def test_domain_error_subclass_normalizes_identically_on_replay(store: Pro
     first = await tool.execute_context({})
     replayed = await tool.execute_context({})
     assert first.to_dict() == replayed.to_dict()
-    assert first.error == "OperationError: device exited unsuccessfully"
+    assert first.error == "RejectedError: device exited unsuccessfully"
     assert first.data == {"exit_code": 7, "stdout": "partial"}
     assert calls == 1
 

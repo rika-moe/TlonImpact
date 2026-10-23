@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from tlon.agents.session_journal import SessionJournal
 from tlon.base.paths import TlonPaths
 from tlon.memory.manager import MemoryManager
@@ -23,6 +25,7 @@ from tlon.memory.session_digest import (
 from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
 from tlon.operations.memory import make_memory_operations
+from tlon.operations.schema import OperationError
 
 
 def _tool(tmp_path: Path) -> tuple[OperationTool, SessionJournal]:
@@ -163,7 +166,7 @@ class _BrokenLogs:
         return 0
 
 
-async def test_journal_failure_is_a_clean_error(tmp_path: Path) -> None:
+async def test_journal_failure_propagates(tmp_path: Path) -> None:
     memory = MemoryManager("agent1", MemoryConfig(), tmp_path / "agent1")
     executor = OperationExecutor(
         OperationRegistry(make_memory_operations(memory, _BrokenLogs())),
@@ -171,7 +174,5 @@ async def test_journal_failure_is_a_clean_error(tmp_path: Path) -> None:
     )
     tool = OperationTool(executor, "session-read")
 
-    result = await tool.execute_context({"session_id": "agent1-x"})
-
-    assert result.success is False
-    assert "disk gone" in (result.error or "")
+    with pytest.raises(OperationError, match="disk gone"):
+        await tool.execute_context({"session_id": "agent1-x"})

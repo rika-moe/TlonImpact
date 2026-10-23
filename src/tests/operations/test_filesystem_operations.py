@@ -228,3 +228,28 @@ async def test_search_preserves_existing_per_line_display_limit():
     result = await executor.call("file-search", {"path": "root", "pattern": "match"})
     assert result["count"] == 1
     assert result["matches"][0]["text"] == payload[:200].decode() + "…"
+
+
+@pytest.mark.parametrize("error", [ValueError("symlink denied"), FileNotFoundError("missing")])
+async def test_device_path_rejection_is_model_correctable(error: Exception) -> None:
+    device, executor = bound()
+    device.check_path = AsyncMock(side_effect=error)
+    result = await OperationTool(executor, "file-read").execute_context({"file_path": "a"})
+    assert not result.success
+    assert result.error == f"RejectedError: {error}"
+
+
+async def test_path_metadata_infrastructure_failure_propagates() -> None:
+    device, executor = bound()
+    device.check_path = AsyncMock(side_effect=RuntimeError("metadata service unavailable"))
+    with pytest.raises(RuntimeError, match="metadata service unavailable"):
+        await OperationTool(executor, "file-read").execute_context({"file_path": "a"})
+
+
+async def test_invalid_archive_propagates_through_tool_projection() -> None:
+    from tlon.operations.schema import OperationError
+
+    device, executor = bound()
+    device.fetch_archive = AsyncMock(return_value=b"broken archive")
+    with pytest.raises(OperationError, match="Invalid sandbox archive"):
+        await OperationTool(executor, "file-list").execute_context({})

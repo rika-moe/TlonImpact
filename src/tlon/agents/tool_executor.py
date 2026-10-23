@@ -121,7 +121,14 @@ class ToolExecutor:
         ):
             logger.info("tool_call", tool_name=tool_name, arguments=log_arguments)
             span = trace.get_current_span()
-            result = await self._execute_inner(tool_name, arguments, context)
+            try:
+                result = await self._execute_inner(tool_name, arguments, context)
+            except Exception as error:
+                span.set_attribute("tool.success", False)
+                span.set_attribute("tool.error", str(error))
+                span.set_status(Status(StatusCode.ERROR, str(error)))
+                logger.error("tool_blocked", tool_name=tool_name, error=str(error))
+                raise
             span.set_attribute("tool.success", result.success)
             if not result.success:
                 span.set_attribute("tool.error", result.error)
@@ -137,26 +144,18 @@ class ToolExecutor:
     async def _execute_inner(
         self, tool_name: str, arguments: dict[str, Any], context: CallContext | None = None
     ) -> ToolResult:
-        """Validate arguments and run the tool, converting failures to ToolResult.
+        """Run the tool; only known input and domain rejections become results.
 
         Args:
             tool_name: Name of the tool to execute
             arguments: Tool arguments as a dictionary
 
         Returns:
-            ToolResult with execution outcome (never raises)
+            ToolResult for success or a definite model-correctable rejection
         """
         tool = self._tools.get(tool_name)
         if not tool:
             logger.error("tool_not_found", tool_name=tool_name)
             return ToolResult(success=False, data={}, error=f"Tool not found: {tool_name}")
 
-        try:
-            return await tool.execute_context(arguments, context)
-        except Exception as e:
-            logger.error("tool_error", tool_name=tool_name, error=str(e), exc_info=True)
-            return ToolResult(
-                success=False,
-                data={},
-                error=f"Execution error: {str(e)}",
-            )
+        return await tool.execute_context(arguments, context)

@@ -1,6 +1,6 @@
-# 编写模块工作程序（P1/P2）
+# 编写模块工作程序（P1–P3）
 
-P1 已提供人工完整模块包、事件入口和持久执行。P2 已提供完整模型请求与纯消息标准库；工具执行和完整对话循环待 P3，Agent 自动起草模块待 P4a；现有内置原型仍使用 v1 stage 引擎。设计见 [可编程工作流程](../design/programmable-workflows.md)。
+P1 已提供人工完整模块包、事件入口和持久执行。P2 已提供完整模型请求与纯消息标准库；P3 提供受控工具分派和普通对话函数，Agent 自动起草模块待 P4a；现有内置原型仍使用 v1 stage 引擎。设计见 [可编程工作流程](../design/programmable-workflows.md)。
 
 ## 文件与入口
 
@@ -79,10 +79,34 @@ ProgramStore 的 entry_programs 保存结果与调度意图，运行完成与意
 
 `user` 和 `assistant` 构造包含 role/content 的消息 map，`append` 返回追加一个消息的新列表；这些函数没有宿主效果。`tlon.*` 是保留命名空间，作者不能覆盖。宿主标准源码只在链接与运行冻结时加入，不写进作者的 modules、管理 API 返回值或审批作者源码。
 
-`model-call` 必填 `messages` 与正整数 `max_tokens`；`tools` 是工具名称列表，省略等同 `[]`。消息 role 可用 user、assistant、tool，作者不能提供 system 消息或任意工具 schema。工具目录由成员装配提供；模型只生成工具建议，P2 不增加 DSL 工具执行接口。
+`model-call` 必填 `messages` 与正整数 `max_tokens`；`tools` 是工具名称列表，省略等同 `[]`。消息 role 可用 user、assistant、tool，作者不能提供 system 消息或任意工具 schema。工具目录由成员装配提供；模型只生成工具建议，工具执行由显式 tool-execute 编排端口负责。
 
 返回值含 `content`（工具专用响应可为 nil）、`tool_calls`、`finish_reason`、`usage`、`reasoning_content`。每条 tool_call 是 `{:id "..." :name "..." :arguments {...}}`；usage 保留 provider 的 snake_case 键。不要将 nil content 当成模型调用失败。完整示例见 [生成—核验—修订回信程序](../../src/tlon/resources/examples/reviewed-reply/README.md)，三个普通函数共享同一根预算。
 
 v2 受理时原子冻结宿主系统提示词、模型配置及工具定义；恢复沿用冻结配置。新模型请求校验当前工具目录，已提交结果允许按原工具契约重放。如果模型响应与额度已提交，但外层 Operation 回执尚未提交，恢复从同一 ProgramStore 模型记录补回执，不调用 provider、不重复扣额。已派发但结果未提交仍是 unknown，不能自动重发。output 模式按获准输出上限预留且不退款，total 模式沿用实际 usage 结算和缺失用量时的保守预留。
 
-输入历史中的 assistant `tool_calls` 使用 provider 消息结构：`{:id "..." :type "function" :function {:name "..." :arguments "JSON字符串"}}`，tool 消息用 `tool_call_id` 关联。它与输出的规范化 `{id,name,arguments}` 不同，P2 不自动把建议执行成消息历史；工具执行和完整协议拼接在 P3 提供。
+输入历史中的 assistant `tool_calls` 使用 provider 消息结构：`{:id "..." :type "function" :function {:name "..." :arguments "JSON字符串"}}`，tool 消息用 `tool_call_id` 关联。它与输出的规范化 `{id,name,arguments}` 不同，P2 不自动把建议执行成消息历史；P3 的 tlon.messages 和 tlon.conversation 完成协议拼接。
+
+## 工具分派与普通对话（P3）
+
+```clojure
+(ns work.dialogue (:require [tlon.conversation :as conversation]) (:export ask))
+(defn ask [task]
+  (conversation/run {:messages [{:role "user" :content task}]
+                     :tools ["time-now"] :max_tokens 128 :max_rounds 4}))
+```
+
+对话函数返回局部结果，调用方可继续核验、修订或发送邮件。它不创建隐式 session，也不重置根预算、取消信号或语言 fuel。`max_rounds` 是程序的轮数上限；模型无工具建议时返回，而不是终止整个事件入口。
+
+需要自定义控制顺序时，可直接组合 model-call 与编排端口：
+
+```clojure
+(tool-execute {:tools ["time-now"]
+               :tool_calls [{:id "clock-1" :name "time-now" :arguments {}}]})
+```
+
+工具名只能来自该次请求的范围和成员目录。批次先拒绝重复 ID、非法名称和控制请求；叶子按输入顺序执行并返回结果。每个叶子有稳定身份与独立回执，批次没有遮蔽部分成功的父 intent。恢复已完成项返回历史回执，尚未执行项检查当前工具定义与权限；遇到未知结果阻塞运行。
+
+只有输入/领域拒绝可转换为模型可修正的工具失败。取消、截止、预算、恢复失配、未知效果和基础设施异常传播给运行器。工具结果按原 ID 关联完整 assistant 响应，不能把部分成功拼成缺少 tool 结果的新模型请求。
+
+完整示例见 [工具辅助核验回信](../../src/tlon/resources/examples/tool-reviewed-reply/README.md)：子对话读取时钟后返回，外层继续核验、修订和发信。已有内置 v1 原型与交互消费者保留至后续阶段。

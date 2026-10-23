@@ -79,7 +79,7 @@ from tlon.base.llm_client import (
 )
 from tlon.base.logger import get_logger
 from tlon.operations.core import CallContext
-from tlon.operations.schema import RecoveryMismatchError, UnknownOutcomeError
+from tlon.operations.schema import RecoveryMismatchError
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.member_mail import MailDraft
 from tlon.tools.base import ToolResult
@@ -720,7 +720,7 @@ class LoopDriver:
     ) -> tuple[ToolCall, ToolResult]:
         """Execute one tool with timeout, returning (tc, result) tuple.
 
-        Catches all exceptions and returns ToolResult(success=False).
+        Propagates blocking failures to the runner without journaling a tool result.
         Designed to run via asyncio.create_task in step_session. The
         result is journaled (``tool/result``) as soon as it exists — the
         log must have it even if the process dies before the collect.
@@ -797,10 +797,6 @@ class LoopDriver:
             execution=current_execution(),
         )
         _, result = await self.execute_one_tool(session_id, tc, context, journal_result=False)
-        if not result.success and result.error and result.error.startswith("UnknownOutcomeError:"):
-            # Recovery cannot collect an uncertain effect as a definite tool result.
-            # The scheduler either waits for safe reconciliation or blocks the root.
-            raise UnknownOutcomeError(result.error, result.data or {})
         return result
 
     # ── Synchronous message processing (for tests) ──

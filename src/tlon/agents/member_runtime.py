@@ -59,6 +59,7 @@ from tlon.operations.model import make_model_operations
 from tlon.operations.schema import UnknownOutcomeError, json_value
 from tlon.operations.state import make_state_operations
 from tlon.operations.time import time_operation_definitions
+from tlon.operations.tool_dispatch import ToolDispatch
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.mail.member_mail import MemberMailService
@@ -219,7 +220,12 @@ class MemberRuntime(Member):
             write_gate=services.write_gate if services is not None else None,
         )
         self._operation_executor = operation_executor
-        self._operations = DSLAdapter(operation_executor)
+        self._operations = DSLAdapter(
+            operation_executor,
+            ToolDispatch(operation_executor, services.tool_executor.get_tool_definitions)
+            if services is not None
+            else None,
+        )
         self._builtins = {**self._host_builtins, **self._operations.builtins()}
         self._behavior_error: str | None = None
         try:
