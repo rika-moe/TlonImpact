@@ -180,7 +180,7 @@ class TestConsumptionReceipts:
         assert await manager.maybe_distill_completed_sessions(journal) is None
 
         # The third new completion reaches the window: only the new
-        # sessions are distilled, and the watermark advances.
+        # sources are distilled, and their consumption receipts are saved.
         await _completed_session(journal, "agent1-s5", "请求5")
         assert await manager.maybe_distill_completed_sessions(journal) is not None
         new_claims = (await manager.claims.get_all_claims())[claim_count:]
@@ -623,3 +623,59 @@ async def test_new_remember_provenance_does_not_consume_old_session(tmp_path: Pa
     assert await restarted.maybe_distill_completed_sessions(journal) == 1
     claims = await restarted.claims.get_all_claims()
     assert [claim["origin"] for claim in claims] == ["remember", "distillation"]
+
+
+async def test_corrupt_distillation_isolated_without_destroying_claims(tmp_path: Path) -> None:
+    from unittest.mock import AsyncMock, Mock
+
+    import pytest
+
+    from tlon.base.maintenance import MaintenanceCheckpointError
+
+    for index, payload in enumerate(
+        (
+            b'{"pending":',
+            b"\xff",
+            b"[]",
+            b'{"consumed_source_ids": "bad", "pending": null}',
+            b'{"consumed_source_ids": [], "pending": {"id": "x", "source_ids": [], "projections": 3}}',
+            b'{"consumed_source_ids": [], "pending": {"id": "x", "source_ids": ["a"], "projections": []}}',
+        )
+    ):
+        home = tmp_path / str(index)
+        manager = _manager(home, distillation_window=1)
+        await manager.load()
+        await manager.remember_fact("existing fact")
+        manager.distillation_file.write_bytes(payload)
+        restarted = _manager(home, distillation_window=1)
+        await restarted.load()
+        assert restarted.maintenance_error is not None
+        assert str(restarted.distillation_file) in restarted.maintenance_error
+        assert (await restarted.claims.get_all_claims())[0]["text"] == "existing fact"
+        await restarted.remember_fact("new fact")
+        distiller = Mock(spec=Distiller)
+        distiller.distill = AsyncMock(side_effect=AssertionError("must not call model"))
+        restarted.distiller = distiller
+        assert len(await restarted.claims.get_all_claims()) == 2
+        with pytest.raises(MaintenanceCheckpointError, match="distillation.json"):
+            await restarted.maybe_distill_completed_sessions(_journal(home))
+        distiller.distill.assert_not_awaited()
+        assert restarted.distillation_file.read_bytes() == payload
+        assert restarted._pending_batch is None
+        assert not restarted._consumed
+        manager.distillation_file.write_text(
+            json.dumps({"consumed_source_ids": [], "pending": None})
+        )
+        repaired = _manager(home, distillation_window=1)
+        await repaired.load()
+        assert repaired.maintenance_error is None
+        assert await repaired.maybe_distill_completed_sessions(_journal(home)) is None
+
+
+async def test_distillation_checkpoint_io_failure_is_not_empty_progress(tmp_path: Path) -> None:
+    import pytest
+
+    manager = _manager(tmp_path)
+    manager.distillation_file.mkdir()
+    with pytest.raises(IsADirectoryError):
+        await manager.load()

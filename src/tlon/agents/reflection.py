@@ -20,7 +20,9 @@ from tlon.agents.session_journal import SessionJournal
 from tlon.base.execution import ExecutionScope, bind_execution
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
+from tlon.base.maintenance import MaintenanceCheckpointError, MaintenanceRetry
 from tlon.memory.manager import MemoryManager
+from tlon.operations.schema import RecoveryMismatchError, UnknownOutcomeError
 
 logger = get_logger(__name__)
 
@@ -66,6 +68,7 @@ class ReflectionEngine:
         self.enabled: bool = reflect.enabled
         self._interval: float = reflect.interval_minutes * 60
         self._min_interactions: int = memory.config.reflection_min_interactions
+        self._retry = MaintenanceRetry()
         self._running = False
         self._task: asyncio.Task[None] | None = None
 
@@ -79,10 +82,60 @@ class ReflectionEngine:
         """
         return self._running
 
+    @property
+    def diagnostic_error(self) -> str | None:
+        """Latest maintenance failure for operator diagnostics."""
+        return self._retry.error
+
     def _load_checkpoint(self) -> dict[str, Any]:
         if not self._checkpoint.exists():
             return {"seen": [], "last_completed": None, "pending": None}
-        return cast(dict[str, Any], json.loads(self._checkpoint.read_text(encoding="utf-8")))
+        try:
+            state = json.loads(self._checkpoint.read_text(encoding="utf-8"))
+            self._validate_checkpoint(state)
+        except (ValueError, TypeError, KeyError) as error:
+            raise MaintenanceCheckpointError(self._checkpoint, str(error)) from error
+        return cast(dict[str, Any], state)
+
+    @staticmethod
+    def _validate_checkpoint(state: Any) -> None:
+        """Reject damaged progress without discarding frozen operations."""
+
+        def strings(value: Any) -> bool:
+            return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+        if not isinstance(state, dict) or not strings(state.get("seen")):
+            raise ValueError("seen must be a list of source IDs")
+        completed = state["last_completed"]
+        if completed is not None and (
+            not isinstance(completed, str) or datetime.fromisoformat(completed).tzinfo is None
+        ):
+            raise ValueError("last_completed must be a timezone-aware timestamp or null")
+        pending = state["pending"]
+        if pending is None:
+            return
+        if not isinstance(pending, dict):
+            raise ValueError("pending must be an object or null")
+        if not isinstance(pending["id"], str) or not strings(pending["sources"]):
+            raise ValueError("pending requires a string ID and source IDs")
+        digest = pending["digest"]
+        if digest is not None and (
+            not isinstance(digest, dict)
+            or not isinstance(digest.get("claims"), list)
+            or type(digest.get("claim_count")) is not int
+            or type(digest.get("undistilled_session_count")) is not int
+            or not isinstance(digest.get("recent_interactions", []), list)
+        ):
+            raise ValueError("pending digest must contain memory counts and claims")
+        operations = pending["operations"]
+        if operations is not None and (
+            not isinstance(operations, list)
+            or not all(isinstance(operation, dict) for operation in operations)
+        ):
+            raise ValueError("pending operations must be objects or null")
+        index = pending["next"]
+        if type(index) is not int or index < 0 or index > len(operations or []):
+            raise ValueError("pending next must identify an operation boundary")
 
     def _save_checkpoint(self, state: dict[str, Any]) -> None:
         temporary = self._checkpoint.with_suffix(".tmp")
@@ -94,30 +147,36 @@ class ReflectionEngine:
 
     async def check_trigger(self) -> None:
         """Count durable completed sources, retaining one frozen batch on failure."""
-        if not self.enabled or self._running:
+        if not self.enabled or self._running or not self._retry.ready():
             return
-        state = await asyncio.to_thread(self._load_checkpoint)
-        if state["pending"] is None:
-            sources = sorted(set(await self._journal.list_completed()) - set(state["seen"]))
-            if len(sources) < self._min_interactions:
-                return
-            if state["last_completed"] is not None:
-                elapsed = (
-                    datetime.now(UTC) - datetime.fromisoformat(state["last_completed"])
-                ).total_seconds()
-                if elapsed < self._interval:
+        try:
+            state = await asyncio.to_thread(self._load_checkpoint)
+            if state["pending"] is None:
+                sources = sorted(set(await self._journal.list_completed()) - set(state["seen"]))
+                if len(sources) < self._min_interactions:
                     return
-            batch = hashlib.sha256(json.dumps(sources).encode()).hexdigest()
-            state["pending"] = {
-                "id": batch,
-                "sources": sources,
-                "digest": None,
-                "operations": None,
-                "next": 0,
-            }
-            await asyncio.to_thread(self._save_checkpoint, state)
-        self._running = True
-        self._task = asyncio.create_task(self._run(state))
+                if state["last_completed"] is not None:
+                    elapsed = (
+                        datetime.now(UTC) - datetime.fromisoformat(state["last_completed"])
+                    ).total_seconds()
+                    if elapsed < self._interval:
+                        return
+                batch = hashlib.sha256(json.dumps(sources).encode()).hexdigest()
+                state["pending"] = {
+                    "id": batch,
+                    "sources": sources,
+                    "digest": None,
+                    "operations": None,
+                    "next": 0,
+                }
+                await asyncio.to_thread(self._save_checkpoint, state)
+            self._running = True
+            self._task = asyncio.create_task(self._run(state))
+        except Exception as error:
+            self._retry.failed(
+                error, blocked=isinstance(error, (RecoveryMismatchError, UnknownOutcomeError))
+            )
+            logger.warning("reflection_failed", error=str(error))
 
     async def shutdown(self) -> None:
         """Cancel an in-flight reflection and await it.
@@ -183,8 +242,12 @@ class ReflectionEngine:
                 state["last_completed"] = datetime.now(UTC).isoformat()
                 state["pending"] = None
                 await asyncio.to_thread(self._save_checkpoint, state)
+                self._retry.succeeded()
                 logger.info("reflection_completed", operation_count=len(operations))
         except Exception as error:
+            self._retry.failed(
+                error, blocked=isinstance(error, (RecoveryMismatchError, UnknownOutcomeError))
+            )
             logger.warning("reflection_failed", error=str(error))
         finally:
             self._running = False

@@ -13,9 +13,12 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
 
+import pytest
+
 from tlon.agents.member_spec import ReflectSpec, SessionRecipe
 from tlon.agents.reflection import ReflectionEngine
 from tlon.agents.session_journal import SessionJournal
+from tlon.base.execution import ModelRequestRejectedError, UnknownModelOutcomeError
 from tlon.base.llm_client import LLMClient, LLMResponse
 from tlon.base.paths import TlonPaths
 from tlon.memory.manager import MemoryManager
@@ -326,3 +329,87 @@ async def test_reflection_prompt_includes_undistilled_program_interactions(tmp_p
     )
     assert "program:run-1" in prompt
     assert "source text" in prompt
+
+
+@pytest.mark.parametrize(
+    "content",
+    ["{", "[]", '{"seen": []}', '{"seen": [], "last_completed": null, "pending": {"id": 1}}'],
+)
+async def test_damaged_reflection_checkpoint_is_preserved_and_reported(
+    tmp_path: Path, content: str
+) -> None:
+    engine, _ = _engine(tmp_path)
+    engine._checkpoint.write_text(content)
+    with patch("tlon.agents.reflection.logger") as logger:
+        for _ in range(3):
+            await engine.check_trigger()
+    assert engine._task is None
+    assert engine._checkpoint.read_text() == content
+    assert str(engine._checkpoint) in (engine.diagnostic_error or "")
+    logger.warning.assert_called_once()
+    # Repair is deliberate and a reload is required to retry a blocked batch.
+    engine._checkpoint.write_text(json.dumps({"seen": [], "last_completed": None, "pending": None}))
+    restarted, _ = _engine(tmp_path)
+    await _complete_sources(restarted)
+    await restarted.check_trigger()
+    assert restarted._task is not None
+    await restarted._task
+    assert restarted.diagnostic_error is None
+    assert restarted._load_checkpoint()["pending"] is None
+
+
+@pytest.mark.parametrize(
+    "error", [ModelRequestRejectedError("rejected"), UnknownModelOutcomeError("unknown")]
+)
+async def test_permanent_reflection_failure_does_not_resubmit(
+    tmp_path: Path, error: Exception
+) -> None:
+    engine, manager = _engine(tmp_path)
+    await manager.remember_fact("a claim")
+    await _complete_sources(engine)
+    with patch.object(engine._llm_client, "chat", side_effect=error) as chat:
+        await engine.check_trigger()
+        assert engine._task is not None
+        await engine._task
+        checkpoint = engine._checkpoint.read_bytes()
+        with patch("tlon.base.maintenance.monotonic", return_value=1e12):
+            for _ in range(5):
+                await engine.check_trigger()
+        assert chat.await_count == 1
+    assert engine._task is None
+    assert engine._checkpoint.read_bytes() == checkpoint
+    assert type(error).__name__ in (engine.diagnostic_error or "")
+
+
+async def test_transient_reflection_failure_retries_frozen_batch_after_backoff(
+    tmp_path: Path,
+) -> None:
+    engine, manager = _engine(tmp_path)
+    await manager.remember_fact("a claim")
+    await _complete_sources(engine)
+    with patch("tlon.base.maintenance.monotonic", return_value=100.0) as clock:
+        with patch.object(engine._llm_client, "chat", side_effect=OSError("temporary")) as chat:
+            await engine.check_trigger()
+            assert engine._task is not None
+            await engine._task
+            pending = engine._load_checkpoint()["pending"]
+            for now in [100.0, 110.0, 129.9]:
+                clock.return_value = now
+                await engine.check_trigger()
+                assert engine._task is None
+            assert chat.await_count == 1
+            clock.return_value = 130.0
+            await engine.check_trigger()
+            assert engine._task is not None
+            await engine._task
+            assert chat.await_count == 2
+            assert engine._load_checkpoint()["pending"] == pending
+            clock.return_value = 189.9
+            await engine.check_trigger()
+            assert engine._task is None
+        clock.return_value = 190.0
+        await engine.check_trigger()
+        assert engine._task is not None
+        await engine._task
+    assert engine._load_checkpoint()["pending"] is None
+    assert engine.diagnostic_error is None

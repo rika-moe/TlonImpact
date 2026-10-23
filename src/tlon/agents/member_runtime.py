@@ -50,6 +50,7 @@ from tlon.base.events.event_bus import EventBus
 from tlon.base.execution import ExecutionScope, MemberWriteGate, bind_execution, current_execution
 from tlon.base.llm_client import LLMClient, ToolCall
 from tlon.base.logger import get_logger
+from tlon.base.maintenance import MaintenanceRetry
 from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_context import continue_trace
 from tlon.lifecycle.service import LifecycleService
@@ -62,7 +63,7 @@ from tlon.operations.invocation import registry_identity
 from tlon.operations.lifecycle import make_lifecycle_operations
 from tlon.operations.mail import make_mail_operations
 from tlon.operations.model import make_model_operations
-from tlon.operations.schema import UnknownOutcomeError, json_value
+from tlon.operations.schema import RecoveryMismatchError, UnknownOutcomeError, json_value
 from tlon.operations.state import make_state_operations
 from tlon.operations.time import time_operation_definitions
 from tlon.operations.tool_dispatch import ToolDispatch
@@ -284,6 +285,7 @@ class MemberRuntime(Member):
         self._program_task: asyncio.Task[None] | None = None
         self._deferred_boot: list[MemberRule] = []
         self._maintenance_sources: frozenset[str] | None = None
+        self._distillation_retry = MaintenanceRetry()
         self._journal = (
             SessionJournal(
                 member_id,
@@ -389,8 +391,22 @@ class MemberRuntime(Member):
 
     def get_diagnostic_error(self) -> str | None:
         """Runtime failure is a diagnostic, never a scheduling state."""
-        return self._behavior_error or (
-            "runtime error" if self._state is MemberState.ERROR else None
+        maintenance_errors = [
+            f"{purpose}: {error}"
+            for purpose, error in (
+                ("distillation", self._distillation_retry.error),
+                ("reflection", self._reflection.diagnostic_error if self._reflection else None),
+                (
+                    "distillation checkpoint",
+                    self._services.memory.maintenance_error if self._services else None,
+                ),
+            )
+            if error
+        ]
+        return (
+            self._behavior_error
+            or "; ".join(maintenance_errors)
+            or ("runtime error" if self._state is MemberState.ERROR else None)
         )
 
     @property
@@ -399,13 +415,11 @@ class MemberRuntime(Member):
 
         Draining must wait for every kind of work, including external I/O.
         """
-        if self._scheduler is not None:
-            return (
-                self._scheduler.active_session_count
-                + self._active_actions
-                + int(self._reflection is not None and self._reflection.is_running)
-            )
-        return self._active_actions
+        return (
+            (self._scheduler.active_session_count if self._scheduler is not None else 0)
+            + self._active_actions
+            + int(self._reflection is not None and self._reflection.is_running)
+        )
 
     @property
     def idle_seconds(self) -> float:
@@ -595,24 +609,29 @@ class MemberRuntime(Member):
         """Maintenance consumes terminal history; it never owns entry recovery."""
         if self._services is None or self._journal is None or not self._can_schedule():
             return
-        active = False
-        try:
-            sources = frozenset(await self._journal.list_completed())
-            if sources != self._maintenance_sources:
-                self._active_actions += 1
-                active = True
-                if self._registry is not None:
-                    await self._registry.publish_scheduling_state(self._member_id)
-                with bind_execution(self._maintenance_execution("distill")):
-                    await self._services.memory.maybe_distill_completed_sessions(self._journal)
-                self._maintenance_sources = sources
-        except Exception as error:
-            self._logger.warning("program_distillation_failed", error=str(error))
-        finally:
-            if active:
-                self._active_actions -= 1
-                if self._registry is not None:
-                    await self._registry.publish_scheduling_state(self._member_id)
+        if self._distillation_retry.ready():
+            active = False
+            try:
+                sources = frozenset(await self._journal.list_completed())
+                if sources != self._maintenance_sources:
+                    self._active_actions += 1
+                    active = True
+                    if self._registry is not None:
+                        await self._registry.publish_scheduling_state(self._member_id)
+                    with bind_execution(self._maintenance_execution("distill")):
+                        await self._services.memory.maybe_distill_completed_sessions(self._journal)
+                    self._maintenance_sources = sources
+                self._distillation_retry.succeeded()
+            except Exception as error:
+                self._distillation_retry.failed(
+                    error, blocked=isinstance(error, (RecoveryMismatchError, UnknownOutcomeError))
+                )
+                self._logger.warning("program_distillation_failed", error=str(error))
+            finally:
+                if active:
+                    self._active_actions -= 1
+                    if self._registry is not None:
+                        await self._registry.publish_scheduling_state(self._member_id)
         try:
             if self._reflection is not None:
                 await self._reflection.check_trigger()

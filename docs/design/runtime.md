@@ -153,3 +153,5 @@ EPIC A 审计收尾将两入口超时统一到 OperationExecutor，并由同一�
 新 v2 的 ProgramStore 保存输入、调用回执、结果和终态；SessionJournal 从其只读快照派生 program:<run_id> 交互事件，并联合旧会话历史。新来源不进入 SessionJournal.resume/find_unfinished；读取视图故障不恢复入口执行。完成时间与终态同事务提交，旧无时间条目明确无时间，查询不修改历史。
 
 v2 在冻结待续入口处理完后检查维护任务，蒸馏失败与交互读取失败单独隔离。维护期间计入真实活动，反思 task 关闭时取消并收割。蒸馏/反思按固定来源集合、独立额度根和持久消费进度恢复，模型 unknown 不能换新根绕过。session-read、thread recap、记忆 digest、教训、退休清点和演武场归档消费同一视图；REST /sessions 是客户端连接会话，不变更。
+
+P4b 维护错误通过成员 diagnostic_error 暴露。v1/v2 都把在途反思计入 active_session_count；未完成模型调用不会被当作已排空。临时维护失败按 30–300 秒退避，固定根上的永久拒绝/unknown/额度耗尽/损坏进度停止本实例热重试，保留原批次；修复并重建实例后仍核对相同回执。checkpoint 的证据保留和人工跳过规则见 [memory](memory.md#维护失败诊断与人工处置)。

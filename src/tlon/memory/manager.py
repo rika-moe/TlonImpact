@@ -44,6 +44,7 @@ from tlon.base.execution import (
     current_execution,
 )
 from tlon.base.logger import get_logger
+from tlon.base.maintenance import MaintenanceCheckpointError
 from tlon.base.paths import TlonPaths
 from tlon.operations.schema import RecoveryMismatchError
 
@@ -155,6 +156,7 @@ class MemoryManager:
 
         self.claims = ClaimStore(agent_id=agent_id, storage_path=self.storage_path)
 
+        self.maintenance_error: str | None = None
         self._loaded = False
         self._consumed: set[str] = set()
         self._pending_batch: dict[str, Any] | None = None
@@ -227,7 +229,11 @@ class MemoryManager:
                 self.config.agent_id = self.agent_id
                 await self._save_config()
 
-            self._load_distillation()
+            try:
+                self._load_distillation()
+            except MaintenanceCheckpointError as error:
+                self.maintenance_error = str(error)
+                logger.error("distillation_checkpoint_invalid", error=str(error))
             await self.claims.load()
             # Only untagged historical claims establish old consumption. New
             # claims carry their origin; provenance from remember/reflection
@@ -397,10 +403,105 @@ class MemoryManager:
 
     def _load_distillation(self) -> None:
         """Load source receipts. Old scalar timestamps are not consumption evidence."""
-        if self.distillation_file.exists():
+        if not self.distillation_file.exists():
+            return
+        try:
             data = json.loads(self.distillation_file.read_text(encoding="utf-8"))
-            self._consumed = set(data.get("consumed_source_ids", []))
-            self._pending_batch = data.get("pending")
+            if (
+                isinstance(data, dict)
+                and set(data) == {"last_distilled_at"}
+                and isinstance(data["last_distilled_at"], str)
+            ):
+                return
+            self._validate_distillation(data)
+        except (UnicodeDecodeError, ValueError) as error:
+            raise MaintenanceCheckpointError(self.distillation_file, str(error)) from error
+        self._consumed = set(data["consumed_source_ids"])
+        self._pending_batch = data["pending"]
+
+    @staticmethod
+    def _validate_distillation(data: Any) -> None:
+        """Validate frozen data before allowing maintenance effects."""
+
+        def strings(value: Any) -> bool:
+            return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+        if not isinstance(data, dict) or not strings(data.get("consumed_source_ids")):
+            raise ValueError("consumed_source_ids must be a list of strings")
+        if set(data) != {"consumed_source_ids", "pending"}:
+            raise ValueError("invalid distillation checkpoint fields")
+        batch = data["pending"]
+        if batch is None:
+            return
+        if not isinstance(batch, dict) or not isinstance(batch.get("id"), str):
+            raise ValueError("pending batch requires a string id")
+        if set(batch) - {
+            "id",
+            "source_ids",
+            "projections",
+            "claims",
+            "conflict_candidates",
+            "supersessions",
+        }:
+            raise ValueError("invalid pending batch fields")
+        if not strings(batch.get("source_ids")):
+            raise ValueError("pending source_ids must be a list of strings")
+        projections = batch.get("projections")
+        if not isinstance(projections, list):
+            raise ValueError("pending projections must be a list")
+        allowed = {
+            "session_id",
+            "trigger_content",
+            "llm_responses",
+            "tool_results",
+            "end_reason",
+            "program_result",
+            "errors",
+        }
+        for projection in projections:
+            if not isinstance(projection, dict) or set(projection) - allowed:
+                raise ValueError("invalid pending projection fields")
+            for key in ("session_id", "trigger_content"):
+                if not isinstance(projection.get(key), str):
+                    raise ValueError(f"projection {key} must be a string")
+            for key in ("end_reason", "program_result"):
+                if key in projection and not isinstance(projection[key], str):
+                    raise ValueError(f"projection {key} must be a string")
+            for key in ("llm_responses", "tool_results", "errors"):
+                if key in projection and not strings(projection[key]):
+                    raise ValueError(f"projection {key} must be a list of strings")
+        if [item["session_id"] for item in projections] != batch["source_ids"]:
+            raise ValueError("projection identities do not match source_ids")
+        for key in ("claims", "conflict_candidates"):
+            if key not in batch:
+                continue
+            if not isinstance(batch[key], list):
+                raise ValueError(f"pending {key} must be a list")
+            for claim in batch[key]:
+                if not isinstance(claim, dict):
+                    raise ValueError(f"pending {key} contains a non-object claim")
+                for field in ("id", "text", "timestamp", "valid_from"):
+                    if not isinstance(claim.get(field), str):
+                        raise ValueError(f"pending claim {field} must be a string")
+                if not strings(claim.get("source_session_ids")):
+                    raise ValueError("pending claim source_session_ids must be strings")
+                for field in ("valid_to", "superseded_by"):
+                    if claim.get(field) is not None and not isinstance(claim[field], str):
+                        raise ValueError(f"pending claim {field} must be a string or null")
+                if claim.get("status", "active") not in ("active", "superseded"):
+                    raise ValueError("invalid pending claim status")
+                if not isinstance(claim.get("importance"), (int, float)):
+                    raise ValueError("pending claim importance must be a number")
+        if "supersessions" in batch:
+            plan = batch["supersessions"]
+            if not isinstance(plan, list) or any(
+                not isinstance(item, dict)
+                or any(
+                    not isinstance(item.get(key), str) for key in ("old_id", "new_id", "valid_to")
+                )
+                for item in plan
+            ):
+                raise ValueError("invalid pending supersessions")
 
     async def _save_distillation(self) -> None:
         """Commit progress atomically; an unacknowledged write remains retryable."""
@@ -437,6 +538,8 @@ class MemoryManager:
         async with self.write_gate.hold():
             if not self._loaded:
                 await self.load()
+            if self.maintenance_error is not None:
+                raise MaintenanceCheckpointError(self.distillation_file, self.maintenance_error)
             if self._pending_batch is not None:
                 projections = [
                     SessionProjection(**item) for item in self._pending_batch["projections"]

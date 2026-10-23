@@ -149,7 +149,7 @@ class LessonsDistiller(Component, Device):
         # another final audit. The exact digest binds the maintenance identity.
         source = json.dumps(digest, sort_keys=True, ensure_ascii=False)
         batch = hashlib.sha256(source.encode()).hexdigest()
-        store = ProgramStore(self._paths.agent_dir(agent_id) / "program.sqlite3")
+        store = ProgramStore(self._paths.agent_program_database_file(agent_id))
         config = yaml_load_file(self._paths.agent_config_file(agent_id))
         limit = config.llm.max_tokens if config is not None and config.llm is not None else 4096
         scope = ExecutionScope(store, f"maintenance:lessons:{batch}", limit, "output")

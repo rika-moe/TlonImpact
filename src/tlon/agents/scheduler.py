@@ -13,6 +13,7 @@ from typing import Any, TypeVar
 
 from tlon.agents.loop_driver import LoopDriver
 from tlon.agents.member_spec import SessionRecipe
+from tlon.agents.program_history import PROGRAM_SOURCE_PREFIX
 from tlon.agents.recovery import blocked_reason, blocks_recovery
 from tlon.agents.session import AgentSession, SessionState
 from tlon.agents.session_journal import SessionJournal, SessionReplay
@@ -138,7 +139,7 @@ class SessionScheduler:
             if self._resume_invocation is not None:
                 continuations: dict[tuple[str, int], tuple[str, SessionReplay]] = {}
                 for sid in await self._journal.list_completed():
-                    if sid.startswith("program:") or sid in recovered:
+                    if sid.startswith(PROGRAM_SOURCE_PREFIX) or sid in recovered:
                         continue
                     events = await self._journal.read_events(sid)
                     start = next(
@@ -463,7 +464,7 @@ class SessionScheduler:
 
         Never raises: a distillation failure (LLM outage, disk error)
         is logged and retried at the next session's reap — the pending
-        sessions stay pending because the watermark never advanced.
+        sources stay pending because their consumption receipts were not committed.
         """
         try:
             scope = (
