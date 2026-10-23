@@ -169,4 +169,4 @@ class RetirementCeremony(Component, Device):
         )
         journal = SessionJournal(agent_id, self._paths)
         digest = await memory.get_memory_digest(journal)
-        return digest if digest["claim_count"] else None
+        return digest if digest["claim_count"] or digest["recent_interactions"] else None

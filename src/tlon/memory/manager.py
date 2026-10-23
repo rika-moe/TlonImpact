@@ -1,11 +1,10 @@
 """Memory Manager - the claim-based memory interface (ADR 0017).
 
-The session journal (ADR 0007) is the sole interaction truth; completed
-sessions are distilled in batches into claims — natural-language
+The injected history reader exposes legacy journal and module program facts;
+completed sources are distilled in batches into claims — natural-language
 assertions with provenance — stored append-only in ``claims.jsonl``.
-Distillation progress is a scalar timestamp watermark persisted in
-``distillation.json`` (session ids are uuids without temporal order, so
-no id-based high-water mark is possible). Retrieval is JIT: the current
+Distillation progress is a set of consumed source IDs and a durable pending
+batch in ``distillation.json``. Late completion never depends on start-time order. Retrieval is JIT: the current
 mail embeds into a query against a sqlite-vec index (``claims_vec.db``,
 a pure derived view of the claim store) and active claims are ranked by
 a composite similarity/recency/importance score; without an embedding
@@ -22,8 +21,10 @@ scheduler calls at its session reap point.
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import os
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -35,8 +36,12 @@ from tlon.base.embedding_client import EmbeddingClient
 from tlon.base.execution import (
     BudgetExceededError,
     ExecutionDeadlineError,
+    ExecutionScope,
     MemberWriteGate,
+    ModelRequestRejectedError,
     UnknownModelOutcomeError,
+    bind_execution,
+    current_execution,
 )
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
@@ -77,11 +82,11 @@ class SessionLogReader(Protocol):
     """
 
     async def list_completed(self, started_after: datetime | None = None) -> list[str]:
-        """Completed ids newer than the start watermark; timeless ones stay pending."""
+        """Completed source IDs; callers consume by stable identity."""
         ...
 
     async def count_completed(self, started_after: datetime | None = None) -> int:
-        """Count completed sessions with the same watermark filter."""
+        """Count completed sources with the optional historical filter."""
         ...
 
     async def read_events(self, session_id: str) -> list[dict[str, Any]]:
@@ -151,7 +156,8 @@ class MemoryManager:
         self.claims = ClaimStore(agent_id=agent_id, storage_path=self.storage_path)
 
         self._loaded = False
-        self._watermark: str | None = None
+        self._consumed: set[str] = set()
+        self._pending_batch: dict[str, Any] | None = None
 
         # Initialize distiller if LLM config provided
         if llm_config:
@@ -180,7 +186,7 @@ class MemoryManager:
         """Load memory from disk.
 
         Called once at Agent startup. Loads config, claims, and the
-        distillation watermark.
+        distillation source receipts.
 
         ``memory/config.json`` is the single per-agent tuning surface:
         when it exists it replaces the constructor-provided config (the
@@ -208,6 +214,7 @@ class MemoryManager:
                     BudgetExceededError,
                     ExecutionDeadlineError,
                     UnknownModelOutcomeError,
+                    ModelRequestRejectedError,
                     RecoveryMismatchError,
                 ):
                     raise
@@ -220,8 +227,20 @@ class MemoryManager:
                 self.config.agent_id = self.agent_id
                 await self._save_config()
 
-            self._watermark = self._load_watermark()
+            self._load_distillation()
             await self.claims.load()
+            # Only untagged historical claims establish old consumption. New
+            # claims carry their origin; provenance from remember/reflection
+            # is never a receipt for the independent distillation consumer.
+            pending_ids = set(self._pending_batch["source_ids"]) if self._pending_batch else set()
+            for claim in await self.claims.get_all_claims(include_superseded=True):
+                if "origin" in claim:
+                    continue
+                self._consumed.update(
+                    source_id
+                    for source_id in claim.get("source_session_ids", [])
+                    if not source_id.startswith("program:") and source_id not in pending_ids
+                )
             await self._init_vector_index()
 
             self._loaded = True
@@ -250,6 +269,7 @@ class MemoryManager:
                 BudgetExceededError,
                 ExecutionDeadlineError,
                 UnknownModelOutcomeError,
+                ModelRequestRejectedError,
                 RecoveryMismatchError,
             ):
                 raise
@@ -279,6 +299,7 @@ class MemoryManager:
                 BudgetExceededError,
                 ExecutionDeadlineError,
                 UnknownModelOutcomeError,
+                ModelRequestRejectedError,
                 RecoveryMismatchError,
             ):
                 raise
@@ -313,6 +334,7 @@ class MemoryManager:
                 BudgetExceededError,
                 ExecutionDeadlineError,
                 UnknownModelOutcomeError,
+                ModelRequestRejectedError,
                 RecoveryMismatchError,
             ):
                 raise
@@ -347,6 +369,7 @@ class MemoryManager:
                     BudgetExceededError,
                     ExecutionDeadlineError,
                     UnknownModelOutcomeError,
+                    ModelRequestRejectedError,
                     RecoveryMismatchError,
                 ):
                     raise
@@ -363,213 +386,155 @@ class MemoryManager:
                 BudgetExceededError,
                 ExecutionDeadlineError,
                 UnknownModelOutcomeError,
+                ModelRequestRejectedError,
                 RecoveryMismatchError,
             ):
                 raise
             except Exception as e:
                 logger.error("memory_config_save_failed", error=str(e), exc_info=True)
 
-    # ===== Distillation watermark =====
+    # ===== Distillation source receipts =====
 
-    def _load_watermark(self) -> str | None:
-        """Read the distillation watermark; a missing/corrupt file reads
-        as no progress (everything is pending — the safe direction)."""
-        if not self.distillation_file.exists():
-            return None
-        try:
+    def _load_distillation(self) -> None:
+        """Load source receipts. Old scalar timestamps are not consumption evidence."""
+        if self.distillation_file.exists():
             data = json.loads(self.distillation_file.read_text(encoding="utf-8"))
-            watermark = data.get("last_distilled_at")
-            return str(watermark) if watermark else None
-        except (
-            BudgetExceededError,
-            ExecutionDeadlineError,
-            UnknownModelOutcomeError,
-            RecoveryMismatchError,
-        ):
-            raise
-        except Exception as e:
-            logger.warning("distillation_watermark_load_failed", error=str(e))
-            return None
+            self._consumed = set(data.get("consumed_source_ids", []))
+            self._pending_batch = data.get("pending")
 
-    async def _save_watermark(self, watermark: str) -> None:
-        """Persist the watermark atomically (temp file + os.replace)."""
-        async with self.write_gate.hold():
-            tmp_file = self.distillation_file.with_name(self.distillation_file.name + ".tmp")
-            try:
-                async with aiofiles.open(tmp_file, "w", encoding="utf-8") as f:
-                    await f.write(json.dumps({"last_distilled_at": watermark}, ensure_ascii=False))
-                await asyncio.to_thread(os.replace, tmp_file, self.distillation_file)
-                self._watermark = watermark
-            except (
-                BudgetExceededError,
-                ExecutionDeadlineError,
-                UnknownModelOutcomeError,
-                RecoveryMismatchError,
-            ):
-                raise
-            except Exception as e:
-                logger.error("distillation_watermark_save_failed", error=str(e), exc_info=True)
-                with contextlib.suppress(OSError):
-                    tmp_file.unlink(missing_ok=True)
-
-    def _parsed_watermark(self) -> datetime | None:
-        """Parse the persisted timestamp; invalid values mean no progress."""
-        if not self._watermark:
-            return None
+    async def _save_distillation(self) -> None:
+        """Commit progress atomically; an unacknowledged write remains retryable."""
+        temporary = self.distillation_file.with_name(self.distillation_file.name + ".tmp")
         try:
-            return datetime.fromisoformat(self._watermark)
-        except ValueError:
-            logger.warning("distillation_watermark_invalid", watermark=self._watermark)
-            return None
-
-    @staticmethod
-    def _session_started_at(events: list[dict[str, Any]]) -> datetime | None:
-        """The session's start time from its ``session/start`` event;
-        None when the log carries no usable timestamp."""
-        for event in events:
-            if event.get("type") != "session/start":
-                continue
-            ts = event.get("ts")
-            if not ts:
-                return None
-            try:
-                return datetime.fromisoformat(str(ts))
-            except ValueError:
-                return None
-        return None
+            async with aiofiles.open(temporary, "w", encoding="utf-8") as stream:
+                await stream.write(
+                    json.dumps(
+                        {
+                            "consumed_source_ids": sorted(self._consumed),
+                            "pending": self._pending_batch,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+                await stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, self.distillation_file)
+        finally:
+            with contextlib.suppress(OSError):
+                temporary.unlink(missing_ok=True)
 
     async def _collect_pending(
         self, logs: SessionLogReader
-    ) -> list[tuple[str, datetime | None, list[dict[str, Any]]]]:
-        """Completed sessions newer than the watermark, with their events.
-
-        The watermark is a scalar timestamp because session ids are
-        uuids without temporal order. A session whose start time cannot
-        be determined is always pending — never silently skipped.
-        """
-        pending = []
-        for session_id in await logs.list_completed(started_after=self._parsed_watermark()):
-            events = await logs.read_events(session_id)
-            started_at = self._session_started_at(events)
-            pending.append((session_id, started_at, events))
-        return pending
-
-    # ===== Batch distillation (journal -> claims, ADR 0017) =====
+    ) -> list[tuple[str, list[dict[str, Any]]]]:
+        return [
+            (source_id, await logs.read_events(source_id))
+            for source_id in sorted(await logs.list_completed())
+            if source_id not in self._consumed
+        ]
 
     async def maybe_distill_completed_sessions(self, logs: SessionLogReader) -> int | None:
-        """Distill completed sessions not yet covered by the watermark.
-
-        Called by the scheduler at its session reap point. When the
-        pending count reaches ``config.distillation_window`` the whole
-        batch is distilled from the sessions' journals into claims; on
-        success the watermark advances to the batch's latest session
-        start, on failure it stays put and the next reap retries.
-
-        Returns:
-            The number of claims persisted if a batch was distilled,
-            None otherwise
-        """
+        """Consume stable completed source IDs, including late-arriving older runs."""
         async with self.write_gate.hold():
             if not self._loaded:
                 await self.load()
-
+            if self._pending_batch is not None:
+                projections = [
+                    SessionProjection(**item) for item in self._pending_batch["projections"]
+                ]
+                return await self._distill_sessions(projections)
             pending = await self._collect_pending(logs)
             if len(pending) < self.config.distillation_window:
-                logger.debug(
-                    "distillation_window_not_reached",
-                    pending_count=len(pending),
-                    window=self.config.distillation_window,
-                )
                 return None
-
-            projections = [
-                build_session_projection(events, session_id)
-                for session_id, _started_at, events in pending
-            ]
             return await self._distill_sessions(
-                projections, [started_at for _sid, started_at, _events in pending]
+                [build_session_projection(events, source_id) for source_id, events in pending]
             )
 
-    async def _distill_sessions(
-        self,
-        projections: list[SessionProjection],
-        started_ats: list[datetime | None],
-    ) -> int | None:
-        """Distill a batch of session projections into claims."""
+    async def _distill_sessions(self, projections: list[SessionProjection]) -> int | None:
+        """Persist a fixed batch before modeling, then replay its receipts and writes."""
         async with self.write_gate.hold():
-            source_session_ids = [p.session_id for p in projections]
-            logger.info("distillation_started", session_count=len(projections))
-
-            claim_dicts: list[dict[str, Any]] = []
-            if self.distiller:
-                try:
-                    claim_dicts = await self.distiller.distill(projections)
-                except (
-                    BudgetExceededError,
-                    ExecutionDeadlineError,
-                    UnknownModelOutcomeError,
-                    RecoveryMismatchError,
-                ):
-                    raise
-                except Exception as e:
-                    logger.error("llm_distillation_failed", error=str(e), exc_info=True)
-            if not claim_dicts:
-                # No LLM, LLM failure, or nothing usable: mechanical claims —
-                # distillation must never lose a batch to provider flakiness.
-                claim_dicts = Distiller.fallback_claims(projections)
-
-            if not claim_dicts:
-                logger.warning("distillation_no_claims", session_count=len(projections))
-                return None
-
-            now = datetime.now(UTC).isoformat()
-            new_claims = [
-                Claim(
-                    text=claim_dict["text"],
-                    timestamp=now,
-                    valid_from=now,
-                    source_session_ids=source_session_ids,
-                    importance=claim_dict.get("importance", 0.5),
+            if self._pending_batch is None:
+                projections = sorted(projections, key=lambda item: item.session_id)
+                source_ids = [item.session_id for item in projections]
+                batch_id = hashlib.sha256(json.dumps(source_ids).encode()).hexdigest()
+                self._pending_batch = {
+                    "id": batch_id,
+                    "source_ids": source_ids,
+                    "projections": [asdict(item) for item in projections],
+                }
+            batch = self._pending_batch
+            # A prior save may have raised before (or after) its atomic replace.
+            # Persist the complete frozen state before any further effect.
+            await self._save_distillation()
+            outer = current_execution()
+            scope = (
+                ExecutionScope(
+                    outer.store,
+                    f"maintenance:distill:{batch['id']}",
+                    outer.token_limit,
+                    outer.measure,
+                    deadline=outer.effective_deadline(),
+                    parent=outer,
                 )
-                for claim_dict in claim_dicts
-            ]
-            await self._resolve_conflicts(new_claims)
-
-            persisted: list[dict[str, Any]] = []
-            try:
-                for claim in new_claims:
-                    claim_data = claim.to_dict()
-                    await self.claims.add_claim(claim_data)
-                    persisted.append(claim_data)
-            except (
-                BudgetExceededError,
-                ExecutionDeadlineError,
-                UnknownModelOutcomeError,
-                RecoveryMismatchError,
-            ):
-                raise
-            except Exception as e:
-                # Persistence failure: the watermark stays, the next reap
-                # retries the same batch.
-                logger.error("distillation_persist_failed", error=str(e), exc_info=True)
-                return None
-
-            await self._index_claims(persisted)
-
-            known_starts = [ts for ts in started_ats if ts is not None]
-            if known_starts:
-                await self._save_watermark(max(known_starts).isoformat())
-
-            logger.info(
-                "distillation_completed",
-                session_count=len(projections),
-                claim_count=len(claim_dicts),
+                if outer is not None
+                else None
             )
-            return len(claim_dicts)
+            if scope is not None:
+                await scope.initialize()
+                scope.check()
+            if "claims" not in batch:
+                with bind_execution(scope.child("distill") if scope else None):
+                    claim_dicts = (
+                        await self.distiller.distill(projections) if self.distiller else []
+                    )
+                if not claim_dicts:
+                    claim_dicts = Distiller.fallback_claims(projections)
+                now = datetime.now(UTC).isoformat()
+                batch["claims"] = [
+                    Claim(
+                        id=f"distill:{batch['id']}:{index}",
+                        origin="distillation",
+                        text=item["text"],
+                        timestamp=now,
+                        valid_from=now,
+                        source_session_ids=batch["source_ids"],
+                        importance=item.get("importance", 0.5),
+                    ).to_dict()
+                    for index, item in enumerate(claim_dicts)
+                ]
+                await self._save_distillation()
+            new_claims = [Claim.from_dict(item) for item in batch["claims"]]
+            if "supersessions" not in batch:
+                with bind_execution(scope.child("conflict") if scope else None):
+                    batch["supersessions"] = await self._plan_conflicts(new_claims, batch=batch)
+                await self._save_distillation()
+            await self._apply_conflicts(batch["supersessions"])
+            for claim in batch["claims"]:
+                if await self.claims.get_claim(claim["id"]) is None:
+                    await self.claims.add_claim(claim)
+            await self._index_claims(batch["claims"])
+            old_consumed = self._consumed.copy()
+            self._consumed.update(batch["source_ids"])
+            self._pending_batch = None
+            try:
+                await self._save_distillation()
+            except BaseException:
+                self._consumed = old_consumed
+                self._pending_batch = batch
+                raise
+            return len(new_claims)
 
     # ===== Conflict judgment (ADR 0017 stage 3) =====
 
     async def _resolve_conflicts(self, new_claims: list[Claim]) -> None:
+        await self._apply_conflicts(await self._plan_conflicts(new_claims))
+
+    async def _apply_conflicts(self, plan: list[dict[str, str]]) -> None:
+        for item in plan:
+            await self.claims.supersede_claim(item["old_id"], item["new_id"], item["valid_to"])
+
+    async def _plan_conflicts(
+        self, new_claims: list[Claim], *, batch: dict[str, Any] | None = None
+    ) -> list[dict[str, str]]:
         """Supersede old claims contradicted by freshly built new ones.
 
         Both write paths (batch distillation, ``remember_fact``) run the
@@ -590,50 +555,58 @@ class MemoryManager:
         """
         async with self.write_gate.hold():
             if self.distiller is None or self._index is None or self._embedder is None:
-                return
+                return []
             if not new_claims:
-                return
+                return []
 
             texts = [claim.text for claim in new_claims]
-            try:
-                vectors = await self._embedder.embed(texts)
-            except (
-                BudgetExceededError,
-                ExecutionDeadlineError,
-                UnknownModelOutcomeError,
-                RecoveryMismatchError,
-            ):
-                raise
-            except Exception as e:
-                logger.warning("conflict_candidate_embed_failed", error=str(e))
-                return
+            if batch is not None and "conflict_candidates" in batch:
+                candidates: list[dict[str, Any]] = batch["conflict_candidates"]
+            else:
+                try:
+                    vectors = await self._embedder.embed(texts)
+                except (
+                    BudgetExceededError,
+                    ExecutionDeadlineError,
+                    UnknownModelOutcomeError,
+                    ModelRequestRejectedError,
+                    RecoveryMismatchError,
+                ):
+                    raise
+                except Exception as e:
+                    logger.warning("conflict_candidate_embed_failed", error=str(e))
+                    return []
 
-            active = {str(c.get("id")): c for c in await self.claims.get_all_claims()}
-            candidates: list[dict[str, Any]] = []
-            seen: set[str] = set()
-            try:
-                for vector in vectors:
-                    for claim_id, similarity in self._index.search(
-                        vector, self.config.conflict_candidate_limit
-                    ):
-                        if similarity < self.config.conflict_similarity_threshold:
-                            continue
-                        if claim_id in seen or claim_id not in active:
-                            continue
-                        seen.add(claim_id)
-                        candidates.append(active[claim_id])
-            except (
-                BudgetExceededError,
-                ExecutionDeadlineError,
-                UnknownModelOutcomeError,
-                RecoveryMismatchError,
-            ):
-                raise
-            except Exception as e:
-                logger.warning("conflict_candidate_search_failed", error=str(e))
-                return
+                active = {str(c.get("id")): c for c in await self.claims.get_all_claims()}
+                candidates = []
+                seen: set[str] = set()
+                try:
+                    for vector in vectors:
+                        for claim_id, similarity in self._index.search(
+                            vector, self.config.conflict_candidate_limit
+                        ):
+                            if similarity < self.config.conflict_similarity_threshold:
+                                continue
+                            if claim_id in seen or claim_id not in active:
+                                continue
+                            seen.add(claim_id)
+                            candidates.append(active[claim_id])
+                except (
+                    BudgetExceededError,
+                    ExecutionDeadlineError,
+                    UnknownModelOutcomeError,
+                    ModelRequestRejectedError,
+                    RecoveryMismatchError,
+                ):
+                    raise
+                except Exception as e:
+                    logger.warning("conflict_candidate_search_failed", error=str(e))
+                    return []
+                if batch is not None:
+                    batch["conflict_candidates"] = candidates
+                    await self._save_distillation()
             if not candidates:
-                return
+                return []
 
             try:
                 verdicts = await self.distiller.judge_conflicts(texts, candidates)
@@ -641,29 +614,26 @@ class MemoryManager:
                 BudgetExceededError,
                 ExecutionDeadlineError,
                 UnknownModelOutcomeError,
+                ModelRequestRejectedError,
                 RecoveryMismatchError,
             ):
                 raise
             except Exception as e:
+                if current_execution() is not None:
+                    raise
                 logger.warning("conflict_judgment_failed", error=str(e))
-                return
+                return []
             if verdicts is None:
-                return
+                return []
 
             now = datetime.now(UTC).isoformat()
-            for claim, verdict in zip(new_claims, verdicts, strict=True):
-                if verdict.action != "supersede":
-                    continue
-                for old_id in verdict.superseded_ids:
-                    if old_id == claim.id:
-                        continue  # never self-supersede
-                    if await self.claims.supersede_claim(old_id, claim.id, now):
-                        logger.info(
-                            "claim_superseded",
-                            agent_id=self.agent_id,
-                            old_claim_id=old_id,
-                            new_claim_id=claim.id,
-                        )
+            return [
+                {"old_id": old_id, "new_id": claim.id, "valid_to": now}
+                for claim, verdict in zip(new_claims, verdicts, strict=True)
+                if verdict.action == "supersede"
+                for old_id in verdict.superseded_ids
+                if old_id != claim.id
+            ]
 
     async def build_context_blocks(
         self,
@@ -802,6 +772,9 @@ class MemoryManager:
         self,
         fact: str,
         importance: float = 0.5,
+        *,
+        claim_id: str | None = None,
+        source_session_ids: list[str] | None = None,
     ) -> str:
         """Record a claim immediately (called by LLM via tool).
 
@@ -820,15 +793,19 @@ class MemoryManager:
             if not self._loaded:
                 await self.load()
 
+            if claim_id is not None and await self.claims.get_claim(claim_id) is not None:
+                return claim_id
             now = datetime.now(UTC).isoformat()
             claim = Claim(
                 text=fact,
                 timestamp=now,
                 valid_from=now,
-                source_session_ids=[],
+                source_session_ids=source_session_ids or [],
                 importance=importance,
             )
 
+            if claim_id is not None:
+                claim.id = claim_id
             await self._resolve_conflicts([claim])
 
             claim_data = claim.to_dict()
@@ -1012,6 +989,7 @@ class MemoryManager:
                 BudgetExceededError,
                 ExecutionDeadlineError,
                 UnknownModelOutcomeError,
+                ModelRequestRejectedError,
                 RecoveryMismatchError,
             ):
                 raise
@@ -1022,7 +1000,7 @@ class MemoryManager:
         """Get a digest of current memory state for reflection/audit.
 
         Returns a dict with the recent active claims and the number of
-        completed sessions not yet distilled (newer than the watermark)
+        completed sources not yet consumed
         for the reflection sub-agent to analyze.
 
         Returns:
@@ -1032,10 +1010,22 @@ class MemoryManager:
             await self.load()
 
         claims = await self.claims.get_recent_claims(50)
-        pending_count = await logs.count_completed(started_after=self._parsed_watermark())
+        completed = await logs.list_completed()
+        pending_count = len(set(completed) - self._consumed)
+        recent_interactions = [
+            asdict(build_session_projection(await logs.read_events(sid), sid))
+            for sid in completed[-10:]
+        ]
 
+        for item in recent_interactions:
+            item["trigger_content"] = item["trigger_content"][:300]
+            item["llm_responses"] = [text[:600] for text in item["llm_responses"][-3:]]
+            item["tool_results"] = [text[:300] for text in item["tool_results"][-5:]]
+            item["program_result"] = item.get("program_result", "")[:600]
+            item["errors"] = [text[:300] for text in item.get("errors", [])[-5:]]
         return {
             "undistilled_session_count": pending_count,
             "claim_count": len(claims),
             "claims": claims,
+            "recent_interactions": recent_interactions,
         }

@@ -454,3 +454,36 @@ async def test_failure_courtesy_lookup_error_preserves_original_program_failure(
         member._operation_executor.call.assert_not_awaited()
     finally:
         await member.shutdown()
+
+
+async def test_program_maintenance_failure_never_replays_completed_entry(tmp_path: Path) -> None:
+    member = _member(tmp_path)
+    await member.initialize()
+    try:
+        await member._run_rule_body(member.spec.rules[0], _event(), run_id="finished")
+        assert member._journal is not None
+        assert "program:finished" in await member._journal.list_completed()
+        services = MagicMock()
+
+        async def failed_maintenance(journal: Any) -> int:
+            assert member.active_session_count > 0
+            assert "program:finished" in await journal.list_completed()
+            raise OSError("maintenance unavailable")
+
+        services.memory.maybe_distill_completed_sessions = AsyncMock(side_effect=failed_maintenance)
+        member._services = services
+        member._reflection = MagicMock()
+        member._reflection.check_trigger = AsyncMock()
+        member._execute_entry_record = AsyncMock(
+            side_effect=AssertionError("entry already terminal")
+        )
+        await member._check_program_maintenance()
+        await member._check_program_maintenance()
+        member._execute_entry_record.assert_not_awaited()
+        assert services.memory.maybe_distill_completed_sessions.await_count == 2
+        inbox = Mailbox(tmp_path / "shared/mail.sqlite3", "sender")
+        assert [mail.content for mail in await inbox.unread()] == ["reply:hello"]
+    finally:
+        member._services = None
+        member._reflection = None
+        await member.shutdown()

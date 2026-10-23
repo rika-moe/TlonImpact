@@ -142,7 +142,7 @@ class MemoryConfig:
 class SessionProjection:
     """One completed session's distillation view.
 
-    Rebuilt from the session's journal (the sole interaction truth):
+    Rebuilt from legacy journal events or a module-program reading view:
     the trigger content plus, per round, the LLM response content and a
     one-line digest of each tool result, and the ``session/end`` reason.
     """
@@ -152,6 +152,8 @@ class SessionProjection:
     llm_responses: list[str] = field(default_factory=list)
     tool_results: list[str] = field(default_factory=list)
     end_reason: str = ""
+    program_result: str = ""
+    errors: list[str] = field(default_factory=list)
 
 
 def build_session_projection(
@@ -169,6 +171,8 @@ def build_session_projection(
     llm_responses: list[str] = []
     tool_results: list[str] = []
     end_reason = ""
+    program_result = ""
+    errors: list[str] = []
     for event in events:
         event_type = event.get("type")
         if event_type == "session/start":
@@ -187,14 +191,25 @@ def build_session_projection(
                 or json.dumps(result.get("data") or {}, ensure_ascii=False)
             )
             tool_results.append(f"{name}: {text}")
+        elif event_type == "program/invocation-pending":
+            identity = event.get("invocation") or {}
+            errors.append(f"未决调用：{identity.get('name', 'unknown')} {identity.get('call_id', '')}")
+        elif event_type == "program/model-failure":
+            errors.append(str((event.get("outcome") or {}).get("error_message") or "模型请求失败"))
         elif event_type == "session/end":
+            if event.get("error"):
+                errors.append(str(event["error"]))
             end_reason = str(event.get("reason") or "")
+            if event.get("result") is not None:
+                program_result = json.dumps(event["result"], ensure_ascii=False)
     return SessionProjection(
         session_id=session_id,
         trigger_content=trigger_content,
         llm_responses=llm_responses,
         tool_results=tool_results,
         end_reason=end_reason,
+        program_result=program_result,
+        errors=errors,
     )
 
 
@@ -218,12 +233,14 @@ class Claim:
     status: Literal["active", "superseded"] = "active"
     superseded_by: str | None = None
     importance: float = 0.5
+    origin: Literal["distillation", "remember"] = "remember"
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             "id": self.id,
+            "origin": self.origin,
             "timestamp": self.timestamp,
             "text": self.text,
             "source_session_ids": self.source_session_ids,
@@ -253,6 +270,7 @@ class Claim:
             status=status if status in ("active", "superseded") else "active",
             superseded_by=data.get("superseded_by"),
             importance=float(data.get("importance", 0.5)),
+            origin="distillation" if data.get("origin") == "distillation" else "remember",
         )
 
 

@@ -76,11 +76,11 @@ async def test_maintenance_waits_for_operation_writer_but_read_can_pass(
         if mutation == "delete":
             return await manager.delete_claim(seed)
         if mutation == "reflection":
-            return await engine._apply_operations(
-                [{"action": "record_claim", "description": "reflected fact"}]
+            return await engine._apply_operation(
+                {"action": "record_claim", "description": "reflected fact"}
             )
         return await manager._distill_sessions(
-            [SessionProjection("history", "completed work", llm_responses=["useful result"])], []
+            [SessionProjection("history", "completed work", llm_responses=["useful result"])]
         )
 
     waiting = asyncio.create_task(maintenance())
@@ -152,10 +152,10 @@ async def test_distillation_control_failure_never_falls_back_to_memory_commit(
     manager.distiller = distiller
     with pytest.raises(type(error)):
         await manager._distill_sessions(
-            [SessionProjection("history", "trigger", llm_responses=["result"])], []
+            [SessionProjection("history", "trigger", llm_responses=["result"])]
         )
     assert await manager.claims.get_all_claims() == []
-    assert manager._watermark is None and not manager.distillation_file.exists()
+    assert not manager._consumed and manager._pending_batch is not None
 
 
 async def test_cancelled_maintenance_waiting_for_gate_cannot_write(tmp_path: Path) -> None:

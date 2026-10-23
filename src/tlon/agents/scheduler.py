@@ -35,7 +35,6 @@ from tlosure.edn import dumps, loads
 logger = get_logger(__name__)
 SessionSpan = Callable[[AgentSession], AbstractContextManager[None]]
 CheckReflection = Callable[[], Awaitable[None]]
-NoteInteraction = Callable[[], None]
 _Result = TypeVar("_Result")
 
 
@@ -48,7 +47,6 @@ class SessionScheduler:
         memory: MemoryManager,
         session_span: SessionSpan,
         check_reflection: CheckReflection,
-        note_interaction: NoteInteraction,
         make_driver: Callable[[SessionRecipe], LoopDriver],
         journal: SessionJournal,
         mailbox: Mailbox | None,
@@ -67,7 +65,6 @@ class SessionScheduler:
         self._memory = memory
         self._session_span = session_span
         self._check_reflection = check_reflection
-        self._note_interaction = note_interaction
         self._make_driver = make_driver
         self._journal = journal
         self._mailbox = mailbox
@@ -141,7 +138,7 @@ class SessionScheduler:
             if self._resume_invocation is not None:
                 continuations: dict[tuple[str, int], tuple[str, SessionReplay]] = {}
                 for sid in await self._journal.list_completed():
-                    if sid in recovered:
+                    if sid.startswith("program:") or sid in recovered:
                         continue
                     events = await self._journal.read_events(sid)
                     start = next(
@@ -371,7 +368,6 @@ class SessionScheduler:
                     await self._notify_failure_reply(session, "error")
                 await asyncio.sleep(0.01)
             await self._ensure_session_end(session)
-            self._note_interaction()
             if self._can_schedule():
                 self._maintenance_running = True
                 try:

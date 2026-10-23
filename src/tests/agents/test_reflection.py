@@ -48,8 +48,17 @@ def _recipe() -> SessionRecipe:
 def _engine(tmp_path: Path, llm_content: str = "{}") -> tuple[ReflectionEngine, MemoryManager]:
     manager = MemoryManager("agent1", MemoryConfig(), data_dir=tmp_path / "agent1")
     journal = SessionJournal("agent1", TlonPaths(home=tmp_path))
-    engine = ReflectionEngine(manager, cast(LLMClient, _FakeLLM(llm_content)), _recipe(), journal)
+    engine = ReflectionEngine(
+        manager, cast(LLMClient, _FakeLLM(llm_content)), _recipe().reflect, journal
+    )
     return engine, manager
+
+
+async def _apply_operations(engine: ReflectionEngine, operations: list[dict[str, Any]]) -> None:
+    for operation in await engine._freeze_operations(
+        operations, await engine._memory.claims.get_all_claims()
+    ):
+        await engine._apply_operation(operation)
 
 
 class TestDeleteClaim:
@@ -58,7 +67,7 @@ class TestDeleteClaim:
         victim_id = await manager.remember_fact("用户偏好深色主题")
         keeper_id = await manager.remember_fact("项目使用 Python")
 
-        await engine._apply_operations([{"action": "delete_claim", "claim_id": victim_id}])
+        await _apply_operations(engine, [{"action": "delete_claim", "claim_id": victim_id}])
 
         assert await manager.claims.get_claim(victim_id) is None
         assert await manager.claims.get_claim(keeper_id) is not None
@@ -69,7 +78,7 @@ class TestDeleteClaim:
         engine, manager = _engine(tmp_path)
         victim_id = await manager.remember_fact("过时的部署地址")
 
-        await engine._apply_operations([{"action": "delete_claim", "claim_id": victim_id[:8]}])
+        await _apply_operations(engine, [{"action": "delete_claim", "claim_id": victim_id[:8]}])
 
         assert await manager.claims.get_claim(victim_id) is None
 
@@ -77,13 +86,13 @@ class TestDeleteClaim:
         engine, manager = _engine(tmp_path)
         keeper_id = await manager.remember_fact("仍然有效的记忆")
 
-        with patch("tlon.memory.manager.logger") as mock_logger:
-            await engine._apply_operations(
-                [{"action": "delete_claim", "claim_id": "no-such-fact-id"}]
+        with patch("tlon.agents.reflection.logger") as mock_logger:
+            await _apply_operations(
+                engine, [{"action": "delete_claim", "claim_id": "no-such-fact-id"}]
             )
 
         mock_logger.warning.assert_called_once()
-        assert mock_logger.warning.call_args.args[0] == "claim_delete_not_found"
+        assert mock_logger.warning.call_args.args[0] == "reflection_delete_claim_unresolved"
         assert await manager.claims.get_claim(keeper_id) is not None
 
     async def test_delete_claim_by_description_falls_back_to_keyword_match(
@@ -92,7 +101,7 @@ class TestDeleteClaim:
         engine, manager = _engine(tmp_path)
         victim_id = await manager.remember_fact("用户喜欢浓缩咖啡")
 
-        await engine._apply_operations([{"action": "delete_claim", "description": "浓缩咖啡"}])
+        await _apply_operations(engine, [{"action": "delete_claim", "description": "浓缩咖啡"}])
 
         assert await manager.claims.get_claim(victim_id) is None
 
@@ -100,7 +109,7 @@ class TestDeleteClaim:
         engine, _manager = _engine(tmp_path)
 
         with patch("tlon.agents.reflection.logger") as mock_logger:
-            await engine._apply_operations([{"action": "delete_claim"}])
+            await _apply_operations(engine, [{"action": "delete_claim"}])
 
         mock_logger.warning.assert_called_once()
         assert mock_logger.warning.call_args.args[0] == "reflection_delete_claim_no_target"
@@ -121,9 +130,16 @@ class TestRunEndToEnd:
             ensure_ascii=False,
         )
         journal = SessionJournal("agent1", TlonPaths(home=tmp_path))
-        engine = ReflectionEngine(manager, cast(LLMClient, _FakeLLM(response)), _recipe(), journal)
+        engine = ReflectionEngine(
+            manager, cast(LLMClient, _FakeLLM(response)), _recipe().reflect, journal
+        )
 
-        await engine._run()
+        for index in range(5):
+            await engine._journal.append(str(index), "session/start", trigger_content="hello")
+            await engine._journal.append(str(index), "session/end", reason="complete")
+        await engine.check_trigger()
+        assert engine._task is not None
+        await engine._task
 
         assert await manager.claims.get_claim(victim_id) is None
 
@@ -156,9 +172,10 @@ class TestLifecycle:
         await manager.remember_fact("一条供反思审视的记忆")
         journal = SessionJournal("agent1", TlonPaths(home=tmp_path))
         llm = _BlockingLLM()
-        engine = ReflectionEngine(manager, cast(LLMClient, llm), _recipe(), journal)
+        engine = ReflectionEngine(manager, cast(LLMClient, llm), _recipe().reflect, journal)
         for _ in range(5):  # reflection_min_interactions default
-            engine.note_interaction()
+            await engine._journal.append(str(_), "session/start", trigger_content="hello")
+            await engine._journal.append(str(_), "session/end", reason="complete")
         await engine.check_trigger()
         await asyncio.wait_for(llm.started.wait(), timeout=2)
         return engine, llm
@@ -227,10 +244,85 @@ async def test_reflection_notifies_active_and_waiting(tmp_path: Path) -> None:
         observed.append(engine.is_running)
 
     engine._state_changed = changed
-    for _ in range(manager.config.reflection_min_interactions):
-        engine.note_interaction()
+    for index in range(manager.config.reflection_min_interactions):
+        await engine._journal.append(str(index), "session/start", trigger_content="hello")
+        await engine._journal.append(str(index), "session/end", reason="complete")
     await engine.check_trigger()
     task = engine._task
     assert task is not None
     await task
     assert observed == [True, False]
+
+
+async def _complete_sources(engine: ReflectionEngine, count: int = 5) -> None:
+    for index in range(count):
+        await engine._journal.append(str(index), "session/start", trigger_content="hello")
+        await engine._journal.append(str(index), "session/end", reason="complete")
+
+
+async def test_reflection_completed_sources_survive_restart_and_deduplicate(tmp_path: Path) -> None:
+    engine, manager = _engine(
+        tmp_path, '{"operations": [{"action": "record_claim", "description": "durable"}]}'
+    )
+    await _complete_sources(engine)
+    await engine.check_trigger()
+    task = engine._task
+    assert task is not None
+    await task
+    assert len(await manager.claims.get_all_claims()) == 1
+    restarted, _ = _engine(
+        tmp_path, '{"operations": [{"action": "record_claim", "description": "duplicate"}]}'
+    )
+    await restarted.check_trigger()
+    assert restarted._task is None
+    assert len(await manager.claims.get_all_claims()) == 1
+    assert len(restarted._load_checkpoint()["seen"]) == 5
+
+
+async def test_reflection_failure_after_claim_append_reuses_frozen_batch(tmp_path: Path) -> None:
+    engine, manager = _engine(
+        tmp_path, '{"operations": [{"action": "record_claim", "description": "durable"}]}'
+    )
+    await _complete_sources(engine)
+    original = manager.remember_fact
+
+    async def crash_after_append(*args: Any, **kwargs: Any) -> str:
+        await original(*args, **kwargs)
+        raise OSError("crash after append")
+
+    with patch.object(manager, "remember_fact", side_effect=crash_after_append):
+        await engine.check_trigger()
+        task = engine._task
+        assert task is not None
+        await task
+    checkpoint = engine._load_checkpoint()
+    assert checkpoint["seen"] == []
+    assert checkpoint["pending"]["next"] == 0
+    restarted, restarted_memory = _engine(tmp_path, "model must not be requested again")
+    with patch.object(
+        restarted._llm_client, "chat", side_effect=AssertionError("duplicate model call")
+    ):
+        await restarted.check_trigger()
+        task = restarted._task
+        assert task is not None
+        await task
+    claims = await restarted_memory.claims.get_all_claims()
+    assert len(claims) == 1
+    assert claims[0]["text"] == "durable"
+    assert restarted._load_checkpoint()["pending"] is None
+
+
+async def test_reflection_prompt_includes_undistilled_program_interactions(tmp_path: Path) -> None:
+    engine, _ = _engine(tmp_path)
+    prompt = engine._build_prompt(
+        {
+            "claim_count": 0,
+            "claims": [],
+            "undistilled_session_count": 1,
+            "recent_interactions": [
+                {"session_id": "program:run-1", "trigger_content": "source text"}
+            ],
+        }
+    )
+    assert "program:run-1" in prompt
+    assert "source text" in prompt

@@ -7,6 +7,7 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -46,6 +47,7 @@ class ProgramStore:
         self.database = database
         self._lock = threading.RLock()
         self._runs: dict[str, ProgramRun] = {}
+        self._history_times: dict[str, tuple[str, str | None]] = {}
         self._effects: dict[tuple[str, int], tuple[str, str, str]] = {}
         self._state: dict[str, str] = {}
 
@@ -78,6 +80,7 @@ class ProgramStore:
                 "CREATE TABLE IF NOT EXISTS budgets (root_id TEXT PRIMARY KEY, token_limit INTEGER NOT NULL, measure TEXT NOT NULL, deadline REAL);"
                 "CREATE TABLE IF NOT EXISTS model_allocations (call_id TEXT PRIMARY KEY, root_id TEXT NOT NULL, reserved INTEGER NOT NULL, output_limit INTEGER NOT NULL, charged INTEGER);"
                 "CREATE TABLE IF NOT EXISTS entry_programs (run_id TEXT PRIMARY KEY, package_edn TEXT NOT NULL, result_edn TEXT, scheduling_edn TEXT, scheduling_applied INTEGER NOT NULL DEFAULT 0);"
+                "CREATE TABLE IF NOT EXISTS entry_history_metadata (run_id TEXT PRIMARY KEY, started_at TEXT NOT NULL, ended_at TEXT);"
                 "CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value_edn TEXT NOT NULL);"
             )
             with connection:
@@ -173,6 +176,7 @@ class ProgramStore:
                     return previous
                 run = ProgramRun(run_id, rule_edn, input_edn, False, package_edn=encoded)
                 self._runs[run_id] = run
+                self._history_times[run_id] = (datetime.now(UTC).isoformat(), None)
                 for slot, value in contexts.items():
                     self._model_contexts.setdefault((run_id, slot), value)
                 return run
@@ -189,6 +193,10 @@ class ProgramStore:
                 )
                 connection.execute(
                     "INSERT INTO entry_programs(run_id,package_edn) VALUES (?,?)", (run_id, encoded)
+                )
+                connection.execute(
+                    "INSERT INTO entry_history_metadata VALUES (?,?,NULL)",
+                    (run_id, datetime.now(UTC).isoformat()),
                 )
                 for slot, value in contexts.items():
                     connection.execute(
@@ -248,6 +256,7 @@ class ProgramStore:
                         run, completed=True, result_edn=result_edn, scheduling_edn=scheduling_edn
                     )
                     self._runs[run_id] = run
+                    self._finish_history(run_id)
                 return run
             with self._connection() as connection:
                 stored_run = self._read_run(connection, run_id)
@@ -259,6 +268,7 @@ class ProgramStore:
                     raise RecoveryMismatchError("Entry cannot be completed")
                 if not stored_run.completed:
                     connection.execute("UPDATE runs SET completed=1 WHERE run_id=?", (run_id,))
+                    self._finish_history(run_id, connection)
                     connection.execute(
                         "UPDATE entry_programs SET result_edn=?,scheduling_edn=? WHERE run_id=?",
                         (result_edn, scheduling_edn, run_id),
@@ -923,12 +933,143 @@ class ProgramStore:
                 run = self._runs[run_id]
                 if not run.completed and run.error is None:
                     self._runs[run_id] = replace(run, error=error)
+                    self._finish_history(run_id)
             else:
                 with self._connection() as connection:
                     connection.execute(
                         "UPDATE runs SET error=? WHERE run_id=? AND completed=0 AND error IS NULL",
                         (error, run_id),
                     )
+                    self._finish_history(run_id, connection)
+
+    def _finish_history(self, run_id: str, connection: sqlite3.Connection | None = None) -> None:
+        """Commit terminal ordering alongside the authoritative lifecycle fact."""
+        ended_at = datetime.now(UTC).isoformat()
+        if connection is None:
+            previous = self._history_times.get(run_id)
+            if previous is not None and previous[1] is None:
+                self._history_times[run_id] = (previous[0], ended_at)
+        else:
+            connection.execute(
+                "UPDATE entry_history_metadata SET ended_at=? WHERE run_id=? AND ended_at IS NULL",
+                (ended_at, run_id),
+            )
+
+    @contextmanager
+    def _history_connection(self) -> Iterator[sqlite3.Connection]:
+        """A read-only snapshot; opening history never initializes authority tables."""
+        assert self.database is not None
+        connection = sqlite3.connect(self.database.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            connection.execute("BEGIN")
+            if connection.execute("PRAGMA user_version").fetchone()[0] != 2:
+                raise RecoveryMismatchError("Unsupported program database format")
+            yield connection
+        finally:
+            connection.close()
+
+    @staticmethod
+    def _history_clock_sql(connection: sqlite3.Connection) -> tuple[str, str]:
+        exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='entry_history_metadata'"
+        ).fetchone()
+        return (
+            ("m.started_at,m.ended_at", "LEFT JOIN entry_history_metadata m ON e.run_id=m.run_id")
+            if exists
+            else ("NULL,NULL", "")
+        )
+
+    def entry_metadata(self) -> list[dict[str, Any]]:
+        """Read terminal clocks without reading source packages or invocations."""
+        with self._lock:
+            if self.database is None:
+                return [
+                    {
+                        "run_id": run.run_id,
+                        "completed": run.completed,
+                        "error": run.error,
+                        "started_at": self._history_times.get(run.run_id, (None, None))[0],
+                        "ended_at": self._history_times.get(run.run_id, (None, None))[1],
+                    }
+                    for run in self._runs.values()
+                    if run.package_edn is not None
+                ]
+            if not self.database.exists():
+                return []
+            with self._history_connection() as connection:
+                clocks, join = self._history_clock_sql(connection)
+                return [
+                    dict(
+                        zip(
+                            ("run_id", "completed", "error", "started_at", "ended_at"),
+                            row,
+                            strict=True,
+                        )
+                    )
+                    for row in connection.execute(
+                        f"SELECT e.run_id,r.completed,r.error,{clocks} FROM entry_programs e "
+                        f"JOIN runs r ON r.run_id=e.run_id {join} ORDER BY e.rowid"
+                    )
+                ]
+
+    def entry_history(
+        self, run_id: str | None = None, *, include_invocations: bool = True
+    ) -> list[dict[str, Any]]:
+        """Read a consistent snapshot without build verification or execution.
+
+        Preexisting entries without clock metadata remain explicitly undated.
+        """
+        with self._lock:
+            if self.database is None:
+                return [
+                    {
+                        "run": run,
+                        "started_at": self._history_times.get(run.run_id, (None, None))[0],
+                        "ended_at": self._history_times.get(run.run_id, (None, None))[1],
+                        "invocations": [
+                            (
+                                json.loads(self._identity(invocation)),
+                                json.loads(outcome) if outcome is not None else None,
+                            )
+                            for invocation, outcome in self._invocations.values()
+                            if include_invocations and invocation.root_id == run.run_id
+                        ],
+                    }
+                    for run in self._runs.values()
+                    if run.package_edn is not None and (run_id is None or run.run_id == run_id)
+                ]
+            if not self.database.exists():
+                return []
+            with self._history_connection() as connection:
+                clocks, join = self._history_clock_sql(connection)
+                rows = connection.execute(
+                    f"SELECT e.run_id,{clocks} FROM entry_programs e {join} "
+                    "WHERE (? IS NULL OR e.run_id=?) ORDER BY e.rowid",
+                    (run_id, run_id),
+                ).fetchall()
+                return [
+                    {
+                        "run": self._read_run(connection, run_id),
+                        "started_at": started_at,
+                        "ended_at": ended_at,
+                        "invocations": [
+                            (
+                                json.loads(identity),
+                                json.loads(outcome) if outcome is not None else None,
+                            )
+                            for identity, outcome in (
+                                connection.execute(
+                                    "SELECT identity_json,outcome_json FROM invocations "
+                                    "WHERE root_id=? ORDER BY rowid",
+                                    (run_id,),
+                                )
+                                if include_invocations
+                                else []
+                            )
+                        ],
+                    }
+                    for run_id, started_at, ended_at in rows
+                ]
 
     def close(self) -> None:
         """No persistent SQLite connection is held, including for bare instances."""

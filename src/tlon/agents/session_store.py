@@ -179,6 +179,30 @@ class SessionStore:
             ).fetchone()
         return row[0] if row is not None else None
 
+    def completed_metadata(self, started_after: datetime | None = None) -> list[tuple[str, str]]:
+        """Completed source IDs and terminal clocks without reading event bodies."""
+        if not self._initialized():
+            return []
+        where, arguments = self._completed_filter(started_after)
+        with self._connection(write=False) as connection:
+            return [
+                (row[0], row[1])
+                for row in connection.execute(
+                    f"SELECT session_id,ended_at FROM sessions WHERE {where}", arguments
+                )
+            ]
+
+    def latest_completed_metadata(self) -> tuple[str, str] | None:
+        """Latest legacy source and completion clock without reading event bodies."""
+        if not self._initialized():
+            return None
+        with self._connection(write=False) as connection:
+            row = connection.execute(
+                "SELECT session_id,ended_at FROM sessions WHERE ended_at IS NOT NULL "
+                "AND end_reason != 'recovery_blocked' ORDER BY ended_at DESC,rowid DESC LIMIT 1"
+            ).fetchone()
+        return (row[0], row[1]) if row else None
+
     def unfinished_ids(self) -> list[str]:
         if not self._initialized():
             return []

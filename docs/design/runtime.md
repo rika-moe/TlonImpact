@@ -61,7 +61,7 @@ run-loop 请求 + SessionRecipe + 原始事件 / 邮件
 
 ### SessionScheduler
 
-[SessionScheduler](../../src/tlon/agents/scheduler.py) 推进一次具体会话，管理超时、恢复、清理、反思计数与记忆蒸馏。每次调用携带自己的配方、触发内容、来源邮件、责任集和所在程序效果的位置。调度器不再从成员的第一条规则挑选固定循环配置，也不要求必须存在邮件才能创建会话。
+[SessionScheduler](../../src/tlon/agents/scheduler.py) 推进一次具体会话，管理旧会话的超时、恢复、清理与记忆维护检查。每次调用携带自己的配方、触发内容、来源邮件、责任集和所在程序效果的位置。调度器不再从成员的第一条规则挑选固定循环配置，也不要求必须存在邮件才能创建会话。
 
 会话暂停等待模型或工具时仍属于成员的公开活跃状态。`AgentSession` 内部 ACTIVE/WAITING 是推进协议，不等于成员公开的四态。死亡、睡眠及排空意图的处理由注册表门控所有入口。
 
@@ -127,7 +127,7 @@ boot/lazy 与邮件订阅资格来自 spec，不是当前调度状态。注册�
 
 ## 反思与完成
 
-[ReflectionEngine](../../src/tlon/agents/reflection.py) 的参数来自当前会话配方，按间隔与完成会话数检查记忆维护条件。后台反思、蒸馏均计入实际活动，并使用独立维护额度根，不能继续消费已结束会话的额度。排空与关闭要等待或取消并收割后台任务，不能遗留游离协程。
+[ReflectionEngine](../../src/tlon/agents/reflection.py) 的旧会话参数来自 ReflectSpec，新 v2 使用宿主维护默认值（启用、30 分钟间隔）。它按稳定完成来源 ID 与间隔检查条件，固定批次/digest/操作进度写入 memory/reflection.json，不能用内存完成计数重复触发。后台反思、蒸馏均计入实际活动，并使用独立维护额度根，不能继续消费已结束会话的额度。排空与关闭要等待或取消并收割后台任务，不能遗留游离协程。
 
 会话结束后由统一程序继续求值，不再有第二个完成动作求值器。需要一次明确模型结果时用 `model-call` 并绑定其返回值；`run-loop` 返回 `nil`，不隐式暴露会话草稿板。
 
@@ -147,3 +147,9 @@ boot/lazy 与邮件订阅资格来自 spec，不是当前调度状态。注册�
 
 
 EPIC A 审计收尾将两入口超时统一到 OperationExecutor，并由同一成员 write gate 保护 Operation 与 MemoryManager 的写入（含反思/蒸馏）。spawn 配额由冻结调用根决定，恢复不依赖日志会话绑定。预算和期限的确定拒绝跨领域包装保持原语义；超时后以真实调用回执为准，只有可能已执行且无回执的调用才为 unknown。
+
+## P4b 交互读取与维护边界
+
+新 v2 的 ProgramStore 保存输入、调用回执、结果和终态；SessionJournal 从其只读快照派生 program:<run_id> 交互事件，并联合旧会话历史。新来源不进入 SessionJournal.resume/find_unfinished；读取视图故障不恢复入口执行。完成时间与终态同事务提交，旧无时间条目明确无时间，查询不修改历史。
+
+v2 在冻结待续入口处理完后检查维护任务，蒸馏失败与交互读取失败单独隔离。维护期间计入真实活动，反思 task 关闭时取消并收割。蒸馏/反思按固定来源集合、独立额度根和持久消费进度恢复，模型 unknown 不能换新根绕过。session-read、thread recap、记忆 digest、教训、退休清点和演武场归档消费同一视图；REST /sessions 是客户端连接会话，不变更。

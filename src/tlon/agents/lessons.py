@@ -22,18 +22,24 @@ stop flow — the stop is already done, this is post-hoc):
 - LLM failure — logged, never raised
 """
 
+import asyncio
+import hashlib
+import json
+import os
 from collections.abc import Callable
 from typing import Any
 
 import aiofiles
 
 from tlon.agents.assembly import _build_llm_config
+from tlon.agents.program_store import ProgramStore
 from tlon.agents.session_journal import SessionJournal
 from tlon.base.component import Component
 from tlon.base.config import yaml_load_file
 from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
+from tlon.base.execution import ExecutionScope, bind_execution
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
@@ -134,25 +140,38 @@ class LessonsDistiller(Component, Device):
         )
         journal = SessionJournal(agent_id, self._paths)
         digest = await memory.get_memory_digest(journal)
-        if digest["claim_count"] == 0:
+        if digest["claim_count"] == 0 and not digest["recent_interactions"]:
             logger.info("lessons_distill_skipped", agent_id=agent_id, reason="empty_digest")
             return
 
         client = self._client_factory(agent_id)
-        response = await client.chat(
-            system_prompt=LESSONS_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": self._build_prompt(digest)}],
-            timeout=60.0,
-            purpose="lessons",
-        )
+        # A duplicate stop reads the same model receipt instead of paying for
+        # another final audit. The exact digest binds the maintenance identity.
+        source = json.dumps(digest, sort_keys=True, ensure_ascii=False)
+        batch = hashlib.sha256(source.encode()).hexdigest()
+        store = ProgramStore(self._paths.agent_dir(agent_id) / "program.sqlite3")
+        config = yaml_load_file(self._paths.agent_config_file(agent_id))
+        limit = config.llm.max_tokens if config is not None and config.llm is not None else 4096
+        scope = ExecutionScope(store, f"maintenance:lessons:{batch}", limit, "output")
+        with bind_execution(scope):
+            response = await client.chat(
+                system_prompt=LESSONS_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": self._build_prompt(digest)}],
+                timeout=60.0,
+                purpose="lessons",
+            )
         if not response.content:
             logger.info("lessons_distill_skipped", agent_id=agent_id, reason="empty_response")
             return
 
         lessons_file = self._paths.memory_lessons_file(agent_id)
         lessons_file.parent.mkdir(parents=True, exist_ok=True)
-        async with aiofiles.open(lessons_file, "w", encoding="utf-8") as f:
+        temporary = lessons_file.with_suffix(".md.tmp")
+        async with aiofiles.open(temporary, "w", encoding="utf-8") as f:
             await f.write(response.content)
+            await f.flush()
+            await asyncio.to_thread(os.fsync, f.fileno())
+        os.replace(temporary, lessons_file)
         logger.info("lessons_distilled", agent_id=agent_id, path=str(lessons_file))
 
     @staticmethod
@@ -171,5 +190,9 @@ class LessonsDistiller(Component, Device):
             parts.append("")
 
         parts.append("")
-        parts.append("请从以上记忆中提炼能传给下一代成员的教训。")
+        interactions = digest.get("recent_interactions", [])
+        if interactions:
+            parts.append("### 最近交互（来源为只读运行记录）")
+            parts.append(json.dumps(interactions, ensure_ascii=False))
+        parts.append("请从以上记忆和交互中提炼能传给下一代成员的教训。")
         return "\n".join(parts)

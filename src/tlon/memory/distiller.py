@@ -8,7 +8,9 @@ from tlon.base.config import LLMConfig
 from tlon.base.execution import (
     BudgetExceededError,
     ExecutionDeadlineError,
+    ModelRequestRejectedError,
     UnknownModelOutcomeError,
+    current_execution,
 )
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
@@ -140,11 +142,14 @@ class Distiller:
         except (
             BudgetExceededError,
             ExecutionDeadlineError,
+            ModelRequestRejectedError,
             UnknownModelOutcomeError,
             RecoveryMismatchError,
         ):
             raise
         except Exception as e:
+            if current_execution() is not None:
+                raise
             logger.error("distill_failed", error=str(e), exc_info=True)
             return []
 
@@ -153,11 +158,17 @@ class Distiller:
         lines = []
 
         for i, session in enumerate(sessions, 1):
-            lines.append(f"[会话 {i}] 触发语：{session.trigger_content}")
+            lines.append(
+                f"[会话 {i}] 来源：{session.session_id}；触发语：{session.trigger_content}"
+            )
+            if session.program_result:
+                lines.append(f"    程序返回：{session.program_result[:600]}")
 
             for resp in session.llm_responses:
                 lines.append(f"    Agent: {resp[:200]}")
 
+            for error in session.errors:
+                lines.append(f"    [失败或未决] {error[:300]}")
             for tool_line in session.tool_results:
                 lines.append(f"    [Tool] {tool_line[:150]}")
 
@@ -256,11 +267,14 @@ class Distiller:
         except (
             BudgetExceededError,
             ExecutionDeadlineError,
+            ModelRequestRejectedError,
             UnknownModelOutcomeError,
             RecoveryMismatchError,
         ):
             raise
         except Exception as e:
+            if current_execution() is not None:
+                raise
             logger.warning("conflict_judge_failed", error=str(e))
             return None
 
@@ -317,10 +331,12 @@ class Distiller:
         claims = []
         for session in sessions:
             trigger = session.trigger_content[:60]
-            if not trigger:
+            if not trigger and not session.program_result:
                 continue
             text = f"处理过会话（触发语：{trigger}）"
             if session.llm_responses:
                 text += f"；回复要点：{session.llm_responses[-1][:80]}"
+            if session.program_result:
+                text += f"；程序返回：{session.program_result[:80]}"
             claims.append({"text": text, "importance": 0.3})
         return claims
