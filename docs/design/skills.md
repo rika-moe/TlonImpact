@@ -77,9 +77,9 @@ description: 从 PDF 提取文本与表格。当任务涉及 PDF 解析时使用
 
 **按需加载意图**：模型从索引选择技能，再读取正文；引擎不注入正文，也没有 `use_skill` 工具。
 
-**当前实现缺口**：`agents/skills.py` 的 `render_skills_index` 仍提示不存在的 `read_file`，并给出不能直接交给容器工具的宿主路径。L1/L2 可在知道映射关系时用 `file-read` 读取 project/agent 层；全局层（包括内置 explain-decision）没有通用正文读取通道。L0 不注册 filesystem 工具，无法通过此机制读取任何正文。脚本需要 L2 的 `shell-run`，并且文件必须位于容器可见路径。
+**当前实现缺口**：`agents/skills.py` 的 `render_skills_index` 仍提示不存在的 `read_file`，并给出不能直接交给容器工具的宿主路径。L1/L2 可在知道映射关系时用 `file-read` 读取 project/agent 层；全局层（包括内置 explain-decision）没有通用正文读取通道。L0 已可用普通文件工具读取自己 workspace 内的正文（ADR 0047），但不能因此读取 workspace 外的宿主路径。脚本需要 L2 的 `shell-run`，并且文件必须位于容器可见路径。
 
-因此三层发现与索引已经实现，不能把它描述为三层正文访问均已跑通。补齐路径映射、全局正文可见性和 L0 加载入口需要独立设计及实现，此次文档整理不改变权限或增加工具。
+因此三层发现与索引已经实现，不能把它描述为三层正文访问均已跑通。补齐路径映射、全局正文可见性和索引路径需要独立设计及实现，workspace 文件权限见 ADR 0047，不另增技能专用工具。
 
 ## 信任与安全
 

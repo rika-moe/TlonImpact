@@ -113,7 +113,7 @@ v2 受理时原子冻结宿主系统提示词、模型配置及工具定义；�
 
 ## Agent 起草、审阅和派生（P4a）
 
-作者资料直接映射到 workspace：`tlon/docs/` 是当前文档，`tlon/stdlib/` 是实际标准库源码。用现有 file-read、file-list、file-search 查询；相对路径按当前 working_dir 解析，默认绝对路径为 `/workspace/tlon/...`。资料只读，L0 无 Docker 时也可读取；普通 workspace 和成员私有文件仍沿原权限，不能借资料映射越界读取。Docker 可用时同路径也是只读挂载。wheel 带入同一份仓库文档，不维护第二份内容副本。
+作者资料直接映射到 workspace：`tlon/docs/` 是当前文档，`tlon/stdlib/` 是实际标准库源码。用现有 file-read、file-list、file-search 查询；相对路径按当前 working_dir 解析，默认绝对路径为 `/workspace/tlon/...`。资料只读，L0 无 Docker 时也可读取；L0/L1/L2 均可用五个普通文件操作读写自己的持久 workspace，无需 Docker；不能借资料映射越界访问宿主或其他成员。联系簿为工作目录下的 `CONTACTS.md`，模型按需读取，使用 file-edit/file-write 更新，不全文注入系统提示。Docker 可用时同路径也是只读挂载。wheel 带入同一份仓库文档，不维护第二份内容副本。
 
 起草是普通 `tlon.authoring/draft` 函数：传入 messages、max_tokens、max_rounds，可按需显式选择 tools。默认工具是文件读取/列举/搜索与 program-check。提示仅提供入口路径，模型自行读取资料；没有宿主预读手册注入、专用一次性起草调用或隐藏候选缓存。模型通过 program-check 的结构化参数提交 behavior/modules，得到诊断后继续修订；draft 返回通过检查的候选，不负责发布。单模块程序也合法，两个可复用模块是验收场景而非强制门槛。
 

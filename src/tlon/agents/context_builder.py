@@ -276,20 +276,10 @@ class ContextBuilder:
             return ""
 
     async def build_prompt_context(self) -> AgentPromptContext:
-        """Build AgentPromptContext with the agent's own contact book.
-
-        ADR 0024: the team-wide SOUL roster is gone — a member only ever
-        sees its own CONTACTS.md (absent file = empty book).
-        """
-        contacts_file = self._paths.agent_contacts_file(self._config.id)
-        contacts = (
-            contacts_file.read_text(encoding="utf-8").strip() if contacts_file.exists() else ""
-        )
-
+        """Build the stable prompt context without reading workspace files."""
         return AgentPromptContext(
             agent_name=self._config.name,
             agent_home=str(self._paths.agent_dir(self._config.id)),
-            contacts=contacts,
         )
 
     def persona_files(self) -> list[Path]:
@@ -298,7 +288,6 @@ class ContextBuilder:
             self._paths.agent_identity_file(self._config.id),
             self._paths.agent_soul_file(self._config.id),
             self._paths.agent_rules_file(self._config.id),
-            self._paths.agent_contacts_file(self._config.id),
         ]
 
     @staticmethod
@@ -316,8 +305,7 @@ class ContextBuilder:
         """Get system prompt, rebuilding the cache when persona files change.
 
         The cache is keyed on the mtime signature of the agent's own
-        persona files (IDENTITY/SOUL/RULES plus the contact book), so
-        editing any of them — including an ``contacts-upsert`` write —
+        persona files (IDENTITY/SOUL/RULES), so editing any of them
         takes effect without restarting the process.
         """
         signature = self.persona_mtime_signature(self.persona_files())

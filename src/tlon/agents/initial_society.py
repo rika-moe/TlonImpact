@@ -177,6 +177,7 @@ def _stage_members(paths: TlonPaths, state: _State) -> None:
         )
         for kind, content in state.personas[member.key].items():
             (staging.agent_config_dir(address) / f"{kind}.md").write_text(content, "utf-8")
+        staging.agent_workspace_dir(address).mkdir(parents=True, exist_ok=True)
         staging.agent_contacts_file(address).write_text(_contacts(member, state), "utf-8")
         (staging.agent_dir(address) / ".initial-society-key").write_text(member.key, "utf-8")
     state.staged = True

@@ -48,7 +48,7 @@ Tool 协议根参数必须是 JSON object 的字符串键。OperationTool 在 To
 
 [file Operation](../../src/tlon/operations/filesystem.py)、[Shell Operation](../../src/tlon/operations/shell.py) 和[时间 Operation](../../src/tlon/operations/time.py) 各自保有唯一 schema，参数与结果由两入口共同使用。名称及完整字段见[工具参考](tools-reference.md#filesystem)。旧 Tool 类和旧名字已删除，无别名、迁移或 fallback。
 
-`file-read`、`file-list`、`file-search`、`shell-check`、`time-now` 属于 read。`file-write`、`file-edit`、`shell-run` 属于 write。时间为外部读取，不能进入纯条件。本域中 L0 装配时间，L1 另有文件，L2 再有 Shell；其他非装置域保持各自既有约束。领域服务执行时重新检查等级及所需装置，工具可见性不是唯一防线。
+`file-read`、`file-list`、`file-search`、`shell-check`、`time-now` 属于 read。`file-write`、`file-edit`、`shell-run` 属于 write。时间为外部读取，不能进入纯条件。本域中 L0/L1/L2 均装配时间及五个文件操作，自己的 workspace 无需装置；L2 再有 Shell；workspace 外访问仍受装置权限约束；其他非装置域保持各自既有约束。领域服务执行时重新检查等级及所需装置，工具可见性不是唯一防线。
 
 文件服务只使用成员的 ExecutionDevice，沿用容器工作目录、读写路径白名单与 archive-only 文件柜。读取额外允许自身只读 `/tlon-home`；写入仅可到配置的 allowed_paths。没有通用宿主文件系统后门。归档内容仅在内存读取，成员路径和归档条目仍需独立校验。
 

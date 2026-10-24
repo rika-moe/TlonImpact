@@ -1,5 +1,6 @@
 # ADR 0024：主观身份与自组织社会——人格自主权、联系簿与 all@ 退役
 
+> 后续修订：[ADR 0047](0047-workspace-contact-files.md) 将联系人改为 workspace 普通文件，删除专用工具与正文注入；所有等级的 workspace 文件操作无需 Docker。下文保留历史决策。
 > 黄页范围与工具名已由 [ADR 0034](0034-member-address-directory.md) 修订：统一成员寻址而非 agent 专用列表，黄页可引用；下文保留历史决策。
 
 > 阅读定位：本文保留当时的选择与理由；当前设计见 [identity](../design/identity.md)、[unified-member-model](../design/unified-member-model.md)。当前适用范围：主观身份、联系簿、人格自主权与 all@ 退役。完整关系见 [决策索引](README.md)。

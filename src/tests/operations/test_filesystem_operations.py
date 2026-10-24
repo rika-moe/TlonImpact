@@ -57,7 +57,10 @@ class MemoryDevice:
 def bound(level="L1"):
     device = MemoryDevice()
     service = MemberFilesystemService(
-        DockerRuntimeConfig(level=level), device, ["/workspace", "/tlon-home"], ["/workspace"]
+        DockerRuntimeConfig(level=level, working_dir="/member-home"),
+        device,
+        ["/workspace", "/tlon-home"],
+        ["/workspace"],
     )
     executor = OperationExecutor(
         OperationRegistry(make_filesystem_operations(service)),
@@ -72,20 +75,25 @@ async def test_dsl_write_model_read_and_unique_unicode_edit():
     call = BuiltinCall(
         "file-write",
         adapter.builtins()["file-write"],
-        [{Keyword("file_path"): "notes/中文.txt", Keyword("content"): "第一行\n第二行\n"}],
+        [
+            {
+                Keyword("file_path"): "/workspace/notes/中文.txt",
+                Keyword("content"): "第一行\n第二行\n",
+            }
+        ],
         {},
     )
     await adapter.handle(call)
     result = await OperationTool(executor, "file-read").execute_context(
-        {"file_path": "notes/中文.txt", "offset": 2, "limit": 1}
+        {"file_path": "/workspace/notes/中文.txt", "offset": 2, "limit": 1}
     )
     assert result.success and result.data["content"] == "第二行"
     result = await OperationTool(executor, "file-edit").execute_context(
-        {"file_path": "notes/中文.txt", "old_string": "第二行", "new_string": "完成"}
+        {"file_path": "/workspace/notes/中文.txt", "old_string": "第二行", "new_string": "完成"}
     )
     assert result.success and device.files["/workspace/notes/中文.txt"].decode().endswith("完成\n")
     result = await OperationTool(executor, "file-edit").execute_context(
-        {"file_path": "notes/中文.txt", "old_string": "不存在", "new_string": "bad"}
+        {"file_path": "/workspace/notes/中文.txt", "old_string": "不存在", "new_string": "bad"}
     )
     assert not result.success and device.writes == 2
 
@@ -94,7 +102,7 @@ async def test_write_loss_reports_unknown_with_stable_identity():
     device, executor = bound()
     device.fail_after_write = True
     with pytest.raises(UnknownOutcomeError) as exc:
-        await executor.call("file-write", {"file_path": "a", "content": "committed"})
+        await executor.call("file-write", {"file_path": "/workspace/a", "content": "committed"})
     assert exc.value.data == {"outcome": "unknown", "call_id": "call-1", "retry_safe": False}
     assert device.files["/workspace/a"] == b"committed"
     assert device.writes == 1
@@ -198,7 +206,9 @@ async def test_directory_sorting_precedes_truncation():
                 entry.type = tarfile.DIRTYPE
             archive.addfile(entry)
     device.fetch_archive = AsyncMock(return_value=buffer.getvalue())
-    result = await OperationTool(executor, "file-list").execute_context({"max_entries": 1})
+    result = await OperationTool(executor, "file-list").execute_context(
+        {"path": "/workspace", "max_entries": 1}
+    )
     assert result.success
     assert result.data["entries"][0]["name"] == "a-dir"
     assert result.data["truncated"]
@@ -210,7 +220,7 @@ async def test_invalid_archive_is_domain_error():
     device, executor = bound()
     device.fetch_archive = AsyncMock(return_value=archive_member("workspace/../../etc/passwd"))
     with pytest.raises(OperationError, match="Unsafe archive"):
-        await executor.call("file-list", {})
+        await executor.call("file-list", {"path": "/workspace"})
 
 
 async def test_search_preserves_existing_per_line_display_limit():
@@ -225,7 +235,7 @@ async def test_search_preserves_existing_per_line_display_limit():
         entry.size = len(payload)
         archive.addfile(entry, io.BytesIO(payload))
     device.fetch_archive = AsyncMock(return_value=buffer.getvalue())
-    result = await executor.call("file-search", {"path": "root", "pattern": "match"})
+    result = await executor.call("file-search", {"path": "/workspace/root", "pattern": "match"})
     assert result["count"] == 1
     assert result["matches"][0]["text"] == payload[:200].decode() + "…"
 
@@ -234,7 +244,9 @@ async def test_search_preserves_existing_per_line_display_limit():
 async def test_device_path_rejection_is_model_correctable(error: Exception) -> None:
     device, executor = bound()
     device.check_path = AsyncMock(side_effect=error)
-    result = await OperationTool(executor, "file-read").execute_context({"file_path": "a"})
+    result = await OperationTool(executor, "file-read").execute_context(
+        {"file_path": "/workspace/a"}
+    )
     assert not result.success
     assert result.error == f"RejectedError: {error}"
 
@@ -243,7 +255,7 @@ async def test_path_metadata_infrastructure_failure_propagates() -> None:
     device, executor = bound()
     device.check_path = AsyncMock(side_effect=RuntimeError("metadata service unavailable"))
     with pytest.raises(RuntimeError, match="metadata service unavailable"):
-        await OperationTool(executor, "file-read").execute_context({"file_path": "a"})
+        await OperationTool(executor, "file-read").execute_context({"file_path": "/workspace/a"})
 
 
 async def test_invalid_archive_propagates_through_tool_projection() -> None:
@@ -252,4 +264,4 @@ async def test_invalid_archive_propagates_through_tool_projection() -> None:
     device, executor = bound()
     device.fetch_archive = AsyncMock(return_value=b"broken archive")
     with pytest.raises(OperationError, match="Invalid sandbox archive"):
-        await OperationTool(executor, "file-list").execute_context({})
+        await OperationTool(executor, "file-list").execute_context({"path": "/workspace"})

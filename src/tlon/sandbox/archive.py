@@ -58,6 +58,8 @@ class DirectoryArchive:
                     raise ValueError(f"Unsafe archive member: {member.name!r}")
                 name = posixpath.normpath(name)
                 if name in ("", "."):
+                    if not root_name:
+                        self.root_is_dir = member.isdir()
                     continue
                 if root_name and name == root_name:
                     self.root_is_dir = member.isdir()

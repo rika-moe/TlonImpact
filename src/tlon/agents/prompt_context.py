@@ -16,10 +16,7 @@ class AgentPromptContext:
     Attributes:
         agent_name: The agent's display name.
         agent_home: Path to agent's ~/.tlon/{id}/ directory (for reading .md files).
-        contacts: Full text of the agent's own CONTACTS.md ("" = empty book;
-            ADR 0024 — the contact book replaced the team-wide SOUL roster).
     """
 
     agent_name: str
     agent_home: str
-    contacts: str

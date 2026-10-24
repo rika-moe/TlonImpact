@@ -19,7 +19,7 @@ model-call 返回建议，tool-execute 逐叶执行并返回真实结果。每�
 ## 注册清单
 
 <!-- BEGIN GENERATED: tool-registry -->
-满配成员注册 55 个工具（由共享 Operation 按域列出；L0 不注册 7 个装置操作，L1 注册 5 个文件操作，L2 再增加 2 个 Shell 操作；时间不依赖装置）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+满配成员注册 53 个工具（由共享 Operation 按域列出；L0/L1/L2 均注册 5 个文件操作，自己的 workspace 无需装置；L2 再增加 2 个 Shell 操作；时间不依赖装置）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | # | 工具名 | 实现 | 域 |
 |---|---|---|---|
@@ -48,43 +48,41 @@ model-call 返回建议，tool-execute 逐叶执行并返回真实结果。每�
 | 23 | `task-complete` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
 | 24 | `task-remove` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
 | 25 | `task-current` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
-| 26 | `contacts-read` | [operations/identity.py](../../src/tlon/operations/identity.py) 的 `OperationTool` 投影 | identity |
-| 27 | `contacts-upsert` | [operations/identity.py](../../src/tlon/operations/identity.py) 的 `OperationTool` 投影 | identity |
-| 28 | `persona-update` | [operations/identity.py](../../src/tlon/operations/identity.py) 的 `OperationTool` 投影 | identity |
-| 29 | `metrics-read` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
-| 30 | `mail-stats` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
-| 31 | `reputation-read` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
-| 32 | `social-health` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
-| 33 | `traces-list` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
-| 34 | `trace-read` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
-| 35 | `state-get` | [operations/state.py](../../src/tlon/operations/state.py) 的 `OperationTool` 投影 | state |
-| 36 | `state-put` | [operations/state.py](../../src/tlon/operations/state.py) 的 `OperationTool` 投影 | state |
-| 37 | `member-spawn` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
-| 38 | `member-list` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
-| 39 | `member-self-state` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
-| 40 | `member-start` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
-| 41 | `member-stop` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
-| 42 | `member-start-all` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
-| 43 | `finish-turn` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
-| 44 | `member-sleeping` | [operations/registry.py](../../src/tlon/operations/registry.py) 的 `OperationTool` 投影 | registry |
-| 45 | `member-running` | [operations/registry.py](../../src/tlon/operations/registry.py) 的 `OperationTool` 投影 | registry |
-| 46 | `member-lazy` | [operations/registry.py](../../src/tlon/operations/registry.py) 的 `OperationTool` 投影 | registry |
-| 47 | `member-roster` | [operations/registry.py](../../src/tlon/operations/registry.py) 的 `OperationTool` 投影 | registry |
-| 48 | `program-check` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 49 | `prototype-write` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 50 | `prototype-list` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 51 | `prototype-staging-list` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 52 | `prototype-lineage` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 53 | `prototype-review` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 54 | `model-call` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
-| 55 | `model-context` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
+| 26 | `persona-update` | [operations/identity.py](../../src/tlon/operations/identity.py) 的 `OperationTool` 投影 | identity |
+| 27 | `metrics-read` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
+| 28 | `mail-stats` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
+| 29 | `reputation-read` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
+| 30 | `social-health` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
+| 31 | `traces-list` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
+| 32 | `trace-read` | [operations/observability.py](../../src/tlon/operations/observability.py) 的 `OperationTool` 投影 | observability |
+| 33 | `state-get` | [operations/state.py](../../src/tlon/operations/state.py) 的 `OperationTool` 投影 | state |
+| 34 | `state-put` | [operations/state.py](../../src/tlon/operations/state.py) 的 `OperationTool` 投影 | state |
+| 35 | `member-spawn` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
+| 36 | `member-list` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
+| 37 | `member-self-state` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
+| 38 | `member-start` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
+| 39 | `member-stop` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
+| 40 | `member-start-all` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
+| 41 | `finish-turn` | [operations/lifecycle.py](../../src/tlon/operations/lifecycle.py) 的 `OperationTool` 投影 | lifecycle |
+| 42 | `member-sleeping` | [operations/registry.py](../../src/tlon/operations/registry.py) 的 `OperationTool` 投影 | registry |
+| 43 | `member-running` | [operations/registry.py](../../src/tlon/operations/registry.py) 的 `OperationTool` 投影 | registry |
+| 44 | `member-lazy` | [operations/registry.py](../../src/tlon/operations/registry.py) 的 `OperationTool` 投影 | registry |
+| 45 | `member-roster` | [operations/registry.py](../../src/tlon/operations/registry.py) 的 `OperationTool` 投影 | registry |
+| 46 | `program-check` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 47 | `prototype-write` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 48 | `prototype-list` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 49 | `prototype-staging-list` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 50 | `prototype-lineage` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 51 | `prototype-review` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 52 | `model-call` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
+| 53 | `model-context` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
 <!-- END GENERATED: tool-registry -->
 
-上表是正式成员的满配。见习成员不注册 member-spawn、prototype-write 两个生殖/演化工具；所有成员均可使用绑定自身的四个调度工具。L0 仅注册 file-read/list/search 查询内置只读资料，不注册 shell、file-write/edit，L1 不注册 shell 两个工具。
+上表是正式成员的满配。见习成员不注册 member-spawn、prototype-write 两个生殖/演化工具；所有成员均可使用绑定自身的四个调度工具。L0/L1/L2 均注册五个文件操作，自己的 workspace 无需 Docker，内置作者资料只读；L0/L1 不注册两个 Shell 工具。
 
 依赖倒置：`tlon.tools` 不许反向依赖 `tlon.agents`/`tlon.prototypes`，agents 域与 prototypes 域工具的端口（`AgentLifecycle` Protocol、`SpawnRejectedError`、`StopRejectedError`）声明在 [lifecycle/ports.py](../../src/tlon/lifecycle/ports.py)，原型端口（`PrototypeError`、`PrototypeSummary`）声明在 [evolution/ports.py](../../src/tlon/evolution/ports.py)；装配时由 `AgentRegistry` 注入成员作用域领域服务，OperationTool 只投影相应操作。
 
-shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/docker_runtime.py](../../src/tlon/sandbox/docker_runtime.py)）。文件柜容器创建后**从不启动**（issue #25），首次文件 I/O 时惰性创建/按名重挂；自 issue #40 起五个 filesystem 工具全部经 get_archive/put_archive 读写（list/search 把目录 tar 拉回 host 侧解包，write 把缺失父目录作为 tar 目录条目带入），容器内零命令执行。Docker daemon 不可用时这些工具返回 `error="Docker runtime not initialized"`，agent 本体照常启动。`docker.level: L0` 的成员（issue #26）完全不装配这两域工具——无执行装置即无工具，不存在「工具有但装置为 None」的状态；`docker.level: L1` 的成员（issue #40）只有 filesystem 五件，shell 工具不注册且 `run()` 由装置层直接拒绝。
+workspace 的五个文件操作直接访问成员自己的持久目录，无需 Docker；文档与标准库映射只读。workspace 外的 filesystem 访问和 shell 工具共享同一个 `DockerRuntime` 实例（[sandbox/docker_runtime.py](../../src/tlon/sandbox/docker_runtime.py)）。文件柜容器创建后**从不启动**（issue #25），首次文件 I/O 时惰性创建/按名重挂；装置通道经 get_archive/put_archive 读写（list/search 把目录 tar 拉回 host 侧解包，write 把缺失父目录作为 tar 目录条目带入），容器内零命令执行。Docker daemon 不可用时依赖装置的调用返回 `error="Docker runtime not initialized"`，agent 本体照常启动。`docker.level: L0` 的成员没有 Docker 装置，但可通过普通文件工具访问自己的 workspace 和只读作者资料；`docker.level: L1` 的成员（issue #40）只有 filesystem 五件，shell 工具不注册且 `run()` 由装置层直接拒绝。
 
 ## mail
 
@@ -212,11 +210,11 @@ Operation 单一契约；输入与输出字段保留 snake_case。（本区块�
 
 ## filesystem
 
-五个工具都在 Docker 沙箱容器内操作，agent 不接触宿主机文件系统。路径统一经 [sandbox/path_guard.py](../../src/tlon/sandbox/path_guard.py) 的 `resolve_container_path` 校验：
+五个工具在自己的 workspace 内由成员绑定的宿主文件通道处理，L0/L1/L2 均无需 Docker；调用者只能使用逻辑工作目录路径，不能选择宿主根或其他成员。`CONTACTS.md` 是其中的普通文件，按需读取和修改，框架不解析联系人格式。`tlon/docs`、`tlon/stdlib` 保持只读，宿主通道拒绝路径逃逸及符号链接。workspace 外的访问仍依赖原装置权限。路径经 [sandbox/path_guard.py](../../src/tlon/sandbox/path_guard.py) 的 `resolve_container_path` 校验：
 
-- 相对路径先拼到容器工作目录（`DockerRuntimeConfig.working_dir`，默认 `/workspace`），再按 POSIX 语义规范化（折叠 [.](./.)/[..](./..)/重复分隔符，[..](./..) 越出根时在 `/` 处截断）。
-- 解析结果必须等于或位于 `allowed_paths`（agent 配置 `tool.allowed_paths`，默认 `["/workspace"]`）之下，否则抛 `ValueError`，工具返回 `success=False` 和越界说明。读侧三工具（file-read/file-list/file-search）在配置白名单之外额外放行 `/tlon-home`——agent 自己的家目录（`~/.tlon/{agent_id}/`）以只读 bind-mount 挂进容器（见 docs/design/execution-device.md 的纵深防御），可读取自己的行为定义、记忆与邮箱；file-write/file-edit 不含此路径，且挂载本身是 `ro`，双保险。其他成员的家目录不挂载进本容器，无法跨 agent 读取。
-- 空路径直接拒绝。词法检查后由装置逐级检查目标及祖先，拒绝 symlink；不解析宿主路径。stat 和 archive 之间仍存在并发修改窗口，边界与限制见[执行装置设计](../design/execution-device.md#挂载与文件通道)。
+- 相对路径先拼到逻辑工作目录（`DockerRuntimeConfig.working_dir`，默认 `/workspace`），再按 POSIX 语义规范化（折叠 [.](./.)/[..](./..)/重复分隔符，[..](./..) 越出根时在 `/` 处截断）。
+- 解析结果必须等于或位于 `allowed_paths`（agent 配置 `tool.allowed_paths`，默认 `["/workspace"]`）之下，否则抛 `ValueError`，工具返回 `success=False` 和越界说明。读侧三工具（file-read/file-list/file-search）在配置白名单之外额外放行 `/tlon-home`——agent 自己的家目录（`~/.tlon/{agent_id}/`）以只读 bind-mount 挂进容器（见 docs/design/execution-device.md 的纵深防御），装置可用时可读取自己的行为定义、人格与记忆；邮箱通过邮件操作访问；file-write/file-edit 不含此路径，且挂载本身是 `ro`，双保险。其他成员的家目录不挂载进本容器，无法跨 agent 读取。
+- 空路径直接拒绝。workspace 宿主通道使用受约束文件访问；装置通道在词法检查后由装置逐级检查目标及祖先，拒绝 symlink；不解析宿主路径。stat 和 archive 之间仍存在并发修改窗口，边界与限制见[执行装置设计](../design/execution-device.md#挂载与文件通道)。
 
 文件操作的字段与输出统一由下方权威定义生成，DSL 和 Tool 使用同一名称及 snake_case 参数。`file-read` 只读 UTF-8 文本，支持分页；`file-write` 整体覆盖并创建缺失父目录；`file-edit` 要求 old_string 唯一匹配。`file-list` 非递归列目录，`file-search` 提供内容正则与文件名 glob 两种模式，跳过 `.git`，保留截断上限。
 
@@ -225,7 +223,7 @@ Operation 单一契约；输入与输出字段保留 snake_case。（本区块�
 
 ### file-read
 
-读取沙箱UTF-8文件；offset默认1，limit默认100，最多500行。/tlon-home只读。
+读取自己的workspace或授权装置UTF-8文件；workspace无需Docker。offset默认1，limit默认100，最多500行。/tlon-home只读。
 
 输入：
 
@@ -248,7 +246,7 @@ Operation 单一契约；输入与输出字段保留 snake_case。（本区块�
 
 ### file-write
 
-创建或覆盖沙箱文件，自动创建父目录。结果未知不可自动重试。
+创建或覆盖自己的workspace或授权装置文件，自动创建父目录。结果未知不可自动重试。
 
 输入：
 
@@ -620,44 +618,6 @@ Operation 单一契约；输入与输出字段保留 snake_case。（本区块�
 
 <!-- BEGIN GENERATED: identity-operations -->
 Operation 单一契约；输入与输出字段保留 snake_case。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
-
-### contacts-read
-
-读取自己的私有联系簿全文，包含自由文本与条目数。
-
-输入：
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-
-输出：
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `content` | string | 是 | — |
-| `entries` | integer | 是 | — |
-| `message` | string | 是 | — |
-
-### contacts-upsert
-
-按名字添加或更新自己的联系簿条目，保留其他自由文本；description为空则删除。修改在下次组装生效。
-
-输入：
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `name` | string | 是 | minLength=1 |
-| `address` | string | 否 | — |
-| `description` | string | 是 | — |
-
-输出：
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `name` | string | 是 | — |
-| `address` | string | 否 | — |
-| `action` | string | 是 | enum=['added', 'updated', 'deleted'] |
-| `message` | string | 是 | — |
 
 ### persona-update
 
