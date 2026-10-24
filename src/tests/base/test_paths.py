@@ -72,7 +72,7 @@ def test_agent_contacts_file_default_is_empty_book(tmp_path: Path) -> None:
     as empty and the write side creates it (with parents) on first write."""
     paths = TlonPaths(home=tmp_path)
     contacts = paths.agent_contacts_file("dev-001")
-    assert contacts == tmp_path / "dev-001" / "config" / "CONTACTS.md"
+    assert contacts == tmp_path / "dev-001" / "workspace" / "CONTACTS.md"
     # No eager creation: resolving the path touches nothing.
     assert not contacts.exists()
     assert not contacts.parent.exists()

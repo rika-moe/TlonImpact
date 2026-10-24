@@ -1,5 +1,6 @@
 # 统一操作：分阶段实施计划
 
+> 后续修订：[ADR 0047](../decisions/0047-workspace-contact-files.md) 将联系人改为 workspace 普通文件，删除专用工具与正文注入；所有等级的 workspace 文件操作无需 Docker。下文阶段记录保留历史。
 > Capability 及复合 Operation 已由 [ADR 0045](../decisions/0045-remove-capabilities.md) 删除。本文保留历史实施记录，不再描述现行能力；宿主 Operation、Tool 与 Behavior 继续保留。
 
 状态：2026-10-21，EPIC A #184–#192 与 EPIC B P5 #193、P6 #194 已合并 main。用户决定 tools 尽量保持固定，P7 暂停；独立推进 P8a 文档收口与旧机制审计，其余 P8 范围待重评。合并仍由人类确认。

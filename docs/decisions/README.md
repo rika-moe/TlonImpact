@@ -85,4 +85,6 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 
 [ADR 0045：删除 Capability](0045-remove-capabilities.md)：删除复合操作、提案审批及管理界面，保留宿主 Operation 与现有 Behavior。
 
-[ADR 0046：以模块函数统一成员工作程序](0046-programmable-workflows.md)：已接受、未实施；module、完整模型/工具交互、单一恢复权威和 stage 分阶段退役，见[目标设计](../design/programmable-workflows.md)。
+[ADR 0046：以模块函数统一成员工作程序](0046-programmable-workflows.md)：已实施；module、完整模型/工具交互、单一恢复权威与 stage 退役，见[目标设计](../design/programmable-workflows.md)。
+
+[ADR 0047：私人资料通过普通 workspace 文件访问](0047-workspace-contact-files.md)：CONTACTS.md 按需读取，三个等级均可直接操作自己的 workspace，删除联系人专用工具与系统提示全文注入。

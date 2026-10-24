@@ -1,7 +1,8 @@
-"""Member-bound sandbox file operations; no Tool or host filesystem access."""
+"""Member-bound workspace and execution-device file operations."""
 
 from __future__ import annotations
 
+import asyncio
 import fnmatch
 import posixpath
 import re
@@ -18,6 +19,7 @@ from tlon.sandbox.archive import DirectoryArchive
 from tlon.sandbox.author_files import author_archive, author_path, author_root, is_author_path
 from tlon.sandbox.device import ExecutionDevice
 from tlon.sandbox.path_guard import normalize_container_path, resolve_container_path
+from tlon.sandbox.workspace_files import WorkspaceFiles
 
 logger = get_logger(__name__)
 
@@ -46,18 +48,44 @@ class MemberFilesystemService:
         device: ExecutionDevice | None,
         read_allowed_paths: list[str],
         write_allowed_paths: list[str],
+        *,
+        workspace: Path | None = None,
     ) -> None:
+        self._workspace = WorkspaceFiles(workspace) if workspace is not None else None
         self._docker_config = config
         self._docker_runtime = device
         self._read_allowed_paths = list(read_allowed_paths)
         self._write_allowed_paths = list(write_allowed_paths)
+
+    def _workspace_path(self, path: str, *, write: bool = False) -> tuple[str, str] | None:
+        normalized = normalize_container_path(posixpath.join(self._docker_config.working_dir, path))
+        if is_author_path(normalized, self._docker_config.working_dir):
+            if write:
+                raise RejectedError(
+                    f"{author_root(self._docker_config.working_dir)} is read-only", {}
+                )
+            return None
+        if normalized == "/tlon-home" or normalized.startswith("/tlon-home/"):
+            if write:
+                raise RejectedError("/tlon-home is read-only", {})
+            return None
+        root = normalize_container_path(self._docker_config.working_dir).rstrip("/")
+        if normalized == root or normalized.startswith(root + "/"):
+            if self._workspace is None:
+                raise RejectedError("Member workspace is not bound", {})
+            return normalized, normalized.removeprefix(root).lstrip("/")
+        return None
+
+    @staticmethod
+    def _host_error(exc: OSError | ValueError) -> RejectedError:
+        return RejectedError(f"Workspace access rejected: {exc}", {})
 
     async def _path(self, path: str, *, write: bool = False) -> str:
         normalized = normalize_container_path(posixpath.join(self._docker_config.working_dir, path))
         if write and is_author_path(normalized, self._docker_config.working_dir):
             raise RejectedError(f"{author_root(self._docker_config.working_dir)} is read-only", {})
         if self._docker_config.level == "L0":
-            raise RejectedError("L0 members cannot access files", {})
+            raise RejectedError("L0 members cannot access files outside their workspace", {})
         if self._docker_runtime is None:
             raise OperationError("Execution device not initialized")
         roots = self._write_allowed_paths if write else self._read_allowed_paths
@@ -86,6 +114,17 @@ class MemberFilesystemService:
                 return container_path, author_archive(local)
             except ValueError as exc:
                 raise RejectedError(str(exc), {}) from exc
+        workspace_path = self._workspace_path(path)
+        if workspace_path is not None:
+            assert self._workspace is not None
+            try:
+                return workspace_path[0], await asyncio.to_thread(
+                    self._workspace.archive,
+                    workspace_path[1],
+                    posixpath.basename(workspace_path[0]) or ".",
+                )
+            except (OSError, ValueError) as exc:
+                raise self._host_error(exc) from exc
         container_path = await self._path(path)
         assert self._docker_runtime is not None
         return container_path, await self._docker_runtime.fetch_archive(container_path)
@@ -114,10 +153,23 @@ class MemberFilesystemService:
         offset: int = arguments.get("offset", 1)
         limit: int = arguments.get("limit", 100)
         mapped = self._author_file(file_path)
-        container_path = await self._path(file_path) if mapped is None else mapped[0]
+        workspace_path = self._workspace_path(file_path)
+        container_path = (
+            workspace_path[0]
+            if workspace_path is not None
+            else await self._path(file_path)
+            if mapped is None
+            else mapped[0]
+        )
         try:
             if mapped is not None:
                 raw = mapped[1].read_bytes()
+            elif workspace_path is not None:
+                assert self._workspace is not None
+                try:
+                    raw = await asyncio.to_thread(self._workspace.read, workspace_path[1])
+                except (OSError, ValueError) as exc:
+                    raise self._host_error(exc) from exc
             else:
                 assert self._docker_runtime is not None
                 raw = await self._docker_runtime.read_file(container_path)
@@ -151,13 +203,28 @@ class MemberFilesystemService:
     async def write(self, arguments: dict[str, Any], context: CallContext) -> dict[str, Any]:
         file_path: str = arguments["file_path"]
         content: str = arguments["content"]
-        container_path = await self._path(file_path, write=True)
-        assert self._docker_runtime is not None
-        try:
-            existed = await self._docker_runtime.file_exists(container_path)
-        except RuntimeError as exc:
-            raise OperationError(str(exc)) from exc
-        await self._write(container_path, content.encode("utf-8"), context)
+        workspace_path = self._workspace_path(file_path, write=True)
+        if workspace_path is not None:
+            assert self._workspace is not None
+            try:
+                existed = await asyncio.to_thread(
+                    self._workspace.write, workspace_path[1], content.encode("utf-8")
+                )
+            except ValueError as exc:
+                raise self._host_error(exc) from exc
+            except OSError as exc:
+                raise UnknownOutcomeError(
+                    f"File write outcome unknown: {exc}",
+                    {"outcome": "unknown", "call_id": context.call_id, "retry_safe": False},
+                ) from exc
+        else:
+            container_path = await self._path(file_path, write=True)
+            assert self._docker_runtime is not None
+            try:
+                existed = await self._docker_runtime.file_exists(container_path)
+            except RuntimeError as exc:
+                raise OperationError(str(exc)) from exc
+            await self._write(container_path, content.encode("utf-8"), context)
         bytes_written = len(content.encode("utf-8"))
         return {
             "file_path": file_path,
@@ -170,12 +237,19 @@ class MemberFilesystemService:
         file_path: str = arguments["file_path"]
         old_string: str = arguments["old_string"]
         new_string: str = arguments["new_string"]
-        container_path = await self._path(file_path, write=True)
-        assert self._docker_runtime is not None
+        workspace_path = self._workspace_path(file_path, write=True)
+        container_path = (
+            workspace_path[0] if workspace_path else await self._path(file_path, write=True)
+        )
         try:
-            raw = await self._docker_runtime.read_file(container_path)
-        except FileNotFoundError:
-            raise RejectedError(f"File not found: {file_path}", {}) from None
+            if workspace_path is not None:
+                assert self._workspace is not None
+                raw = await asyncio.to_thread(self._workspace.read, workspace_path[1])
+            else:
+                assert self._docker_runtime is not None
+                raw = await self._docker_runtime.read_file(container_path)
+        except (OSError, ValueError) as exc:
+            raise self._host_error(exc) from exc
         except RuntimeError as e:
             raise OperationError(f"Failed to read file: {e}") from e
         try:
@@ -194,7 +268,21 @@ class MemberFilesystemService:
                 {},
             )
         new_content = content.replace(old_string, new_string, 1)
-        await self._write(container_path, new_content.encode("utf-8"), context)
+        if workspace_path is not None:
+            assert self._workspace is not None
+            try:
+                await asyncio.to_thread(
+                    self._workspace.write, workspace_path[1], new_content.encode("utf-8")
+                )
+            except ValueError as exc:
+                raise self._host_error(exc) from exc
+            except OSError as exc:
+                raise UnknownOutcomeError(
+                    f"File write outcome unknown: {exc}",
+                    {"outcome": "unknown", "call_id": context.call_id, "retry_safe": False},
+                ) from exc
+        else:
+            await self._write(container_path, new_content.encode("utf-8"), context)
         return {
             "file_path": file_path,
             "replaced": True,

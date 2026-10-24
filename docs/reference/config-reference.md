@@ -71,7 +71,7 @@
 | `network_mode` | `str` | "none" |  |
 <!-- END GENERATED: agent-yaml-fields-docker -->
 
-`level`（issue #26，L1 落地于 #40）是执行装置能力阶梯声明：`"L0"` = 无执行装置——装配时不创建 DockerRuntime，也不注册依赖装置的 shell/filesystem 工具（shell-run/shell-check/file-read/file-write/file-edit/file-list/file-search）；`"L1"`（默认，issue #31 于 2026-10-05 拍板翻转）= 文件层——archive-only，创建文件柜容器并注册 5 个 filesystem 工具，但结构性零代码执行（容器从不启动、exec 单元从不存在，run() 由装置层直接拒绝）；`"L2"` = Docker 完整 userland。声明即数据、随原型提案一起评审。`docker.level` 也可由原型 spec 的顶层 `:execution` 段（见 [dsl-reference.md](./dsl-reference.md) 1.1 节）在实例化时一次性投影而来——此后运行时权威是本字段，成员自改 behavior.tlon 的 `:execution` 不会重新投影（防自提权）。
+`level`（issue #26，L1 落地于 #40）是执行装置能力阶梯声明：`"L0"` = 无执行装置——不创建 DockerRuntime、不注册 Shell，但五个文件工具可读写自己的 workspace 和读取只读作者资料；`"L1"`（默认，issue #31 于 2026-10-05 拍板翻转）= 文件层——archive-only，workspace 外文件访问可使用文件柜容器，但结构性零代码执行（容器从不启动、exec 单元从不存在，run() 由装置层直接拒绝）；`"L2"` = Docker 完整 userland。声明即数据、随原型提案一起评审。`docker.level` 也可由原型 spec 的顶层 `:execution` 段（见 [dsl-reference.md](./dsl-reference.md) 1.1 节）在实例化时一次性投影而来——此后运行时权威是本字段，成员自改 behavior.tlon 的 `:execution` 不会重新投影（防自提权）。
 
 ### `tool`
 
@@ -84,7 +84,7 @@
 | `allowed_paths` | `list[str]` | ['/workspace'] |  |
 <!-- END GENERATED: agent-yaml-fields-tool -->
 
-`per_timeout` 是成员宿主操作的共享默认超时（DSL 与 Tool 相同），见 [OperationExecutor](../../src/tlon/operations/core.py)；操作默认值、已声明的显式 timeout 和根期限可以覆盖或收紧它；`allowed_paths` 是文件工具只允许触碰的**容器内绝对路径**（file-write/file-edit 的完整白名单），非空、必须 `/` 开头（校验器强制）。file-read/file-list/file-search 在此之上额外放行 `/tlon-home`（agent 自己家目录的只读挂载，见 tools-reference.md filesystem 一节），该路径不进 `allowed_paths` 配置。
+`per_timeout` 是成员宿主操作的共享默认超时（DSL 与 Tool 相同），见 [OperationExecutor](../../src/tlon/operations/core.py)；操作默认值、已声明的显式 timeout 和根期限可以覆盖或收紧它；`allowed_paths` 是 workspace 之外装置访问的**容器内绝对路径**白名单（写/edit 仅限该白名单）；自己的 workspace 由宿主独立绑定，不依赖此白名单或 Docker，非空、必须 `/` 开头（校验器强制）。file-read/file-list/file-search 在此之上额外放行 `/tlon-home`（agent 自己家目录的只读挂载，见 tools-reference.md filesystem 一节），该路径不进 `allowed_paths` 配置。
 
 ### 完整示例
 
@@ -214,7 +214,6 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 │   ├── config/
 │   │   ├── agent.yaml                # 本 agent 配置
 │   │   ├── IDENTITY.md / SOUL.md / RULES.md   # 身份/人格及约束（IDENTITY/SOUL 可自主修改，RULES 不可自改，见 identity design）
-│   │   ├── CONTACTS.md               # 联系簿（成员自写、私有，缺省即空；ADR 0024 / EPIC #101）
 │   │   └── behavior.tlon             # 行为规约（唯一权威，一切派生）
 │   ├── memory/
 │   │   ├── config.json               # 记忆调参
@@ -223,7 +222,8 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 │   ├── sessions.sqlite3              # session 事件与生命周期元数据（ADR 0007/0032：交互唯一真相）
 │   ├── sessions/                     # 旧 session JSONL 离线档案（不读取、不导入、不双写）
 │   ├── tasks.jsonl                   # TaskManager 持久化
-│   └── workspace/                  # 成员工作目录
+│   └── workspace/                  # 成员工作目录（各等级普通文件工具均可读写，无需 Docker）
+│       └── CONTACTS.md              # 私人联系簿，按需读取，缺失时可自行创建；ADR 0047
 ```
 
 要点：

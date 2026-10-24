@@ -10,7 +10,7 @@ from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
 from tlon.operations.dsl import DSLAdapter
 from tlon.operations.identity import make_identity_operations
-from tlon.operations.schema import InputError, UnknownOutcomeError, json_value
+from tlon.operations.schema import UnknownOutcomeError
 from tlosure.builtins import BuiltinCall
 from tlosure.edn import Keyword
 
@@ -22,37 +22,10 @@ def _bound(paths: TlonPaths, member: str) -> OperationExecutor:
     )
 
 
-async def test_real_contacts_two_members_two_entrances(tmp_path: Path) -> None:
-    paths = TlonPaths(home=tmp_path)
-    alice, bob = _bound(paths, "alice"), _bound(paths, "bob")
-    adapter = DSLAdapter(alice)
-    args = {
-        Keyword("name"): "小林",
-        Keyword("address"): "lin@tlon.internal",
-        Keyword("description"): "靠谱",
-    }
-    result = await adapter.handle(
-        BuiltinCall("contacts-upsert", adapter.builtins()["contacts-upsert"], [args], {})
-    )
-    assert json_value(result, edn_keys=True)["action"] == "added"
-    read = await OperationTool(alice, "contacts-read").execute_context({})
-    assert read.success and read.data["entries"] == 1 and "靠谱" in read.data["content"]
-    other = await OperationTool(bob, "contacts-read").execute_context({})
-    assert other.success and other.data["entries"] == 0
-    assert not paths.agent_contacts_file("bob").exists()
-    invalid = await OperationTool(alice, "contacts-upsert").execute_context(
-        {"name": "x", "address": "y", "description": "z", "member_id": "bob"}
-    )
-    assert not invalid.success
-    with pytest.raises(InputError):
-        await adapter.handle(
-            BuiltinCall(
-                "contacts-read",
-                adapter.builtins()["contacts-read"],
-                [{Keyword("member_id"): "bob"}],
-                {},
-            )
-        )
+def test_identity_contract_only_exposes_persona() -> None:
+    assert [operation.name for operation in make_identity_operations(None, "")] == [
+        "persona-update"
+    ]
 
 
 async def test_persona_two_entrances_and_write_failure_receipt(tmp_path: Path) -> None:

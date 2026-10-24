@@ -27,7 +27,14 @@ def member_at(
     home: Path, device: ExecutionDevice, actions: str, shell: MemberShellService | None = None
 ) -> MemberRuntime:
     config = DockerRuntimeConfig(level="L2" if shell else "L1")
-    files = MemberFilesystemService(config, device, ["/workspace"], ["/workspace"])
+    (home / "device-member" / "workspace").mkdir(parents=True, exist_ok=True)
+    files = MemberFilesystemService(
+        config,
+        device,
+        ["/workspace"],
+        ["/workspace"],
+        workspace=home / "device-member" / "workspace",
+    )
     operations = (*make_filesystem_operations(files), *time_operation_definitions())
     if shell:
         operations = (*operations, *make_shell_operations(shell))
@@ -82,7 +89,8 @@ async def test_member_program_and_model_share_file_contract(tmp_path: Path) -> N
                 "file-write", {"file_path": "other", "content": "bad", "member_id": "victim"}
             )
         ).success
-        assert device.files == {"/workspace/shared.txt": "共享内容".encode()}
+        assert (tmp_path / "device-member/workspace/shared.txt").read_text() == "共享内容"
+        assert device.files == {}
     finally:
         await member.shutdown()
 

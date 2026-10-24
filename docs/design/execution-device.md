@@ -1,6 +1,8 @@
 # Execution Device：成员执行权限与容器机制
 
-执行装置隔离成员的文件访问和代码执行。tlosure 求值、文件操作、Linux 命令执行分成 L0/L1/L2 三层，按最低够用原则授权。Capability 已删除，见 [ADR 0045](../decisions/0045-remove-capabilities.md)；行为评估见 [arena](arena.md)。
+> 当前实施决策：[ADR 0047](../decisions/0047-workspace-contact-files.md)。CONTACTS.md 移入自己的 workspace，按需使用普通文件操作，不全文注入；L0/L1/L2 自己的 workspace 文件访问不依赖 Docker。旧 contacts 专用服务与操作删除，无兼容或迁移。
+
+执行装置隔离成员的文件访问和代码执行。自己的 workspace 文件访问独立于装置，装置访问和 Linux 命令执行按 L0/L1/L2 分层，按最低够用原则授权。Capability 已删除，见 [ADR 0045](../decisions/0045-remove-capabilities.md)；行为评估见 [arena](arena.md)。
 
 ## 领域约束
 
@@ -14,11 +16,11 @@
 
 | 层级 | 当前实现 | 可用能力 |
 |---|---|---|
-| L0 | 无 Docker 装置 | tlosure 计量求值及非装置工具；仅注册作者资料的 file-read/list/search；普通文件与 Shell 不可访问 |
-| L1 | DockerRuntime 的 archive-only 文件柜 | 五个 filesystem 工具；无代码执行 |
+| L0 | 无 Docker 装置 | tlosure 计量求值及非装置工具；五个文件工具读写自己的 workspace，作者资料只读；无 Shell |
+| L1 | DockerRuntime 的 archive-only 文件柜 | workspace 文件工具；workspace 外的文件访问使用装置；无代码执行 |
 | L2 | 文件柜 + 一次性执行单元 | filesystem 工具及 `shell-run` / `shell-check` |
 
-[base/config.py](../../src/tlon/base/config.py) 的 `DockerRuntimeConfig` 默认 `level="L1"`。[agents/prototypes/instantiate.py](../../src/tlon/agents/prototypes/instantiate.py) 的 `instantiate` 把原型声明一次性投影到成员配置；[agents/assembly.py](../../src/tlon/agents/assembly.py) 的 `assemble_member_services` 按成员配置装配。即使 Docker 不可用，L1/L2 仍按声明注册工具，调用时返回装置未初始化错误。
+[base/config.py](../../src/tlon/base/config.py) 的 `DockerRuntimeConfig` 默认 `level="L1"`。[agents/prototypes/instantiate.py](../../src/tlon/agents/prototypes/instantiate.py) 的 `instantiate` 把原型声明一次性投影到成员配置；[agents/assembly.py](../../src/tlon/agents/assembly.py) 的 `assemble_member_services` 按成员配置装配。所有等级均注册五个文件工具，自己的 workspace 和只读作者资料无需 Docker。L1/L2 的 workspace 外访问仍需装置；Docker 不可用时只有依赖装置的调用报错。
 
 内置原型按实际行为声明：定址转发、条件路由、短回合交流、标准无执行迭代为 L0；标准文件迭代为 L1；计划后执行、标准工具迭代、证据核验为 L2。原型技术 ID 均为系统生成的 p-UUID，显示名不代表职业（ADR 0035）。L2 声明在原型评审中作为红旗呈现，不自动构成拒绝。
 
@@ -59,7 +61,7 @@ def close() -> None
 
 ## 挂载与文件通道
 
-workspace 下的 `tlon/docs` 与 `tlon/stdlib` 是 runtime 文档和标准库源码的只读映射。现有文件工具可在没有 Docker 时读取这两个资料目录；L0 的访问范围止于这些资料。L1/L2 的 Docker 也在同一位置只读挂载，写入或编辑被拒绝。目录随配置的 working_dir 定位，作者可使用相对路径。
+workspace 下的 `tlon/docs` 与 `tlon/stdlib` 是 runtime 文档和标准库源码的只读映射。现有文件工具可在没有 Docker 时读取这两个资料目录；L0 同时可读写自己的普通 workspace 文件。L1/L2 的 Docker 也在同一位置只读挂载，写入或编辑被拒绝。目录随配置的 working_dir 定位，作者可使用相对路径。
 
 两种容器共用 `_container_kwargs` 与 `_bind_mounts`：
 
@@ -72,9 +74,9 @@ workspace 下的 `tlon/docs` 与 `tlon/stdlib` 是 runtime 文档和标准库源
 
 成员可读取自己的行为定义、人格和记忆；邮箱通过邮件工具访问共享邮局，不靠成员目录里的旧邮件文件。只有 workspace 的写入跨执行单元持久保存。
 
-文件领域服务经 path_guard 做容器路径白名单检查，再由装置 check_path 检查目标及其祖先，拒绝符号链接路径。读侧额外允许 `/tlon-home`；写/edit 使用配置的写白名单。归档解析拒绝绝对路径、`..` 等非法条目，链接仅列出而不读取其目标。Docker stat 与 archive API 并非同一个原子 open-beneath 操作；并发 L2 命令改写路径仍有 TOCTOU 窗口，不能声称已消除任意并发 symlink 竞态。成员挂载隔离与内核只读挂载仍是最终边界，其他成员目录和宿主 Docker socket 不进入容器。
+文件领域服务将逻辑工作目录绑定到成员自己的宿主 workspace，五个操作直接访问该目录，无需 Docker。宿主通道拒绝路径逃逸、符号链接与硬链接；目录遍历遇到这些链接时拒绝整次列出/搜索，不跟随目标，并保持作者资料只读；具体实现见 [ADR 0047](../decisions/0047-workspace-contact-files.md)。workspace 外的装置通道经 path_guard 做容器路径白名单检查，再由装置 check_path 检查目标及其祖先，拒绝符号链接路径。读侧额外允许 `/tlon-home`；写/edit 使用配置的写白名单。归档解析拒绝绝对路径、`..` 等非法条目，链接仅列出而不读取其目标。Docker stat 与 archive API 并非同一个原子 open-beneath 操作；并发 L2 命令改写路径仍有 TOCTOU 窗口，不能声称已消除任意并发 symlink 竞态。成员挂载隔离与内核只读挂载仍是最终边界，其他成员目录和宿主 Docker socket 不进入容器。
 
-`read_file` 与 `write_file` 使用 get_archive / put_archive，字节不经 stdout 解码；MemberFilesystemService 在领域边界另要求 UTF-8 文本。`file_exists` 读 archive 响应头；list/search 把目录 tar 拉回宿主分析，由 [sandbox/archive.py](../../src/tlon/sandbox/archive.py) 完成遍历与匹配，不依赖镜像内 find/grep。搜索内容正则采用 Python `re`。写入父目录通过 tar 目录条目创建，只加入缺失父目录，避免修改已有目录元数据。
+装置通道的 `read_file` 与 `write_file` 使用 get_archive / put_archive，字节不经 stdout 解码；MemberFilesystemService 在领域边界另要求 UTF-8 文本。`file_exists` 读 archive 响应头；list/search 把目录 tar 拉回宿主分析，由 [sandbox/archive.py](../../src/tlon/sandbox/archive.py) 完成遍历与匹配，不依赖镜像内 find/grep。搜索内容正则采用 Python `re`。写入父目录通过 tar 目录条目创建，只加入缺失父目录，避免修改已有目录元数据。
 
 ## 网络与资源
 

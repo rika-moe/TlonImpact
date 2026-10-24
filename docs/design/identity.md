@@ -1,5 +1,7 @@
 # 主观身份与自组织社会（Subjective Identity）
 
+> 当前实施决策：[ADR 0047](../decisions/0047-workspace-contact-files.md)。CONTACTS.md 移入自己的 workspace，按需使用普通文件操作，不全文注入；L0/L1/L2 自己的 workspace 文件访问不依赖 Docker。旧 contacts 专用服务与操作删除，无兼容或迁移。
+
 > 本文定义人格、地址、主观社会身份和组织的边界。当前机制可直接从本文阅读；选择的背景与备选见 [ADR 0024](../decisions/0024-subjective-identity.md)，成员行为的约束见 [统一成员模型](unified-member-model.md)。
 
 ## 概念：身份的四个正交层
@@ -48,10 +50,10 @@ WebUI 创建与编辑成员时统一展示这三个文件及上述定义。编�
 
 ## 联系簿：社会身份的唯一载体
 
-每成员一本私有 `CONTACTS.md`（一等文件），条目为自由文本 + 宽松结构：**名字 / 地址 / 我对 ta 的描述**。规则：
+每成员一本私有 `CONTACTS.md`，是 workspace 中的普通文件。成员自行组织格式，可记录名字、地址和对他人的认识；框架不解析条目。规则：
 
 - **自写、私有**：只能读写自己的联系簿；B 对 A 的评价 B 不说，A 就不知道——隐私是差序格局的一部分，也是声誉真实的前提。
-- **注入自己的 prompt**：取代全员 SOUL 注入，社会注意力收敛到小圈层，O(N) prompt 膨胀随之消解。
+- **按需读取**：唯一位置为自己的 `workspace/CONTACTS.md`。系统提示只说明用途和文件位置，正文不注入；成员按任务使用普通 `file-read` 读取，`file-edit` / `file-write` 更新，文件不存在时可创建。
 - **成员自己维护**：收到信、合作过、打听过——是否记入、怎么描述，是成员自己的判断。通信自动沉淀是后续候选，第一版不做。
 - **主观无需一致**：A 的 SOUL 自称开朗，B 记 A 聪明，C 记 A 博学，B 与 C 互不相识——全部合法。成员的社会身份 = 朋友们在各自联系簿中认识的总和，不存在、也不需要一份「正确答案」。
 
@@ -91,9 +93,9 @@ WebUI 创建与编辑成员时统一展示这三个文件及上述定义。编�
 | --- | --- |
 | 人格自编辑工具 `persona-update`（自写 IDENTITY/SOUL，私有） | [src/tlon/identity/persona.py](../../src/tlon/identity/persona.py) |
 | 人格变更留痕（ledger 事件） | [src/tlon/base/ledger.py](../../src/tlon/base/ledger.py)（`persona_update` 记录）+ [src/tlon/identity/persona.py](../../src/tlon/identity/persona.py) 写侧 |
-| 联系簿一等文件 `CONTACTS.md` 路径与缺省 | [src/tlon/base/paths.py](../../src/tlon/base/paths.py) `agent_contacts_file`（缺省语义：文件不存在即空联系簿，不 eager 创建） |
-| 联系簿读写工具 `contacts-read` / `contacts-upsert`（私有） | [src/tlon/identity/contacts.py](../../src/tlon/identity/contacts.py)（`contacts-upsert` 为条目级 upsert——同名更新地址/描述、节内自由文本保留、空描述删条目，不做整本重写） |
-| prompt 注入：「联系簿」段取代「团队成员」段 | [src/tlon/agents/context_builder.py](../../src/tlon/agents/context_builder.py)、`prompt_builder.py`、`prompt_context.py`（只注入自己的 CONTACTS.md，缺省即空；mtime 签名不再含他人 SOUL） |
+| 联系簿一等文件 `CONTACTS.md` 路径与缺省 | [src/tlon/base/paths.py](../../src/tlon/base/paths.py) `agent_workspace_dir`（联系簿为其下的普通 `CONTACTS.md`，不存在时按需创建） |
+| 联系簿普通文件读写 | [src/tlon/sandbox/filesystem.py](../../src/tlon/sandbox/filesystem.py)（复用五个文件 Operation，无联系人专用服务和格式维护） |
+| 固定联系簿说明 | [src/tlon/agents/prompt_builder.py](../../src/tlon/agents/prompt_builder.py)（正文不注入，不参与 prompt 变更签名；公开地址由 member-list 查询） |
 | all@ 展开删除、无效地址拒绝 | [src/tlon/organization/mail/post_office.py](../../src/tlon/organization/mail/post_office.py)（无效地址整封拒绝） |
 | 统一成员寻址工具 `member-list` | [src/tlon/lifecycle/service.py](../../src/tlon/lifecycle/service.py)（与 DSL 共用邮局目录，只输出公开 id / name / address） |
 | 名册黄页化：`member-roster {}` 普通只读操作 | [src/tlon/operations/registry.py](../../src/tlon/operations/registry.py)（从同一邮局目录渲染 `名字（公开 id） — 地址`，由共享 invocation 记录采样值） |

@@ -119,7 +119,7 @@ serving 侧在 facade 上装配客户端会话、通知服务、通讯录和 HTT
 
 ## 已落地的共享操作边界
 
-邮件、文件、Shell、时间的 Operation 保存唯一输入/输出 schema，由 DSLAdapter 和 OperationTool 投影为两种入口。成员作用域服务负责领域行为；工具协议层不保存第二份邮件规则或 Shell 任务表。文件与执行等级在领域执行时检查；在本次切换的装置与时间域，L0 可读时间、L1 加文件、L2 加 Shell，邮件及其他非装置操作沿各自既有约束装配。P4a 将两入口的叶子操作 intent 与回执统一到 ProgramStore；session journal 负责会话历史，结果不明保留 unknown。
+邮件、文件、Shell、时间的 Operation 保存唯一输入/输出 schema，由 DSLAdapter 和 OperationTool 投影为两种入口。成员作用域服务负责领域行为；工具协议层不保存第二份邮件规则或 Shell 任务表。文件与执行等级在领域执行时检查；在本次切换的装置与时间域，L0/L1/L2 均可读时间和读写自己的 workspace 文件（无需 Docker），L2 加 Shell；workspace 外文件访问仍受装置权限约束，邮件及其他非装置操作沿各自既有约束装配。P4a 将两入口的叶子操作 intent 与回执统一到 ProgramStore；session journal 负责会话历史，结果不明保留 unknown。
 
 EPIC A、P5 #193 和 P6 #194 已合并。当前调用契约见 [Operation reference](reference/operations-reference.md)，阶段状态见[实施计划](design/operations-plan.md)，旧机制审计见[操作机制审计](design/operations-audit.md)。
 

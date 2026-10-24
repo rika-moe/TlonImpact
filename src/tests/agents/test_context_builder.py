@@ -55,3 +55,30 @@ async def test_context_read_failure_is_not_hidden_as_an_empty_success() -> None:
     reader.build_knowledge_context.side_effect = RuntimeError("read failed")
     with pytest.raises(RuntimeError, match="read failed"):
         await member_context_operation(reader, lambda: []).handler(CallContext("a", "r", "c"), {})
+
+
+async def test_contacts_are_read_on_demand_without_invalidating_system_prompt(
+    tmp_path: Path,
+) -> None:
+    paths = TlonPaths(home=tmp_path)
+    builder = ContextBuilder(
+        AgentConfig(id="a", name="A"),
+        Mailbox(paths.mail_database_file(), "a"),
+        AsyncMock(),
+        TaskManager(agent_id="a", tlon_paths=paths),
+        "a@tlon.internal",
+        tlon_paths=paths,
+    )
+    before = await builder.get_system_prompt()
+    signature = builder.persona_mtime_signature(builder.persona_files())
+    contacts = paths.agent_contacts_file("a")
+    contacts.parent.mkdir(parents=True, exist_ok=True)
+    contacts.write_text("private acquaintance one", encoding="utf-8")
+    assert await builder.get_system_prompt() is before
+    contacts.write_text("private acquaintance two", encoding="utf-8")
+    assert await builder.get_system_prompt() is before
+    assert builder.persona_mtime_signature(builder.persona_files()) == signature
+    assert "CONTACTS.md" in before
+    assert "file-read" in before and "file-edit" in before and "file-write" in before
+    assert "private acquaintance" not in before
+    assert contacts not in builder.persona_files()

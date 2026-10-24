@@ -49,7 +49,7 @@ def make_filesystem_operations(service: MemberFilesystemService) -> tuple[Operat
     return (
         Operation(
             "file-read",
-            "读取沙箱UTF-8文件；offset默认1，limit默认100，最多500行。/tlon-home只读。",
+            "读取自己的workspace或授权装置UTF-8文件；workspace无需Docker。offset默认1，limit默认100，最多500行。/tlon-home只读。",
             _object(
                 {
                     "file_path": _PATH,
@@ -73,7 +73,7 @@ def make_filesystem_operations(service: MemberFilesystemService) -> tuple[Operat
         ),
         Operation(
             "file-write",
-            "创建或覆盖沙箱文件，自动创建父目录。结果未知不可自动重试。",
+            "创建或覆盖自己的workspace或授权装置文件，自动创建父目录。结果未知不可自动重试。",
             _object({"file_path": _PATH, "content": _STRING}),
             _object(
                 {"file_path": _STRING, "bytes_written": _INT, "existed_before": _BOOL, **_MESSAGE}

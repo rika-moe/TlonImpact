@@ -234,7 +234,8 @@ class TestAdamDecisions:
         assert "小新" in mail.content
         assert "：\n\n欢迎出生。" in mail.content
         assert "worker-1（worker-1）" not in mail.content
-        assert "contacts-upsert" in mail.content
+        assert "CONTACTS.md" in mail.content
+        assert "file-read" in mail.content
         assert "member-list" in mail.content
         assert "adam@tlon.internal" in mail.content
 

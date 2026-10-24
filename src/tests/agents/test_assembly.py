@@ -121,9 +121,7 @@ class TestFileValuesTakeEffect:
         assert built.api_base == "https://proxy.example/v1"
 
 
-# The device-dependent tools: the bash pair is L2-only, the filesystem
-# five are also registered at L1 (文件层, issue #40); all seven are
-# withheld from members declaring docker.level: L0 (issue #26).
+# Shell execution is L2-only; every level has its own workspace file tools.
 BASH_TOOLS = frozenset({"shell-run", "shell-check"})
 FILE_TOOLS = frozenset(
     {
@@ -156,10 +154,7 @@ def tlon_paths(tmp_path: Path) -> TlonPaths:
 
 
 class TestExecutionLevelAssembly:
-    """docker.level at assembly (issue #26, L1 in #40): L0 = 无执行装置 —
-    no DockerRuntime is constructed and none of the seven device-dependent
-    tools is registered; L1 = 文件层 — runtime exists, the filesystem five
-    are registered, the bash pair is not; L2 = the status-quo full path."""
+    """Workspace files are universal; execution devices remain level-bound."""
 
     async def _assemble(self, tlon_paths: TlonPaths, level: str) -> Any:
         config = AgentConfig(
@@ -175,7 +170,7 @@ class TestExecutionLevelAssembly:
             tlon_paths=tlon_paths,
         )
 
-    async def test_l0_keeps_reference_reads_without_runtime_or_device_writes(
+    async def test_l0_has_workspace_files_without_runtime(
         self, tlon_paths: TlonPaths, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         runtime_ctor = MagicMock(side_effect=AssertionError("L0 must not construct DockerRuntime"))
@@ -187,7 +182,7 @@ class TestExecutionLevelAssembly:
         assert caps.docker_runtime is None
         assert caps.memory.write_gate is caps.write_gate
         names = set(caps.tool_executor.list_tools()) | {op.name for op in caps.operations}
-        assert names & DEVICE_TOOLS == {"file-read", "file-list", "file-search"}
+        assert names & DEVICE_TOOLS == FILE_TOOLS
         # 其余工具照常装配
         assert {"time-now", "memory-remember"} <= names
         # Mail tools bind later in MemberRuntime, with its actual mailbox/PostOffice.
@@ -205,7 +200,7 @@ class TestExecutionLevelAssembly:
 
         caps = await self._assemble(tlon_paths, "L1")
 
-        # 文件 I/O 需要文件柜容器，L1 照常装配 runtime（经审计包装）
+        # L1 保留 workspace 外文件柜装配；自己的 workspace 不依赖它。
         assert caps.docker_runtime is not None
         names = set(caps.tool_executor.list_tools()) | {op.name for op in caps.operations}
         assert names >= FILE_TOOLS
@@ -284,3 +279,30 @@ async def test_real_assembly_evolution_writes_use_injected_paths(
     assert list_staging_prototypes(other_paths) == []
     assert not other_paths.prototypes_staging_dir().exists()
     assert not paths.prototypes_dir().exists()
+
+
+@pytest.mark.parametrize("level", ["L0", "L1", "L2"])
+async def test_workspace_operations_survive_unavailable_docker(
+    tlon_paths: TlonPaths, monkeypatch: pytest.MonkeyPatch, level: str
+) -> None:
+    from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+
+    constructor = MagicMock(side_effect=RuntimeError("Docker deliberately unavailable"))
+    monkeypatch.setattr("tlon.agents.assembly.DockerRuntime", constructor)
+    caps = await TestExecutionLevelAssembly()._assemble(tlon_paths, level)
+    member_id = f"member-{level.lower()}"
+    assert caps.docker_runtime is None
+    executor = OperationExecutor(
+        OperationRegistry(caps.operations), CallContext(member_id, "workspace", "call")
+    )
+    await executor.call("file-write", {"file_path": "CONTACTS.md", "content": "original"})
+    await executor.call(
+        "file-edit", {"file_path": "CONTACTS.md", "old_string": "original", "new_string": "current"}
+    )
+    result = await executor.call("file-read", {"file_path": "CONTACTS.md"})
+    assert result["content"] == "current"
+    assert tlon_paths.agent_contacts_file(member_id).read_text() == "current"
+    assert (await executor.call("file-list", {}))["entries"][0]["name"] == "CONTACTS.md"
+    assert (await executor.call("file-search", {"pattern": "current"}))["count"] == 1
+    if level == "L0":
+        constructor.assert_not_called()

@@ -1,1 +1,1 @@
-"""Member-owned identity and contact services."""
+"""Member-owned persona service."""

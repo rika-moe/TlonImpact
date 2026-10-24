@@ -564,11 +564,10 @@ def render_tool_registry() -> str:
             )
     count = len(rows)
     domains = operation_domains()
-    device_count = len(domains["filesystem"]) + len(domains["shell"])
     header = (
         f"满配成员注册 {count} 个工具（由共享 Operation 按域列出；"
-        f"L0 不注册 {device_count} 个装置操作，"
-        f"L1 注册 {len(domains['filesystem'])} 个文件操作，L2 再增加 "
+        f"L0/L1/L2 均注册 {len(domains['filesystem'])} 个文件操作，"
+        "自己的 workspace 无需装置；L2 再增加 "
         f"{len(domains['shell'])} 个 Shell 操作；时间不依赖装置）：{GENERATED_NOTE}\n\n"
         "| # | 工具名 | 实现 | 域 |\n"
         "|---|---|---|---|"

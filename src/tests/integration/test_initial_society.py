@@ -47,7 +47,7 @@ async def test_initial_society_served_with_local_contacts_and_preserved_on_resta
             config_dir = TlonPaths(home_a).agent_config_dir(member_id)
             for filename in ("IDENTITY.md", "SOUL.md", "RULES.md"):
                 assert re.search(r"[\u4e00-\u9fff]", (config_dir / filename).read_text())
-            contacts = (config_dir / "CONTACTS.md").read_text()
+            contacts = TlonPaths(home_a).agent_contacts_file(member_id).read_text()
             peers = re.findall(r"(m-[0-9a-f]+)@tlon\.internal", contacts)
             assert 2 <= len(peers) <= 4
             assert len(peers) == len(set(peers))
@@ -68,7 +68,7 @@ async def test_initial_society_served_with_local_contacts_and_preserved_on_resta
         assert len(ids_b) == 30
         assert ids_a.isdisjoint(ids_b)
         for member_id in ids_b:
-            contacts = (TlonPaths(home_b).agent_config_dir(member_id) / "CONTACTS.md").read_text()
+            contacts = TlonPaths(home_b).agent_contacts_file(member_id).read_text()
             assert set(re.findall(r"(m-[0-9a-f]+)@tlon\.internal", contacts)) <= ids_b
 
     async with _server(home_a) as (url, _):

@@ -567,3 +567,16 @@ async def test_program_maintenance_source_failure_is_backed_off(tmp_path: Path) 
         assert "source unavailable" in (member.get_diagnostic_error() or "")
     finally:
         member._services = None
+
+
+async def test_program_prompt_never_embeds_mutable_contact_book(tmp_path: Path) -> None:
+    member = _member(tmp_path)
+    paths = TlonPaths(home=tmp_path)
+    contacts = paths.agent_contacts_file("member")
+    contacts.parent.mkdir(parents=True, exist_ok=True)
+    contacts.write_text("private relationship before", encoding="utf-8")
+    before = await member._program_system_prompt()
+    contacts.write_text("private relationship after", encoding="utf-8")
+    assert await member._program_system_prompt() == before
+    assert "private relationship" not in before
+    assert "CONTACTS.md" in before

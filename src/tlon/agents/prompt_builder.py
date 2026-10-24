@@ -54,6 +54,8 @@ _PROTOCOL = """## 交互协议
      它是写给自己的锚，不是贴出去的名片
    - 系统不权威认证成员的职务、组织、能力或可信程度；你对其他成员的认识保存在自己的
      联系簿里，主观、可错，靠通信检验与更正。投递地址是机制事实，与社会身份判断分开
+   - 你的私人联系簿位于当前工作目录下的 `CONTACTS.md`。需要了解既有关系时用 file-read 读取；
+     有新认识时用 file-edit 或 file-write 更新；文件不存在时可自行创建。按任务需要读取，不必每轮读取。
    - member-list 工具提供统一成员寻址黄页（公开 id / 名字 / 地址），
      覆盖已登记且可投递的成员，休眠或离线不影响寻址。黄页不区分人类与 agent，
      也不证明任何职务、组织、能力或可信等级
@@ -81,12 +83,11 @@ class SystemPromptBuilder:
 
     Reads IDENTITY.md, SOUL.md, RULES.md from the agent's ``config/``
     subdirectory (``~/.tlon/{id}/config/``) and composes them with the
-    agent's own contact book (ADR 0024) and framework protocol rules.
+    framework protocol rules.
 
-    ``include_persona`` gates the identity/contacts/behavior (persona
+    ``include_persona`` gates the identity/behavior (persona
     file) sections; ``include_protocol`` gates the framework protocol
-    section. Both default to True, which reproduces the historical full
-    prompt.
+    section. Both default to True.
 
     Usage:
         context = AgentPromptContext(...)
@@ -124,27 +125,6 @@ class SystemPromptBuilder:
             parts.append(soul)
         return "\n".join(parts)
 
-    def build_contacts(self) -> str:
-        if not self.context.contacts:
-            return (
-                "## 联系簿\n\n"
-                "你的联系簿还是空的——你还不认识任何人。通信即结识："
-                "往来中用 contacts-upsert 把对一个人的认识记下来（名字 / 地址 / 我对 ta 的描述）。"
-            )
-        body = self.context.contacts
-        # The book file carries its own top-level title (the tool's
-        # default header); the section heading supersedes it — a member's
-        # custom preamble title survives.
-        lines = body.splitlines()
-        if lines and lines[0].lstrip("#").strip() == "联系簿":
-            body = "\n".join(lines[1:]).strip()
-        return (
-            "## 联系簿\n\n"
-            "以下是你自己写的联系人记录——主观的、可错的认识，靠通信检验与更正；"
-            "想了解新的人，就通信，然后用 contacts-upsert 记录。\n\n"
-            f"{body}"
-        )
-
     def build_behavior(self) -> str | None:
         rules = self._read("RULES.md")
         if not rules:
@@ -159,7 +139,6 @@ class SystemPromptBuilder:
         if self.include_persona:
             sections += [
                 self.build_identity(),
-                self.build_contacts(),
                 self.build_behavior(),
             ]
         if self.include_protocol:

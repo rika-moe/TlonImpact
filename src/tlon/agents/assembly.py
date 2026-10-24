@@ -200,8 +200,8 @@ async def assemble_member_services(
     # MemberServices.docker_runtime both hold the wrapped instance;
     # close() passes through, so MemberRuntime's shutdown path is unchanged.
     # 能力阶梯（issue #26/#40）：L0 无执行装置——不创建 DockerRuntime，
-    # 下方也不注册装置工具；L1（文件层）与 L2 都创建 runtime——文件 I/O
-    # 需要文件柜容器。L1 的零代码执行是结构性的：bash 工具不注册，
+    # 自己的 workspace 文件操作不依赖装置；L1/L2 仍可装配外部文件柜。
+    # L1 的零代码执行是结构性的：bash 工具不注册，
     # run() 在非 L2 由装置层直接拒绝。
     docker_runtime: ExecutionDevice | None = None
     if config.docker.level == "L0":
@@ -252,19 +252,17 @@ async def assemble_member_services(
         member_context_operation(context_reader, tool_executor.list_tools),
     ]
     shell_service = None
+    workspace = tlon_paths.agent_workspace_dir(config.id)
+    workspace.mkdir(parents=True, exist_ok=True)
     filesystem = MemberFilesystemService(
         config.docker,
         docker_runtime,
         [*config.tool.allowed_paths, AGENT_HOME_CONTAINER_PATH],
         config.tool.allowed_paths,
+        workspace=workspace,
     )
     filesystem_operations = make_filesystem_operations(filesystem)
-    operations.extend(
-        operation
-        for operation in filesystem_operations
-        if config.docker.level != "L0"
-        or operation.name in {"file-read", "file-list", "file-search"}
-    )
+    operations.extend(filesystem_operations)
     if config.docker.level == "L2":
         shell_service = MemberShellService(config.docker, docker_runtime)
         operations.extend(make_shell_operations(shell_service))

@@ -31,6 +31,11 @@ def test_members_have_model_persona_and_local_contacts(tmp_path: Path) -> None:
         assert ":version 2" in paths.agent_behavior_file(agent_id).read_text("utf-8")
         for kind in ("IDENTITY", "SOUL", "RULES"):
             assert (paths.agent_config_dir(agent_id) / f"{kind}.md").read_text("utf-8")
+        assert (
+            paths.agent_contacts_file(agent_id)
+            == paths.agent_workspace_dir(agent_id) / "CONTACTS.md"
+        )
+        assert not (paths.agent_config_dir(agent_id) / "CONTACTS.md").exists()
         contacts = paths.agent_contacts_file(agent_id).read_text("utf-8")
         addresses = [
             line.removeprefix("- 地址：")

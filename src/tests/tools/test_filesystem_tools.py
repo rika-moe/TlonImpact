@@ -2,6 +2,7 @@
 SearchFiles) via the ExecutionDevice interface."""
 
 import io
+import posixpath
 import tarfile
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
@@ -28,8 +29,21 @@ class _Projection:
         self._allowed_paths = ["/workspace"]
 
     async def execute_context(self, arguments):
+        # This suite exercises external device paths; own-workspace access is
+        # covered against real host files in test_workspace_files.py.
+        original_root = self._docker_config.working_dir
+        config = DockerRuntimeConfig(
+            level=self._docker_config.level if isinstance(self._docker_config.level, str) else "L1",
+            working_dir="/member-home",
+        )
+        arguments = dict(arguments)
+        for key in ("file_path", "path"):
+            if key in arguments:
+                arguments[key] = posixpath.join(original_root, arguments[key])
+        if self.name in ("file-list", "file-search") and "path" not in arguments:
+            arguments["path"] = original_root
         service = MemberFilesystemService(
-            self._docker_config, self._docker_runtime, self._allowed_paths, self._allowed_paths
+            config, self._docker_runtime, self._allowed_paths, self._allowed_paths
         )
         operation = next(op for op in make_filesystem_operations(service) if op.name == self.name)
         executor = OperationExecutor(
@@ -99,7 +113,7 @@ class TestReadFileTool:
         result = await read_tool.execute_context({"file_path": "test.txt"})
 
         assert result.success is True
-        assert result.data["file_path"] == "test.txt"
+        assert result.data["file_path"] == "/workspace/test.txt"
         assert result.data["total_lines"] == 3
         assert result.data["read_lines"] == 3
         assert "Line 1" in result.data["content"]
@@ -176,7 +190,7 @@ class TestWriteFileTool:
         )
 
         assert result.success is True
-        assert result.data["file_path"] == "new_file.txt"
+        assert result.data["file_path"] == "/workspace/new_file.txt"
         assert result.data["bytes_written"] == 13
         assert result.data["existed_before"] is False
 
