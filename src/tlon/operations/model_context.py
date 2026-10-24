@@ -40,7 +40,7 @@ def context_operation(service: ModelService | None, input_schema: dict[str, Any]
                 model=config["model_name"],
                 text=json.dumps(selected, ensure_ascii=False, separators=(",", ":")),
             )
-        output = min(config["max_tokens"], arguments["max_tokens"])
+        output = min(config["max_tokens"], arguments.get("max_tokens", config["max_tokens"]))
         return {
             "input_tokens": tokens,
             "context_window": window,

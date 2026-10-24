@@ -29,6 +29,8 @@ def run(entry: str, arguments: str, builtins: dict[str, Builtin] | None = None) 
 
 CALLS = '[{:id "a" :name "one" :arguments {:value 1}} {:id "b" :name "two" :arguments {}}]'
 RESPONSE = '{:content nil :reasoning_content "private reasoning" :tool_calls ' + CALLS + "}"
+FINISH = '{:content nil :tool_calls [{:id "stop" :name "finish-turn" :arguments {}}]}'
+FINISHED = '[{:id "stop" :name "finish-turn" :success true :data {:finished true} :error nil}]'
 RESULTS = '[{:id "a" :name "one" :success true :data 1 :error nil} {:id "b" :name "two" :success false :data nil :error {:message "rejected"}}]'
 
 
@@ -70,11 +72,11 @@ def test_conversation_pairs_data_before_next_request() -> None:
 
     def model(env: dict[str, Any], request: Any) -> Any:
         requests.append(request)
-        return loads(RESPONSE if len(requests) == 1 else '{:content "draft" :tool_calls []}')
+        return loads(RESPONSE if len(requests) == 1 else FINISH)
 
     def execute(env: dict[str, Any], request: Any) -> Any:
         executions.append(request)
-        return loads(RESULTS)
+        return loads(RESULTS if len(executions) == 1 else FINISHED)
 
     registry = program_builtins()
     registry.update(
@@ -85,13 +87,13 @@ def test_conversation_pairs_data_before_next_request() -> None:
         '{:messages [{:role "user" :content "task"}] :tools ["one" "two"] :max_tokens 128 :max_rounds 3}',
         registry,
     )
-    assert result[Keyword("content")] == "draft"
-    assert result[Keyword("reason")] == "complete"
-    assert len(requests) == 2 and len(executions) == 1
+    assert result[Keyword("content")] is None
+    assert result[Keyword("reason")] == "finish-turn"
+    assert len(requests) == 2 and len(executions) == 2
     assert len(requests[1][Keyword("messages")]) == 4
 
 
-def test_local_finish_does_not_dispatch_host_control() -> None:
+def test_finish_executes_tool_and_preserves_paired_history() -> None:
     registry = program_builtins()
     registry["model-call"] = Builtin(
         lambda env, request: loads(
@@ -99,9 +101,7 @@ def test_local_finish_does_not_dispatch_host_control() -> None:
         ),
         pure=False,
     )
-    registry["tool-execute"] = Builtin(
-        lambda env, request: pytest.fail("control dispatch"), pure=False
-    )
+    registry["tool-execute"] = Builtin(lambda env, request: loads(FINISHED), pure=False)
     result = run(
         "tlon.conversation/run",
         '{:messages [] :tools ["finish-turn"] :max_tokens 128 :max_rounds 2}',
@@ -109,7 +109,7 @@ def test_local_finish_does_not_dispatch_host_control() -> None:
     )
     assert result[Keyword("reason")] == "finish-turn"
     assert len(result[Keyword("messages")]) == 2
-    with pytest.raises(EvalError, match="mix"):
+    with pytest.raises(EvalError, match="empty standalone"):
         registry["model-call"] = Builtin(
             lambda env, request: loads(
                 '{:content nil :tool_calls [{:id "a" :name "finish-turn" :arguments {}} {:id "b" :name "one" :arguments {}}]}'
@@ -123,18 +123,16 @@ def test_local_finish_does_not_dispatch_host_control() -> None:
         )
 
 
-def test_round_limit_returns_complete_paired_history() -> None:
+def test_round_limit_fails_before_successful_finish() -> None:
     registry = program_builtins()
     registry["model-call"] = Builtin(lambda env, request: loads(RESPONSE), pure=False)
     registry["tool-execute"] = Builtin(lambda env, request: loads(RESULTS), pure=False)
-    result = run(
-        "tlon.conversation/run",
-        '{:messages [] :tools ["one" "two"] :max_tokens 128 :max_rounds 1}',
-        registry,
-    )
-    assert result[Keyword("reason")] == "round-limit"
-    assert result[Keyword("content")] is None
-    assert len(result[Keyword("messages")]) == 3
+    with pytest.raises(EvalError, match="round-limit reached before finish-turn"):
+        run(
+            "tlon.conversation/run",
+            '{:messages [] :tools ["one" "two"] :max_tokens 128 :max_rounds 1}',
+            registry,
+        )
     with pytest.raises(EvalError, match="positive integer"):
         run("tlon.conversation/run", "{:messages [] :max_tokens 128 :max_rounds 0}", registry)
 
@@ -168,7 +166,7 @@ def test_finish_turn_cannot_hide_nonempty_parameters() -> None:
     registry["tool-execute"] = Builtin(
         lambda env, request: pytest.fail("control dispatch"), pure=False
     )
-    with pytest.raises(EvalError, match="arguments must be empty"):
+    with pytest.raises(EvalError, match="empty standalone"):
         run(
             "tlon.conversation/run",
             '{:messages [] :tools ["finish-turn"] :max_tokens 128 :max_rounds 2}',

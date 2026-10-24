@@ -79,9 +79,9 @@ ProgramStore 的 entry_programs 保存结果与调度意图，运行完成与意
 
 `user` 和 `assistant` 构造包含 role/content 的消息 map，`append` 返回追加一个消息的新列表；这些函数没有宿主效果。`tlon.*` 是保留命名空间，作者不能覆盖。宿主标准源码只在链接与运行冻结时加入，不写进作者的 modules、管理 API 返回值或审批作者源码。
 
-`model-call` 必填 `messages` 与正整数 `max_tokens`；`tools` 是工具名称列表，省略等同 `[]`。消息 role 可用 user、assistant、tool，作者不能提供 system 消息或任意工具 schema。工具目录由成员装配提供；模型只生成工具建议，工具执行由显式 tool-execute 编排端口负责。
+`model-call` 必填 `messages`，可选正整数 `max_tokens`（省略时使用冻结成员配置的单次输出上限 `llm.max_tokens`）；`tools` 是工具名称列表，省略等同 `[]`。消息 role 可用 user、assistant、tool，作者不能提供 system 消息或任意工具 schema。工具目录由成员装配提供；模型只生成工具建议，工具执行由显式 tool-execute 编排端口负责。
 
-返回值含 `content`（工具专用响应可为 nil）、`tool_calls`、`finish_reason`、`usage`、`reasoning_content`。每条 tool_call 是 `{:id "..." :name "..." :arguments {...}}`；usage 保留 provider 的 snake_case 键。不要将 nil content 当成模型调用失败。完整示例见 [生成—核验—修订回信程序](../../src/tlon/resources/examples/reviewed-reply/README.md)，三个普通函数共享同一根预算。
+返回值含 `content`（工具专用响应可为 nil）、`tool_calls`、`finish_reason`、`usage`、`reasoning_content`。每条 tool_call 是 `{:id "..." :name "..." :arguments {...}}`；usage 保留 provider 的 snake_case 键。不要将 nil content 当成模型调用失败。完整示例见 [生成—核验—修订回信程序](../../src/tlon/resources/examples/reviewed-reply/README.md)，三个普通函数共享同一根预算（成员 `program_token_budget`，默认 100000，与单次输出上限分开）。
 
 v2 受理时原子冻结宿主系统提示词、模型配置及工具定义；恢复沿用冻结配置。新模型请求校验当前工具目录，已提交结果允许按原工具契约重放。如果模型响应与额度已提交，但外层 Operation 回执尚未提交，恢复从同一 ProgramStore 模型记录补回执，不调用 provider、不重复扣额。已派发但结果未提交仍是 unknown，不能自动重发。output 模式按获准输出上限预留且不退款，total 模式沿用实际 usage 结算和缺失用量时的保守预留。
 
@@ -92,11 +92,11 @@ v2 受理时原子冻结宿主系统提示词、模型配置及工具定义；�
 ```clojure
 (ns work.dialogue (:require [tlon.conversation :as conversation]) (:export ask))
 (defn ask [task]
-  (conversation/run {:messages [{:role "user" :content task}]
-                     :tools ["time-now"] :max_tokens 128 :max_rounds 4}))
+  (conversation/run {:messages [{:role "user" :content (str task " Use tools for actions; call finish-turn alone when done.")}]
+                     :tools ["time-now" "finish-turn"] :max_rounds 4}))
 ```
 
-对话函数返回局部结果，调用方可继续核验、修订或发送邮件。它不创建隐式 session，也不重置根预算、取消信号或语言 fuel。`max_rounds` 是程序的轮数上限；模型无工具建议时返回，而不是终止整个事件入口。
+对话函数返回局部结果，调用方可继续核验、修订或发送邮件。它不创建隐式 session，也不重置根预算、取消信号或语言 fuel。`max_rounds` 是程序的轮数上限；行动循环必须成功执行独立且空参数的 `finish-turn` 才返回，而不是终止整个事件入口。纯文本、无工具调用、截断或达到轮数上限明确失败，不自动发信。发信必须使用 `mail-send` / `mail-forward`，成功投信不结束循环；规划、自评和压缩可以经 `context/complete` 返回文本。
 
 需要自定义控制顺序时，可直接组合 model-call 与编排端口：
 

@@ -88,3 +88,5 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 [ADR 0046：以模块函数统一成员工作程序](0046-programmable-workflows.md)：已实施；module、完整模型/工具交互、单一恢复权威与 stage 退役，见[目标设计](../design/programmable-workflows.md)。
 
 [ADR 0047：私人资料通过普通 workspace 文件访问](0047-workspace-contact-files.md)：CONTACTS.md 按需读取，三个等级均可直接操作自己的 workspace，删除联系人专用工具与系统提示全文注入。
+
+[ADR 0048：行动循环显式工具结束与独立模型预算](0048-action-loop-and-model-budgets.md)：发信与结束必须使用工具，内部文本不得触发隐式交付；移除原型 512 限制，单次输出上限与程序总预算分离。

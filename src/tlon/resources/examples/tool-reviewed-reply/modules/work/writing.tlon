@@ -1,22 +1,25 @@
 (ns work.writing
-  (:require [tlon.messages :as messages] [tlon.conversation :as conversation])
+  (:require [tlon.messages :as messages] [tlon.conversation :as conversation] [tlon.context :as context])
   (:export generate review revise))
 
 (defn generate [task]
-  (let [draft (conversation/run
-                {:messages [(messages/user (str "First call time-now to obtain the current time, then write a draft answering: " task))]
-                 :tools ["time-now"] :max_tokens 128 :max_rounds 4})]
-    (assert (not (= (get draft :reason) "round-limit")) "draft conversation reached its round limit")
+  (let [evidence (conversation/run
+                   {:messages [(messages/user (str "Call time-now to obtain the current time for this task, then call finish-turn alone: " task))]
+                    :tools ["time-now" "finish-turn"] :max_rounds 4})
+        draft (context/complete
+                {:messages (messages/append (get evidence :messages)
+                             (messages/user (str "Using this committed evidence, write a draft answering: " task)))
+                 :tools []})]
     (get draft :content)))
 
 (defn review [task draft]
-  (get (model-call {:messages [(messages/user (str "Review this draft against the task: " task))
-                              (messages/assistant draft)
-                              (messages/user "Identify unsupported claims and missing information.")]
-                    :tools [] :max_tokens 128}) :content))
+  (get (context/complete {:messages [(messages/user (str "Review this draft against the task: " task))
+                                    (messages/assistant draft)
+                                    (messages/user "Identify unsupported claims and missing information.")]
+                          :tools []}) :content))
 
 (defn revise [task draft review]
-  (get (model-call {:messages [(messages/user (str "Task: " task))
-                              (messages/assistant draft)
-                              (messages/user (str "Revise using this review: " review))]
-                    :tools [] :max_tokens 128}) :content))
+  (get (context/complete {:messages [(messages/user (str "Task: " task))
+                                    (messages/assistant draft)
+                                    (messages/user (str "Revise using this review: " review))]
+                          :tools []}) :content))

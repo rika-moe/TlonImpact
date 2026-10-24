@@ -1,7 +1,7 @@
 # 可组合工具核验回信
 
-`work.writing/generate` 调用普通 `tlon.conversation/run`：模型先调用 `time-now`，看到对应工具结果后返回草稿。子对话返回后，外层仍执行核验、修订和发送邮件。这两个作者模块可以被其他普通函数调用，不注册为 Tool。
+`work.writing/generate` 调用普通 `tlon.conversation/run`：模型先调用 `time-now`，看到对应工具结果后单独调用 `finish-turn`。内部草稿、核验、修订使用 `tlon.context/complete`，允许返回文本，但拒绝截断输出。这两个作者模块可以被其他普通函数调用，不注册为 Tool。
 
-`max_rounds` 限制子对话的模型请求次数，所有请求、工具及外层函数共享入口的 fuel、预算、取消与写 gate。对话返回 `content/messages/reason`；`reason` 是 `complete`、`finish-turn` 或 `round-limit`。`finish-turn` 仅在显式提供该工具名且模型单独选择它时局部返回；混合控制请求拒绝，绝不调用宿主调度控制。
+外层将修订文本交给行动循环，由模型显式调用 `mail-send`，再单独成功调用 `finish-turn`。发信不结束循环，纯文本不能发送邮件或结束 turn；仅成功结束后标读原邮件。模型输出上限使用成员配置，与入口总预算独立。
 
-工具错误仍追加一条与原 ID 配对的 tool 消息；基础设施中断则由宿主阻塞，不交给模型重试。示例中的核验只是模型审阅，不代表事实已得到独立证明。
+`max_rounds` 限制子对话的模型请求次数，所有请求、工具及外层函数共享入口的 fuel、预算、取消与写 gate。对话仅在成功执行 `finish-turn` 后返回；轮数耗尽、无工具调用、截断或结束工具失败均报错。工具错误保留对应 ID 的 tool 消息；基础设施中断由宿主阻塞。示例中的核验只是模型审阅，不代表事实已得到独立证明。

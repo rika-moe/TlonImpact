@@ -54,11 +54,11 @@ Behavior 目标示意为 `{:handlers {:mail-delivered work.reply/handle-mail}}`�
 
 ### P2 当前实现
 
-`model-call` 必填 `messages`、`max_tokens`，可选 `tools`（工具名列表，默认空）与 `cache_prefix_len`。返回 content（可为 null）、规范化的 `{id,name,arguments}` tool_calls、finish_reason、usage 和 reasoning_content。输入拒绝旧 prompt 字段、system 消息及任意工具 schema。所有普通程序使用 ModelService；P5 已删除旧 StageServices 与 stage 引擎。
+`model-call` 必填 `messages`，可选 `max_tokens`（省略时使用冻结成员的 `llm.max_tokens` 单次上限）、`tools`（工具名列表，默认空）与 `cache_prefix_len`。返回 content（可为 null）、规范化的 `{id,name,arguments}` tool_calls、finish_reason、usage 和 reasoning_content。输入拒绝旧 prompt 字段、system 消息及任意工具 schema。所有普通程序使用 ModelService；P5 已删除旧 StageServices 与 stage 引擎。
 
 宿主提供纯模块 `tlon.messages`（user/assistant/append），保留 tlon 命名空间；链接时合并标准源码，运行快照包含完整标准源码，作者模块与审批 API 保持原作者内容。v2 受理事务同时冻结 host（系统词、工具定义）与 config（有效非秘密模型配置，包括运行时重试/超时参数）；同一根运行复用它们。模型的工具选择只影响本次声明，不执行工具。
 
-Operation 的恢复 hook 只读取同根、同稳定调用路径的已提交模型结果，核对有效消息/系统词/工具/max_tokens/缓存前缀，再补外层回执。未知模型请求保持阻塞。新请求还校验当前工具契约；历史已提交结果不要求工具仍可执行。output 按获准输出额度计量，total 沿用现有结算，不另设账本。
+Operation 的恢复 hook 只读取同根、同稳定调用路径的已提交模型结果，核对有效消息/系统词/工具/max_tokens/缓存前缀，再补外层回执。未知模型请求保持阻塞。新请求还校验当前工具契约；历史已提交结果不要求工具仍可执行。程序根额度使用成员 program_token_budget（默认 100000），与单次 llm.max_tokens 分离；output 按获准输出额度计量，total 沿用现有结算，不另设账本。
 
 ## 4. 工具分派和错误
 
@@ -74,7 +74,7 @@ Operation 的恢复 hook 只读取同根、同稳定调用路径的已提交模�
 
 `tool-execute` 是 DSLAdapter 的编排端口，接受 tools 名称列表和规范化 tool_calls，返回按输入顺序排列的 `{id,name,success,data,error}`。批次不写父 intent；每个叶子都经 OperationExecutor 独立持久化，身份绑定完整批次与位置。先还原历史，再检查新效果的当前目录；撤权/定义变化阻塞，未知结果不能作为模型重试建议。
 
-`tlon.conversation/run` 是普通模块函数，参数含 messages/tools/max_tokens/max_rounds。max_rounds 为正整数，局部返回 reason 为 complete、finish-turn 或 round-limit。`tlon.messages/response` 与 exchange 转换和校验完整消息协议。仅显式依赖时装配 conversation；无需模型的模块继续独立运行。模型工具执行只接受宿主叶子，模块函数不注册为 Tool。
+`tlon.conversation/run` 是普通模块函数，参数含 messages/tools/max_rounds 及可选 max_tokens。max_rounds 为正整数；行动循环要求工具调用，必须成功执行独立且空参数的 finish-turn 才返回局部 reason=finish-turn。达到轮数、截断或缺失工具调用明确失败，纯文本不自动结束或发信。short-turn 最多三轮，允许发信后再显式结束。内部规划、自评和压缩通过 context/complete 返回文本，截断同样失败。`tlon.messages/response` 与 exchange 转换和校验完整消息协议。仅显式依赖时装配 conversation；无需模型的模块继续独立运行。模型工具执行只接受宿主叶子，模块函数不注册为 Tool。
 
 ### P4a 当前实现
 

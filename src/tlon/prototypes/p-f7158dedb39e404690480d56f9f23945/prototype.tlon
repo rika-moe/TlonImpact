@@ -1,1 +1,1 @@
-{:name :p-f7158dedb39e404690480d56f9f23945 :display-name "计划后执行" :description "L2 执行能力；首轮先制定最多 5 步计划，再思考与执行，交卷前自评；最多 10 轮、每次模型输出最多 512 token，后台维护按成员配置反思。适合工程、研究和项目推进。" :trusted true :program-digest "b876f374c4bba1ec3325cb48f8dea1861727a0b6ba8478b67901f5a8bbba998e"}
+{:name :p-f7158dedb39e404690480d56f9f23945 :display-name "计划后执行" :description "L2 执行能力；首轮先制定最多 5 步计划，再思考与执行，交卷前自评；最多 10 轮，后台维护按成员配置反思。适合工程、研究和项目推进。" :trusted true :program-digest "06a7b48e38c74acb8f95fcb69c0d34d379cc26901900aca1064bf080308b7cb9"}

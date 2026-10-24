@@ -1175,7 +1175,7 @@ Operation 单一契约；输入与输出字段保留 snake_case。（本区块�
 |---|---|---|---|
 | `messages` | array[object] | 是 | minItems=1 |
 | `tools` | array[string] | 否 | uniqueItems=True |
-| `max_tokens` | integer | 是 | minimum=1 |
+| `max_tokens` | integer | 否 | minimum=1 |
 | `cache_prefix_len` | integer | 否 | minimum=0 |
 
 输出：
@@ -1198,7 +1198,7 @@ Estimate the complete frozen model request size and window; does not call the pr
 |---|---|---|---|
 | `messages` | array[object] | 是 | minItems=1 |
 | `tools` | array[string] | 否 | uniqueItems=True |
-| `max_tokens` | integer | 是 | minimum=1 |
+| `max_tokens` | integer | 否 | minimum=1 |
 | `cache_prefix_len` | integer | 否 | minimum=0 |
 
 输出：

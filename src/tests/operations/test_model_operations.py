@@ -140,9 +140,11 @@ async def test_tool_only_response_preserves_structure_without_execution() -> Non
 
 
 @pytest.mark.parametrize("measure", ["output", "total"])
+@pytest.mark.parametrize("output_cap", [None, 8])
 async def test_committed_model_restores_missing_outer_receipt_before_cancel_or_deadline(
     tmp_path: Path,
     measure: str,
+    output_cap: int | None,
 ) -> None:
     import asyncio
     import time
@@ -172,7 +174,9 @@ async def test_committed_model_restores_missing_outer_receipt_before_cancel_or_d
         raise asyncio.CancelledError()
 
     executor._commit = lose_outer
-    args = {"messages": [{"role": "user", "content": "x"}], "max_tokens": 8}
+    args = {"messages": [{"role": "user", "content": "x"}]}
+    if output_cap is not None:
+        args["max_tokens"] = output_cap
     with pytest.raises(asyncio.CancelledError):
         await executor.call("model-call", args)
     executor._commit = original
@@ -337,3 +341,39 @@ async def test_recorded_rejection_restores_missing_outer_receipt_without_dispatc
     assert store.budget_usage("r")["pending_count"] == 0
     client._chat_with_retries.assert_awaited_once()
     system.assert_awaited_once()
+
+
+@pytest.mark.parametrize("output_cap,expected", [(None, 12), (5, 5), (50, 12)])
+async def test_optional_output_cap_uses_frozen_member_limit_and_shared_program_budget(
+    tmp_path: Path, output_cap: int | None, expected: int
+) -> None:
+    from tlon.agents.program_store import ProgramStore
+    from tlon.base.execution import ExecutionScope
+
+    store = ProgramStore(tmp_path / "budget.sqlite", build_id="test")
+    client = LLMClient(
+        LLMConfig(model_name="openai/test", max_tokens=12),
+        agent_id="a",
+        tlon_paths=TlonPaths(home=tmp_path),
+    )
+    provider = AsyncMock(return_value=LLMResponse("done", usage={"completion_tokens": 2}))
+    client._chat_with_retries = provider
+    scope = ExecutionScope(store, "r", 100, "output")
+    executor = OperationExecutor(
+        OperationRegistry(make_model_operations(client, AsyncMock(return_value="persona"))),
+        CallContext("a", "r", "c", execution=scope),
+        store,
+    )
+    arguments = {"messages": [{"role": "user", "content": "task"}]}
+    if output_cap is not None:
+        arguments["max_tokens"] = output_cap
+    await executor.call("model-call", arguments)
+    assert provider.await_args.args[4] == expected
+    client.config.max_tokens = 1
+    # A different invocation consumes the same program allowance but keeps
+    # the model configuration frozen when the entry first sampled.
+    await executor.call("model-call", arguments, CallContext("a", "r", "next", execution=scope))
+    assert provider.await_args.args[4] == expected
+    assert provider.await_count == 2
+    # Output accounting conservatively charges each reserved allowance.
+    assert store.budget_usage("r")["used"] == expected * 2

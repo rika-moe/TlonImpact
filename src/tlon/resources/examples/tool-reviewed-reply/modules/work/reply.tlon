@@ -1,11 +1,17 @@
 (ns work.reply
-  (:require [work.writing :as writing])
+  (:require [work.writing :as writing] [tlon.messages :as messages] [tlon.conversation :as conversation])
   (:export handle))
 
 (defn handle [event]
-  (let [task (get (get event :mail) :content)
+  (let [mail (get event :mail)
+        task (get mail :content)
         draft (writing/generate task)
         review (writing/review task draft)
-        answer (writing/revise task draft review)]
-    (mail-send {:to [(get event :sender)] :content answer})
-    {:result answer}))
+        answer (writing/revise task draft review)
+        result (conversation/run
+                 {:messages [(messages/user (str "Send this reviewed answer to " (get event :sender)
+                               " using mail-send with in_reply_to " (get mail :id)
+                               ", then call finish-turn alone. Answer: " answer))]
+                  :tools ["mail-send" "finish-turn"] :max_rounds 4})
+        read (mail-mark-read {:mail_ids [(get mail :id)]})]
+    {:result result}))

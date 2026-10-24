@@ -151,7 +151,7 @@ class LessonsDistiller(Component, Device):
         batch = hashlib.sha256(source.encode()).hexdigest()
         store = ProgramStore(self._paths.agent_program_database_file(agent_id))
         config = yaml_load_file(self._paths.agent_config_file(agent_id))
-        limit = config.llm.max_tokens if config is not None and config.llm is not None else 4096
+        limit = config.program_token_budget if config is not None else 100000
         scope = ExecutionScope(store, f"maintenance:lessons:{batch}", limit, "output")
         with bind_execution(scope):
             response = await client.chat(

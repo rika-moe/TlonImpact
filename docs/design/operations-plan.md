@@ -1,6 +1,6 @@
 # 统一操作：分阶段实施计划
 
-> 后续修订：[ADR 0047](../decisions/0047-workspace-contact-files.md) 将联系人改为 workspace 普通文件，删除专用工具与正文注入；所有等级的 workspace 文件操作无需 Docker。下文阶段记录保留历史。
+> 后续修订：[ADR 0048](../decisions/0047-workspace-contact-files.md) 将联系人改为 workspace 普通文件，删除专用工具与正文注入；所有等级的 workspace 文件操作无需 Docker。下文阶段记录保留历史。
 > Capability 及复合 Operation 已由 [ADR 0045](../decisions/0045-remove-capabilities.md) 删除。本文保留历史实施记录，不再描述现行能力；宿主 Operation、Tool 与 Behavior 继续保留。
 
 状态：2026-10-21，EPIC A #184–#192 与 EPIC B P5 #193、P6 #194 已合并 main。用户决定 tools 尽量保持固定，P7 暂停；独立推进 P8a 文档收口与旧机制审计，其余 P8 范围待重评。合并仍由人类确认。
@@ -421,3 +421,5 @@ P6 当时直接向 main 交付，现已通过 #194 合并并可勾选。之后�
 
 
 P8a 本地验证：主会话复核源码、文档差异与保留例外，完整质量门及隔离 dream/SDK 投递通过，连续三次会话请求的序列化 tools 一致；未测 provider 缓存命中率。Python 源码无差异，过时源码注释单独登记，避免仅注释改动也改变恢复构建身份。详细数量、过程与 PR 见任务 [#195](https://github.com/rika-moe/TlonImpact/issues/195)。合并前 P8a 保持未勾选，P7 暂停，P8b 未实施。
+
+2026-10-24 修订：上述 P4a 的成员 llm.max_tokens 作为 output 根额度已由 [ADR 0048](../decisions/0048-action-loop-and-model-budgets.md) 废止；当前使用独立 program_token_budget，llm.max_tokens 仅为单次输出上限。

@@ -1,9 +1,18 @@
 (ns work.reply
-  (:require [tlon.context :as context] [tlon.workflows :as workflows] [work.methods :as methods])
+  (:require [tlon.context :as context] [tlon.messages :as messages]
+            [tlon.conversation :as conversation] [work.methods :as methods])
   (:export handle))
 (defn handle [event]
-  (let [options {:messages (context/assemble {:task (get (get event :mail) :content)})
-                 :tools ["time-now"] :max_rounds 3 :max_tokens 256}
-        answer (methods/answer options)]
-    (workflows/forward (get event :sender) (get answer :content))
-    {:result answer}))
+  (let [mail (get event :mail)
+        options {:messages (context/assemble
+                             {:task (str (get mail :content)
+                                      " Use time-now when evidence requires it. End each action loop with an empty standalone finish-turn call. Text alone cannot end an action loop.")})
+                 :tools ["time-now" "finish-turn"] :max_rounds 3}
+        answer (methods/answer options)
+        delivered (conversation/run
+                    {:messages [(messages/user (str "Send this reviewed answer to " (get event :sender)
+                                  " using mail-send with in_reply_to " (get mail :id)
+                                  ", then call finish-turn alone. Answer: " (get answer :content)))]
+                     :tools ["mail-send" "finish-turn"] :max_rounds 3})
+        read (mail-mark-read {:mail_ids [(get mail :id)]})]
+    {:result delivered}))
