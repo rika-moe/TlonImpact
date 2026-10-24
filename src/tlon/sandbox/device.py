@@ -31,7 +31,7 @@ from tlon.base.logger import get_logger
 from tlon.base.tracing import trace_context
 
 #: Commands are truncated in audit records (span attribute + log event);
-#: the full text already lives in the session journal's tool-call record.
+#: the full text already lives in the run journal's tool-call record.
 _COMMAND_AUDIT_LIMIT = 200
 
 

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tests.history_helpers import append_history
-from tlon.agents.session_journal import SessionJournal
+from tlon.agents.run_journal import RunJournal
 from tlon.base.paths import TlonPaths
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
@@ -22,9 +22,9 @@ from tlosure.edn import Keyword
 
 def services(
     tmp_path: Path, member: str
-) -> tuple[MemoryManager, SessionJournal, OperationExecutor]:
+) -> tuple[MemoryManager, RunJournal, OperationExecutor]:
     memory = MemoryManager(member, MemoryConfig(), tmp_path / member)
-    journal = SessionJournal(member, TlonPaths(home=tmp_path))
+    journal = RunJournal(member, TlonPaths(home=tmp_path))
     executor = OperationExecutor(
         OperationRegistry(make_memory_operations(memory, journal)),
         CallContext(member, "run", "call"),
@@ -59,9 +59,9 @@ async def test_two_members_memory_and_journal_isolation(tmp_path: Path) -> None:
     await a.call("memory-remember", {"fact": "private secret"})
     assert "private secret" not in (await b.call("memory-search", {"query": "private"}))["results"]
     for journal, text in ((ja, "A secret"), (jb, "B private")):
-        await append_history(journal, "same-id", "session/start", trigger_content=text)
-    assert "A secret" in (await a.call("session-read", {"session_id": "same-id"}))["digest"]
-    assert "B private" in (await b.call("session-read", {"session_id": "same-id"}))["digest"]
+        await append_history(journal, "same-id", "run/start", trigger_content=text)
+    assert "A secret" in (await a.call("run-read", {"run_id": "same-id"}))["digest"]
+    assert "B private" in (await b.call("run-read", {"run_id": "same-id"}))["digest"]
     with pytest.raises(InputError):
         await a.call("memory-search", {"query": "x", "member_id": "b"})
     # A mislabeled executor cannot grant access to B's bound memory service.

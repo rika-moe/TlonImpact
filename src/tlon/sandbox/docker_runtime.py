@@ -523,7 +523,7 @@ class DockerRuntime:
         """Run a blocking cabinet I/O call, recovering once from a stale
         container reference.
 
-        The wake lock only serializes assembly, not the session lifecycle
+        The wake lock only serializes assembly, not the run lifecycle
         (issue #87): a config-drift rebuild in ``ensure_running``
         (``container.remove(force=True)``) can race with an in-flight call
         holding the old ``self.container``, surfacing as a daemon 404

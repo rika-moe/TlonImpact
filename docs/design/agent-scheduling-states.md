@@ -1,6 +1,6 @@
 # 成员四态调度与邮件解耦
 
-状态：已实现（2026-10-18）。决策见 [ADR 0039](../decisions/0039-four-state-scheduling.md) 和 [ADR 0041](../decisions/0041-admin-scheduling-controls.md)。
+状态：已实现（2026-10-18），执行边界于 2026-10-24 按 [ADR 0049](../decisions/0049-retire-agent-session.md) 更新。决策见 [ADR 0039](../decisions/0039-four-state-scheduling.md) 和 [ADR 0041](../decisions/0041-admin-scheduling-controls.md)。
 
 ## 1. 状态定义
 
@@ -8,12 +8,12 @@
 
 | 状态 | 含义 | 收到邮件 | 是否执行成员工作 |
 |---|---|---|---|
-| 活跃 `active` | 正在处理工作，包括 LLM 调用、工具执行、结果收集和反思调用 | 正常入箱，按现有会话接纳规则后续处理 | 是 |
+| 活跃 `active` | 正在处理工作，包括 LLM 调用、工具执行、结果收集和反思调用 | 正常入箱，按成员程序与串行事件队列后续处理 | 是 |
 | 等待 `waiting` | 当前没有工作，等待可处理的邮件或已声明的工作事件 | 正常入箱；符合行为规则的来信使其活跃 | 否，直到发生工作事件 |
 | 睡眠 `sleeping` | 成员或管理员请求睡到指定时刻，期间不处理邮件或运行成员工作 | 正常入箱，不提前唤醒 | 否 |
 | 死亡 `dead` | 永久停止响应；不是进程暂时离线 | 拒收新邮件 | 否，终态 |
 
-“活跃”覆盖等待 LLM 网络响应、等待工具结果的时间。内部 session 可以保留执行阶段，但不得把内部 I/O waiting 当作成员的“等待”。反思若调用 LLM 也算活跃；睡眠期间不启动反思。计时、邮箱入箱和日志维护属于 runtime 工作，不使成员变为活跃。
+“活跃”覆盖等待 LLM 网络响应、等待工具结果的时间。program run 可以包含多个局部 turn，但不得把内部 I/O waiting 当作成员的“等待”。反思若调用 LLM 也算活跃；睡眠期间不启动反思。计时、邮箱入箱和日志维护属于 runtime 工作，不使成员变为活跃。
 
 运行实例装配、卸载、启动中、出错、服务离线等是运行诊断，不再与四态混作一组枚举。等待中的成员可以驻留或卸载；卸载不意味着睡眠。runtime 整体离线不意味着全部成员死亡。
 
@@ -22,7 +22,7 @@
 ```mermaid
 stateDiagram-v2
     waiting --> active: 可处理邮件或工作事件
-    active --> waiting: finish-turn / 本次工作因限额或错误结束
+    active --> waiting: run 完成且无其他工作 / 工作因限额或错误结束
     active --> sleeping: sleep-until / 管理员定时睡眠，排空当前工作
     waiting --> sleeping: 管理员定时睡眠
     sleeping --> active: 到期或管理员唤醒，且有待处理邮件
@@ -33,7 +33,7 @@ stateDiagram-v2
 ```
 
 - 收到不符合成员行为规则的邮件不必进入活跃；可沿用已有门控与标读语义。
-- 活跃时新来信仍入箱，不并发创建第二个session。工作结束后如有新接纳的邮件，可以立即再次活跃。
+- 活跃时新来信仍入箱，不并发创建第二个 program run。工作结束后如有新接纳的邮件，可以立即再次活跃。
 - 睡眠期间的邮件和普通事件均不能绕过睡眠门控；不积攒重放所有普通事件。已有邮件保存在邮箱，到期后按成员规则检查。
 - 睡眠到期先检查持久邮箱：有可处理邮件则处理，否则等待。到期和管理员提前唤醒本身均不调用 LLM。
 - 结束、睡眠、退出不隐式标读。沿用责任集与慢速重扫规则，避免 finish-turn 后立即反复处理同一批搁置邮件；睡眠到期可重新检查这些未读邮件。
@@ -48,7 +48,7 @@ stateDiagram-v2
 | `mail-forward(...)` | 转发邮件 | 无 |
 | `mail-check-inbox` / `mail-search` | 查询自己的邮箱 | 无 |
 | `mail-mark-read(mail_ids)` | 标读自己的邮件 | 影响以后哪些邮件可触发工作；不直接转换当前状态 |
-| `finish-turn()` | 结束本次工作，不发送邮件 | 活跃 → 等待；有新工作可紧接着再活跃 |
+| `finish-turn()` | 结束所属局部行动 turn，不发送邮件 | 外层程序继续；仅当 run 与其他工作全部结束后进入等待 |
 | `sleep-until(wake_at, reason?)` | 结束本次工作，睡至指定 UTC 时刻 | 活跃 → 睡眠 |
 | `exit-agent(reason?)` | 自己永久退出，保留历史 | 活跃 → 死亡 |
 | `member-self-state()` | 读取自己的状态、唤醒时间、待退出等诊断信息 | 无 |
@@ -65,7 +65,7 @@ stateDiagram-v2
 
 这会比现有 `mail-send(is_complete=true)` 多一次模型工具调用轮次，是解耦的成本。本轮不预设批处理或“发信后自动 finish”的隐藏优化。可以发多封邮件后结束，也可以完全不发信直接结束或睡眠。删除 `silence`，由 `finish-turn` 承担不回信结束工作的语义，不保留别名。
 
-业务任务的 `task-pause` / `task-complete` 只改变任务记录，不代表成员睡眠或本次会话结束；继续保持独立。
+业务任务的 `task-pause` / `task-complete` 只改变任务记录，不代表成员睡眠或本次 program run 结束；继续保持独立。
 
 ## 4. 邮件与调度的关系
 
@@ -73,7 +73,7 @@ stateDiagram-v2
 
 - 邮局负责地址、幂等、原子入箱与拒信。睡眠和等待都正常收信；死亡拒收。一封多人邮件若含死亡收件人，沿用当前整封拒绝契约。
 - 调度器负责何时处理邮箱、何时睡、何时结束。发信成功只表示入箱，不表示自己的工作已经完成或对方已处理。
-- `finish-turn` 不保证任务已经完成，也不保证邮箱清空，只表示本次工作周期结束。
+- `finish-turn` 只结束所属局部行动循环，不保证整个 program run、业务任务或邮箱处理完成。外层程序可继续执行、进入另一 turn，最后提交 run 结果与调度意图。
 - 资源回收不设置 sleeping。旧 idle drain 应改为卸载等待中的实例；睡眠期限只能由显式睡眠意图决定。
 - 错误、超时或预算耗尽结束当前工作，不自动判定死亡。已有错误通知可由明确的系统通知政策发送，不能重新把邮件工具当作结束信号。
 
@@ -85,26 +85,19 @@ stateDiagram-v2
 
 睡眠请求在完成当前工作后持久记录绝对 UTC 唤醒时刻，再由 runtime 管理计时。重启不会延长睡眠：未来期限继续等待；已到期则检查邮箱。睡眠闸门同时约束投递通知、启动扫描、慢速重扫、链式唤醒、反思和所有规则程序，不能仅在某一个入口判断。
 
-runtime 恢复活跃成员时沿用 session journal 恢复机制，不从已完成的会话重新制造工作。睡眠只能在会话结束后提交，因此不允许“持久睡眠中还有继续执行的 session”。
+runtime 只由 ProgramStore 恢复未完成 program run，不从 RunJournal 的历史投影或已完成 run 重新制造工作。睡眠在当前工作全部排空后提交，持久睡眠期间不能继续执行成员 run。`is_busy` 覆盖程序执行与后台维护；后台维护不算 program run 数量。
 
 状态变更写入可追踪的原因与时间；到期回调必须重新读状态，防止旧计时器唤醒已经死亡或改变了睡眠期限的成员。死亡与睡眠的改变由同一成员锁串行化。管理等待、睡眠与终止活跃成员均先阻止新工作接纳、排空当前工作，不能只改一个显示字段；不强制取消正在执行的 LLM、工具或反思。
 
-## 6. 对现有代码的影响
+## 6. 当前执行与读侧边界
 
-| 区域 | 当前行为 | 所需修改 |
-|---|---|---|
-| `agents/member_runtime.py` | active/thinking 等运行状态，邮件扫描与反思 | 四态派生；统一工作计数与睡眠闸门；分离实例装卸诊断 |
-| `agents/agent_registry.py`、`agents/reaper.py` | 状态聚合、来信唤醒、idle drain、退休 | 统一生命周期入口、持久睡眠、计时恢复；等待实例回收不改逻辑状态 |
-| `agents/scheduler.py`、`agents/session.py` | session ACTIVE/WAITING/COMPLETED，结束后链式唤醒 | 保留内部执行阶段，明确待工具与成员等待的区别；结束意图在安全点落地 |
-| `agents/stages/act.py`、`agents/loop_driver.py`、`agents/executor.py`、`agents/stages/outcome.py` | 识别 mail-send/silence 作为结束信号 | 改为独立状态效果；成功发信不结束；sleep/exit 不发信、不隐式标读 |
-| `tools/mail/send_email.py`、`tools/mail/silence.py` | 邮件和会话完成耦合 | 删除 is_complete 与 silence，保持投信结果语义 |
-| `lifecycle/service.py`、`agents/assembly.py` | 可按信任层装配 member-stop，目标是任意成员 | 自我结束/睡眠/退出工具与管理终止权限分离 |
-| `organization/mail/store.py`、`post_office.py` 及生命周期持久化接口 | 退休拒收与入箱事务排序 | 保留原子拒收；睡眠正常入箱；死亡状态单一权威 |
-| `agents/vocabulary.py`、`member_spec.py`、`agents/adam.py` | 旧 completing? 依赖 mail-send/silence（P6 改为显式 round 数据）；DSL start/stop、idle/noisy 政策 | 明确工作结束与邮件派发谓词；更新 DSL 管理动作、Adam 回收政策，避免 stop 同时表示卸载和死亡 |
-| `prototypes/`、公共提示词、工具参考 | 旧交卷前自评基于 completing?，说明用发信结束（P6 使用 round.sending_mail/completing） | 全部同步独立结束工具；证据核验应在实际邮件派发前审查，不能挪到 finish-turn 时才检查已发邮件 |
-| `tlon_server` 生命周期 API/SSE、`tlon_client`、WebUI | retired/thinking/sleeping 等状态展示及启停操作 | 一致输出四态与 wake_at；启动/错误显示为诊断；死亡无启动按钮，睡眠显示到期时间 |
+ADR 0039/0041 的四态、持久睡眠与管理排空已实现；其中旧 session 引擎、scheduler 和 stage 路径由后续模块程序设计替代，ADR 0049 正式删除 agent session 实体及旧历史读取，不保留别名、兼容层或 migration。历史决策仍保留在对应 ADR 中。
 
-本次不做旧接口兼容层、不保留 is_complete 或 silence 别名。实施时必须同时更新包内 DSL、协议文本、测试及使用方。当前 ~/.tlon 的原型与成员 spec 是否同步另行明确授权，不因写设计稿修改现有数据。
+- `agents/member_runtime.py` 串行运行成员程序；`is_busy` 同时覆盖程序与后台维护，排空等待全部活动结束。
+- ProgramStore 保存 run 输入、预算、调用回执、完成与失败结果，拥有唯一执行恢复权威；RunJournal 只提供 run 历史读取、清单和导出。
+- 记忆、反思、教训和历史回顾使用原始 `run_id`、`source_run_ids`；派生额度键为 `(spawner_id, run_id)`，成员配置为 `run_spawn_quota`。
+- serving 层 client session 继续承担连接、身份和 SSE 订阅，`/sessions` 客户端协议不变。
+- 不修改用户磁盘上的旧 agent session 归档，不迁移旧来源引用；旧历史不再可查询。
 
 ## 7. 验收场景
 
@@ -132,7 +125,7 @@ runtime 恢复活跃成员时沿用 session journal 恢复机制，不从已完�
 
 | 当前状态 | 可用按钮 | 行为 |
 |---|---|---|
-| 活跃 | 进入等待、定时睡眠、永久退出 | 阻止接纳新工作，完成当前会话、工具与后台工作后转换；排空中仍为活跃并显示待执行操作 |
+| 活跃 | 进入等待、定时睡眠、永久退出 | 阻止接纳新工作，完成当前 program run、工具与后台工作后转换；排空中仍为活跃并显示待执行操作 |
 | 等待 | 定时睡眠、永久退出 | 无当前工作时直接执行；等待不等于停收邮件 |
 | 睡眠 | 唤醒、调整醒来时间、永久退出 | 管理员可以撤销或修改期限；来信本身仍不唤醒 |
 | 死亡 | 无状态操作 | 永久终态；历史仍可查看 |
@@ -141,6 +134,6 @@ runtime 恢复活跃成员时沿用 session journal 恢复机制，不从已完�
 
 管理端分别调用 `/admin/agents/{agent_id}/wake`、`/wait`、`/sleep` 和 `/terminate`。sleep 只接受 `{wake_at: 带时区的未来 ISO 时间}`，支持本地时间或时长输入并归一为 UTC。无效请求返回 400，未知成员 404，死亡或状态冲突 409；立即完成 200，排空中 202，响应携带同一个权威状态快照。
 
-提前唤醒和调整期限必须撤销旧持久期限及计时器，所有回调重新核对意图，防止旧计时器提前唤醒、再次唤醒或复活死亡成员。管理操作的等待/睡眠闸门必须覆盖会话、规则程序和后台反思。
+提前唤醒和调整期限必须撤销旧持久期限及计时器，所有回调重新核对意图，防止旧计时器提前唤醒、再次唤醒或复活死亡成员。管理操作的等待/睡眠闸门必须覆盖program run 和后台反思。
 
-管理端尚在排空的等待/睡眠请求属于待执行请求；服务重启后清除该请求并恢复正常的未结束会话恢复流程，需要管理员重新发起。只有完成排空并正式入睡后的绝对期限跨重启保留，不能让尚未结束的会话被误标为已睡眠。永久退出沿用原有持久终态契约。
+管理端尚在排空的等待/睡眠请求属于待执行请求；服务重启后清除该请求并恢复正常的未完成 program run 恢复流程，需要管理员重新发起。只有完成排空并正式入睡后的绝对期限跨重启保留，不能让尚未结束的 program run被误标为已睡眠。永久退出沿用原有持久终态契约。

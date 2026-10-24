@@ -2,7 +2,7 @@
   {
     "name": "recall-uv-deps",
     "dimension": "fact-recall",
-    "sessions": [
+    "runs": [
       {
         "ts": "2026-08-03T10:00:00",
         "trigger": "提醒一下：我们项目的 Python 依赖统一用 uv 管理，别再往 requirements.txt 里加东西了。",
@@ -15,7 +15,7 @@
   {
     "name": "recall-desk-floor",
     "dimension": "fact-recall",
-    "sessions": [
+    "runs": [
       {
         "ts": "2026-08-05T09:30:00",
         "trigger": "同步个事：小王的工位搬到 3 楼靠窗的位置了，以后找他去那边。",
@@ -28,7 +28,7 @@
   {
     "name": "recall-release-window",
     "dimension": "fact-recall",
-    "sessions": [
+    "runs": [
       {
         "ts": "2026-08-10T16:00:00",
         "trigger": "以后发布固定在每周四下午 4 点前完成，其他时间不发生产。",
@@ -41,7 +41,7 @@
   {
     "name": "recall-docs-tool",
     "dimension": "fact-recall",
-    "sessions": [
+    "runs": [
       {
         "ts": "2026-08-12T14:00:00",
         "trigger": "项目文档站是用 mkdocs 搭的，源文件都在 docs/ 目录，改完跑构建就行。",
@@ -54,7 +54,7 @@
   {
     "name": "update-cloud-migration",
     "dimension": "knowledge-update",
-    "sessions": [
+    "runs": [
       {
         "ts": "2026-07-01T10:00:00",
         "trigger": "我们的 API 服务部署在阿里云华东机房，排查问题先看那边的控制台。",
@@ -76,7 +76,7 @@
   {
     "name": "update-oncall-person",
     "dimension": "knowledge-update",
-    "sessions": [
+    "runs": [
       {
         "ts": "2026-07-06T09:00:00",
         "trigger": "本周 oncall 值班是小李，线上有事直接找他。",
@@ -98,7 +98,7 @@
   {
     "name": "update-meeting-time",
     "dimension": "knowledge-update",
-    "sessions": [
+    "runs": [
       {
         "ts": "2026-07-02T10:00:00",
         "trigger": "产品周会固定在每周一上午 10 点，3 号会议室。",
@@ -120,7 +120,7 @@
   {
     "name": "update-budget",
     "dimension": "knowledge-update",
-    "sessions": [
+    "runs": [
       {
         "ts": "2026-07-10T14:00:00",
         "trigger": "二季度市场预算批下来了，50 万，先按这个做计划。",
@@ -142,7 +142,7 @@
   {
     "name": "temporal-project-status",
     "dimension": "temporal",
-    "sessions": [
+    "runs": [
       {
         "ts": "2026-03-02T09:00:00",
         "trigger": "凤凰项目这周正式启动了，先做需求梳理，排期月底出。",
@@ -169,7 +169,7 @@
   {
     "name": "temporal-price-change",
     "dimension": "temporal",
-    "sessions": [
+    "runs": [
       {
         "ts": "2026-03-15T10:00:00",
         "trigger": "标准版定价出来了，99 元每月，官网已经更新。",
@@ -196,7 +196,7 @@
   {
     "name": "temporal-owner-change",
     "dimension": "temporal",
-    "sessions": [
+    "runs": [
       {
         "ts": "2026-03-10T09:00:00",
         "trigger": "数据平台这条线以后由张楠负责，需求都提给他。",
@@ -223,14 +223,14 @@
   {
     "name": "refusal-empty-memory",
     "dimension": "refusal",
-    "sessions": [],
+    "runs": [],
     "query": "公司的年假政策是多少天？",
     "expect": { "surface": "both", "expect_empty": true }
   },
   {
     "name": "refusal-no-fabrication",
     "dimension": "refusal",
-    "sessions": [
+    "runs": [
       {
         "ts": "2026-08-03T10:00:00",
         "trigger": "我们项目的 Python 依赖统一用 uv 管理。",
@@ -251,7 +251,7 @@
   {
     "name": "refusal-selectivity",
     "dimension": "refusal",
-    "sessions": [
+    "runs": [
       {
         "ts": "2026-08-01T09:00:00",
         "trigger": "生产环境的 Kubernetes 集群一共 3 个节点，都在华东。",

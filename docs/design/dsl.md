@@ -14,7 +14,7 @@
 
 静态校验检查完整依赖闭包、符号、路径和模块初始化纯度。fuel/depth 控制计算，根模型预算和截止时间约束外部调用。源码、输入、依赖、约束与模型上下文受理时冻结；恢复不能改用当前磁盘源码。
 
-ProgramStore 是运行、调用回执和终态的唯一恢复权威。不确定外部结果保留 unknown 并阻塞，不能把失败包装成成功值再自动重试。历史 SessionJournal 只读，不再恢复执行。
+ProgramStore 是运行、调用回执和终态的唯一恢复权威。不确定外部结果保留 unknown 并阻塞，不能把失败包装成成功值再自动重试。RunJournal 只读 ProgramStore，不再恢复执行。
 
 ## 标准程序与上下文
 
@@ -24,4 +24,4 @@ ProgramStore 是运行、调用回执和终态的唯一恢复权威。不确定�
 
 ## 已删除边界
 
-P5 删除 v1 rules/when/actions 解释器、run-loop、SessionRecipe、StageServices/StageOutcome、LoopDriver、AgentSession、SessionScheduler、ContextPressure 及控制操作嵌套限制。不保留兼容执行或迁移。旧未完成工作与读失败会阻塞成员；历史保留，只能由操作员按 [实施计划](programmable-workflows-plan.md) 的清单处置。
+P5 删除 v1 rules/when/actions 解释器、run-loop、SessionRecipe、StageServices/StageOutcome、LoopDriver、AgentSession、SessionScheduler、ContextPressure 及控制操作嵌套限制。不保留兼容执行或迁移。非入口旧 program 未完成工作与读失败仍阻塞成员；按 [ADR 0049](../decisions/0049-retire-agent-session.md)，旧 agent session 数据库不再读取，也不兼容或迁移，用户磁盘归档不自动删除。

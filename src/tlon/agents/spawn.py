@@ -1,15 +1,15 @@
 """Spawn budget and derivation logic (split from agent_registry).
 
 ``SpawnManager`` owns the stage-6b spawn budget (global activation cap,
-spawn depth, per-session quota) and executes the two member-derivation
+spawn depth, per-run quota) and executes the two member-derivation
 flows: ``spawn_member`` (prototype instantiation under the budget) and
 ``adopt_agent`` (hot adoption of an out-of-process creation).
 
-The per-session quota is tilted by the target bloodline's fitness
+The per-run quota is tilted by the target bloodline's fitness
 (ADR 0014): an optional ``tilt_provider`` maps the spawn target's
 prototype to a multiplier (clamped to [0.5, 2.0] by the society policy's
 ``tilt`` hook, ``agents/policy.py`` — ADR 0022), and the effective quota
-is ``ceil(session_spawn_quota * tilt)``. The global activation cap stays
+is ``ceil(run_spawn_quota * tilt)``. The global activation cap stays
 untouched — splitting it per bloodline would punish incumbent members of
 temporarily-inefficient lineages. Tilt 1.0 (the cold-start default, and
 every failure fallback) reproduces the untilted behavior exactly.
@@ -25,7 +25,7 @@ The probation gate (trust ladder, docs/design/unified-member-model.md)
 tightens budget 3 from the
 *spawner* side: an optional ``probation`` provider maps the spawner's
 member id to a bool, and a probationary spawner (spawned, not yet
-endorsed) gets its effective per-session quota capped at 1. Note the
+endorsed) gets its effective per-run quota capped at 1. Note the
 keying difference from tilt/solvency: those two judge the spawn
 *target's* bloodline (prototype name); probation judges the *spawner*
 (member id) — one spawn can therefore be tilted by one bloodline's
@@ -33,9 +33,9 @@ fitness while capped by its spawner's trust level. Same fail-open
 discipline: a missing provider or a derivation error reads as *not*
 probation.
 
-Of the three budgets, only the per-(spawner, session) quota is a ledger,
+Of the three budgets, only the per-(spawner, run) quota is a ledger,
 and it is persisted (``TlonPaths.spawn_quota_ledger_file``, atomic
-replace): sessions themselves survive a restart via journal replay
+replace): program runs survive a restart via journal replay
 (ADR 0007), so a memory-only quota would let a spawner refill its quota
 by restarting. The activation cap is a runtime fact (the run table is
 empty after a restart — persisting it would import dead members'
@@ -70,10 +70,6 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# Quota bucket used when no session context is available (e.g. direct calls
-# from tests): all such spawns share one bucket per spawner.
-_UNKNOWN_SESSION = "-"
-
 
 class SpawnManager:
     """Spawn budget ledger + spawn/adopt execution for a registry.
@@ -87,7 +83,7 @@ class SpawnManager:
         registry: "AgentRegistry",
         max_activations: int,
         max_spawn_depth: int,
-        session_spawn_quota: int,
+        run_spawn_quota: int,
         tilt_provider: Callable[[str], Awaitable[float]] | None = None,
         solvency: Callable[[str], Awaitable[bool]] | None = None,
         probation: Callable[[str], Awaitable[bool]] | None = None,
@@ -95,7 +91,7 @@ class SpawnManager:
         self._registry = registry
         self._max_activations = max_activations
         self._max_spawn_depth = max_spawn_depth
-        self._session_spawn_quota = session_spawn_quota
+        self._run_spawn_quota = run_spawn_quota
         # Bloodline-fitness tilt (ADR 0014): prototype name -> quota
         # multiplier. None = always neutral 1.0 (untilted behavior).
         self._tilt_provider = tilt_provider
@@ -107,8 +103,8 @@ class SpawnManager:
         # disabled). Keyed by the spawner, not the target prototype —
         # different dimension from tilt/solvency above.
         self._probation = probation
-        # (spawner_id, session_id) -> successful spawn count, persisted to
-        # disk so the anti-runaway quota survives restarts (sessions do,
+        # (spawner_id, run_id) -> successful spawn count, persisted to
+        # disk so the anti-runaway quota survives restarts (program runs do,
         # via journal replay).
         self._ledger_path: Path = registry._paths.spawn_quota_ledger_file()
         self._quota: dict[tuple[str, str], int] = self._load_ledger()
@@ -145,11 +141,11 @@ class SpawnManager:
             if (
                 isinstance(entry, dict)
                 and isinstance(entry.get("spawner"), str)
-                and isinstance(entry.get("session"), str)
+                and isinstance(entry.get("run"), str)
                 and isinstance(entry.get("count"), int)
                 and entry["count"] > 0
             ):
-                quota[(entry["spawner"], entry["session"])] = entry["count"]
+                quota[(entry["spawner"], entry["run"])] = entry["count"]
             else:
                 logger.warning("spawn_quota_ledger_entry_skipped", entry=repr(entry))
         return quota
@@ -161,8 +157,8 @@ class SpawnManager:
         for this process — the cap still holds until the next restart.
         """
         entries = [
-            {"spawner": spawner, "session": session, "count": count}
-            for (spawner, session), count in sorted(self._quota.items())
+            {"spawner": spawner, "run": run, "count": count}
+            for (spawner, run), count in sorted(self._quota.items())
         ]
         payload = json.dumps({"version": 1, "quota": entries}, ensure_ascii=False) + "\n"
         tmp_path = self._ledger_path.with_suffix(".tmp")
@@ -225,7 +221,7 @@ class SpawnManager:
         prototype: str,
         name: str,
         spawner_id: str,
-        session_id: str | None,
+        run_id: str,
         params: dict[str, Any] | None = None,
     ) -> AgentConfig:
         """Spawn a new member from a prototype and start it immediately.
@@ -255,8 +251,7 @@ class SpawnManager:
             prototype: prototype directory name under ~/.tlon/prototypes/
             name: display name of the new member
             spawner_id: id of the agent requesting the spawn (audit + depth)
-            session_id: session the spawn belongs to (quota bucket); None
-                buckets all context-less spawns of the spawner together
+            run_id: nonempty program run identifier owning the spawn quota
 
         Returns:
             The new member's AgentConfig (with lineage fields).
@@ -266,6 +261,14 @@ class SpawnManager:
             PrototypeError: prototype missing, or the spawner declares no
                 model for the child to inherit (ADR 0016)
         """
+        if not isinstance(run_id, str) or not run_id.strip():
+            self._reject_spawn(
+                "invalid_run",
+                spawner_id=spawner_id,
+                run_id=run_id,
+                prototype=prototype,
+                detail="member spawn requires a nonempty program run identifier",
+            )
         registry = self._registry
         tlon_paths = registry._paths
 
@@ -277,7 +280,7 @@ class SpawnManager:
             self._reject_spawn(
                 "untrusted_prototype",
                 spawner_id=spawner_id,
-                session_id=session_id,
+                run_id=run_id,
                 prototype=prototype,
                 detail=f"prototype '{prototype}' is untrusted (staged, awaiting approval)",
             )
@@ -289,7 +292,7 @@ class SpawnManager:
             self._reject_spawn(
                 "insolvent_lineage",
                 spawner_id=spawner_id,
-                session_id=session_id,
+                run_id=run_id,
                 prototype=prototype,
                 detail=(
                     f"bloodline '{prototype}' is insolvent (token spend not"
@@ -303,7 +306,7 @@ class SpawnManager:
             self._reject_spawn(
                 "max_activations",
                 spawner_id=spawner_id,
-                session_id=session_id,
+                run_id=run_id,
                 prototype=prototype,
                 detail=f"running agents {len(registry._agents)} >= cap {self._max_activations}",
             )
@@ -316,36 +319,36 @@ class SpawnManager:
             self._reject_spawn(
                 "max_spawn_depth",
                 spawner_id=spawner_id,
-                session_id=session_id,
+                run_id=run_id,
                 prototype=prototype,
                 detail=f"depth {depth} > cap {self._max_spawn_depth}",
             )
 
-        # Budget 3: per-(spawner, session) quota, tilted by the target
+        # Budget 3: per-(spawner, run) quota, tilted by the target
         # bloodline's efficiency (ADR 0014): effective quota =
         # ceil(base * tilt), tilt clamped to [0.5, 2.0] upstream. Tilt
         # 1.0 (cold start / failure fallback) is the untilted behavior.
         # Probation cap (trust ladder, docs/design/unified-member-model.md):
         # a probationary *spawner* (spawned, not yet endorsed) is capped
-        # at 1 spawn per session regardless of the tilt — tilt judges the
+        # at 1 spawn per run regardless of the tilt — tilt judges the
         # target bloodline, probation judges the spawner.
         tilt = await self._tilt(prototype)
-        effective_quota = math.ceil(self._session_spawn_quota * tilt)
+        effective_quota = math.ceil(self._run_spawn_quota * tilt)
         probationary = await self._probationary(spawner_id)
         if probationary:
             effective_quota = min(effective_quota, 1)
-        quota_key = (spawner_id, session_id or _UNKNOWN_SESSION)
+        quota_key = (spawner_id, run_id)
         used = self._quota.get(quota_key, 0)
         if used >= effective_quota:
             probation_note = "; spawner on probation, capped at 1" if probationary else ""
             self._reject_spawn(
-                "session_quota",
+                "run_quota",
                 spawner_id=spawner_id,
-                session_id=session_id,
+                run_id=run_id,
                 prototype=prototype,
                 detail=(
-                    f"quota {effective_quota} per session exhausted"
-                    f" (base {self._session_spawn_quota} × tilt {tilt:.2f})"
+                    f"quota {effective_quota} per run exhausted"
+                    f" (base {self._run_spawn_quota} × tilt {tilt:.2f})"
                     f"{probation_note}"
                 ),
             )
@@ -395,7 +398,7 @@ class SpawnManager:
             self._reject_spawn(
                 "config_reload_failed",
                 spawner_id=spawner_id,
-                session_id=session_id,
+                run_id=run_id,
                 prototype=prototype,
                 detail=f"provider could not load new config for '{agent_id}'",
             )
@@ -435,7 +438,7 @@ class SpawnManager:
         reason: str,
         *,
         spawner_id: str,
-        session_id: str | None,
+        run_id: str,
         prototype: str,
         detail: str,
     ) -> NoReturn:
@@ -444,7 +447,7 @@ class SpawnManager:
             "spawn_rejected",
             reason=reason,
             spawner_id=spawner_id,
-            session_id=session_id,
+            run_id=run_id,
             prototype=prototype,
             detail=detail,
         )

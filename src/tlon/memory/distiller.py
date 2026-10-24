@@ -1,4 +1,4 @@
-"""LLM-based distillation of session projections into claims (ADR 0017)."""
+"""LLM-based distillation of run projections into claims (ADR 0017)."""
 
 import json
 from dataclasses import dataclass, field
@@ -17,7 +17,7 @@ from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.operations.schema import RecoveryMismatchError
 
-from .models import SessionProjection
+from .models import RunProjection
 
 logger = get_logger(__name__)
 
@@ -37,9 +37,9 @@ class ConflictVerdict:
 
 
 class Distiller:
-    """Uses LLM to distill completed-session projections into claims.
+    """Uses LLM to distill completed-run projections into claims.
 
-    One call per batch: the projections (rebuilt from the session
+    One call per batch: the projections (rebuilt from the run
     journals) go in, a list of natural-language claims (text +
     importance) comes out. Without an LLM (or on LLM failure) the caller
     falls back to mechanical claims — distillation must never lose a
@@ -67,20 +67,20 @@ class Distiller:
         """
         self.llm_client = LLMClient(llm_config, agent_id=agent_id, tlon_paths=tlon_paths)
 
-    async def distill(self, sessions: list[SessionProjection]) -> list[dict[str, Any]]:
-        """Distill session projections into claims.
+    async def distill(self, runs: list[RunProjection]) -> list[dict[str, Any]]:
+        """Distill run projections into claims.
 
         Args:
-            sessions: List of completed-session projections
+            runs: List of completed-run projections
 
         Returns:
             List of claim dictionaries with ``text`` and ``importance``;
             empty when the LLM yields nothing usable (caller falls back)
         """
-        if not sessions:
+        if not runs:
             return []
 
-        formatted_sessions = self._format_sessions(sessions)
+        formatted_runs = self._format_runs(runs)
 
         system_prompt = """你是一个记忆蒸馏助手。你的任务是分析用户与AI助手之间的对话历史，蒸馏出值得长期记住的断言（claim）。
 
@@ -101,7 +101,7 @@ class Distiller:
 }"""
 
         messages = [
-            {"role": "user", "content": f"请从以下会话中蒸馏记忆断言：\n\n{formatted_sessions}"}
+            {"role": "user", "content": f"请从以下程序运行中蒸馏记忆断言：\n\n{formatted_runs}"}
         ]
 
         try:
@@ -153,23 +153,21 @@ class Distiller:
             logger.error("distill_failed", error=str(e), exc_info=True)
             return []
 
-    def _format_sessions(self, sessions: list[SessionProjection]) -> str:
-        """Format session projections for LLM prompt."""
+    def _format_runs(self, runs: list[RunProjection]) -> str:
+        """Format run projections for LLM prompt."""
         lines = []
 
-        for i, session in enumerate(sessions, 1):
-            lines.append(
-                f"[会话 {i}] 来源：{session.session_id}；触发语：{session.trigger_content}"
-            )
-            if session.program_result:
-                lines.append(f"    程序返回：{session.program_result[:600]}")
+        for i, run in enumerate(runs, 1):
+            lines.append(f"[程序运行 {i}] 来源：{run.run_id}；触发语：{run.trigger_content}")
+            if run.program_result:
+                lines.append(f"    程序返回：{run.program_result[:600]}")
 
-            for resp in session.llm_responses:
+            for resp in run.llm_responses:
                 lines.append(f"    Agent: {resp[:200]}")
 
-            for error in session.errors:
+            for error in run.errors:
                 lines.append(f"    [失败或未决] {error[:300]}")
-            for tool_line in session.tool_results:
+            for tool_line in run.tool_results:
                 lines.append(f"    [Tool] {tool_line[:150]}")
 
             lines.append("")
@@ -319,24 +317,24 @@ class Distiller:
         return index, ConflictVerdict(action="supersede", superseded_ids=superseded_ids)
 
     @staticmethod
-    def fallback_claims(sessions: list[SessionProjection]) -> list[dict[str, Any]]:
+    def fallback_claims(runs: list[RunProjection]) -> list[dict[str, Any]]:
         """Mechanical claims without LLM: quote the real trigger text plus
-        the session's first reply, one claim per session.
+        the run's first reply, one claim per run.
 
-        The projection carries the session's trigger content (ADR 0028:
+        The projection carries the run's trigger content (ADR 0028:
         the wake template, not a user request), so the fallback records
-        the session's wake context, never the agent's own reply mistaken
+        the run's wake context, never the agent's own reply mistaken
         for user input.
         """
         claims = []
-        for session in sessions:
-            trigger = session.trigger_content[:60]
-            if not trigger and not session.program_result:
+        for run in runs:
+            trigger = run.trigger_content[:60]
+            if not trigger and not run.program_result:
                 continue
-            text = f"处理过会话（触发语：{trigger}）"
-            if session.llm_responses:
-                text += f"；回复要点：{session.llm_responses[-1][:80]}"
-            if session.program_result:
-                text += f"；程序返回：{session.program_result[:80]}"
+            text = f"处理过程序运行（触发语：{trigger}）"
+            if run.llm_responses:
+                text += f"；回复要点：{run.llm_responses[-1][:80]}"
+            if run.program_result:
+                text += f"；程序返回：{run.program_result[:80]}"
             claims.append({"text": text, "importance": 0.3})
         return claims

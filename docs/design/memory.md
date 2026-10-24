@@ -1,6 +1,8 @@
 # 记忆系统设计
 
-Tlon 的记忆不是检索增强的附件，而是 agent 会话循环的一部分：旧运行的 session journal 与新模块运行的 ProgramStore 分别保存各自交互事实，SessionJournal 提供统一只读视图，已完成的 session 成批蒸馏成 claim（自然语言断言）进入长期记忆，下一轮对话再把它们拼回上下文。本文解释这套系统为什么长现在这样，以当前实现为准（存储层在 [src/tlon/memory/](../../src/tlon/memory)，agent 侧工具在 [src/tlon/operations/memory.py](../../src/tlon/operations/memory.py)，反思在 [src/tlon/agents/reflection.py](../../src/tlon/agents/reflection.py)）。设计选择的历史见 [ADR 0017](../decisions/0017-claim-based-memory.md)；会话 journal 的事实与恢复契约见 [runtime.md](./runtime.md)。
+当前执行边界以 [ADR 0049](../decisions/0049-retire-agent-session.md) 为准；原 agent session 历史与来源读取已退役，历史 ADR 保留为决策记录，client session 不受影响。
+
+Tlon 的记忆不是检索增强的附件，而是 agent 会话循环的一部分：ProgramStore 保存程序执行与调用回执事实，RunJournal 提供只读视图，已完成的 program run 成批蒸馏成 claim（自然语言断言）进入长期记忆，下一轮对话再把它们拼回上下文。本文解释这套系统为什么长现在这样，以当前实现为准（存储层在 [src/tlon/memory/](../../src/tlon/memory)，agent 侧工具在 [src/tlon/operations/memory.py](../../src/tlon/operations/memory.py)，反思在 [src/tlon/agents/reflection.py](../../src/tlon/agents/reflection.py)）。设计选择的历史见 [ADR 0017](../decisions/0017-claim-based-memory.md)；program run 的事实与恢复契约见 [runtime.md](./runtime.md)。
 
 ## 定位：可审计的个体记忆
 
@@ -11,13 +13,13 @@ Tlon 的记忆不是检索增强的附件，而是 agent 会话循环的一部�
 
 这两条决定了记忆系统的基本形态：每个 agent 一个私有目录（`~/.tlon/{agent_id}/memory/`，路径由 [base/paths.py](../../src/tlon/base/paths.py) 的 `TlonPaths` 解析），内容以 JSONL/JSON 文本文件为主体，外加一个 sqlite-vec 向量索引库（`claims_vec.db`）——索引是 `claims.jsonl` 的**纯派生视图**，可删可重建，不是第二个真相。
 
-还有一条隐含约束来自会话循环的架构：`tlon.memory` 在分层上只依赖 `tlon.base`（import-linter 强制），不认识 agent、邮件、工具。它提供的是纯粹的存储、蒸馏与检索能力，「什么时候存、什么时候取、取多少拼进上下文」的决策都在 agents 层（独立会话配方与 `ContextBuilder` / `SessionScheduler` 的装配）。记忆系统是被编排的机制，不自带策略——这与全系统「策略/机制分离」的原则一致。也是这条约束决定了蒸馏触发入口的形状：manager 定义 SessionLogReader Protocol，以 list_completed/read_events 读取来源。SessionJournal 联合旧会话和新 ProgramStore，只读视图不参与新运行恢复。新来源 ID 是 `program:<run_id>`；消费进度按来源集合判断，不能按开始时间跳过迟完成运行。
+还有一条隐含约束来自会话循环的架构：`tlon.memory` 在分层上只依赖 `tlon.base`（import-linter 强制），不认识 agent、邮件、工具。它提供的是纯粹的存储、蒸馏与检索能力，「什么时候存、什么时候取、取多少拼进上下文」的决策都在 agents 层（成员工作程序与 `ContextBuilder` 的装配）。记忆系统是被编排的机制，不自带策略——这与全系统「策略/机制分离」的原则一致。也是这条约束决定了蒸馏触发入口的形状：manager 定义 RunLogReader Protocol，以 list_completed/read_events 读取来源。RunJournal 只读取 ProgramStore，只读视图不参与运行恢复。来源 ID 为原始 `run_id`，无 `program:` 前缀；消费进度按来源集合判断，不能按开始时间跳过迟完成运行。
 
 ## 单一产物：claim
 
 长期记忆的统一产物是 **claim**：一句自然语言断言 + 元数据（[memory/models.py](../../src/tlon/memory/models.py) 的 `Claim`）：
 
-- `source_session_ids`——来源 session 引用，可回读 journal 原文核对；
+- `source_run_ids`——来源 run 引用，可回读 journal 原文核对；
 - `valid_from` / `valid_to`——有效时间窗；
 - `status`（`active` / `superseded`）与 `superseded_by`——取代即失效、不删除的生命周期字段（写入逻辑见下文「claim 生命周期」）；
 - `importance`——检索打分因子（JIT 混合打分使用，见「上下文注入」）。
@@ -26,27 +28,27 @@ Tlon 的记忆不是检索增强的附件，而是 agent 会话循环的一部�
 
 [memory/manager.py](../../src/tlon/memory/manager.py) 的 `MemoryManager` 是统一入口，持有唯一的存储 [memory/claim_store.py](../../src/tlon/memory/claim_store.py) 的 `ClaimStore`：`memory/claims.jsonl`，每行一条 claim。
 
-记忆有三个入口：系统自动批量蒸馏（`maybe_distill_completed_sessions`）与 agent 主动记录（`memory-remember`，立即写一条 claim）与反思补记（`record_claim`）——长期层允许多方填充，因为它本来就是筛选后的判断而不是原始记录。
+记忆有三个入口：系统自动批量蒸馏（`maybe_distill_completed_runs`）与 agent 主动记录（`memory-remember`，立即写一条 claim）与反思补记（`record_claim`）——长期层允许多方填充，因为它本来就是筛选后的判断而不是原始记录。
 
 存储格式是 JSONL，写入策略是**逻辑追加、物理原子快照**。`add_claim` 添加新条目；supersede 更新旧 claim 的生命周期字段，`forget` / 反思可显式删除，所有变更都以临时文件 + `os.replace` 原子重写，提交后才发布缓存。写失败向调用方传播，若提交后丢失回执则重读磁盘事实。加载逐行解析，坏行告警后跳过；不能把这种容错理解为零数据丢失保证。claims 没有容量淘汰上限，自动失效保留旧条目，显式删除仍会删除。
 
 store 一把 `asyncio.Lock`，以缓存服务运行时读写，`claims.jsonl` 承担持久内容；写入失败由存储层记录日志，不能将内存更新等同于已持久提交。`MemoryManager.load` 还有一层配置加载语义：`memory/config.json` 是**唯一的**记忆调参面——存在时以磁盘文件为准（绑定 `agent_id`），不存在时用构造传入的 `MemoryConfig`（生产装配传默认值）落盘初始化。配置字段见 [配置参考](../reference/config-reference.md)。
 
-`MemoryConfig` 的默认值定义了整个系统的量级：蒸馏窗口 3 个 session、进上下文的 claim 10 条；反思至少间隔 5 个新完成 session。这些数字是成本与效果之间的手工平衡点，集中在 [memory/models.py](../../src/tlon/memory/models.py) 一处。
+`MemoryConfig` 的默认值定义了整个系统的量级：蒸馏窗口 3 个 run、进上下文的 claim 10 条；反思至少间隔 5 个新完成 run。这些数字是成本与效果之间的手工平衡点，集中在 [memory/models.py](../../src/tlon/memory/models.py) 一处。
 
 ### 批量蒸馏：journal → claims
 
-蒸馏由 [memory/distiller.py](../../src/tlon/memory/distiller.py) 的 `Distiller` 完成：一次 LLM 调用（30 秒超时），从整批 session 投影蒸馏出若干条 claim（每条 `text` + `importance`），prompt 要求模型以 JSON 返回，`_extract_json` 容忍 markdown 代码块包裹。LLM 不可用时（未配置、调用失败或产出为空）回退到 `fallback_claims`——每个 session 一条机械 claim（「处理过会话（触发语：…）」+ 回复要点拼接）。降级是设计意图：记忆蒸馏不能因 LLM 抖动而丢失；且因为输入来自 journal，fallback 引用的是真触发语（ADR 0028 起为固定模板「你有 N 封未读邮件」），而不是 agent 自己的回信。
+蒸馏由 [memory/distiller.py](../../src/tlon/memory/distiller.py) 的 `Distiller` 完成：一次 LLM 调用（30 秒超时），从整批 run 投影蒸馏出若干条 claim（每条 `text` + `importance`），prompt 要求模型以 JSON 返回，`_extract_json` 容忍 markdown 代码块包裹。LLM 不可用时（未配置、调用失败或产出为空）回退到 `fallback_claims`——每个 run 一条机械 claim（「处理过程序运行（触发语：…）」+ 回复要点拼接）。降级是设计意图：记忆蒸馏不能因 LLM 抖动而丢失；且因为输入来自 journal，fallback 引用的是真触发语（来自 run 冻结输入），而不是 agent 自己的回信。
 
-Distiller 的输入是 **session 事件投影**（`SessionProjection`，[memory/models.py](../../src/tlon/memory/models.py)）：`trigger_content`（`session/start` 的触发语，ADR 0028 起为固定模板）+ 每轮 `llm/response` 的 content + 每条 `tool/result` 的一行摘要。投影由 `build_session_projection` 从只读事件视图重建，也包含无模型程序的返回值和结束状态。来源 ID 随 claim 保存。
+Distiller 的输入是 **run 事件投影**（`RunProjection`，[memory/models.py](../../src/tlon/memory/models.py)）：`trigger_content`（`run/start` 的触发语，来自 run 冻结输入）+ 每轮 `llm/response` 的 content + 每条 `tool/result` 的一行摘要。投影由 `build_run_projection` 从只读事件视图重建，也包含无模型程序的返回值和结束状态。来源 ID 随 claim 保存。
 
 ### 来源消费进度与恢复
 
-`memory/distillation.json` 保存 `consumed_source_ids` 和一个固定的 pending 批次。完成来源集合减去已消费 ID 得到 pending，较早开始、较晚完成或较晚读取的运行都能进入后续批次。旧 `last_distilled_at` 不再参与筛选；无 origin 字段的旧 claims 的 source_session_ids 可证明旧来源已消费，不转换或删除历史。消费记录独立于 claim 产物，之后删除 claim 不会让已消费来源再次进入蒸馏。
+`memory/distillation.json` 保存 `consumed_source_ids` 和一个固定的 pending 批次。完成来源集合减去已消费 ID 得到 pending，较早开始、较晚完成或较晚读取的运行都能进入后续批次。消费状态只认当前 checkpoint，不读取旧 `last_distilled_at`，也不从历史 claim 推断消费回执。旧 agent session 来源不迁移、不提供回读兼容。消费记录独立于 claim 产物，之后删除 claim 不会让已消费来源再次进入蒸馏。
 
-调用模型前先保存批次 ID 和输入投影；维护根为来源集合 hash，对应独立预算。模型结果、稳定 claim ID、冲突候选和应用计划在写入前保存。原子提交进度失败时重读或恢复原批次，复用模型回执并跳过已写 claim；unknown 保留阻塞证据，不发起新的模型请求。旧会话在回收点触发，新 v2 在串行运行器的维护检查点触发；维护活动计入排空，不能因读取或维护失败重新执行已完成入口。
+调用模型前先保存批次 ID 和输入投影；维护根为来源集合 hash，对应独立预算。模型结果、稳定 claim ID、冲突候选和应用计划在写入前保存。原子提交进度失败时重读或恢复原批次，复用模型回执并跳过已写 claim；unknown 保留阻塞证据，不发起新的模型请求。蒸馏在串行运行器的维护检查点触发；维护活动计入 `is_busy` 与排空，不能因读取或维护失败重新执行已完成入口。
 
-输入事实不删除。只读交互视图可以随时从 ProgramStore 重建，无投影数据库、游标追赶服务或新 session resume。
+输入事实不删除。只读交互视图可以随时从 ProgramStore 重建，无投影数据库、游标追赶服务或独立的 agent session 恢复。
 
 ### claim 生命周期：冲突判定，失效不删除
 
@@ -79,24 +81,24 @@ Distiller 的输入是 **session 事件投影**（`SessionProjection`，[memory/
 
 两种路径的渲染一致：`- [YYYY-MM-DD] {text}` 的日期标记行，拼成一个 `ContextBlock`（类型 `claims`，标签「记忆」）。
 
-注入点是 [agents/context_builder.py](../../src/tlon/agents/context_builder.py) 的 `ContextBuilder`：spec 的 `:context` 段向量里出现 `(knowledge)` 时，`build_context` 把责任集全部邮件的主题 + 正文作为 query 传给 `build_knowledge_context`，把记忆块拼成一条 `[已知信息]` 开头的 user 消息。注入位置不随声明浮动：knowledge 消息固定追加为整个 context 的最后一条（触发语之后），落在压缩锚点（anchor）之外——每 session JIT 变化的内容不再冻结进 anchor，context pressure 可以正常压缩它，KV-cache 前缀也随之更小更稳（ADR 0015）。`:sections` 里的 `(knowledge)` 声明只控制「是否注入」——fast-responder 原型的 `:context` 里没有 `(knowledge)`，它就不带记忆上场，这是 cost routing 的一部分。
+注入点是 [agents/context_builder.py](../../src/tlon/agents/context_builder.py) 的 `ContextBuilder`：spec 的 `:context` 段向量里出现 `(knowledge)` 时，`build_context` 把责任集全部邮件的主题 + 正文作为 query 传给 `build_knowledge_context`，把记忆块拼成一条 `[已知信息]` 开头的 user 消息。注入位置不随声明浮动：knowledge 消息固定追加为整个 context 的最后一条（触发语之后），落在压缩锚点（anchor）之外——每 run JIT 变化的内容不再冻结进 anchor，context pressure 可以正常压缩它，KV-cache 前缀也随之更小更稳（ADR 0015）。`:sections` 里的 `(knowledge)` 声明只控制「是否注入」——fast-responder 原型的 `:context` 里没有 `(knowledge)`，它就不带记忆上场，这是 cost routing 的一部分。
 
 一个细节体现实用主义：`build_knowledge_context` 把记忆构建的异常整个兜住（记告警、返回空串），记忆损坏不阻断对话，空记忆等价于没有 `(knowledge)` 段。记忆是增强，不是依赖。
 
 ## agent 侧接口
 
-agent 通过 [src/tlon/operations/memory.py](../../src/tlon/operations/memory.py) 下的四个工具读写自己的记忆，全部在 `assemble_member_services`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配成员服务时注册；前三个直接持有本 agent 的 `MemoryManager` 实例，`session-read` 持有本 agent 的 session journal（`SessionLogReader` 端口）：
+agent 通过 [src/tlon/operations/memory.py](../../src/tlon/operations/memory.py) 下的四个工具读写自己的记忆，全部在 `assemble_member_services`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配成员服务时注册；前三个直接持有本 agent 的 `MemoryManager` 实例，`run-read` 持有本 agent 的 run journal（`RunLogReader` 端口）：
 
-- `memory-remember`（`remember_fact.py` 的 `RememberFactTool`）——立即写一条 claim（参数为 `fact` 文本与 `importance`）。新 claim 不在当前 session 重新注入（注入只在 session 首步构建一次），但经 `memory-search` 立即可查，下个 session 进 JIT 注入。
-- `memory-search`（`search_memories.py` 的 `SearchMemoriesTool`）——向量检索：query embed 后按相似度取 top-k active claims，每条结果带日期与 `source_session_ids` 来源引用；索引不可用时降级关键词子串匹配。
-- `session-read`（`read_session.py` 的 `ReadSessionTool`）——claim → 来源的回读通道：按 session id 读该会话的 journal，渲染为有界摘要（触发语 + 各轮回复 + 工具活动；触发截 300 字、每轮回复截 600 字、最多列 12 轮、总量硬上限 12000 字符）。claim 是压缩指针，journal 是原文真相（ReadAgent 模式）。
-- `forget`（`forget_memory.py` 的 `ForgetMemoryTool`）——删除记忆；默认预览模式（只报匹配），`confirm: true` 才真正删。两步确认是给 LLM 的防误删闸门。
+- `memory-remember`——立即写一条 claim（参数为 `fact` 文本与 `importance`）。新 claim 不在当前 run 重新注入（注入只在 run 首步构建一次），但经 `memory-search` 立即可查，下个 run 进 JIT 注入。
+- `memory-search`——向量检索：query embed 后按相似度取 top-k active claims，每条结果带日期与 `source_run_ids` 来源引用；索引不可用时降级关键词子串匹配。
+- `run-read`——claim → 来源的回读通道：按原始 run_id 读取程序历史投影，渲染为有界摘要（触发语 + 各轮回复 + 工具活动；触发截 300 字、每轮回复截 600 字、最多列 12 轮、总量硬上限 12000 字符）。claim 是压缩指针，journal 是原文真相（ReadAgent 模式）。
+- `forget`——删除记忆；默认预览模式（只报匹配），`confirm: true` 才真正删。两步确认是给 LLM 的防误删闸门。
 
 工具的读写都只落在本 agent 的目录——`MemoryManager` 构造时绑定 `agent_id`，工具层没有跨 agent 访问的入口。记忆私有性在这一层是结构性保证，不是约定。
 
 ## 反思：记忆的自我审计
 
-[agents/reflection.py](../../src/tlon/agents/reflection.py) 的 ReflectionEngine 按间隔和未消费完成来源数触发审计；默认最少 5 个来源。旧会话从配方取得 ReflectSpec，新 v2 使用宿主维护默认值（启用、30 分钟间隔），不引入 stage 配方。
+[agents/reflection.py](../../src/tlon/agents/reflection.py) 的 ReflectionEngine 按间隔和未消费完成来源数触发审计；默认最少 5 个来源。使用宿主维护默认值（启用、30 分钟间隔），不引入 stage 配方。
 
 `memory/reflection.json` 保存已消费来源、固定批次、digest、操作和应用进度。模型在稳定批次维护根运行，record_claim 使用稳定 ID 和来源引用；delete_claim 在应用前解析为固定目标 ID，恢复不会误删后来新增的记忆。失败保留原批次，重放不重复计数或重新生成操作。后台 task 的活动和关闭由运行器管理。
 
@@ -110,7 +112,7 @@ get_memory_digest 提供最近 50 条 active claims、未蒸馏来源数及最�
 
 三个关键设计：
 
-- **离线路径**。蒸馏发生在 member runtime shutdown 之后，所以蒸馏器**离线重建**归档数据：用显式 `data_dir` 重建 `MemoryManager`、用 `SessionJournal` 满足 digest 需要的 journal 读面，不与任何活着的运行态共享对象。
+- **离线路径**。蒸馏发生在 member runtime shutdown 之后，所以蒸馏器**离线重建**归档数据：用显式 `data_dir` 重建 `MemoryManager`、用 `RunJournal` 满足 digest 需要的 journal 读面，不与任何活着的运行态共享对象。
 - **只挂蓄意停止**。`AGENT_SLEEPING`/`AGENT_IDLE`（drain 是日常 scale-to-zero 睡眠，反复发生）不触发蒸馏——退休才有遗产，午睡没有。
 - **失败不阻断**。没有可用记忆服务或 digest 为空直接跳过；LLM 失败只记日志不 raise——停止流程已经完成，这只是事后簿记。
 
@@ -122,14 +124,14 @@ get_memory_digest 提供最近 50 条 active claims、未蒸馏来源数及最�
 
 把上面各节串起来，一封邮件从进入到沉淀的全链路是：
 
-1. 入口将完成状态、结果及调度意图提交到 ProgramStore；旧引擎仍向自己的 journal 提交。
-2. SessionJournal 读取两类来源，新运行只由 ProgramStore 恢复；完成计数和最近交互由元数据与回执派生。
+1. 入口将完成状态、结果及调度意图提交到唯一执行权威 ProgramStore。
+2. RunJournal 只读取 ProgramStore，运行也只由 ProgramStore 恢复；完成计数和最近交互由元数据与回执派生。
 3. 蒸馏和反思按稳定来源 ID 与固定批次独立消费，不重复调用模型或追加相同 claim。
-4. thread recap、session-read、退休归档和教训读取同一视图；来源 ID 可回读，客户端连接 `/sessions` 无变动。
+4. thread recap、run-read、退休归档和教训读取同一视图；来源 ID 可回读，客户端连接 `/sessions` 无变动。
 
 ## 回归集
 
-记忆系统的独立回归评测是：[scripts/eval_memory.py](../../scripts/eval_memory.py) + 场景数据集 [scripts/memory_eval/](../../scripts/memory_eval/README.md)（14 个中文邮件场景，对齐 LongMemEval 的四个维度——事实召回、知识更新、时序、拒答）。评测跑真实链路：每个场景在隔离的临时目录里重建 MemoryManager，假 journal 灌入脚本化 session（`session/start` 时间戳控制蒸馏顺序，window=1 逐 session 蒸馏），然后用场景 query 打两个检索面——JIT 注入面（`build_context_blocks`）与检索面（`search_memories`）——断言「该出现的出现、不该出现的（被取代的旧事实、无关 claim、编造内容）不出现」。知识更新与时序维度实际验证的就是冲突判定 supersede 的端到端效果：旧 claim 失效不删除、可审计，但绝不能进检索结果。
+记忆系统的独立回归评测是：[scripts/eval_memory.py](../../scripts/eval_memory.py) + 场景数据集 [scripts/memory_eval/](../../scripts/memory_eval/README.md)（14 个中文邮件场景，对齐 LongMemEval 的四个维度——事实召回、知识更新、时序、拒答）。评测跑真实链路：每个场景在隔离的临时目录里重建 MemoryManager，假 journal 灌入脚本化 run（`run/start` 时间戳控制蒸馏顺序，window=1 逐 run 蒸馏），然后用场景 query 打两个检索面——JIT 注入面（`build_context_blocks`）与检索面（`search_memories`）——断言「该出现的出现、不该出现的（被取代的旧事实、无关 claim、编造内容）不出现」。知识更新与时序维度实际验证的就是冲突判定 supersede 的端到端效果：旧 claim 失效不删除、可审计，但绝不能进检索结果。
 
 这是需要真实模型的手动评测，独立于常规质量门：评测需要真实 LLM（蒸馏 + 冲突判定）与 embedding 调用——花钱、要 API key，且 LLM 产出有固有波动（脚本允许单场景重试一次再判 FAIL）。运行：
 
@@ -147,14 +149,14 @@ embedding 模型必须显式指定（JIT 检索无从降级评测，缺失直接
 
 ADR 0017 的业界调研结论：主流现成 memory 产品无可直接引入者（生态绑死、停更或需外挂图数据库），且 Anthropic/Manus/LangChain 三家独立收敛到「文件 + 笔记 + 周期摘要 + 选择性注入」——Tlon 的范式方向没错，缺的是检索层与事实生命周期。于是整体替换自研：
 
-- **可解释**——每条 claim 都记着 `source_session_ids`，可疑的断言可以回到 journal 逐事件核对。
+- **可解释**——每条 claim 都记着 `source_run_ids`，可疑的断言可以回到 journal 逐事件核对。
 - **可编辑**——JSONL 是纯文本，人类可以直接打开审计、改错、删除；`forget` 工具的两步确认也建立在「记忆是可枚举条目」之上。
-- **可审计**——落盘即事实。`~/.tlon/{agent_id}/memory/` 下的文件与 `sessions.sqlite3` 就是 agent 经历与记得的全部，没有第二个真相；旧 `sessions/` JSONL 只是不参与运行时的离线档案（ADR 0032）。
+- **可审计**——落盘即事实。`~/.tlon/{agent_id}/memory/` 下的文件与 `program.sqlite3` 分别保存记忆产物与执行事实；旧 `sessions.sqlite3` 不再读取，也不迁移或删除用户磁盘归档（ADR 0049）。
 - **有边界的重建**——journal 能重新提供自动蒸馏的输入，但重跑 LLM 不保证相同产物；主动 `memory-remember` 与反思写入也会产生 claim，不能宣称全部 claims 可由 journal 无损重建。可完全丢弃并重建的是向量索引。
 
 ### 为什么蒸馏用 LLM 而不是规则
 
-哪句话是决策、哪个偏好值得长期保留，规则写不出来。但 LLM 蒸馏有两个固有风险，设计上分别兜住：**丢内容**靠蒸馏输入永不删除（journal 只增不减，失败时固定批次保留，后续维护恢复原任务）与 fallback 机械 claim（蒸馏失败不等于 session 白跑）；**编内容**靠 prompt 约束（「不要推测」）加 `source_session_ids` 溯源。反思引擎是这个信任模型的第二层：蒸馏时没提取到的、提取错的，由反思在事后审计中补记或删除。
+哪句话是决策、哪个偏好值得长期保留，规则写不出来。但 LLM 蒸馏有两个固有风险，设计上分别兜住：**丢内容**靠蒸馏输入永不删除（journal 只增不减，失败时固定批次保留，后续维护恢复原任务）与 fallback 机械 claim（蒸馏失败不等于 run 白跑）；**编内容**靠 prompt 约束（「不要推测」）加 `source_run_ids` 溯源。反思引擎是这个信任模型的第二层：蒸馏时没提取到的、提取错的，由反思在事后审计中补记或删除。
 
 ### 为什么记忆是 agent 私有的
 
@@ -172,7 +174,7 @@ ADR 0017 的业界调研结论：主流现成 memory 产品无可直接引入者
 
 v2 蒸馏和反思的临时故障按 30、60、120、240、300 秒退避，后续上限为 300 秒；等待期间不再调用模型、写 checkpoint 或发布维护活动。固定根上的额度耗尽、截止、provider 已拒绝、模型/外部效果 unknown、恢复失配及损坏 checkpoint 会阻塞本进程内的对应维护任务。错误通过成员 diagnostic_error 上浮，正常收发邮件和另一项独立维护不因此停止。进程重启只重新核对原批次与回执，不给原根新额度，也不绕过 unknown。
 
-checkpoint 保存冻结输入、claims/operations 和应用进度。损坏 JSON、截断或错误结构因此不能当成空进度：文件保持原字节，蒸馏损坏仅隔离蒸馏，普通 claims 读取与记忆写入仍可用；反思损坏只隔离反思。缺少文件仍表示尚无维护进度。原有只含 last_distilled_at 的历史文件没有固定批次，继续仅作为历史阅读，不用于新来源筛选。
+checkpoint 保存冻结输入、claims/operations 和应用进度。损坏 JSON、截断或错误结构因此不能当成空进度：文件保持原字节，蒸馏损坏仅隔离蒸馏，普通 claims 读取与记忆写入仍可用；反思损坏只隔离反思。缺少文件仍表示尚无维护进度。只含旧 `last_distilled_at` 的 checkpoint 不受支持，按不符合当前结构的 checkpoint 隔离，不进行兼容读取或迁移。
 
 操作员处置顺序：
 
@@ -183,4 +185,4 @@ checkpoint 保存冻结输入、claims/operations 和应用进度。损坏 JSON�
 
 当前固定批次一次包含全部待消费来源，长 backlog 仍可能形成较大 checkpoint；一个无法读取的来源会阻塞这一维护消费者，需恢复其权威数据后继续。批次大小和逐来源隔离尚未扩展，本修复不引入另一套维护队列。
 
-退休旧成员首次执行教训模型维护时，如果此前没有 program.sqlite3，会为独立额度和模型回执建立该库；路径由 TlonPaths.agent_program_database_file 提供。单纯读取旧交互不会创建程序库，也不会转换历史。
+退休成员首次执行教训模型维护时，如果此前没有 program.sqlite3，会为独立额度和模型回执建立该库；路径由 TlonPaths.agent_program_database_file 提供。单纯读取 run 交互不会创建程序库，也不会转换历史。

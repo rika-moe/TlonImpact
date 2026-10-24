@@ -16,6 +16,8 @@ ProgramStore 记录逐调用身份、契约、冻结依赖及结果。state-put 
 
 ## 已退役
 
-ActionRequest、RuleEnv/LoopEnv/StageCondEnv、run-loop、effects collector 和 stage 条件作用域已删除。v1 行为拒绝，无兼容层。新执行和恢复只有模块程序路径；SessionJournal 保留只读历史，不写入或恢复运行。
+ActionRequest、RuleEnv/LoopEnv/StageCondEnv、run-loop、effects collector 和 stage 条件作用域已删除。v1 行为拒绝，无兼容层。新执行和恢复只有模块程序路径；RunJournal 仅查询 ProgramStore，不写入或恢复运行。
 
 reference 中事件、工具、配置与词汇清单由 `scripts/gen_reference_docs.py` 生成；静态校验不保证运行时无类型错误或预算耗尽，错误按运行边界持久化和上浮。
+
+当前历史边界以 [ADR 0049](../decisions/0049-retire-agent-session.md) 为准：agent session 已退役，run-read/run_id/source_run_ids 为唯一程序历史协议；不提供旧历史兼容或迁移，client session 保留。

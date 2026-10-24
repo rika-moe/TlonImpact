@@ -126,7 +126,7 @@ def _apply_cache_breakpoints(
     of the *conversation* list; index 0 here is the system message, so the
     anchor's last message sits at index ``cache_prefix_len``). The caller's
     messages are never mutated: marked entries are copies, keeping the
-    journaled session context marker-free.
+    journaled run context marker-free.
     """
     if model.split("/", 1)[0] not in _EXPLICIT_CACHE_PROVIDERS:
         return all_messages
@@ -204,7 +204,7 @@ class LLMResponse:
     reasoning_content: str | None = None  # For kimi-k2.5 thinking mode
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary (session journal persistence, ADR 0007)."""
+        """Convert to dictionary (run journal persistence, ADR 0007)."""
         return {
             "content": self.content,
             "tool_calls": ([tc.to_dict() for tc in self.tool_calls] if self.tool_calls else None),
@@ -287,7 +287,7 @@ class LLMClient:
         tools: list[dict[str, Any]] | None = None,
         timeout: float | None = None,
         purpose: str | None = None,
-        session_id: str | None = None,
+        run_id: str | None = None,
         cache_prefix_len: int | None = None,
         max_tokens: int | None = None,
     ) -> LLMResponse:
@@ -299,10 +299,12 @@ class LLMClient:
                 tools,
                 timeout,
                 purpose,
-                session_id,
+                run_id,
                 cache_prefix_len,
                 max_tokens,
             )
+        # The execution authority owns attribution, including internal model calls.
+        run_id = scope.root_id
         frozen = await asyncio.to_thread(
             scope.store.freeze_model_context,
             scope.root_id,
@@ -337,7 +339,7 @@ class LLMClient:
                 tools,
                 timeout,
                 purpose,
-                session_id,
+                run_id,
                 cache_prefix_len,
                 allowance,
             )
@@ -376,7 +378,7 @@ class LLMClient:
         tools: list[dict[str, Any]] | None = None,
         timeout: float | None = None,
         purpose: str | None = None,
-        session_id: str | None = None,
+        run_id: str | None = None,
         cache_prefix_len: int | None = None,
         max_tokens: int | None = None,
     ) -> LLMResponse:
@@ -389,10 +391,10 @@ class LLMClient:
             timeout: Request timeout in seconds
             purpose: Ledger attribution label (e.g. "think",
                 "summarize"); None = unattributed
-            session_id: Session the call belongs to, when known
+            run_id: Run the call belongs to, when known
             max_tokens: Optional output cap, bounded by the member model configuration
             cache_prefix_len: How many leading entries of ``messages``
-                form the stable prefix (the session anchor). Only used by
+                form the stable prefix (the run anchor). Only used by
                 explicit-caching providers (Anthropic family) to place a
                 cache breakpoint on the prefix's last message; automatic-
                 caching providers ignore it entirely
@@ -455,7 +457,7 @@ class LLMClient:
                     await self._record_usage(
                         response,
                         purpose=purpose,
-                        session_id=session_id,
+                        run_id=run_id,
                         duration_ms=duration_ms,
                         cpu_ms=cpu_ms,
                     )
@@ -481,7 +483,7 @@ class LLMClient:
         response: LLMResponse,
         *,
         purpose: str | None,
-        session_id: str | None,
+        run_id: str | None,
         duration_ms: int,
         cpu_ms: int,
     ) -> None:
@@ -504,7 +506,7 @@ class LLMClient:
             "duration_ms": duration_ms,
             "cpu_ms": cpu_ms,
             "purpose": purpose,
-            "session_id": session_id,
+            "run_id": run_id,
         }
         try:
             await self._ledger.append(record)

@@ -146,7 +146,7 @@ class TestPersonaLedgerAudit:
             "duration_ms": 100,
             "cpu_ms": 1,
             "purpose": "think",
-            "session_id": "s1",
+            "run_id": "r1",
         }
         await LedgerWriter(paths.agent_ledger_file(AGENT_ID)).append(llm_record)
         await tool.execute_context({"file": "identity", "content": "人格"})

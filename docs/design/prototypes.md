@@ -103,11 +103,11 @@ agent 侧入口是 `LifecycleService`（[lifecycle/service.py](../../src/tlon/li
 
 ### spawn 预算：落盘账本
 
-三道防失控闸门（注册表构造参数，硬编码默认值）：全局同时运行上限 `max_activations = 8`、spawn 链深度 `max_spawn_depth = 3`、每 (spawner, session) 配额 `session_spawn_quota = 2`。三者只有 (spawner, session) 配额是账本，落盘 `~/.tlon/shared/spawn-quota.json`（原子替换写入，损坏时告警并从头开始，绝不阻碍启动），跨重启存活——执行根及回执通过 ProgramStore 跨重启存活，纯内存账本会让 spawner 靠重启刷满配额，防失控闸失效。三个维度分别防三种失控：总量防资源耗尽，深度防无限递归 spawn，会话配额防单个任务循环里刷成员。`max_activations` 从当前运行表计数，重启后重新形成；`max_spawn_depth` 从成员持久化的 `spawn_depth` 递增派生，两者不另建账本。
+三道防失控闸门（注册表构造参数，硬编码默认值）：全局同时运行上限 `max_activations = 8`、spawn 链深度 `max_spawn_depth = 3`、每 (spawner, run) 配额 `run_spawn_quota = 2`。三者只有 (spawner, run) 配额是账本，落盘 `~/.tlon/shared/spawn-quota.json`（原子替换写入，损坏时告警并从头开始，绝不阻碍启动），跨重启存活——执行根及回执通过 ProgramStore 跨重启存活，纯内存账本会让 spawner 靠重启刷满配额，防失控闸失效。三个维度分别防三种失控：总量防资源耗尽，深度防无限递归 spawn，运行配额防单个任务循环里刷成员。`max_activations` 从当前运行表计数，重启后重新形成；`max_spawn_depth` 从成员持久化的 `spawn_depth` 递增派生，两者不另建账本。
 
 每次 spawn 在基础配额上应用两个独立维度：
 
-- **目标血脉的 tilt**：有效配额先算 `ceil(session_spawn_quota × tilt)`；冷启动和 provider 异常回到中性 `1.0`。
+- **目标血脉的 tilt**：有效配额先算 `ceil(run_spawn_quota × tilt)`；冷启动和 provider 异常回到中性 `1.0`。
 - **发起者的见习状态**：按 **spawner_id** 判断，而不是目标 prototype；见习成员的有效配额再取 `min(effective, 1)`，派生异常不收紧。
 
 目标血脉还必须通过偿付检查，失败返回 `insolvent_lineage`，异常则放行。这些判断的公式和默认阈值统一在 [society-policy.md](society-policy.md) 定义，SpawnManager 负责执行结果。全局激活上限不按血脉拆分，避免因血脉暂时低效影响其现役成员。账本损坏时从头开始是当前可用性取舍，不等于配额在磁盘损坏后仍有严格保障。

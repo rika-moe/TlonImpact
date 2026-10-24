@@ -1,6 +1,6 @@
 """Rebuildable reading events from committed member program facts.
 
-These events are views, never inputs to session recovery. No model or tool is
+These events are views, never inputs to run recovery. No model or tool is
 called and no inferred outcome is written back to either authority.
 """
 
@@ -11,13 +11,10 @@ from tlon.agents.program_store import ProgramRun
 from tlon.operations.schema import json_value
 from tlosure.edn import loads
 
-PROGRAM_SOURCE_PREFIX = "program:"
-
 
 def program_events(record: dict[str, Any], agent_id: str) -> list[dict[str, Any]]:
     """Project one immutable snapshot into the shared reading vocabulary."""
     run: ProgramRun = record["run"]
-    source_id = PROGRAM_SOURCE_PREFIX + run.run_id
     snapshot = json_value(loads(run.input_edn), edn_keys=True)
     payload = snapshot.get("payload", {}) if isinstance(snapshot, dict) else {}
     mail = payload.get("mail", {}) if isinstance(payload, dict) else {}
@@ -33,8 +30,7 @@ def program_events(record: dict[str, Any], agent_id: str) -> list[dict[str, Any]
         events.append({"seq": len(events), "ts": record["started_at"], "type": event_type, **data})
 
     emit(
-        "session/start",
-        session_id=source_id,
+        "run/start",
         agent_id=agent_id,
         responsibility=[mail_id] if mail_id else [],
         source_mail_id=mail_id,
@@ -68,7 +64,10 @@ def program_events(record: dict[str, Any], agent_id: str) -> list[dict[str, Any]
             else:
                 emit("program/model-failure", call_id=identity["call_id"], outcome=outcome)
         elif name not in {"model-call", "tool-execute", "model-context"}:
-            emit("tool/dispatch", tool_calls=[{"id": identity["call_id"], "function": {"name": name}}])
+            emit(
+                "tool/dispatch",
+                tool_calls=[{"id": identity["call_id"], "function": {"name": name}}],
+            )
             emit(
                 "tool/result",
                 tool_call={"id": identity["call_id"], "function": {"name": name}},
@@ -81,7 +80,7 @@ def program_events(record: dict[str, Any], agent_id: str) -> list[dict[str, Any]
             )
     if run.completed or run.error is not None:
         emit(
-            "session/end",
+            "run/end",
             reason="failed" if run.error else "completed",
             error=run.error,
             result=json_value(loads(run.result_edn), edn_keys=True) if run.result_edn else None,

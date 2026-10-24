@@ -1,6 +1,6 @@
 """Memory Manager - the claim-based memory interface (ADR 0017).
 
-The injected history reader exposes legacy journal and module program facts;
+The injected history reader exposes committed program run facts;
 completed sources are distilled in batches into claims — natural-language
 assertions with provenance — stored append-only in ``claims.jsonl``.
 Distillation progress is a set of consumed source IDs and a durable pending
@@ -16,7 +16,7 @@ contradicted ones are superseded in place — invalidated, never deleted
 execution control and recovery identity failures propagate without writing. The manager
 keeps the claim store, the index, the context-block assembly for the
 ``(knowledge)`` section, and the batch distillation trigger the
-scheduler calls at its session reap point.
+scheduler calls at its run reap point.
 """
 
 import asyncio
@@ -50,7 +50,7 @@ from tlon.operations.schema import RecoveryMismatchError
 
 from .claim_store import ClaimStore
 from .distiller import Distiller
-from .models import Claim, ContextBlock, MemoryConfig, SessionProjection, build_session_projection
+from .models import Claim, ContextBlock, MemoryConfig, RunProjection, build_run_projection
 from .vector_index import VectorIndex
 
 logger = get_logger(__name__)
@@ -74,12 +74,12 @@ class Embedder(Protocol):
         ...
 
 
-class SessionLogReader(Protocol):
+class RunLogReader(Protocol):
     """The journal read surface the distillation trigger needs.
 
     ``tlon.memory`` cannot import ``tlon.agents`` (import-linter), so the
     journal (agents layer) is injected structurally: any object with
-    these methods qualifies — in production, ``SessionJournal``.
+    these methods qualifies — in production, ``RunJournal``.
     """
 
     async def list_completed(self, started_after: datetime | None = None) -> list[str]:
@@ -90,8 +90,8 @@ class SessionLogReader(Protocol):
         """Count completed sources with the optional historical filter."""
         ...
 
-    async def read_events(self, session_id: str) -> list[dict[str, Any]]:
-        """All events of one session's log, in order."""
+    async def read_events(self, run_id: str) -> list[dict[str, Any]]:
+        """All events of one run's log, in order."""
         ...
 
 
@@ -106,8 +106,8 @@ class MemoryManager:
         >>> manager = MemoryManager("dev-001", config, Path("./data"))
         >>> await manager.load()
         >>>
-        >>> # At the scheduler's session reap point
-        >>> await manager.maybe_distill_completed_sessions(journal)
+        >>> # At the scheduler's run reap point
+        >>> await manager.maybe_distill_completed_runs(journal)
         >>>
         >>> # Build context for LLM
         >>> context_blocks = await manager.build_context_blocks(current_message)
@@ -235,18 +235,6 @@ class MemoryManager:
                 self.maintenance_error = str(error)
                 logger.error("distillation_checkpoint_invalid", error=str(error))
             await self.claims.load()
-            # Only untagged historical claims establish old consumption. New
-            # claims carry their origin; provenance from remember/reflection
-            # is never a receipt for the independent distillation consumer.
-            pending_ids = set(self._pending_batch["source_ids"]) if self._pending_batch else set()
-            for claim in await self.claims.get_all_claims(include_superseded=True):
-                if "origin" in claim:
-                    continue
-                self._consumed.update(
-                    source_id
-                    for source_id in claim.get("source_session_ids", [])
-                    if not source_id.startswith("program:") and source_id not in pending_ids
-                )
             await self._init_vector_index()
 
             self._loaded = True
@@ -402,17 +390,11 @@ class MemoryManager:
     # ===== Distillation source receipts =====
 
     def _load_distillation(self) -> None:
-        """Load source receipts. Old scalar timestamps are not consumption evidence."""
+        """Load and validate durable run consumption receipts."""
         if not self.distillation_file.exists():
             return
         try:
             data = json.loads(self.distillation_file.read_text(encoding="utf-8"))
-            if (
-                isinstance(data, dict)
-                and set(data) == {"last_distilled_at"}
-                and isinstance(data["last_distilled_at"], str)
-            ):
-                return
             self._validate_distillation(data)
         except (UnicodeDecodeError, ValueError) as error:
             raise MaintenanceCheckpointError(self.distillation_file, str(error)) from error
@@ -450,7 +432,7 @@ class MemoryManager:
         if not isinstance(projections, list):
             raise ValueError("pending projections must be a list")
         allowed = {
-            "session_id",
+            "run_id",
             "trigger_content",
             "llm_responses",
             "tool_results",
@@ -461,7 +443,7 @@ class MemoryManager:
         for projection in projections:
             if not isinstance(projection, dict) or set(projection) - allowed:
                 raise ValueError("invalid pending projection fields")
-            for key in ("session_id", "trigger_content"):
+            for key in ("run_id", "trigger_content"):
                 if not isinstance(projection.get(key), str):
                     raise ValueError(f"projection {key} must be a string")
             for key in ("end_reason", "program_result"):
@@ -470,7 +452,7 @@ class MemoryManager:
             for key in ("llm_responses", "tool_results", "errors"):
                 if key in projection and not strings(projection[key]):
                     raise ValueError(f"projection {key} must be a list of strings")
-        if [item["session_id"] for item in projections] != batch["source_ids"]:
+        if [item["run_id"] for item in projections] != batch["source_ids"]:
             raise ValueError("projection identities do not match source_ids")
         for key in ("claims", "conflict_candidates"):
             if key not in batch:
@@ -483,8 +465,8 @@ class MemoryManager:
                 for field in ("id", "text", "timestamp", "valid_from"):
                     if not isinstance(claim.get(field), str):
                         raise ValueError(f"pending claim {field} must be a string")
-                if not strings(claim.get("source_session_ids")):
-                    raise ValueError("pending claim source_session_ids must be strings")
+                if not strings(claim.get("source_run_ids")):
+                    raise ValueError("pending claim source_run_ids must be strings")
                 for field in ("valid_to", "superseded_by"):
                     if claim.get(field) is not None and not isinstance(claim[field], str):
                         raise ValueError(f"pending claim {field} must be a string or null")
@@ -524,16 +506,14 @@ class MemoryManager:
             with contextlib.suppress(OSError):
                 temporary.unlink(missing_ok=True)
 
-    async def _collect_pending(
-        self, logs: SessionLogReader
-    ) -> list[tuple[str, list[dict[str, Any]]]]:
+    async def _collect_pending(self, logs: RunLogReader) -> list[tuple[str, list[dict[str, Any]]]]:
         return [
             (source_id, await logs.read_events(source_id))
             for source_id in sorted(await logs.list_completed())
             if source_id not in self._consumed
         ]
 
-    async def maybe_distill_completed_sessions(self, logs: SessionLogReader) -> int | None:
+    async def maybe_distill_completed_runs(self, logs: RunLogReader) -> int | None:
         """Consume stable completed source IDs, including late-arriving older runs."""
         async with self.write_gate.hold():
             if not self._loaded:
@@ -541,23 +521,21 @@ class MemoryManager:
             if self.maintenance_error is not None:
                 raise MaintenanceCheckpointError(self.distillation_file, self.maintenance_error)
             if self._pending_batch is not None:
-                projections = [
-                    SessionProjection(**item) for item in self._pending_batch["projections"]
-                ]
-                return await self._distill_sessions(projections)
+                projections = [RunProjection(**item) for item in self._pending_batch["projections"]]
+                return await self._distill_runs(projections)
             pending = await self._collect_pending(logs)
             if len(pending) < self.config.distillation_window:
                 return None
-            return await self._distill_sessions(
-                [build_session_projection(events, source_id) for source_id, events in pending]
+            return await self._distill_runs(
+                [build_run_projection(events, source_id) for source_id, events in pending]
             )
 
-    async def _distill_sessions(self, projections: list[SessionProjection]) -> int | None:
+    async def _distill_runs(self, projections: list[RunProjection]) -> int | None:
         """Persist a fixed batch before modeling, then replay its receipts and writes."""
         async with self.write_gate.hold():
             if self._pending_batch is None:
-                projections = sorted(projections, key=lambda item: item.session_id)
-                source_ids = [item.session_id for item in projections]
+                projections = sorted(projections, key=lambda item: item.run_id)
+                source_ids = [item.run_id for item in projections]
                 batch_id = hashlib.sha256(json.dumps(source_ids).encode()).hexdigest()
                 self._pending_batch = {
                     "id": batch_id,
@@ -599,7 +577,7 @@ class MemoryManager:
                         text=item["text"],
                         timestamp=now,
                         valid_from=now,
-                        source_session_ids=batch["source_ids"],
+                        source_run_ids=batch["source_ids"],
                         importance=item.get("importance", 0.5),
                     ).to_dict()
                     for index, item in enumerate(claim_dicts)
@@ -877,7 +855,7 @@ class MemoryManager:
         importance: float = 0.5,
         *,
         claim_id: str | None = None,
-        source_session_ids: list[str] | None = None,
+        source_run_ids: list[str] | None = None,
     ) -> str:
         """Record a claim immediately (called by LLM via tool).
 
@@ -903,7 +881,7 @@ class MemoryManager:
                 text=fact,
                 timestamp=now,
                 valid_from=now,
-                source_session_ids=source_session_ids or [],
+                source_run_ids=source_run_ids or [],
                 importance=importance,
             )
 
@@ -928,7 +906,7 @@ class MemoryManager:
         Vector retrieval when the index is available (the embedding
         query is naturally cross-lingual — the old space-split keyword
         matching is gone with ); otherwise a keyword fallback. Each
-        hit carries its date and source session references, so the agent
+        hit carries its date and source run references, so the agent
         can cite where a memory came from.
 
         Args:
@@ -953,8 +931,8 @@ class MemoryManager:
             lines.append("## 相关记忆")
             for c in results:
                 timestamp = str(c.get("timestamp", ""))[:10]
-                refs = [str(s) for s in c.get("source_session_ids") or []]
-                suffix = f"（来源 session: {', '.join(refs)}）" if refs else ""
+                refs = [str(s) for s in c.get("source_run_ids") or []]
+                suffix = f"（来源 run: {', '.join(refs)}）" if refs else ""
                 lines.append(f"- [{timestamp}] {c.get('text', '')}{suffix}")
             lines.append("")
         else:
@@ -1099,7 +1077,7 @@ class MemoryManager:
             except Exception as e:
                 logger.warning("vector_index_delete_failed", claim_id=claim_id, error=str(e))
 
-    async def get_memory_digest(self, logs: SessionLogReader) -> dict[str, Any]:
+    async def get_memory_digest(self, logs: RunLogReader) -> dict[str, Any]:
         """Get a digest of current memory state for reflection/audit.
 
         Returns a dict with the recent active claims and the number of
@@ -1107,7 +1085,7 @@ class MemoryManager:
         for the reflection sub-agent to analyze.
 
         Returns:
-            Dict with keys: undistilled_session_count, claim_count, claims
+            Dict with keys: undistilled_run_count, claim_count, claims
         """
         if not self._loaded:
             await self.load()
@@ -1116,7 +1094,7 @@ class MemoryManager:
         completed = await logs.list_completed()
         pending_count = len(set(completed) - self._consumed)
         recent_interactions = [
-            asdict(build_session_projection(await logs.read_events(sid), sid))
+            asdict(build_run_projection(await logs.read_events(sid), sid))
             for sid in completed[-10:]
         ]
 
@@ -1127,7 +1105,7 @@ class MemoryManager:
             item["program_result"] = item.get("program_result", "")[:600]
             item["errors"] = [text[:300] for text in item.get("errors", [])[-5:]]
         return {
-            "undistilled_session_count": pending_count,
+            "undistilled_run_count": pending_count,
             "claim_count": len(claims),
             "claims": claims,
             "recent_interactions": recent_interactions,

@@ -1,5 +1,6 @@
 # 调用记录与恢复权威（P4a）
 
+> 后续修订：[ADR 0049](../decisions/0049-retire-agent-session.md) 已删除 agent session 及旧历史读取；下文旧阶段验收记录保留为历史，不代表当前兼容能力。
 > P5：执行与恢复仅有普通模块路径；旧 stage、run-loop、SessionScheduler 和 SessionJournal.resume 已删除。本文的 P4/P6 等旧操作统一阶段记录保留为历史，当前调用权威仍为 ProgramStore；边界以 [Runtime](runtime.md) 为准。
 
 > 后续覆盖：P1–P5 已完成，退役后的旧 API、宿主查询和存储边界见 [退役代码清理](workflow-retirement-cleanup.md)。以下阶段描述保留施工背景：[ADR 0046](../decisions/0046-programmable-workflows.md) 与 [可编程工作流程](programmable-workflows.md) 将以模块函数替代 stage 引擎，施工见[分阶段计划](programmable-workflows-plan.md)。P1 的当前用法见 [模块程序指南](../guides/writing-a-module-program.md)。本文的 stage 描述仅适用于 v1。

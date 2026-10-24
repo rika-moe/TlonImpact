@@ -278,13 +278,13 @@ class TestAdminDeleteAgent:
 
     async def test_live_sessions_conflict(self, tmp_path: Path):
         reg = MagicMock()
-        reg.remove_member = AsyncMock(side_effect=StopRejectedError("active_sessions", "busy"))
+        reg.remove_member = AsyncMock(side_effect=StopRejectedError("active_work", "busy"))
         handler, _reg, _p = _handler(tmp_path, reg)
 
         resp = await handler.handle_delete_agent(StubRequest(agent_id="dev-1"))
 
         assert resp.status == 409
-        assert json.loads(resp.text)["reason"] == "active_sessions"
+        assert json.loads(resp.text)["reason"] == "active_work"
 
 
 class TestAdminStaging:

@@ -9,7 +9,7 @@ has no archive to inspect and is skipped. Historical records remain unchanged.
 from datetime import UTC, datetime
 from typing import Any
 
-from tlon.agents.session_journal import SessionJournal
+from tlon.agents.run_journal import RunJournal
 from tlon.base.component import Component
 from tlon.base.config import yaml_load_file
 from tlon.base.device import Device
@@ -167,6 +167,6 @@ class RetirementCeremony(Component, Device):
             data_dir=self._paths.agent_dir(agent_id),
             tlon_paths=self._paths,
         )
-        journal = SessionJournal(agent_id, self._paths)
+        journal = RunJournal(agent_id, self._paths)
         digest = await memory.get_memory_digest(journal)
         return digest if digest["claim_count"] or digest["recent_interactions"] else None

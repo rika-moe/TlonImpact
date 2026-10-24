@@ -180,8 +180,6 @@ class AgentConfig(BaseModel):
     spawn_depth: int = 0
 
     # ReAct loop limits live in the behavior spec (behavior.tlon), not here.
-    # A session idle (ACTIVE or WAITING) longer than this is cancelled
-    session_timeout_seconds: int = 1800
     # 慢速 rescan cadence（ADR 0028 决策 4：搁置未读与漏网来信的兜底唤醒）
     mail_rescan_interval_seconds: float = Field(default=900.0, gt=0)
 

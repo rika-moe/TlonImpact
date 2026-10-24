@@ -181,7 +181,7 @@ async def test_no_embedder_falls_back_to_recency(tmp_path: Path) -> None:
 
 
 async def test_embed_failure_falls_back_to_recency(tmp_path: Path) -> None:
-    """A provider outage must never break the session: the index fails
+    """A provider outage must never break the run: the index fails
     to build, retrieval degrades, claims are still injected by recency."""
     manager = await _load_with_claims(
         _manager(tmp_path, FailingEmbedder(), max_claims=1),
@@ -266,23 +266,23 @@ async def test_delete_claim_removes_vector(tmp_path: Path) -> None:
 # ===== memory-search =====
 
 
-async def test_search_memories_vector_path_exposes_source_sessions(
+async def test_search_memories_vector_path_exposes_source_runs(
     tmp_path: Path,
 ) -> None:
-    """Vector hits carry their provenance: date plus source session ids,
+    """Vector hits carry their provenance: date plus source run ids,
     so the agent can cite where a memory came from."""
     text = "部署脚本在 scripts/deploy.sh"
     query = "怎么部署"
     embedder = FakeEmbedder({query: _axis(0), text: _axis(0)})
     manager = await _load_with_claims(
         _manager(tmp_path, embedder),
-        [{**_claim("c1", text), "source_session_ids": ["sess-1", "sess-2"]}],
+        [{**_claim("c1", text), "source_run_ids": ["sess-1", "sess-2"]}],
     )
 
     result = await manager.search_memories(query)
 
     assert text in result
-    assert "来源 session: sess-1, sess-2" in result
+    assert "来源 run: sess-1, sess-2" in result
 
 
 async def test_search_memories_without_index_keeps_keyword_fallback(

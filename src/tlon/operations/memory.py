@@ -1,4 +1,4 @@
-"""Shared memory and session read contracts, bound to member-owned services."""
+"""Shared memory and run read contracts, bound to member-owned services."""
 
 from typing import Any, Protocol
 
@@ -7,7 +7,7 @@ from tlon.base.execution import (
     ExecutionDeadlineError,
     ModelRequestRejectedError,
 )
-from tlon.memory.session_digest import render_session_digest
+from tlon.memory.run_digest import render_run_digest
 from tlon.operations.core import CallContext, Operation
 from tlon.operations.schema import OperationError, RejectedError, UnknownOutcomeError
 
@@ -29,11 +29,11 @@ class MemoryPort(Protocol):
     async def forget(self, query: str, confirm: bool = False) -> str: ...
 
 
-class SessionReadPort(Protocol):
-    async def read_events(self, session_id: str) -> list[dict[str, Any]]: ...
+class RunReadPort(Protocol):
+    async def read_events(self, run_id: str) -> list[dict[str, Any]]: ...
 
 
-def make_memory_operations(memory: MemoryPort, logs: SessionReadPort) -> tuple[Operation, ...]:
+def make_memory_operations(memory: MemoryPort, logs: RunReadPort) -> tuple[Operation, ...]:
     """Keep existing retrieval/conflict semantics; expose no owner override."""
 
     async def remember(context: CallContext, args: dict[str, Any]) -> dict[str, Any]:
@@ -68,16 +68,16 @@ def make_memory_operations(memory: MemoryPort, logs: SessionReadPort) -> tuple[O
 
     async def read(context: CallContext, args: dict[str, Any]) -> dict[str, Any]:
         check(context)
-        session_id = args["session_id"]
+        run_id = args["run_id"]
         try:
-            events = await logs.read_events(session_id)
+            events = await logs.read_events(run_id)
         except Exception as error:
             raise OperationError(str(error)) from error
         if not events:
-            raise RejectedError(f"session not found: {session_id}", {"outcome": "rejected"})
+            raise RejectedError(f"run not found: {run_id}", {"outcome": "rejected"})
         return {
-            "session_id": session_id,
-            "digest": render_session_digest(events),
+            "run_id": run_id,
+            "digest": render_run_digest(events),
             "event_count": len(events),
         }
 
@@ -106,7 +106,7 @@ def make_memory_operations(memory: MemoryPort, logs: SessionReadPort) -> tuple[O
         ),
         Operation(
             "memory-search",
-            "搜索自己的长期记忆，来源会话可用 session-read 回读。",
+            "搜索自己的长期记忆，来源运行可用 run-read 回读。",
             _object(
                 {"query": query, "limit": {"type": "integer", "minimum": 1, "maximum": 100}},
                 ["query"],
@@ -124,12 +124,12 @@ def make_memory_operations(memory: MemoryPort, logs: SessionReadPort) -> tuple[O
             effects=frozenset({"write"}),
         ),
         Operation(
-            "session-read",
-            "回读自己的交互来源，旧 session ID 或 program:<run_id>，返回有界摘要；只读且不恢复执行。",
-            _object({"session_id": query}, ["session_id"]),
+            "run-read",
+            "回读自己的交互来源，原始 run_id，返回有界摘要；只读且不恢复执行。",
+            _object({"run_id": query}, ["run_id"]),
             _object(
-                {"session_id": text, "digest": text, "event_count": {"type": "integer"}},
-                ["session_id", "digest", "event_count"],
+                {"run_id": text, "digest": text, "event_count": {"type": "integer"}},
+                ["run_id", "digest", "event_count"],
             ),
             read,
             effects=frozenset({"read"}),
@@ -139,7 +139,7 @@ def make_memory_operations(memory: MemoryPort, logs: SessionReadPort) -> tuple[O
 
 def memory_operation_definitions() -> tuple[Operation, ...]:
     """Inspect definitions without constructing a filesystem-backed manager."""
-    return make_memory_operations(_UnboundMemory(), _UnboundSessions())
+    return make_memory_operations(_UnboundMemory(), _UnboundRuns())
 
 
 class _UnboundMemory:
@@ -155,6 +155,6 @@ class _UnboundMemory:
         raise OperationError("memory service is not bound")
 
 
-class _UnboundSessions:
-    async def read_events(self, session_id: str) -> list[dict[str, Any]]:
-        raise OperationError("session journal is not bound")
+class _UnboundRuns:
+    async def read_events(self, run_id: str) -> list[dict[str, Any]]:
+        raise OperationError("run journal is not bound")

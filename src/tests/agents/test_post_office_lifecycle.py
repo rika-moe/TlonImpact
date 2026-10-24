@@ -45,7 +45,7 @@ def registry_at(tmp_path: Path) -> AgentRegistry:
 
 def member_with_sessions(count: int) -> MagicMock:
     member = MagicMock()
-    member.active_session_count = count
+    member.is_busy = count
     member.idle_seconds = 10
     member.shutdown = AsyncMock()
     return member
@@ -77,7 +77,7 @@ async def test_pending_stop_retires_after_idle_drain_wins(tmp_path: Path) -> Non
     registry._agents["worker"] = member
     assert not await registry.stop_member("worker", "operator", when_idle=True)
     watcher = registry._pending_stop_tasks["worker"]
-    member.active_session_count = 0
+    member.is_busy = 0
     await registry._reaper.drain("worker", "idle")
     await asyncio.wait_for(watcher, 1)
     assert MailStore(registry._paths.mail_database_file()).is_retired("worker")
@@ -207,7 +207,7 @@ async def test_cancelled_retirement_cleanup_can_be_retried(tmp_path: Path) -> No
     assert registry._agents["worker"] is member
     # Even a half-stopped runtime reporting a live session must finish
     # cleanup; a durable retirement can no longer be treated as new work.
-    member.active_session_count = 1
+    member.is_busy = 1
     member.shutdown.side_effect = None
     assert await registry.stop_member("worker", "operator")
     assert "worker" not in registry._agents

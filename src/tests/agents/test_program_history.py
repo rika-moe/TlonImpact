@@ -9,9 +9,9 @@ import pytest
 
 from tests.history_helpers import append_history
 from tlon.agents.program_store import ProgramStore
-from tlon.agents.session_journal import SessionJournal
+from tlon.agents.run_journal import RunJournal
 from tlon.base.paths import TlonPaths
-from tlon.memory.models import build_session_projection
+from tlon.memory.models import build_run_projection
 from tlon.operations.invocation import Invocation, InvocationOutcome
 
 
@@ -30,12 +30,12 @@ def _commit(store: ProgramStore, run_id: str, name: str, value: object) -> None:
 
 
 @pytest.mark.parametrize("disk", [False, True])
-async def test_rebuild_mixed_history_without_execution(tmp_path: Path, disk: bool) -> None:
+async def test_rebuild_run_history_without_execution(tmp_path: Path, disk: bool) -> None:
     paths = TlonPaths(home=tmp_path)
     store = ProgramStore(paths.agent_program_database_file("a") if disk else None, build_id="old")
-    journal = SessionJournal("a", paths, program_store=store)
-    await append_history(journal, "legacy", "session/start", trigger_content="old", context=[])
-    await append_history(journal, "legacy", "session/end", reason="done")
+    journal = RunJournal("a", paths, program_store=store)
+    await append_history(journal, "earliest", "run/start", trigger_content="old", context=[])
+    await append_history(journal, "earliest", "run/end", reason="done")
     _entry(store, "early")
     _entry(store, "late")
     _commit(store, "early", "_model-request", {"content": "answer", "tool_calls": []})
@@ -46,29 +46,29 @@ async def test_rebuild_mixed_history_without_execution(tmp_path: Path, disk: boo
     _entry(store, "failed")
     store.fail("failed", "broken")
     assert await journal.list_completed() == [
-        "legacy",
-        "program:late",
-        "program:early",
-        "program:failed",
+        "earliest",
+        "late",
+        "early",
+        "failed",
     ]
-    assert await journal.list_completed(watermark) == ["program:early", "program:failed"]
+    assert await journal.list_completed(watermark) == ["early", "failed"]
     assert await journal.count_completed() == 4
-    assert await journal.latest_completed() == "program:failed"
+    assert await journal.latest_completed() == "failed"
     assert await journal.list_pending() == []
-    events = await journal.read_events("program:early")
-    assert events == await journal.read_events("program:early")
-    projection = build_session_projection(events, "program:early")
+    events = await journal.read_events("early")
+    assert events == await journal.read_events("early")
+    projection = build_run_projection(events, "early")
     assert projection.trigger_content == "hello"
     assert projection.llm_responses == ["answer"]
     assert "read bytes" in projection.tool_results[0]
     assert projection.end_reason == "completed"
-    assert (await journal.derive_context("program:early"))[0]["content"] == "question"
-    assert await journal.end_reason("program:failed") == "failed"
+    assert (await journal.derive_context("early"))[0]["content"] == "question"
+    assert await journal.end_reason("failed") == "failed"
     assert not hasattr(journal, "resume")
     if disk:
         # Re-open with another build: history reading must not authorize recovery.
-        recovered = SessionJournal("a", paths)
-        assert await recovered.read_events("program:early") == events
+        recovered = RunJournal("a", paths)
+        assert await recovered.read_events("early") == events
         assert await recovered.count_completed() == 4
 
 
@@ -81,25 +81,25 @@ async def test_undated_existing_entries_and_safe_exports(tmp_path: Path) -> None
     assert store.database is not None
     with sqlite3.connect(store.database) as connection:
         connection.execute("DELETE FROM entry_history_metadata WHERE run_id=?", ("../../unsafe",))
-    journal = SessionJournal("a", paths)
-    assert await journal.list_completed(datetime.now(UTC)) == ["program:../../unsafe"]
-    assert await journal.latest_completed() == "program:../../unsafe"
+    journal = RunJournal("a", paths)
+    assert await journal.list_completed(datetime.now(UTC)) == ["../../unsafe"]
+    assert await journal.latest_completed() == "../../unsafe"
     await journal.export_jsonl(tmp_path / "exports")
     files = list((tmp_path / "exports").iterdir())
     assert len(files) == 2
     assert all(file.parent == tmp_path / "exports" for file in files)
     assert any("%2F" in file.name for file in files)
     assert not (tmp_path / "unsafe.jsonl").exists()
-    pending = await journal.read_events("program:pending")
-    assert len(pending) == 1 and pending[0]["type"] == "session/start"
-    assert await journal.list_pending() == ["program:pending"]
+    pending = await journal.read_events("pending")
+    assert len(pending) == 1 and pending[0]["type"] == "run/start"
+    assert await journal.list_pending() == ["pending"]
 
 
 async def test_empty_reader_does_not_create_program_authority(tmp_path: Path) -> None:
     paths = TlonPaths(home=tmp_path)
-    journal = SessionJournal("a", paths)
+    journal = RunJournal("a", paths)
     assert await journal.list_completed() == []
-    assert await journal.read_events("program:missing") == []
+    assert await journal.read_events("missing") == []
     assert not paths.agent_program_database_file("a").exists()
 
 
@@ -113,8 +113,8 @@ async def test_partial_failure_keeps_committed_and_pending_facts(tmp_path: Path)
     pending = Invocation("unresolved", "interrupted", ("pending",), "shell", "{}", "test", "test")
     store.begin_invocation(pending)
     store.fail("interrupted", "unsafe invocation outcome unknown")
-    journal = SessionJournal("a", paths)
-    events = await journal.read_events("program:interrupted")
+    journal = RunJournal("a", paths)
+    events = await journal.read_events("interrupted")
     assert events[0]["responsibility"] == ["mail-1"]
     assert events[0]["source_mail_id"] == "mail-1"
     assert len([e for e in events if e["type"] == "llm/response"]) == 1
@@ -123,14 +123,14 @@ async def test_partial_failure_keeps_committed_and_pending_facts(tmp_path: Path)
     assert unresolved["outcome"] == "unknown"
     assert unresolved["invocation"]["name"] == "shell"
     assert events[-1]["error"] == "unsafe invocation outcome unknown"
-    projection = build_session_projection(events, "program:interrupted")
+    projection = build_run_projection(events, "interrupted")
     assert "未决调用：shell unresolved" in projection.errors
     assert "unsafe invocation outcome unknown" in projection.errors
-    from tlon.memory.session_digest import render_session_digest
+    from tlon.memory.run_digest import render_run_digest
 
-    digest = render_session_digest(events)
+    digest = render_run_digest(events)
     assert "未决调用" in digest and "unsafe invocation outcome unknown" in digest
-    assert await journal.read_events("program:interrupted") == events
+    assert await journal.read_events("interrupted") == events
     assert not hasattr(journal, "append")
 
 
@@ -145,9 +145,9 @@ async def test_old_authority_without_clock_table_is_read_only(tmp_path: Path) ->
     before = store.database.read_bytes()
     store.database.chmod(0o444)
     try:
-        reader = SessionJournal("a", paths)
-        assert await reader.list_completed(datetime.now(UTC)) == ["program:old"]
-        events = await reader.read_events("program:old")
+        reader = RunJournal("a", paths)
+        assert await reader.list_completed(datetime.now(UTC)) == ["old"]
+        events = await reader.read_events("old")
         assert events[0]["ts"] is None and events[-1]["ts"] is None
         assert store.database.read_bytes() == before
         with sqlite3.connect(store.database) as connection:
@@ -159,3 +159,22 @@ async def test_old_authority_without_clock_table_is_read_only(tmp_path: Path) ->
             )
     finally:
         store.database.chmod(0o644)
+
+
+async def test_legacy_session_archive_is_ignored_and_run_ids_are_literal(tmp_path: Path) -> None:
+    paths = TlonPaths(home=tmp_path)
+    archive = paths.agent_dir("a") / "sessions.sqlite3"
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"unrecognized legacy archive")
+    before = archive.read_bytes()
+    store = ProgramStore(paths.agent_program_database_file("a"), build_id="test")
+    _entry(store, "literal")
+    store.complete_entry("literal", None)
+    journal = RunJournal("a", paths, program_store=store)
+    assert await journal.list_completed() == ["literal"]
+    assert await journal.read_events("program:literal") == []
+    events = await journal.read_events("literal")
+    assert events[0]["type"] == "run/start" and events[0]["run_id"] == "literal"
+    assert events[-1]["type"] == "run/end"
+    assert not any("session_id" in event for event in events)
+    assert archive.read_bytes() == before

@@ -13,10 +13,10 @@ class MemoryConfig:
     Attributes:
         version: Config file version
         agent_id: Associated agent ID
-        distillation_window: Completed undistilled sessions before a batch
+        distillation_window: Completed undistilled runs before a batch
             distillation runs (ADR 0017)
         context_max_claims: Claims to include in context
-        reflection_min_interactions: Completed sessions before reflection
+        reflection_min_interactions: Completed runs before reflection
             may trigger
         retrieval_alpha_similarity / retrieval_beta_recency /
             retrieval_gamma_importance: JIT retrieval composite score
@@ -139,15 +139,15 @@ class MemoryConfig:
 
 
 @dataclass
-class SessionProjection:
-    """One completed session's distillation view.
+class RunProjection:
+    """One completed run's distillation view.
 
-    Rebuilt from legacy journal events or a module-program reading view:
+    Rebuilt from the program run reading view:
     the trigger content plus, per round, the LLM response content and a
-    one-line digest of each tool result, and the ``session/end`` reason.
+    one-line digest of each tool result, and the ``run/end`` reason.
     """
 
-    session_id: str
+    run_id: str
     trigger_content: str
     llm_responses: list[str] = field(default_factory=list)
     tool_results: list[str] = field(default_factory=list)
@@ -156,14 +156,12 @@ class SessionProjection:
     errors: list[str] = field(default_factory=list)
 
 
-def build_session_projection(
-    events: list[dict[str, Any]], session_id: str = ""
-) -> SessionProjection:
-    """Rebuild one session's distillation view from its journal events.
+def build_run_projection(events: list[dict[str, Any]], run_id: str = "") -> RunProjection:
+    """Rebuild one run's distillation view from its journal events.
 
     The projection is: the real trigger content (from
-    ``session/start``), every round's LLM response content, a one-line
-    digest per tool result, and the ``session/end`` reason. Shared by the
+    ``run/start``), every round's LLM response content, a one-line
+    digest per tool result, and the ``run/end`` reason. Shared by the
     distillation trigger (memory) and the thread recap (agents) — the
     journal's event vocabulary is parsed here and only here.
     """
@@ -175,7 +173,7 @@ def build_session_projection(
     errors: list[str] = []
     for event in events:
         event_type = event.get("type")
-        if event_type == "session/start":
+        if event_type == "run/start":
             trigger_content = str(event.get("trigger_content") or "")
         elif event_type == "llm/response":
             content = (event.get("response") or {}).get("content") or ""
@@ -193,17 +191,19 @@ def build_session_projection(
             tool_results.append(f"{name}: {text}")
         elif event_type == "program/invocation-pending":
             identity = event.get("invocation") or {}
-            errors.append(f"未决调用：{identity.get('name', 'unknown')} {identity.get('call_id', '')}")
+            errors.append(
+                f"未决调用：{identity.get('name', 'unknown')} {identity.get('call_id', '')}"
+            )
         elif event_type == "program/model-failure":
             errors.append(str((event.get("outcome") or {}).get("error_message") or "模型请求失败"))
-        elif event_type == "session/end":
+        elif event_type == "run/end":
             if event.get("error"):
                 errors.append(str(event["error"]))
             end_reason = str(event.get("reason") or "")
             if event.get("result") is not None:
                 program_result = json.dumps(event["result"], ensure_ascii=False)
-    return SessionProjection(
-        session_id=session_id,
+    return RunProjection(
+        run_id=run_id,
         trigger_content=trigger_content,
         llm_responses=llm_responses,
         tool_results=tool_results,
@@ -218,8 +218,8 @@ class Claim:
     """One remembered assertion (ADR 0017).
 
     A claim is a natural-language statement distilled from completed
-    sessions or recorded directly by the agent, with provenance
-    (``source_session_ids``) and a validity window. Claims are
+    runs or recorded directly by the agent, with provenance
+    (``source_run_ids``) and a validity window. Claims are
     append-only: supersession marks (``status``/``valid_to``/
     ``superseded_by``), never deletes — a superseded claim stays in
     ``claims.jsonl`` for audit.
@@ -228,7 +228,7 @@ class Claim:
     text: str
     timestamp: str
     valid_from: str
-    source_session_ids: list[str] = field(default_factory=list)
+    source_run_ids: list[str] = field(default_factory=list)
     valid_to: str | None = None
     status: Literal["active", "superseded"] = "active"
     superseded_by: str | None = None
@@ -243,7 +243,7 @@ class Claim:
             "origin": self.origin,
             "timestamp": self.timestamp,
             "text": self.text,
-            "source_session_ids": self.source_session_ids,
+            "source_run_ids": self.source_run_ids,
             "valid_from": self.valid_from,
             "valid_to": self.valid_to,
             "status": self.status,
@@ -264,7 +264,7 @@ class Claim:
             id=data.get("id", uuid.uuid4().hex),
             timestamp=timestamp,
             text=data.get("text", ""),
-            source_session_ids=data.get("source_session_ids", []),
+            source_run_ids=data.get("source_run_ids", []),
             valid_from=data.get("valid_from", timestamp),
             valid_to=data.get("valid_to"),
             status=status if status in ("active", "superseded") else "active",

@@ -39,7 +39,7 @@ uv run python scripts/eval_memory.py --embedding-model ... --no-retry
 
 | 维度 | 含义 | 断言方式 |
 | --- | --- | --- |
-| `fact-recall` | session 里埋一个具体事实，相关 query 应检索命中 | `must_contain` 命中 |
+| `fact-recall` | run 里埋一个具体事实，相关 query 应检索命中 | `must_contain` 命中 |
 | `knowledge-update` | 新事实取代矛盾旧事实（冲突判定 supersede） | 出新 `must_contain`，旧 `must_not_contain`（失效不删除，但不得进注入/检索结果） |
 | `temporal` | 多时间点状态变化，问「当前/最新」应得最新值 | 最新值 `must_contain`，历史值 `must_not_contain`（valid_from/valid_to 端到端） |
 | `refusal` | 问记忆里不存在的话题 | 不编造（`must_not_contain` 问话题词）、空记忆报空（`expect_empty`）、top-k 选择性（无关 claim 不进注入面） |
@@ -50,7 +50,7 @@ uv run python scripts/eval_memory.py --embedding-model ... --no-retry
 {
   "name": "update-cloud-migration",
   "dimension": "knowledge-update",
-  "sessions": [
+  "runs": [
     { "ts": "2026-07-01T10:00:00", "trigger": "用户来信原文", "responses": ["agent 回复"] }
   ],
   "query": "评测时的检索 query",
@@ -63,7 +63,7 @@ uv run python scripts/eval_memory.py --embedding-model ... --no-retry
 }
 ```
 
-- `sessions[].ts`：session 的 `session/start` 时间戳。**蒸馏的 pending 判定靠它与水位线比对**——时序/更新类场景靠递增 ts 控制蒸馏顺序；每个 session 完成即蒸馏（评测 window=1）。
+- `runs[].ts`：run 的 `run/start` 时间戳。**蒸馏的 pending 判定靠它与水位线比对**——时序/更新类场景靠递增 ts 控制蒸馏顺序；每个 run 完成即蒸馏（评测 window=1）。
 - `expect.surface`：断言面——`injection`（`build_context_blocks`，JIT 注入面）、`search`（`search_memories`，检索面）、`both`（默认）。
 - `must_contain`：字符串（必须出现）或字符串列表（任一出现即可——容忍 LLM 措辞差异，如 `["3 楼", "三楼"]`）。
 - `must_not_contain`：任何一面出现即 FAIL。检索面的 query 回显行（`搜索结果 for '...'`）在断言前会被剥离，query 本身的措辞不会误判。
@@ -73,7 +73,7 @@ uv run python scripts/eval_memory.py --embedding-model ... --no-retry
 
 往 `scenarios.json` 加一条，保持 name 唯一、dimension 取四个之一即可。写断言时注意：
 
-- 新 session 的 trigger 里**不要提及要被取代的旧值**（否则蒸馏出的新 claim 自带旧值，`must_not_contain` 必然挂）；
+- 新 run 的 trigger 里**不要提及要被取代的旧值**（否则蒸馏出的新 claim 自带旧值，`must_not_contain` 必然挂）；
 - `must_contain` 用蒸馏大概率会保留的具体 token（数字、专名、工具名），措辞有歧义的用「任一出现」列表；
 - 断言针对的是检索面文本（claim 行），不是 LLM 回答——评测不验证「agent 答得对不对」，只验证「该出现的记忆出现了、不该出现的没出现」。
 

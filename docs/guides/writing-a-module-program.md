@@ -65,7 +65,7 @@ v2 包源码发布后不可 PATCH，staging 也一样。修改请创建新包并
 
 ProgramStore 的 entry_programs 保存结果与调度意图，运行完成与意图原子提交；调度器以 run_id 持久接纳去重。跨存储采用幂等交付，不声称跨数据库事务。旧睡眠已醒来或被管理员替代后，重放不会重建它。所有程序只通过模块入口执行；旧格式拒绝，不兼容或失败回退。
 
-模块入口通过 ProgramStore 保存交互，SessionJournal 提供只读统一视图，供反思、蒸馏、回顾与退休清点消费。恢复受现有宿主构建身份约束，不支持换版本宿主重放。
+模块入口通过 ProgramStore 保存交互，RunJournal 提供只读统一视图，供反思、蒸馏、回顾与退休清点消费。恢复受现有宿主构建身份约束，不支持换版本宿主重放。
 
 ## 模型请求与纯消息标准库（P2）
 
@@ -133,6 +133,8 @@ v2 运行的责任邮件、原错误与模型草稿保留。终止或不安全 u
 
 ## 回读交互来源（P4b）
 
-模块入口的完成状态与模型/工具回执保存在 ProgramStore。记忆或 digest 中的 `program:<run_id>` 可直接传给现有 `session-read`，读取有界摘要与来源；旧 session ID 仍用于读取旧历史。读取不会恢复执行，也不会消费模型额度。thread recap、蒸馏、反思、教训及退休清点读取同一视图。来源尚未蒸馏也可读取，claim 中的来源引用不代表另一个维护消费者已经处理完成。
+模块入口的完成状态与模型/工具回执保存在 ProgramStore。记忆或 digest 中的 `run_id` 可直接传给现有 `run-read`，读取有界摘要与来源；旧 agent session 历史不再读取。读取不会恢复执行，也不会消费模型额度。thread recap、蒸馏、反思、教训及退休清点读取同一视图。来源尚未蒸馏也可读取，claim 中的来源引用不代表另一个维护消费者已经处理完成。
 
 内置 `tlon.agent/respond` 的 `max_rounds` 是工具循环上界，同时受入口共享 fuel 和模型额度约束。达到上限会明确失败，保留未读原邮件与执行回执，按宿主失败通知规则处理；不把用尽轮数当作成功完成。
+
+当前历史边界以 [ADR 0049](../decisions/0049-retire-agent-session.md) 为准：agent session 已退役，run-read/run_id/source_run_ids 为唯一程序历史协议；不提供旧历史兼容或迁移，client session 保留。

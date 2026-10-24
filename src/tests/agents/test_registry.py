@@ -545,9 +545,9 @@ class TestMemberStopAndDrain:
 
 
 class TestPendingStop:
-    """stopAgent when_idle=true: a member with live sessions registers a
+    """stopAgent when_idle=true: a member with live work registers a
     "stop when idle" intent instead of being rejected; the registry's
-    watcher fires the stop the moment the sessions drain."""
+    watcher fires the stop the moment the work drain."""
 
     async def _running_member(self, bus, tmp_path, monkeypatch, agent_id="worker-1"):
         p = TlonPaths(home=tmp_path)
@@ -573,16 +573,16 @@ class TestPendingStop:
             )
         )
         await _wait_for(lambda: registry.get_agent(agent_id) is not None)
-        # Fast poll for the watcher; a mutable live-session count stands in
-        # for the scheduler's session set.
+        # Fast poll for the watcher; a mutable live-run count stands in
+        # for the scheduler's run set.
         monkeypatch.setattr(AgentRegistry, "_PENDING_STOP_POLL_SECONDS", 0.05)
-        sessions = {"count": 1}
+        work = {"count": 1}
         monkeypatch.setattr(
             MemberRuntime,
-            "active_session_count",
-            property(lambda self: sessions["count"]),
+            "is_busy",
+            property(lambda self: bool(work["count"])),
         )
-        return registry, sessions
+        return registry, work
 
     async def test_when_idle_registers_pending_not_rejected(self, bus, tmp_path, monkeypatch):
         registry, _ = await self._running_member(bus, tmp_path, monkeypatch)
@@ -605,8 +605,8 @@ class TestPendingStop:
 
         await registry.shutdown()
 
-    async def test_pending_stop_fires_when_sessions_drain(self, bus, tmp_path, monkeypatch):
-        registry, sessions = await self._running_member(bus, tmp_path, monkeypatch)
+    async def test_pending_stop_fires_when_work_drain(self, bus, tmp_path, monkeypatch):
+        registry, work = await self._running_member(bus, tmp_path, monkeypatch)
 
         stopped: list[Event] = []
         bus.subscribe(EventType.AGENT_STOPPED, lambda e: stopped.append(e))
@@ -614,7 +614,7 @@ class TestPendingStop:
         assert await registry.stop_member("worker-1", stopped_by="test", when_idle=True) is False
         assert registry.get_agent("worker-1") is not None
 
-        sessions["count"] = 0  # the last session completed
+        work["count"] = 0  # the last run completed
         await _wait_for(lambda: registry.get_agent("worker-1") is None)
         assert registry._pending_stops == {}
         assert registry._pending_stop_tasks == {}
@@ -627,10 +627,10 @@ class TestPendingStop:
     async def test_pending_stop_fulfilled_by_immediate_stop(self, bus, tmp_path, monkeypatch):
         """An immediate stop once the member is idle fulfils the intent:
         the watcher is cancelled and the registry stays clean."""
-        registry, sessions = await self._running_member(bus, tmp_path, monkeypatch)
+        registry, work = await self._running_member(bus, tmp_path, monkeypatch)
 
         assert await registry.stop_member("worker-1", stopped_by="test", when_idle=True) is False
-        sessions["count"] = 0
+        work["count"] = 0
         assert await registry.stop_member("worker-1", stopped_by="test") is True
 
         assert registry._pending_stops == {}
@@ -646,7 +646,7 @@ class TestPendingStop:
         for kwargs in ({}, {"when_idle": False}):
             with pytest.raises(StopRejectedError) as exc:
                 await registry.stop_member("worker-1", stopped_by="test", **kwargs)
-            assert exc.value.reason == "active_sessions"
+            assert exc.value.reason == "active_work"
         assert registry.get_agent("worker-1") is not None
         assert registry._pending_stops == {}
 

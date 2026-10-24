@@ -20,7 +20,7 @@ class ClaimStore:
 
     Storage format: JSON Lines (``claims.jsonl``), one claim per line.
     Claims have no capacity cap — supersession marks, never deletes
-    (same storage philosophy as the session journal). Deletion exists
+    (same storage philosophy as the run journal). Deletion exists
     only for the agent-initiated ``forget``/reflection paths. Every mutation
     persists a private snapshot atomically before publishing it in memory
     (temp file + os.replace); failed writes never report successful receipt.

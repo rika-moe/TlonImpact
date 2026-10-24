@@ -17,7 +17,7 @@ from tlon.base.config import LLMConfig
 from tlon.base.llm_client import LLMResponse
 from tlon.memory.distiller import ConflictVerdict, Distiller
 from tlon.memory.manager import MemoryManager
-from tlon.memory.models import MemoryConfig, SessionProjection
+from tlon.memory.models import MemoryConfig, RunProjection
 
 _DIM = 4
 
@@ -70,7 +70,7 @@ class FakeDistiller:
         self._judge_error = judge_error
         self.judge_calls: list[tuple[list[str], list[dict[str, Any]]]] = []
 
-    async def distill(self, sessions: list[SessionProjection]) -> list[dict[str, Any]]:
+    async def distill(self, runs: list[RunProjection]) -> list[dict[str, Any]]:
         return self._distill_output
 
     async def judge_conflicts(
@@ -302,9 +302,9 @@ class TestDistillationConflicts:
             ],
         )
         manager.distiller = fake  # type: ignore[assignment]
-        projections = [SessionProjection(session_id="s1", trigger_content="q")]
+        projections = [RunProjection(run_id="s1", trigger_content="q")]
 
-        claim_count = await manager._distill_sessions(projections)
+        claim_count = await manager._distill_runs(projections)
 
         assert claim_count == 2
         old = await manager.claims.get_claim("c-old")
@@ -359,9 +359,9 @@ class TestDegradation:
             judge_error=RuntimeError("llm down"),
         )
         manager.distiller = fake  # type: ignore[assignment]
-        projections = [SessionProjection(session_id="s1", trigger_content="q")]
+        projections = [RunProjection(run_id="s1", trigger_content="q")]
 
-        claim_count = await manager._distill_sessions(projections)
+        claim_count = await manager._distill_runs(projections)
 
         assert claim_count == 1
         assert fake.judge_calls  # judgment was attempted — and failed
@@ -381,9 +381,9 @@ class TestDegradation:
         )
         fake = FakeDistiller([], judge_error=RuntimeError("llm down"))  # distill -> []
         manager.distiller = fake  # type: ignore[assignment]
-        projections = [SessionProjection(session_id="s1", trigger_content="整理部署文档")]
+        projections = [RunProjection(run_id="s1", trigger_content="整理部署文档")]
 
-        claim_count = await manager._distill_sessions(projections)
+        claim_count = await manager._distill_runs(projections)
 
         assert claim_count == 1
         texts = [c["text"] for c in await manager.claims.get_all_claims()]

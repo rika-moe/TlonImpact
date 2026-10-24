@@ -20,8 +20,10 @@ model-call 经 ModelService 使用宿主绑定身份、系统输入、成员模�
 
 ContextBuilder 只提供成员资料读取及人格缓存，不解释工作流程。member-context 返回固定字段；标准模块自行组合、裁剪或压缩 messages。所有模型请求及压缩共用根预算。
 
-SessionJournal 提供旧 SQLite 历史和 ProgramStore 交互投影的只读查询、摘要与导出。它没有 append/resume/find_unfinished。客户端连接 SessionManager、REST `/sessions` 和 SSE 继续由 serving 层管理，和已删除的 AgentSession 不同。
+RunJournal 仅从 ProgramStore 提供原始 run_id 的只读查询、摘要与导出；事件为 run/start、run/end，来源字段为 source_run_ids。run-read 只读回溯，不恢复执行。Agent session 及旧 SQLite 历史查询已删除；客户端连接 SessionManager、REST `/sessions` 和 SSE 仍由 serving 层管理。
 
 ## 旧记录处置
 
-启动前只读检查旧 session 和非入口 program 的未完成记录。发现旧 pending、未知数据库格式或读取失败，成员阻塞并显示路径与身份；不重放、不迁移、不标记成功、不清库。已完成历史仍可读取。操作员保留证据、确认原外部效果后选择处置；完整说明见 [P5 实施计划](programmable-workflows-plan.md)。
+不读取旧 agent session 数据库，不迁移历史或记忆引用，已有归档不被运行时修改。启动前仍只读检查非入口 program 的未完成记录。发现旧 pending、未知数据库格式或读取失败，成员阻塞并显示路径与身份；不重放、不迁移、不标记成功、不清库。ProgramStore 中的 run 历史可读取。操作员保留证据、确认原外部效果后选择处置；完整说明见 [P5 实施计划](programmable-workflows-plan.md)。
+
+按 [ADR 0049](../decisions/0049-retire-agent-session.md)，程序总预算及派生额度归 run；is_busy 覆盖程序和维护，排空不以虚构 session 数量判断。

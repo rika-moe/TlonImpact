@@ -1,4 +1,4 @@
-"""Bounded rendering of member session journal events."""
+"""Bounded rendering of member run journal events."""
 
 import json
 from typing import Any
@@ -20,13 +20,13 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
-def render_session_digest(events: list[dict[str, Any]]) -> str:
-    """Render one session's journal events as a bounded readable digest.
+def render_run_digest(events: list[dict[str, Any]]) -> str:
+    """Render one run's journal events as a bounded readable digest.
 
     Contents: the wake trigger text, the end reason, every LLM reply in
     order, and a per-name tool-call count — the same event vocabulary as
-    the session-recap renderer, but exhaustive over the session instead of
-    a one-session recap.
+    the run-recap renderer, but exhaustive over the run instead of
+    a one-run recap.
     """
     trigger = ""
     end_reason = ""
@@ -37,9 +37,9 @@ def render_session_digest(events: list[dict[str, Any]]) -> str:
     tool_counts: dict[str, int] = {}
     for event in events:
         event_type = event.get("type")
-        if event_type == "session/start":
+        if event_type == "run/start":
             trigger = str(event.get("trigger_content") or "")
-            source = str(event.get("session_id") or "")
+            source = str(event.get("run_id") or "")
         elif event_type == "llm/response":
             content = (event.get("response") or {}).get("content") or ""
             if content:
@@ -50,8 +50,10 @@ def render_session_digest(events: list[dict[str, Any]]) -> str:
             tool_counts[name] = tool_counts.get(name, 0) + 1
         elif event_type == "program/invocation-pending":
             identity = event.get("invocation") or {}
-            errors.append(f"[未决调用] {identity.get('name', 'unknown')} {identity.get('call_id', '')}")
-        elif event_type == "session/end":
+            errors.append(
+                f"[未决调用] {identity.get('name', 'unknown')} {identity.get('call_id', '')}"
+            )
+        elif event_type == "run/end":
             if event.get("error"):
                 errors.append(f"[失败] {event['error']}")
             end_reason = str(event.get("reason") or "")

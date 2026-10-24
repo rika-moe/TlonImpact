@@ -16,7 +16,7 @@ class SchedulingStore:
         try:
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS scheduling_intents ("
-                "member_id TEXT PRIMARY KEY, action TEXT NOT NULL, wake_at TEXT, session_id TEXT NOT NULL)"
+                "member_id TEXT PRIMARY KEY, action TEXT NOT NULL, wake_at TEXT, run_id TEXT NOT NULL)"
             )
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS program_schedule_receipts ("
@@ -34,21 +34,21 @@ class SchedulingStore:
             return {
                 row[0]: (row[1], row[2], row[3])
                 for row in connection.execute(
-                    "SELECT member_id, action, wake_at, session_id FROM scheduling_intents"
+                    "SELECT member_id, action, wake_at, run_id FROM scheduling_intents"
                 )
             }
         finally:
             connection.close()
 
-    def put(self, member_id: str, action: str, wake_at: str | None, session_id: str) -> None:
+    def put(self, member_id: str, action: str, wake_at: str | None, run_id: str) -> None:
         connection = self._connect()
         try:
             with connection:
                 connection.execute(
                     "INSERT INTO scheduling_intents VALUES (?,?,?,?) "
                     "ON CONFLICT(member_id) DO UPDATE SET action=excluded.action, "
-                    "wake_at=excluded.wake_at, session_id=excluded.session_id",
-                    (member_id, action, wake_at, session_id),
+                    "wake_at=excluded.wake_at, run_id=excluded.run_id",
+                    (member_id, action, wake_at, run_id),
                 )
         finally:
             connection.close()
@@ -80,7 +80,7 @@ class SchedulingStore:
                     (member_id, run_id),
                 ).fetchone()
                 current = connection.execute(
-                    "SELECT action,wake_at,session_id FROM scheduling_intents WHERE member_id=?",
+                    "SELECT action,wake_at,run_id FROM scheduling_intents WHERE member_id=?",
                     (member_id,),
                 ).fetchone()
                 if receipt is not None:

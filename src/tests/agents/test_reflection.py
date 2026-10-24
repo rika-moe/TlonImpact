@@ -18,7 +18,7 @@ import pytest
 from tests.history_helpers import append_history
 from tlon.agents.member_spec import ReflectSpec
 from tlon.agents.reflection import ReflectionEngine
-from tlon.agents.session_journal import SessionJournal
+from tlon.agents.run_journal import RunJournal
 from tlon.base.execution import ModelRequestRejectedError, UnknownModelOutcomeError
 from tlon.base.llm_client import LLMClient, LLMResponse
 from tlon.base.paths import TlonPaths
@@ -38,7 +38,7 @@ class _FakeLLM:
 
 def _engine(tmp_path: Path, llm_content: str = "{}") -> tuple[ReflectionEngine, MemoryManager]:
     manager = MemoryManager("agent1", MemoryConfig(), data_dir=tmp_path / "agent1")
-    journal = SessionJournal("agent1", TlonPaths(home=tmp_path))
+    journal = RunJournal("agent1", TlonPaths(home=tmp_path))
     engine = ReflectionEngine(
         manager,
         cast(LLMClient, _FakeLLM(llm_content)),
@@ -123,7 +123,7 @@ class TestRunEndToEnd:
             },
             ensure_ascii=False,
         )
-        journal = SessionJournal("agent1", TlonPaths(home=tmp_path))
+        journal = RunJournal("agent1", TlonPaths(home=tmp_path))
         engine = ReflectionEngine(
             manager,
             cast(LLMClient, _FakeLLM(response)),
@@ -133,9 +133,9 @@ class TestRunEndToEnd:
 
         for index in range(5):
             await append_history(
-                engine._journal, str(index), "session/start", trigger_content="hello"
+                engine._journal, str(index), "run/start", trigger_content="hello"
             )
-            await append_history(engine._journal, str(index), "session/end", reason="complete")
+            await append_history(engine._journal, str(index), "run/end", reason="complete")
         await engine.check_trigger()
         assert engine._task is not None
         await engine._task
@@ -169,14 +169,14 @@ class TestLifecycle:
         """Trigger a reflection that blocks inside the LLM call."""
         manager = MemoryManager("agent1", MemoryConfig(), data_dir=tmp_path / "agent1")
         await manager.remember_fact("一条供反思审视的记忆")
-        journal = SessionJournal("agent1", TlonPaths(home=tmp_path))
+        journal = RunJournal("agent1", TlonPaths(home=tmp_path))
         llm = _BlockingLLM()
         engine = ReflectionEngine(
             manager, cast(LLMClient, llm), ReflectSpec(enabled=True, interval_minutes=0), journal
         )
         for _ in range(5):  # reflection_min_interactions default
-            await append_history(engine._journal, str(_), "session/start", trigger_content="hello")
-            await append_history(engine._journal, str(_), "session/end", reason="complete")
+            await append_history(engine._journal, str(_), "run/start", trigger_content="hello")
+            await append_history(engine._journal, str(_), "run/end", reason="complete")
         await engine.check_trigger()
         await asyncio.wait_for(llm.started.wait(), timeout=2)
         return engine, llm
@@ -246,8 +246,8 @@ async def test_reflection_notifies_active_and_waiting(tmp_path: Path) -> None:
 
     engine._state_changed = changed
     for index in range(manager.config.reflection_min_interactions):
-        await append_history(engine._journal, str(index), "session/start", trigger_content="hello")
-        await append_history(engine._journal, str(index), "session/end", reason="complete")
+        await append_history(engine._journal, str(index), "run/start", trigger_content="hello")
+        await append_history(engine._journal, str(index), "run/end", reason="complete")
     await engine.check_trigger()
     task = engine._task
     assert task is not None
@@ -257,8 +257,8 @@ async def test_reflection_notifies_active_and_waiting(tmp_path: Path) -> None:
 
 async def _complete_sources(engine: ReflectionEngine, count: int = 5) -> None:
     for index in range(count):
-        await append_history(engine._journal, str(index), "session/start", trigger_content="hello")
-        await append_history(engine._journal, str(index), "session/end", reason="complete")
+        await append_history(engine._journal, str(index), "run/start", trigger_content="hello")
+        await append_history(engine._journal, str(index), "run/end", reason="complete")
 
 
 async def test_reflection_completed_sources_survive_restart_and_deduplicate(tmp_path: Path) -> None:
@@ -319,13 +319,13 @@ async def test_reflection_prompt_includes_undistilled_program_interactions(tmp_p
         {
             "claim_count": 0,
             "claims": [],
-            "undistilled_session_count": 1,
+            "undistilled_run_count": 1,
             "recent_interactions": [
-                {"session_id": "program:run-1", "trigger_content": "source text"}
+                {"run_id": "run-1", "trigger_content": "source text"}
             ],
         }
     )
-    assert "program:run-1" in prompt
+    assert "run-1" in prompt
     assert "source text" in prompt
 
 

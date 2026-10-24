@@ -1,6 +1,6 @@
-"""SpawnManager — the persisted (spawner, session) quota ledger.
+"""SpawnManager — the persisted (spawner, run) quota ledger.
 
-Sessions survive a process restart via journal replay (ADR 0007), so the
+Runs survive a process restart via journal replay (ADR 0007), so the
 anti-runaway spawn quota must survive it too: the ledger lives at
 ``~/.tlon/shared/spawn-quota.json`` (atomic replace) and a fresh
 SpawnManager over the same home picks up the previous process's counts.
@@ -87,26 +87,35 @@ def _write_prototype(p: TlonPaths, name: str) -> None:
 
 
 class TestQuotaPersistence:
+    @pytest.mark.parametrize("run_id", ["", "   "])
+    async def test_spawn_requires_nonempty_run(self, tmp_path, run_id: str) -> None:
+        p = TlonPaths(home=tmp_path)
+        manager = SpawnManager(_FakeRegistry(p), 8, 3, 2)  # type: ignore[arg-type]
+        with pytest.raises(SpawnRejectedError) as failure:
+            await manager.spawn_member("worker", "甲", "boss-1", run_id)
+        assert failure.value.reason == "invalid_run"
+        assert not p.spawn_quota_ledger_file().exists()
+
     async def test_quota_survives_restart(self, tmp_path):
         """A fresh SpawnManager over the same home keeps the spent quota —
         a restart no longer refills it."""
         p = TlonPaths(home=tmp_path)
         _write_prototype(p, "worker")
         manager = SpawnManager(_FakeRegistry(p), 8, 3, 2)  # type: ignore[arg-type]
-        await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
-        await manager.spawn_member("worker", "乙", "boss-1", "sess-1")
+        await manager.spawn_member("worker", "甲", "boss-1", "run-1")
+        await manager.spawn_member("worker", "乙", "boss-1", "run-1")
         with pytest.raises(SpawnRejectedError) as exc:
-            await manager.spawn_member("worker", "丙", "boss-1", "sess-1")
-        assert exc.value.reason == "session_quota"
+            await manager.spawn_member("worker", "丙", "boss-1", "run-1")
+        assert exc.value.reason == "run_quota"
         assert p.spawn_quota_ledger_file().exists()
 
         # "Restart": a new manager over the same ledger file.
         restarted = SpawnManager(_FakeRegistry(p), 8, 3, 2)  # type: ignore[arg-type]
         with pytest.raises(SpawnRejectedError) as exc:
-            await restarted.spawn_member("worker", "丙", "boss-1", "sess-1")
-        assert exc.value.reason == "session_quota"
-        # A different session bucket is unaffected by the restart.
-        await restarted.spawn_member("worker", "丁", "boss-1", "sess-2")
+            await restarted.spawn_member("worker", "丙", "boss-1", "run-1")
+        assert exc.value.reason == "run_quota"
+        # A different run bucket is unaffected by the restart.
+        await restarted.spawn_member("worker", "丁", "boss-1", "run-2")
 
     async def test_quota_counts_accumulate_across_restart(self, tmp_path):
         """Counts add up across processes: one spawn before the restart
@@ -114,13 +123,29 @@ class TestQuotaPersistence:
         p = TlonPaths(home=tmp_path)
         _write_prototype(p, "worker")
         manager = SpawnManager(_FakeRegistry(p), 8, 3, 2)  # type: ignore[arg-type]
-        await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
+        await manager.spawn_member("worker", "甲", "boss-1", "run-1")
 
         restarted = SpawnManager(_FakeRegistry(p), 8, 3, 2)  # type: ignore[arg-type]
-        await restarted.spawn_member("worker", "乙", "boss-1", "sess-1")  # 2nd of 2
+        await restarted.spawn_member("worker", "乙", "boss-1", "run-1")  # 2nd of 2
         with pytest.raises(SpawnRejectedError) as exc:
-            await restarted.spawn_member("worker", "丙", "boss-1", "sess-1")
-        assert exc.value.reason == "session_quota"
+            await restarted.spawn_member("worker", "丙", "boss-1", "run-1")
+        assert exc.value.reason == "run_quota"
+
+    async def test_old_session_ledger_is_not_run_quota(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        _write_prototype(p, "worker")
+        ledger = p.spawn_quota_ledger_file()
+        ledger.parent.mkdir(parents=True, exist_ok=True)
+        ledger.write_text(
+            json.dumps(
+                {"version": 1, "quota": [{"spawner": "boss-1", "session": "run-1", "count": 99}]}
+            ),
+            encoding="utf-8",
+        )
+        manager = SpawnManager(_FakeRegistry(p), 8, 3, 2)  # type: ignore[arg-type]
+        await manager.spawn_member("worker", "甲", "boss-1", "run-1")
+        entries = json.loads(ledger.read_text(encoding="utf-8"))["quota"]
+        assert entries == [{"spawner": "boss-1", "run": "run-1", "count": 1}]
 
     async def test_corrupt_ledger_starts_empty(self, tmp_path):
         """An unparseable ledger warns and starts empty — never a boot blocker."""
@@ -131,7 +156,7 @@ class TestQuotaPersistence:
         ledger.write_text("not json {{{", encoding="utf-8")
 
         manager = SpawnManager(_FakeRegistry(p), 8, 3, 2)  # type: ignore[arg-type]  # must not raise
-        await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
+        await manager.spawn_member("worker", "甲", "boss-1", "run-1")
         # The successful spawn rewrote the file with valid content.
         json.loads(p.spawn_quota_ledger_file().read_text(encoding="utf-8"))
 
@@ -144,7 +169,7 @@ class TestQuotaPersistence:
         ledger.write_text('{"quota": {"not": "a list"}}', encoding="utf-8")
 
         manager = SpawnManager(_FakeRegistry(p), 8, 3, 2)  # type: ignore[arg-type]
-        await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
+        await manager.spawn_member("worker", "甲", "boss-1", "run-1")
 
     async def test_malformed_entries_skipped_valid_kept(self, tmp_path):
         """Per-entry tolerance: bad rows are skipped, valid rows still bind."""
@@ -157,8 +182,8 @@ class TestQuotaPersistence:
                 {
                     "version": 1,
                     "quota": [
-                        {"spawner": "boss-1", "session": "sess-1", "count": 2},
-                        {"spawner": 1, "session": None, "count": "x"},
+                        {"spawner": "boss-1", "run": "run-1", "count": 2},
+                        {"spawner": 1, "run": None, "count": "x"},
                     ],
                 }
             ),
@@ -167,9 +192,9 @@ class TestQuotaPersistence:
 
         manager = SpawnManager(_FakeRegistry(p), 8, 3, 2)  # type: ignore[arg-type]
         with pytest.raises(SpawnRejectedError) as exc:
-            await manager.spawn_member("worker", "丙", "boss-1", "sess-1")
-        assert exc.value.reason == "session_quota"
-        await manager.spawn_member("worker", "甲", "boss-2", "sess-1")
+            await manager.spawn_member("worker", "丙", "boss-1", "run-1")
+        assert exc.value.reason == "run_quota"
+        await manager.spawn_member("worker", "甲", "boss-2", "run-1")
 
 
 def _const_tilt(value: float):
@@ -181,7 +206,7 @@ def _const_tilt(value: float):
 
 class TestSpawnTilt:
     """Budget-3 quota tilt by bloodline fitness (): the effective
-    per-session quota is ceil(base * tilt); tilt 1.0 is the neutral
+    per-run quota is ceil(base * tilt); tilt 1.0 is the neutral
     cold-start/failure fallback."""
 
     async def test_tilt_two_widens_quota(self, tmp_path):
@@ -192,10 +217,10 @@ class TestSpawnTilt:
             _FakeRegistry(p), 8, 3, 2, tilt_provider=_const_tilt(2.0)
         )
         for name in "甲乙丙丁":
-            await manager.spawn_member("worker", name, "boss-1", "sess-1")
+            await manager.spawn_member("worker", name, "boss-1", "run-1")
         with pytest.raises(SpawnRejectedError) as exc:
-            await manager.spawn_member("worker", "戊", "boss-1", "sess-1")
-        assert exc.value.reason == "session_quota"
+            await manager.spawn_member("worker", "戊", "boss-1", "run-1")
+        assert exc.value.reason == "run_quota"
         assert "tilt 2.00" in str(exc.value)
 
     async def test_tilt_half_narrows_quota(self, tmp_path):
@@ -205,10 +230,10 @@ class TestSpawnTilt:
         manager = SpawnManager(  # type: ignore[arg-type]
             _FakeRegistry(p), 8, 3, 2, tilt_provider=_const_tilt(0.5)
         )
-        await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
+        await manager.spawn_member("worker", "甲", "boss-1", "run-1")
         with pytest.raises(SpawnRejectedError) as exc:
-            await manager.spawn_member("worker", "乙", "boss-1", "sess-1")
-        assert exc.value.reason == "session_quota"
+            await manager.spawn_member("worker", "乙", "boss-1", "run-1")
+        assert exc.value.reason == "run_quota"
         assert "tilt 0.50" in str(exc.value)
 
     async def test_provider_failure_falls_back_to_neutral(self, tmp_path):
@@ -223,11 +248,11 @@ class TestSpawnTilt:
         manager = SpawnManager(  # type: ignore[arg-type]
             _FakeRegistry(p), 8, 3, 2, tilt_provider=_boom
         )
-        await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
-        await manager.spawn_member("worker", "乙", "boss-1", "sess-1")
+        await manager.spawn_member("worker", "甲", "boss-1", "run-1")
+        await manager.spawn_member("worker", "乙", "boss-1", "run-1")
         with pytest.raises(SpawnRejectedError) as exc:
-            await manager.spawn_member("worker", "丙", "boss-1", "sess-1")
-        assert exc.value.reason == "session_quota"
+            await manager.spawn_member("worker", "丙", "boss-1", "run-1")
+        assert exc.value.reason == "run_quota"
         assert "tilt 1.00" in str(exc.value)
 
 
@@ -249,7 +274,7 @@ class TestSpawnSolvency:
             _FakeRegistry(p), 8, 3, 2, solvency=_const_solvency(False)
         )
         with pytest.raises(SpawnRejectedError) as exc:
-            await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
+            await manager.spawn_member("worker", "甲", "boss-1", "run-1")
         assert exc.value.reason == "insolvent_lineage"
 
     async def test_solvent_lineage_spawns(self, tmp_path):
@@ -258,7 +283,7 @@ class TestSpawnSolvency:
         manager = SpawnManager(  # type: ignore[arg-type]
             _FakeRegistry(p), 8, 3, 2, solvency=_const_solvency(True)
         )
-        await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
+        await manager.spawn_member("worker", "甲", "boss-1", "run-1")
 
     async def test_provider_failure_fails_open(self, tmp_path):
         """A raising solvency provider never blocks a spawn."""
@@ -271,7 +296,7 @@ class TestSpawnSolvency:
         manager = SpawnManager(  # type: ignore[arg-type]
             _FakeRegistry(p), 8, 3, 2, solvency=_boom
         )
-        await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
+        await manager.spawn_member("worker", "甲", "boss-1", "run-1")
 
 
 def _const_probation(value: bool):
@@ -285,7 +310,7 @@ class TestSpawnProbation:
     """Probation quota cap (trust ladder,
     docs/design/unified-member-model.md): keyed by *spawner id*
     (unlike tilt/solvency, which key on the target prototype) — a
-    probationary spawner's effective per-session quota is capped at 1,
+    probationary spawner's effective per-run quota is capped at 1,
     whatever the tilt says. Fail-open like the other two providers."""
 
     async def test_probation_spawner_capped_at_one(self, tmp_path):
@@ -294,10 +319,10 @@ class TestSpawnProbation:
         manager = SpawnManager(  # type: ignore[arg-type]
             _FakeRegistry(p), 8, 3, 2, probation=_const_probation(True)
         )
-        await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
+        await manager.spawn_member("worker", "甲", "boss-1", "run-1")
         with pytest.raises(SpawnRejectedError) as exc:
-            await manager.spawn_member("worker", "乙", "boss-1", "sess-1")
-        assert exc.value.reason == "session_quota"
+            await manager.spawn_member("worker", "乙", "boss-1", "run-1")
+        assert exc.value.reason == "run_quota"
         assert "probation" in str(exc.value)
 
     async def test_probation_cap_wins_over_tilt(self, tmp_path):
@@ -313,10 +338,10 @@ class TestSpawnProbation:
             tilt_provider=_const_tilt(2.0),
             probation=_const_probation(True),
         )
-        await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
+        await manager.spawn_member("worker", "甲", "boss-1", "run-1")
         with pytest.raises(SpawnRejectedError) as exc:
-            await manager.spawn_member("worker", "乙", "boss-1", "sess-1")
-        assert exc.value.reason == "session_quota"
+            await manager.spawn_member("worker", "乙", "boss-1", "run-1")
+        assert exc.value.reason == "run_quota"
         assert "probation" in str(exc.value)
 
     async def test_full_spawner_uncapped(self, tmp_path):
@@ -325,11 +350,11 @@ class TestSpawnProbation:
         manager = SpawnManager(  # type: ignore[arg-type]
             _FakeRegistry(p), 8, 3, 2, probation=_const_probation(False)
         )
-        await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
-        await manager.spawn_member("worker", "乙", "boss-1", "sess-1")
+        await manager.spawn_member("worker", "甲", "boss-1", "run-1")
+        await manager.spawn_member("worker", "乙", "boss-1", "run-1")
         with pytest.raises(SpawnRejectedError) as exc:
-            await manager.spawn_member("worker", "丙", "boss-1", "sess-1")
-        assert exc.value.reason == "session_quota"
+            await manager.spawn_member("worker", "丙", "boss-1", "run-1")
+        assert exc.value.reason == "run_quota"
         assert "probation" not in str(exc.value)
 
     async def test_provider_failure_fails_open(self, tmp_path):
@@ -344,8 +369,8 @@ class TestSpawnProbation:
         manager = SpawnManager(  # type: ignore[arg-type]
             _FakeRegistry(p), 8, 3, 2, probation=_boom
         )
-        await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
-        await manager.spawn_member("worker", "乙", "boss-1", "sess-1")
+        await manager.spawn_member("worker", "甲", "boss-1", "run-1")
+        await manager.spawn_member("worker", "乙", "boss-1", "run-1")
 
 
 class TestModelInheritance:
@@ -359,7 +384,7 @@ class TestModelInheritance:
         _write_prototype(p, "worker")
         manager = SpawnManager(_FakeRegistry(p), 8, 3, 2)  # type: ignore[arg-type]
 
-        config = await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
+        config = await manager.spawn_member("worker", "甲", "boss-1", "run-1")
 
         assert config.id.startswith("m-")
         assert UUID(hex=config.id[2:]).version == 4
@@ -381,7 +406,7 @@ class TestModelInheritance:
         )
 
         with pytest.raises(PrototypeError, match="model"):
-            await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
+            await manager.spawn_member("worker", "甲", "boss-1", "run-1")
 
 
 class TestAdoptAgent:

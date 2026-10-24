@@ -9,7 +9,7 @@
 ### 顶层字段
 
 <!-- BEGIN GENERATED: agent-yaml-fields-agent -->
-`AgentConfig` 字段（12 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`AgentConfig` 字段（11 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
@@ -23,7 +23,6 @@
 | `prototype` | `str \| None` | None |  |
 | `spawned_by` | `str \| None` | None |  |
 | `spawn_depth` | `int` | 0 |  |
-| `session_timeout_seconds` | `int` | 1800 |  |
 | `mail_rescan_interval_seconds` | `float` | 900.0 |  |
 <!-- END GENERATED: agent-yaml-fields-agent -->
 
@@ -33,7 +32,6 @@
 - `program_token_budget`：单次工作程序入口或维护执行的共享输出预算，正整数，默认 100000；规划、行动、自评与压缩共享。沿用 output 账本按请求预留且成功不退预留的规则，恢复使用原冻结预算。
 - `prototype` / `spawned_by` / `spawn_depth`：血缘审计（统一成员模型，ADR 0006）——spawn 出本成员的 agent id 与 spawn 链深度，非 spawn 为 `null` / `0`。
 - `idle_timeout_seconds`：lazy 成员空闲多少秒后睡（scale-to-zero；成员永不删除，档案归档）。
-- `session_timeout_seconds`：ACTIVE/WAITING 的会话空闲超时即取消。
 - `mail_rescan_interval_seconds`：慢速重扫未读邮件的间隔（ADR 0028 决策 4）——agent 搁置未处理的未读与被崩溃吞掉的投递由这个重扫兜底唤醒。
 
 ### `llm`
@@ -107,7 +105,6 @@ agent:
     per_timeout: 30.0
     allowed_paths:
       - /workspace
-  session_timeout_seconds: 1800
 ```
 
 ## 2. 人格文件与行为规约
@@ -148,7 +145,7 @@ agent:
 }
 ```
 
-各段与 `MemoryConfig` 字段对应：`distillation.window`（批量蒸馏窗口——已完成且开始时间晚于蒸馏水位线（`memory/distillation.json`）的 session 数达到该值即触发批量蒸馏，ADR 0017）、`context.max_claims_in_context`（注入上下文的 claim 条数）、`reflection.min_interactions`（自驱动记忆审计的最小完成会话数；开/关与间隔在 `behavior.tlon` 的 `:reflect` 声明）。`retrieval` 段是 JIT 检索调参（ADR 0017 阶段 2）：`alpha_similarity`/`beta_recency`/`gamma_importance` 是复合打分 `α·similarity + β·recency + γ·importance` 的三个权重，`recency_half_life_days` 是 recency 指数衰减的半衰期（天），`pool_factor` 是 KNN 候选池相对 k 的放大倍数。`conflict` 段是冲突判定调参（ADR 0017 阶段 3）：`similarity_threshold` 是触发 LLM 判定的相似度门限（余弦，定高控制成本），`candidate_limit` 是每条新 claim 拉取的候选旧 claim 数。ADR 0017 之前的 `summary`/`episodic`/旧 `context` 段与 ADR 0009 之前的 `working`/`triggers` 段读取时自然忽略，无需清理。
+各段与 `MemoryConfig` 字段对应：`distillation.window`（批量蒸馏窗口——已终态且 run_id 尚未被 `memory/distillation.json` 消费集合覆盖的运行数达到该值即触发批量蒸馏，ADR 0017）、`context.max_claims_in_context`（注入上下文的 claim 条数）、`reflection.min_interactions`（自驱动记忆审计的最小终态运行数；开/关与间隔在 `behavior.tlon` 的 `:reflect` 声明）。`retrieval` 段是 JIT 检索调参（ADR 0017 阶段 2）：`alpha_similarity`/`beta_recency`/`gamma_importance` 是复合打分 `α·similarity + β·recency + γ·importance` 的三个权重，`recency_half_life_days` 是 recency 指数衰减的半衰期（天），`pool_factor` 是 KNN 候选池相对 k 的放大倍数。`conflict` 段是冲突判定调参（ADR 0017 阶段 3）：`similarity_threshold` 是触发 LLM 判定的相似度门限（余弦，定高控制成本），`candidate_limit` 是每条新 claim 拉取的候选旧 claim 数。ADR 0017 之前的 `summary`/`episodic`/旧 `context` 段与 ADR 0009 之前的 `working`/`triggers` 段读取时自然忽略，无需清理。
 
 > **生效路径**：`MemoryManager.load`（成员启动时调用）在 `config.json` 存在时以磁盘文件为准加载并绑定 `agent_id`——生产装配（[agents/assembly.py](../../src/tlon/agents/assembly.py) 的 `assemble_member_services`）传入默认 `MemoryConfig()`，不预填 `agent_id`，因此**磁盘调参在生产环境直接生效**。`agent.yaml` 无 `memory:` 段（[base/config.py](../../src/tlon/base/config.py) 的旧 `MemoryConfig` 已删除，其字段从未被消费）。
 
@@ -221,8 +218,7 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 │   │   ├── config.json               # 记忆调参
 │   │   ├── claims.jsonl              # 记忆 claim（ADR 0017，追加优先，允许删除/重写）
 │   │   └── distillation.json         # 蒸馏水位线（last_distilled_at）
-│   ├── sessions.sqlite3              # session 事件与生命周期元数据（ADR 0007/0032：交互唯一真相）
-│   ├── sessions/                     # 旧 session JSONL 离线档案（不读取、不导入、不双写）
+│   ├── program.sqlite3               # program run、模型及工具回执唯一权威
 │   ├── tasks.jsonl                   # TaskManager 持久化
 │   └── workspace/                  # 成员工作目录（各等级普通文件工具均可读写，无需 Docker）
 │       └── CONTACTS.md              # 私人联系簿，按需读取，缺失时可自行创建；ADR 0047

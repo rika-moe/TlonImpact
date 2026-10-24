@@ -90,3 +90,5 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 [ADR 0047：私人资料通过普通 workspace 文件访问](0047-workspace-contact-files.md)：CONTACTS.md 按需读取，三个等级均可直接操作自己的 workspace，删除联系人专用工具与系统提示全文注入。
 
 [ADR 0048：行动循环显式工具结束与独立模型预算](0048-action-loop-and-model-budgets.md)：发信与结束必须使用工具，内部文本不得触发隐式交付；移除原型 512 限制，单次输出上限与程序总预算分离。
+
+[ADR 0049：退役 Agent Session，统一 Program Run](0049-retire-agent-session.md)：删除旧历史兼容，历史、记忆溯源与额度统一 run，保留 client session。

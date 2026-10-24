@@ -32,7 +32,7 @@ class RecipientResolver:
     """Map aliases to addresses and addresses to member identities.
 
     Configuration includes sleeping agents. Humans become known through SQLite
-    registration, independent of active sessions. Retirement is checked by the
+    registration, independent of active work. Retirement is checked by the
     post office, including transactionally at local admission.
 
     A supplied human_ids snapshot makes resolution database-free for a batch.

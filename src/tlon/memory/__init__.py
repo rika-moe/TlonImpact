@@ -11,5 +11,5 @@ Usage:
     >>> config = MemoryConfig()
     >>> memory = MemoryManager(agent_id="dev-001", config=config, data_dir=Path("./data"))
     >>> await memory.load()
-    >>> await memory.maybe_distill_completed_sessions(journal)
+    >>> await memory.maybe_distill_completed_runs(journal)
 """

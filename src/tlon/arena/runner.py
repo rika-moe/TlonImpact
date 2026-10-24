@@ -4,8 +4,8 @@
 staging 原型拷入隔离宇宙 trusted 库 → ``instantiate`` 实例化临时成员 →
 config 资源收紧 → 语料落盘（先归档再跑，跑挂了语料也在）→
 ``build_runtime`` 起隔离 runtime → adopt 成员 → 逐封发 MAIL_NEW →
-有界等待 drained（投递确认 + 未读排空 + 无存活 session）→ 证据归档回
-生产 staging（sessions + run.json 含 fed 映射 + ledger + 邮箱）→
+有界等待 drained（投递确认 + 未读排空 + 无存活 run）→ 证据归档回
+生产 staging（runs + run.json 含 fed 映射 + ledger + 邮箱）→
 生成报告（fail-soft，报告失败不毁证据）→ 拆除（shutdown → 容器 GC →
 删隔离家园）。
 
@@ -29,7 +29,7 @@ from typing import Any, Protocol
 from tlon.agents.prototypes.info import BEHAVIOR_FILE, METADATA_FILE
 from tlon.agents.prototypes.instantiate import instantiate
 from tlon.agents.prototypes.staging import list_staging_prototypes
-from tlon.agents.session_journal import SessionJournal
+from tlon.agents.run_journal import RunJournal
 from tlon.arena.corpus import (
     ADVERSARIAL_SUITE,
     DEFAULT_CORPUS_LIMIT,
@@ -63,7 +63,7 @@ HARD_TIME_BOX_SECONDS = 1800.0
 ARENA_MEMORY_LIMIT = "256m"
 ARENA_CPU_LIMIT = 0.5
 
-#: session 完成轮询间隔
+#: run 完成轮询间隔
 DEFAULT_POLL_SECONDS = 2.0
 
 
@@ -104,10 +104,10 @@ class ArenaRun:
     error: str | None = None
     fed: list[dict[str, Any]] = field(default_factory=list)
     report_error: str | None = None
-    #: ADR 0028 收工语义：全部语料已投递、未读排空、无存活 session，且
-    #: 稳定跨一个轮询间隔（判定见 ``_wait_sessions``）。DONE = drained；
+    #: ADR 0028 收工语义：全部语料已投递、未读排空、无存活 run，且
+    #: 稳定跨一个轮询间隔（判定见 ``_wait_runs``）。DONE = drained；
     #: 否则撞全局时间盒（部分轨迹也是数据）。completed_count 只记完成的
-    #: session 数——单 session 可批处理多封语料，不等于已处理语料数。
+    #: run 数——单 run 可批处理多封语料，不等于已处理语料数。
     drained: bool = False
 
     @property
@@ -159,6 +159,8 @@ class _PostOfficeLike(Protocol):
 class _MembersLike(Protocol):
     async def adopt(self, agent_id: str) -> str: ...
 
+    async def get_state(self, agent_id: str) -> str | None: ...
+
 
 class IsolatedRuntime(Protocol):
     """隔离 runtime 的最小面（``api.bootstrap.Runtime`` 的结构子集）。
@@ -179,8 +181,8 @@ class IsolatedRuntime(Protocol):
     async def shutdown(self) -> None: ...
 
 
-class SessionJournalLike(Protocol):
-    """session 完成检测的最小面（``SessionJournal`` 的结构子集）。"""
+class RunJournalLike(Protocol):
+    """run 完成检测的最小面（``RunJournal`` 的结构子集）。"""
 
     async def count_completed(self, started_after: datetime | None = None) -> int: ...
 
@@ -188,7 +190,7 @@ class SessionJournalLike(Protocol):
 
 
 RuntimeFactory = Callable[[TlonPaths], Awaitable[IsolatedRuntime]]
-JournalFactory = Callable[[str, TlonPaths], SessionJournalLike]
+JournalFactory = Callable[[str, TlonPaths], RunJournalLike]
 CorpusLLMFactory = Callable[[str], CorpusLLM]
 ContainerGC = Callable[[str], Awaitable[list[str]]]
 ReportGenerator = Callable[[Path], ArenaReport]
@@ -250,7 +252,7 @@ class ArenaRunner:
         tlon_paths: TlonPaths,
         runtime_factory: RuntimeFactory,
         settings: Settings,
-        journal_factory: JournalFactory = SessionJournal,
+        journal_factory: JournalFactory = RunJournal,
         corpus_llm_factory: CorpusLLMFactory = _default_corpus_llm,
         container_gc: ContainerGC = docker_container_gc,
         report_generator: ReportGenerator = generate_report,
@@ -265,13 +267,13 @@ class ArenaRunner:
                 (production: ``tlon.api.bootstrap.build_runtime``)
             settings: Process settings snapshot (``TLON_ARENA_MODEL``),
                 built at the process entry point and injected here
-            journal_factory: Session completion probe (production: SessionJournal)
+            journal_factory: Run completion probe (production: RunJournal)
             corpus_llm_factory: Builds the corpus-generation LLM from a model name
             container_gc: Force-removes the run's containers by name (fail-soft)
             report_generator: Builds ARENA.md / report.json from the archive
                 (fail-soft — a report failure never skips teardown)
             clock: Monotonic clock for the time box (tests inject a fake)
-            poll_seconds: Session completion poll interval
+            poll_seconds: Run completion poll interval
         """
         self._paths = tlon_paths
         self._runtime_factory = runtime_factory
@@ -444,9 +446,9 @@ class ArenaRunner:
                 raise ArenaError(f"临时成员接入失败（adopt: {adopt_result}）")
             await self._feed(runtime, run, agent_id, corpus)
 
-            # 有界等待：drained（投递确认 + 未读排空 + 无存活 session，
+            # 有界等待：drained（投递确认 + 未读排空 + 无存活 run，
             # 稳定跨一个轮询间隔）即收工，或撞全局时间盒（部分轨迹也是数据）
-            run.completed_count, run.drained = await self._wait_sessions(arena_paths, run)
+            run.completed_count, run.drained = await self._wait_runs(arena_paths, run, runtime)
             run.status = RunStatus.COLLECTING
         except Exception as e:
             run.status = RunStatus.FAILED
@@ -521,9 +523,9 @@ class ArenaRunner:
         """Publish one MAIL_NEW per corpus mail on the isolated event bus.
 
         Each fed mail's ``{mail_id, from, subject, origin}`` is recorded on
-        the run (run.json ``fed`` 字段)——报告经各 session journal
-        ``session/start`` 的 ``responsibility`` 反解语料归属（ADR 0028：
-        一个 session 可收编多封语料），不靠猜。
+        the run (run.json ``fed`` 字段)——报告经各 run journal
+        ``run/start`` 的 ``responsibility`` 反解语料归属（ADR 0028：
+        一个 run 可收编多封语料），不靠猜。
         """
         for item in corpus:
             mail = Mail.create(
@@ -544,18 +546,14 @@ class ArenaRunner:
         run.fed_count = len(corpus)
         logger.info("arena_corpus_fed", run_id=run.run_id, fed=run.fed_count)
 
-    async def _wait_sessions(self, arena_paths: TlonPaths, run: ArenaRun) -> tuple[int, bool]:
+    async def _wait_runs(
+        self, arena_paths: TlonPaths, run: ArenaRun, runtime: IsolatedRuntime
+    ) -> tuple[int, bool]:
         """Poll until the run drains, or the global time box hits.
 
-        ADR 0028 单 session 模型下，一个 session 可批处理多封语料，收工
-        条件不是「每封信一个完成 session」而是排空（drained），三个要件：
+        排空条件包括语料全部投递、无未读邮件、无未结束的 program run，
+        并且成员状态已知且没有活动工作（包含后台维护）。
 
-        - **投递确认门**：``run.fed`` 全部 mail_id 出现在收件箱之前，排空
-          观测无意义——喂信与投递是异步的，空收件箱 ≠ 处理完。这是确定的
-          前置条件，替代了轮询次数碰运气。
-        - **无未读 ∧ 无 unfinished**：scheduler 只在未读邮件上开 session
-          （admission 的唯一入口是 wakeable unread），未读为空即不会有新
-          session 收编语料；无 unfinished 即没有活 session 还在处理。
         - **稳定窗**：drained 须在连续两次观测（间隔一个 poll 周期）都成立
           才收工——覆盖唯一残余竞态：成员自发信（如自寄）的投递可能落在
           单次观测之后。两次不是魔法次数：第一次是状态快照，第二次确认
@@ -566,8 +564,8 @@ class ArenaRunner:
         时间盒，run 撞盒收场——部分轨迹也是数据。
 
         Returns:
-            (completed session count, drained) —— completed_count 只记完成
-            的 session 数，不等于已处理语料数（一对多）。
+            (completed run count, drained) —— completed_count 只记完成
+            的 run 数，不等于已处理语料数。
         """
         journal = self._journal_factory(run.agent_id, arena_paths)
         mailbox = Mailbox(arena_paths.mail_database_file(), run.agent_id)
@@ -578,8 +576,11 @@ class ArenaRunner:
         while True:
             completed_count = await journal.count_completed()
             inbox_ids = {mail.id for mail in await mailbox.inbox()}
+            state = await runtime.members.get_state(run.agent_id)
             drained = (
-                fed_ids <= inbox_ids
+                state is not None
+                and state != "active"
+                and fed_ids <= inbox_ids
                 and not await mailbox.unread()
                 and not await journal.list_pending()
             )
@@ -595,7 +596,7 @@ class ArenaRunner:
         archive_dir: Path,
         agent_id: str,
     ) -> None:
-        """Export session events + ledger + mailbox, write run.json.
+        """Export run events + ledger + mailbox, write run.json.
 
         corpus.json was already written before the run started. The ledger
         (ADR 0014) and the member mailbox (sent/inbox) are the report's
@@ -604,7 +605,7 @@ class ArenaRunner:
         failure here must not skip teardown.
         """
         try:
-            await SessionJournal(agent_id, arena_paths).export_jsonl(archive_dir / "sessions")
+            await RunJournal(agent_id, arena_paths).export_jsonl(archive_dir / "runs")
             ledger_src = arena_paths.agent_ledger_file(agent_id)
             if ledger_src.is_file():
                 shutil.copy2(ledger_src, archive_dir / "ledger.jsonl")

@@ -1,5 +1,6 @@
 # 可编程工作流程：分阶段实施计划
 
+> 后续修订：[ADR 0049](../decisions/0049-retire-agent-session.md) 已删除 agent session 及旧历史读取；下文旧阶段验收记录保留为历史，不代表当前兼容能力。
 > 后续修订：[ADR 0047](../decisions/0047-workspace-contact-files.md) 将联系人改为 workspace 普通文件，删除专用工具与正文注入；所有等级的 workspace 文件操作无需 Docker。下文阶段记录保留历史。
 状态：2026-10-23，设计已接受；P0 文档与任务已建立，P1–P5 全部合并（#208/#209/#210/#211/#212/#213），两个 EPIC 的功能验收已完成。设计基线 `9fe00817bd75944e49a05cfd8e0149fa240dc757`（#198），P4a 施工基线 `a65088f`（#210）。设计权威：[目标设计](programmable-workflows.md)；选择理由：[ADR 0046](../decisions/0046-programmable-workflows.md)。当前能力以各阶段实施记录及 reference 为准。
 

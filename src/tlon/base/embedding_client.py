@@ -6,7 +6,7 @@ reads ``{PROVIDER}_API_KEY`` natively), and a member-level ``api_base``
 overrides the registry endpoint. Deliberately without retry or ledger
 accounting: embedding is a best-effort derived-view builder — callers
 catch ``EmbeddingError`` and degrade to recency-ordered retrieval, so
-provider flakiness must never take memory (or the session) down.
+provider flakiness must never take memory (or the run) down.
 """
 
 import litellm

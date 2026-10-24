@@ -31,7 +31,7 @@ from tlon.agents.prototypes.staging import (
     write_staging_prototype,
 )
 from tlon.agents.reputation import reputation_provider
-from tlon.agents.session_journal import SessionJournal
+from tlon.agents.run_journal import RunJournal
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.config import DEFAULT_CONTEXT_WINDOW, AgentConfig, LLMConfig
 from tlon.base.execution import MemberWriteGate
@@ -151,7 +151,7 @@ async def assemble_member_services(
 
     Unified member model (ADR 0006): every member gets the full
     capability set — LLM client, memory, task manager, Docker runtime,
-    tools, and the team roster. Rules can request a session whenever their
+    tools, and the team roster. Rules can start a run whenever their
     program requires one; capability availability does not classify a member.
     Resource loading stays on demand. A member declaring
     ``docker.level: L0`` gets no execution device — no DockerRuntime and
@@ -244,7 +244,7 @@ async def assemble_member_services(
         memory,
         task_manager,
         address_for_member(config.id),
-        SessionJournal(config.id, tlon_paths),
+        RunJournal(config.id, tlon_paths),
         tlon_paths=tlon_paths,
     )
     operations = [
@@ -293,7 +293,7 @@ async def assemble_member_services(
             ),
         )
     )
-    operations.extend(make_memory_operations(memory, SessionJournal(config.id, tlon_paths)))
+    operations.extend(make_memory_operations(memory, RunJournal(config.id, tlon_paths)))
     operations.extend(make_task_operations(task_manager))
     operations.extend(make_identity_operations(tlon_paths, config.id))
     operations.extend(

@@ -54,7 +54,7 @@ class LifecycleService:
                 prototype=args["prototype"],
                 name=args["name"],
                 spawner_id=self.member_id,
-                session_id=context.run_id,
+                run_id=context.run_id,
                 params=args.get("params"),
             )
         except SpawnRejectedError as error:

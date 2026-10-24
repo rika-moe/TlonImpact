@@ -2,11 +2,11 @@
 
 ``IdleReaper`` runs the registry's idle-*fact* monitor: every
 ``IDLE_CHECK_INTERVAL_SECONDS`` it publishes an AGENT_IDLE fact for each
-running lazy agent idle past its timeout with no live sessions —
+running lazy agent idle past its timeout with no live work —
 deciding what to do with that fact is Adam's policy, not the registry's.
 It also executes the resulting drains (``drain``): a stop request is
 re-validated under the per-agent wake lock right before shutdown, so a
-session that started in the race window keeps the agent alive.
+run that started in the race window keeps the agent alive.
 
 The registry is constructor-injected for the run table, config queries,
 wake locks, and the event bus; the import direction stays
@@ -44,7 +44,7 @@ class IdleReaper:
         """Periodically report idle lazy agents (scale-to-zero facts).
 
         Every ``IDLE_CHECK_INTERVAL_SECONDS``, each running lazy agent that
-        has been idle past its configured timeout and has no live sessions
+        has been idle past its configured timeout and has no live work
         is reported as an AGENT_IDLE fact event. Stopping it is a policy
         decision (Adam's); the registry only executes the resulting
         AGENT_STOP_REQUEST.
@@ -61,8 +61,8 @@ class IdleReaper:
     async def _report_if_idle(self, agent_id: str) -> None:
         """Publish an AGENT_IDLE fact if the agent is idle past its timeout.
 
-        Fact detection only — no state is changed here. An agent with any
-        live (ACTIVE/WAITING) session is never reported idle.
+        Fact detection only — no state is changed here. A member with
+        active work is never reported idle.
         """
         registry = self._registry
         config = registry._agent_info.get_config(agent_id)
@@ -72,7 +72,7 @@ class IdleReaper:
         agent = registry._agents.get(agent_id)
         if agent is None:
             return
-        if agent.active_session_count > 0 or agent.idle_seconds < config.idle_timeout_seconds:
+        if agent.is_busy or agent.idle_seconds < config.idle_timeout_seconds:
             return
 
         idle = int(agent.idle_seconds)
@@ -90,7 +90,7 @@ class IdleReaper:
 
         The fact that motivated the request may be stale, so the condition
         is re-checked under the per-agent lock right before shutdown — a
-        session that started (or activity that resumed) in the race window
+        run that started (or activity that resumed) in the race window
         keeps the agent alive.
         """
         registry = self._registry
@@ -101,7 +101,7 @@ class IdleReaper:
         agent = registry._agents.get(agent_id)
         if agent is None:
             return
-        if agent.active_session_count > 0 or agent.idle_seconds < config.idle_timeout_seconds:
+        if agent.is_busy or agent.idle_seconds < config.idle_timeout_seconds:
             return
 
         # Serialize with a concurrent start of the same persona
@@ -111,7 +111,7 @@ class IdleReaper:
             if agent is None:
                 return
             # Drain re-check under the lock
-            if agent.active_session_count > 0:
+            if agent.is_busy:
                 return
             if agent.idle_seconds < config.idle_timeout_seconds:
                 return

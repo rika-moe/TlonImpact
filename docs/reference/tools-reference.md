@@ -40,7 +40,7 @@ model-call 返回建议，tool-execute 逐叶执行并返回真实结果。每�
 | 15 | `memory-remember` | [operations/memory.py](../../src/tlon/operations/memory.py) 的 `OperationTool` 投影 | memory |
 | 16 | `memory-search` | [operations/memory.py](../../src/tlon/operations/memory.py) 的 `OperationTool` 投影 | memory |
 | 17 | `memory-forget` | [operations/memory.py](../../src/tlon/operations/memory.py) 的 `OperationTool` 投影 | memory |
-| 18 | `session-read` | [operations/memory.py](../../src/tlon/operations/memory.py) 的 `OperationTool` 投影 | memory |
+| 18 | `run-read` | [operations/memory.py](../../src/tlon/operations/memory.py) 的 `OperationTool` 投影 | memory |
 | 19 | `task-create` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
 | 20 | `task-list` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
 | 21 | `task-start` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
@@ -437,7 +437,7 @@ Operation 单一契约；输入与输出字段保留 snake_case。（本区块�
 
 ### memory-search
 
-搜索自己的长期记忆，来源会话可用 session-read 回读。
+搜索自己的长期记忆，来源运行可用 run-read 回读。
 
 输入：
 
@@ -469,21 +469,21 @@ Operation 单一契约；输入与输出字段保留 snake_case。（本区块�
 |---|---|---|---|
 | `result` | string | 是 | — |
 
-### session-read
+### run-read
 
-回读自己的交互来源，旧 session ID 或 program:<run_id>，返回有界摘要；只读且不恢复执行。
+回读自己的交互来源，原始 run_id，返回有界摘要；只读且不恢复执行。
 
 输入：
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `session_id` | string | 是 | minLength=1 |
+| `run_id` | string | 是 | minLength=1 |
 
 输出：
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `session_id` | string | 是 | — |
+| `run_id` | string | 是 | — |
 | `digest` | string | 是 | — |
 | `event_count` | integer | 是 | — |
 <!-- END GENERATED: memory-operations -->

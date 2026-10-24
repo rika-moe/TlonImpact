@@ -15,7 +15,9 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tests.prototype_helpers import builtin_id
+from tlon.agents.program_store import ProgramStore
 from tlon.base.config import AgentConfig, LLMConfig, yaml_save
+from tlon.base.execution import ExecutionScope, bind_execution
 from tlon.base.ledger import (
     LedgerWriter,
     collect_agent_ledger,
@@ -66,7 +68,7 @@ def _record(
     completion_tokens: int = 5,
     duration_ms: int = 10,
     cpu_ms: int = 1,
-    session_id: str | None = "s1",
+    run_id: str | None = "s1",
     model: str | None = "openai/gpt-test",
 ) -> dict[str, Any]:
     return {
@@ -78,7 +80,7 @@ def _record(
         "duration_ms": duration_ms,
         "cpu_ms": cpu_ms,
         "purpose": purpose,
-        "session_id": session_id,
+        "run_id": run_id,
     }
 
 
@@ -94,7 +96,7 @@ class TestLedgerRecording:
             system_prompt="sys",
             messages=[{"role": "user", "content": "hi"}],
             purpose="think",
-            session_id="s1",
+            run_id="s1",
         )
 
         assert response.content == "hi"
@@ -107,10 +109,39 @@ class TestLedgerRecording:
         assert record["prompt_tokens"] == 7
         assert record["completion_tokens"] == 11
         assert record["purpose"] == "think"
-        assert record["session_id"] == "s1"
+        assert record["run_id"] == "s1"
         assert isinstance(record["duration_ms"], int) and record["duration_ms"] >= 0
         assert isinstance(record["cpu_ms"], int) and record["cpu_ms"] >= 0
         assert record["ts"]
+
+    @pytest.mark.parametrize("supplied_run_id", [None, "unrelated-run"])
+    async def test_execution_scope_owns_usage_attribution_and_replay(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supplied_run_id: str | None
+    ) -> None:
+        paths = TlonPaths(home=tmp_path)
+        client = _client(paths)
+        provider = AsyncMock(return_value=_fake_litellm_response())
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        monkeypatch.setattr("litellm.acompletion", provider)
+        store = ProgramStore(None)
+        for _ in range(2):
+            # A new scope replays the same durable model receipt after recovery.
+            with bind_execution(ExecutionScope(store, "owner-run", 10000, "output")):
+                response = await client.chat(
+                    system_prompt="sys",
+                    messages=[{"role": "user", "content": "hi"}],
+                    purpose="distill",
+                    run_id=supplied_run_id,
+                )
+                assert response.content == "hi"
+        records = [
+            json.loads(line) for line in paths.agent_ledger_file("dev-001").read_text().splitlines()
+        ]
+        assert len(records) == 1
+        assert records[0]["run_id"] == "owner-run"
+        assert records[0]["purpose"] == "distill"
+        assert "session_id" not in records[0]
+        provider.assert_awaited_once()
 
     async def test_no_agent_id_records_nothing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

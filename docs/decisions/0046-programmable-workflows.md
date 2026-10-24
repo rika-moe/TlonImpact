@@ -1,5 +1,6 @@
 # ADR 0046：以模块函数统一成员工作程序
 
+> 修订：[ADR 0049](0049-retire-agent-session.md) 已退役 agent session 及旧历史查询；以下 session 存储/读取设计仅为历史记录，当前以 ProgramStore run 历史为准。
 状态：已接受，P1–P5 全部合并（#208/#209/#210/#211/#212/#213），两个 EPIC 验收完成，2026-10-23。代码基线：`9fe00817bd75944e49a05cfd8e0149fa240dc757`（#198）。ADR 的接受不授权自动施工或合并；各阶段按明确授权独立实施。
 
 设计契约：[可编程工作流程](../design/programmable-workflows.md)。任务范围、验收和删除项：[实施计划](../design/programmable-workflows-plan.md)。本文记录选择与取舍；完成状态与逐项证据见实施计划的“EPIC 收尾核对”。
