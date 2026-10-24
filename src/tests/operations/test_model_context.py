@@ -14,9 +14,13 @@ from tlon.operations.model import make_model_operations
 from tlon.operations.schema import RecoveryMismatchError
 
 
-@pytest.mark.parametrize("input_tokens,fits", [(40, True), (81, False)])
+@pytest.mark.parametrize("input_tokens", [40, 81])
+@pytest.mark.parametrize("output_cap", [None, 50, 10])
 async def test_context_inspection_counts_frozen_system_and_tools_and_replays(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, input_tokens: int, fits: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    input_tokens: int,
+    output_cap: int | None,
 ) -> None:
     store = ProgramStore(tmp_path / "program.sqlite", build_id="test")
     catalog = [{"type": "function", "function": {"name": "time-now", "parameters": {}}}]
@@ -35,15 +39,17 @@ async def test_context_inspection_counts_frozen_system_and_tools_and_replays(
     arguments: dict[str, Any] = {
         "messages": [{"role": "user", "content": "task"}],
         "tools": ["time-now"],
-        "max_tokens": 50,
     }
+    if output_cap is not None:
+        arguments["max_tokens"] = output_cap
+    expected_output = min(20, output_cap) if output_cap is not None else 20
     with bind_execution(ExecutionScope(store, "r", 100, "output")):
         result = await executor.call("model-context", arguments)
     assert result == {
         "input_tokens": input_tokens,
-        "output_tokens": 20,
+        "output_tokens": expected_output,
         "context_window": 100,
-        "fits": fits,
+        "fits": input_tokens + expected_output <= 100,
     }
     assert counter.call_count == 2
     assert counter.call_args_list[0].kwargs == {

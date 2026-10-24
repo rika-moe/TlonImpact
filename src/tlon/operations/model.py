@@ -59,7 +59,7 @@ MODEL_INPUT_SCHEMA: dict[str, Any] = {
         "max_tokens": {"type": "integer", "minimum": 1},
         "cache_prefix_len": {"type": "integer", "minimum": 0},
     },
-    "required": ["messages", "max_tokens"],
+    "required": ["messages"],
     "additionalProperties": False,
 }
 
@@ -98,7 +98,7 @@ def make_model_operations(
             response = await service.request(
                 messages=arguments["messages"],
                 tools=arguments.get("tools", []),
-                max_tokens=arguments["max_tokens"],
+                max_tokens=arguments.get("max_tokens"),
                 cache_prefix_len=arguments.get("cache_prefix_len"),
                 purpose="program" if context.origin == "program" else "tool",
                 session_id=context.run_id,

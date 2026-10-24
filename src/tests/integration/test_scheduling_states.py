@@ -45,17 +45,28 @@ async def test_real_tools_sleep_wake_finish_and_permanent_exit(tmp_path: Path) -
             unread = store.mails(member_id, "unread")
             return response("mail-mark-read", {"mail_ids": [mail.id for mail in unread]})
         if calls == 3:
-            return LLMResponse(
-                content="sleep:" + (datetime.now(UTC) + timedelta(seconds=2)).isoformat()
+            return response(
+                "state-put",
+                {
+                    "key": "next",
+                    "value": {
+                        "kind": "sleep-until",
+                        "at": (datetime.now(UTC) + timedelta(seconds=2)).isoformat(),
+                    },
+                },
             )
         if calls == 4:
+            return response("finish-turn", {})
+        if calls == 5:
             woke.set()
             unread = store.mails(member_id, "unread")
             return response("mail-mark-read", {"mail_ids": [mail.id for mail in unread]})
-        if calls == 5:
-            return response("finish-turn", {})
         if calls == 6:
-            return LLMResponse(content="exit")
+            return response("finish-turn", {})
+        if calls == 7:
+            return response("state-put", {"key": "next", "value": {"kind": "exit"}})
+        if calls == 8:
+            return response("finish-turn", {})
         raise AssertionError(f"Unexpected inference after call {calls}: {kwargs}")
 
     async with _server(tmp_path) as (url, app):
@@ -70,13 +81,12 @@ async def test_real_tools_sleep_wake_finish_and_permanent_exit(tmp_path: Path) -
             (defn boot [event] {:result nil})
             (defn handle [event]
               (let [turn (conversation/run {:messages [{:role "user" :content (get (get event :mail) :content)}]
-                            :tools ["mail-send" "mail-mark-read" "finish-turn"]
+                            :tools ["mail-send" "mail-mark-read" "state-put" "finish-turn"]
                             :max_tokens 256 :max_rounds 10})
-                    content (get turn :content)]
-                (if (= content "exit") {:result (get turn :reason) :next {:kind "exit"}}
-                  (if (and content (content-matches? content "^sleep:"))
-                    {:result (get turn :reason) :next {:kind "sleep-until" :at (substring content 6)}}
-                    {:result (get turn :reason)}))))
+                    next (state-get {:key "next"})]
+                (state-put {:key "next" :value nil})
+                (if next {:result (get turn :reason) :next next}
+                  {:result (get turn :reason)})))
             """
             }
             async with http.post(
@@ -127,17 +137,19 @@ async def test_real_tools_sleep_wake_finish_and_permanent_exit(tmp_path: Path) -
                 await _send_mail(http, url, "睡眠期间来信", to=[member_id])
                 assert len(store.mails(member_id, "unread")) == 1
                 assert (await registry.get_agent_status(member_id))["state"] == "sleeping"
-                assert calls == 3
+                assert calls == 4
                 async with asyncio.timeout(10):
                     await woke.wait()
                 assert datetime.now(UTC) >= datetime.fromisoformat(sleeping["wake_at"])
                 await wait_state("waiting")
-                assert calls == 5
+                assert calls == 6
                 assert not store.mails(member_id, "unread")
-                assert len(store.mails("human:alice")) == 1  # finish-turn sent no mail
+                assert len(store.mails("human:alice")) == 1, [
+                    mail.content for mail in store.mails("human:alice")
+                ]  # finish-turn sent no mail
                 await _send_mail(http, url, "现在永久退出", to=[member_id])
                 await wait_state("dead")
-                assert calls == 6
+                assert calls == 8
                 history = [mail.id for mail in store.mails(member_id)]
                 assert len(history) == 3
                 async with http.post(
@@ -150,4 +162,4 @@ async def test_real_tools_sleep_wake_finish_and_permanent_exit(tmp_path: Path) -
                 ) as refused:
                     assert refused.status == 400
                 assert [mail.id for mail in store.mails(member_id)] == history
-                assert calls == 6
+                assert calls == 8

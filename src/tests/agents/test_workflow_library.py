@@ -29,7 +29,19 @@ def run(
                 lambda env, options: {"fits": window is None or len(str(options)) < window},
                 pure=False,
             ),
-            "tool-execute": Builtin(lambda env, options: [], pure=False),
+            "tool-execute": Builtin(
+                lambda env, options: [
+                    {
+                        "id": call["id"],
+                        "name": call["name"],
+                        "success": True,
+                        "data": {"finished": True},
+                        "error": None,
+                    }
+                    for call in options["tool_calls"]
+                ],
+                pure=False,
+            ),
             "mail-send": Builtin(lambda env, options: options, pure=False),
             "mail-forward": Builtin(lambda env, options: options, pure=False),
         }
@@ -125,7 +137,12 @@ def test_two_nested_methods_return_before_outer_continues() -> None:
         "reviewed (workflows/reviewed options)] "
         '{:checked (get checked :content) :reviewed (get reviewed :content) :outer "continued"})',
         [
-            {"content": value}
+            {
+                "content": value,
+                "tool_calls": [{"id": "done", "name": "finish-turn", "arguments": {}}],
+            }
+            if value in {"source A", "source B", "draft"}
+            else {"content": value}
             for value in ["source A", "source B", "cross check", "draft", "review", "revision"]
         ],
     )
@@ -159,3 +176,118 @@ def test_forward_uses_original_mail_identity() -> None:
     result, requests = run('(workflows/forward "reader@tlon.internal" "mail-source")')
     assert result == {"to": ["reader@tlon.internal"], "mail_id": "mail-source"}
     assert requests == []
+
+
+def test_omitted_output_limit_stays_absent_from_model_request() -> None:
+    result, requests = run(
+        '(context/complete {:messages [{:role "user" :content "plan"}] :tools []})',
+        [{"content": "plan"}],
+    )
+    assert result["content"] == "plan"
+    assert "max_tokens" not in requests[0]
+
+
+def test_compaction_rejects_truncated_summary() -> None:
+    history = [{"role": "user", "content": value} for value in ["old", "recent"]]
+    with pytest.raises(EvalError, match="model output truncated"):
+        run(
+            "(context/compact {:messages " + edn(history) + "})",
+            [{"content": "partial", "finish_reason": "length"}],
+        )
+
+
+def test_short_turn_allows_delivery_followed_by_explicit_finish() -> None:
+    result, requests = run(
+        '(workflows/short-turn {:messages [] :tools ["mail-send" "finish-turn"]})',
+        [
+            {
+                "tool_calls": [
+                    {
+                        "id": "send",
+                        "name": "mail-send",
+                        "arguments": {"to": ["sender@tlon.internal"], "content": "answer"},
+                    }
+                ]
+            },
+            {"tool_calls": [{"id": "done", "name": "finish-turn", "arguments": {}}]},
+        ],
+    )
+    assert result["reason"] == "finish-turn"
+    assert len(requests) == 2
+    assert requests[1]["messages"][-1]["tool_call_id"] == "send"
+
+
+def test_standard_work_example_composes_methods_then_delivers_with_tools() -> None:
+    from tlon.agents.program_package import program_builtins, program_module_sources
+
+    example = files("tlon").joinpath("resources/examples/standard-work")
+    responses = [
+        {"content": "plan"},
+        {"tool_calls": [{"id": "clock", "name": "time-now", "arguments": {}}]},
+        {"tool_calls": [{"id": "planned", "name": "finish-turn", "arguments": {}}]},
+        {"tool_calls": [{"id": "drafted", "name": "finish-turn", "arguments": {}}]},
+        {"content": "review"},
+        {"content": "revised answer"},
+        {
+            "tool_calls": [
+                {
+                    "id": "send",
+                    "name": "mail-send",
+                    "arguments": {"to": ["sender@tlon.internal"], "content": "revised answer"},
+                }
+            ]
+        },
+        {"tool_calls": [{"id": "delivered", "name": "finish-turn", "arguments": {}}]},
+    ]
+    requests: list[dict[str, Any]] = []
+    calls: list[dict[str, Any]] = []
+    marked: list[dict[str, Any]] = []
+
+    def model(env: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
+        requests.append(request)
+        return responses.pop(0)
+
+    def execute(env: dict[str, Any], request: dict[str, Any]) -> list[dict[str, Any]]:
+        calls.extend(request["tool_calls"])
+        return [
+            {"id": call["id"], "name": call["name"], "success": True, "data": {}, "error": None}
+            for call in request["tool_calls"]
+        ]
+
+    builtins = program_builtins()
+    builtins.update(
+        {
+            "model-call": Builtin(model, pure=False),
+            "model-context": Builtin(lambda env, options: {"fits": True}, pure=False),
+            "tool-execute": Builtin(execute, pure=False),
+            "mail-mark-read": Builtin(lambda env, options: marked.append(options), pure=False),
+        }
+    )
+    sources = program_module_sources(
+        {
+            f"work/{name}.tlon": example.joinpath(f"modules/work/{name}.tlon").read_text()
+            for name in ["methods", "reply"]
+        }
+    )
+    package = ModulePackage.from_sources(sources, builtins)
+    result = eval_form(
+        loads(
+            '(handle {:sender "sender@tlon.internal" :mail {:id "incoming" :content "What time is it?"}})'
+        ),
+        {"handle": package.entry("work.reply/handle")},
+        builtins,
+        fuel=10000,
+    )
+    assert result["result"]["reason"] == "finish-turn"
+    assert len(requests) == 8
+    assert all("max_tokens" not in request for request in requests)
+    assert [call["name"] for call in calls] == [
+        "time-now",
+        "finish-turn",
+        "finish-turn",
+        "mail-send",
+        "finish-turn",
+    ]
+    assert calls[-2]["arguments"]["content"] == "revised answer"
+    assert "revised answer" in requests[-2]["messages"][-1]["content"]
+    assert marked == [{"mail_ids": ["incoming"]}]

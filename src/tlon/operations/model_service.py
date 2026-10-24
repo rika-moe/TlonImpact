@@ -175,7 +175,7 @@ class ModelService:
             "messages": [{"role": "system", "content": host["system_prompt"]}]
             + arguments["messages"],
             "tools": selected or None,
-            "max_tokens": arguments["max_tokens"],
+            "max_tokens": arguments.get("max_tokens"),
             "cache_prefix_len": arguments.get("cache_prefix_len"),
         }
         if any(request.get(key) != value for key, value in expected.items()):

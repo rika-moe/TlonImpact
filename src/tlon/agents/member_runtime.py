@@ -297,11 +297,7 @@ class MemberRuntime(Member):
             )
 
     def _maintenance_execution(self, purpose: str) -> ExecutionScope:
-        limit = (
-            self._services.config.llm.max_tokens
-            if self._services and self._services.config.llm
-            else 4096
-        )
+        limit = self._services.config.program_token_budget if self._services else 100000
         root = (
             f"maintenance:{purpose}"
             if purpose.startswith("reflection:")
@@ -726,9 +722,9 @@ class MemberRuntime(Member):
                 "model_contexts": model_contexts,
                 "entry": handler.entry,
                 "fuel": self._spec.fuel,
-                "token_budget": self._services.config.llm.max_tokens
-                if self._services and self._services.config.llm
-                else 4096,
+                "token_budget": self._services.config.program_token_budget
+                if self._services
+                else 100000,
             },
         )
         return await self._run_entry_record(record)

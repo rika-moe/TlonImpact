@@ -2,5 +2,4 @@
 (defn boot [event] {:result nil})
 (defn handle [event]
   (agent/respond event {:method "short-turn" :max_rounds 3 :history_limit 5
-                        :max_tokens 512
                         :review_instructions "核验结论是否有具体来源、计算过程或实际工具结果支撑，区分事实、推断与未核实内容。未执行的工具不构成证据；无法支持的断言必须修订或删除。"}))

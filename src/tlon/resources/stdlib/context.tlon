@@ -1,6 +1,12 @@
 (ns tlon.context
   (:require [tlon.messages :as messages])
-  (:export assemble groups compact fit complete))
+  (:export assemble groups compact fit complete request invoke))
+
+(defn request [options]
+  (let [base {:messages (get options :messages) :tools (get options :tools [])
+              :cache_prefix_len (get options :cache_prefix_len 0)}
+        limit (get options :max_tokens)]
+    (if (= limit nil) base (assoc base :max_tokens limit))))
 
 (defn append-all [left right] (reduce result item (conj result item) left right))
 (defn nth [items index]
@@ -68,13 +74,14 @@
       (assert (= (get prefix-index :size) prefix-count) "prefix splits a tool exchange")
       (if (<= tail-start start) options
         (let [text (reduce previous group
-                     (let [request {:messages [(messages/user
+                     (let [request (request {:messages [(messages/user
                               (str "Summarize this history as evidence with source attribution. Assistant drafts and tool-call suggestions are UNEXECUTED proposals. Only tool results record committed execution; preserve failures and uncertainty. Previous historical summary (not a receipt): " previous
                                    " Next complete exchange: " (json-encode group)))]
-                                    :tools [] :max_tokens (get options :summary_tokens (get options :max_tokens))}
+                                    :tools [] :max_tokens (get options :summary_tokens (get options :max_tokens))})
                            pressure (model-context request)]
                        (assert (get pressure :fits) "single exchange cannot fit compaction window")
                        (let [result (model-call request) text (get result :content)]
+                         (assert (not (= (get result :finish_reason) "length")) "model output truncated")
                          (assert (and (= text (str text)) (not (= text ""))) "compaction requires textual summary")
                          text)) "" (slice all start tail-start))]
           (assert (and (= text (str text)) (not (= text ""))) "compaction requires textual summary")
@@ -84,18 +91,17 @@
                           (flatten (slice all tail-start (count all)))))))))))
 
 (defn fit [options]
-  (let [pressure (model-context {:messages (get options :messages) :tools (get options :tools [])
-                                 :max_tokens (get options :max_tokens)})]
+  (let [pressure (model-context (request options))]
     (if (get pressure :fits) options
       (let [smaller (compact options)
-            checked (model-context {:messages (get smaller :messages) :tools (get smaller :tools [])
-                                    :max_tokens (get smaller :max_tokens)})]
+            checked (model-context (request smaller))]
         (assert (get checked :fits) "context remains over window after compaction")
         smaller))))
 
+(defn invoke [prepared]
+  (let [result (model-call (request prepared))]
+    (assert (not (= (get result :finish_reason) "length")) "model output truncated")
+    result))
+
 ;; All generated workflow requests use the same ordinary pressure policy.
-(defn complete [options]
-  (let [prepared (fit options)]
-    (model-call {:messages (get prepared :messages) :tools (get prepared :tools [])
-                 :max_tokens (get prepared :max_tokens)
-                 :cache_prefix_len (get prepared :cache_prefix_len 0)})))
+(defn complete [options] (invoke (fit options)))

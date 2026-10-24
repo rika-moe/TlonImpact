@@ -74,7 +74,7 @@ state-put 将状态与该次调用结果放在 ProgramStore 的同一事务；�
 
 Operation 没有 control 分类或 sole/direct/literal 嵌套限制。`finish-turn` 返回普通局部信号，调度由根入口结果及宿主生命周期决定。
 
-程序直接模型调用使用持久 output 根，额度来自成员 llm.max_tokens；获准的输出预留成功后不退款，实际输出上限还受请求值和剩余额度限制。旧 run-loop/recipe total 根入口已删除。既有 total 预算账本语义仍供相关宿主调用使用；普通程序及其压缩、提案、评审共享冻结根。total 成功按可靠的实际 usage 结算；缺少 usage 或提交未知时保留预留，实际超额如实记账并阻止后续请求，token 估算不是硬上界。
+程序直接模型调用使用持久 output 根，额度来自成员 program_token_budget（默认 100000）；llm.max_tokens 仅为单次输出上限，model-call/model-context 未指定 max_tokens 时使用该成员配置；获准的输出预留成功后不退款，实际输出上限还受请求值和剩余额度限制。旧 run-loop/recipe total 根入口已删除。既有 total 预算账本语义仍供相关宿主调用使用；普通程序及其压缩、提案、评审共享冻结根。total 成功按可靠的实际 usage 结算；缺少 usage 或提交未知时保留预留，实际超额如实记账并阻止后续请求，token 估算不是硬上界。
 
 模型响应与额度结算原子提交，已提交历史只还原，不重新扣额或请求 provider；未知提交不自动重发。后台反思和蒸馏另建维护根。宿主 ContextVar 传播作用域，业务参数不能重置额度；取消只作用于当前进程任务树，冻结 deadline 和预算跨重启保留。详情见 [执行作用域](../design/execution-scope.md)。
 
@@ -88,7 +88,7 @@ spawn 的配额归属取冻结 CallContext.run_id：Tool 与 DSL 使用所属冻
 
 ## 可编程工作流程 P2：模型请求与恢复
 
-`model-call` 必填 `messages` 和 `max_tokens`；`tools` 是工具名列表（默认空），可选 `cache_prefix_len`。输入消息允许 user/assistant/tool，system 由宿主绑定；prompt 与任意工具 schema 拒绝。返回 content（可为 null）、tool_calls（id/name/arguments）、finish_reason、usage、reasoning_content，不执行工具建议。工具执行由 tool-execute 显式完成。
+`model-call` 必填 `messages`，可选正整数 `max_tokens`（默认使用冻结成员的单次输出上限）；`tools` 是工具名列表（默认空），可选 `cache_prefix_len`。输入消息允许 user/assistant/tool，system 由宿主绑定；prompt 与任意工具 schema 拒绝。返回 content（可为 null）、tool_calls（id/name/arguments）、finish_reason、usage、reasoning_content，不执行工具建议。工具执行由 tool-execute 显式完成。
 
 普通程序通过 ModelService 使用统一模型调用账本。v2 受理原子冻结 host（系统输入及工具定义）与 config（有效成员模型配置）；已有结果重放不受后来系统词或模型配置变化影响，新请求仍校验当前工具目录。已提交模型结果缺外层回执时，恢复 hook 核对稳定路径和有效请求，只读补回执；unknown 不自动重发。output 模式维持获准输出上限预留，total 模式维持现有实际用量结算与缺失用量的保守处理。
 

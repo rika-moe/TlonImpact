@@ -2,7 +2,7 @@
   (:require [tlon.messages :as messages] [tlon.conversation :as conversation] [tlon.context :as context])
   (:export short-turn plan-then-act evidence-check reviewed route forward))
 
-(defn short-turn [options] (conversation/run (assoc options :max_rounds 1)))
+(defn short-turn [options] (conversation/run (assoc options :max_rounds 3)))
 (defn plan-then-act [options]
   (let [plan (context/complete {:messages (messages/append (get options :messages)
                                       (messages/user "Plan the work. Do not claim execution. Return a concise plan."))

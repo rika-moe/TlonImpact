@@ -5,46 +5,32 @@
 (defn step [options]
   (let [tools (get options :tools [])
         prepared (context/fit options)
-        response (model-call {:messages (get prepared :messages) :tools tools
-                              :cache_prefix_len (get options :cache_prefix_len 0)
-                              :max_tokens (get options :max_tokens)})
+        response (context/invoke prepared)
         calls (get response :tool_calls [])
-        results (if (= (count calls) 0) []
-                  (tool-execute {:tools tools :tool_calls calls}))]
-    {:response response :results results
-     :messages (if (= (count calls) 0)
-                 (messages/append (get prepared :messages) (messages/response response))
-                 (messages/exchange (get prepared :messages) response results))}))
+        ends (filter call (= (get call :name) "finish-turn") calls)
+        required (assert (> (count calls) 0) "action loop requires tool calls")
+        checked (if (> (count ends) 0)
+                  (assert (and (= (count calls) 1)
+                               (= (get (reduce previous call call nil calls) :arguments) {}))
+                          "finish-turn must be an empty standalone call") true)
+        results (tool-execute {:tools tools :tool_calls calls})
+        finished (if (> (count ends) 0)
+                   (assert (and (= (count results) 1)
+                                (get (reduce previous result result nil results) :success))
+                           "finish-turn execution failed") false)]
+    {:response response :results results :finished finished
+     :messages (messages/exchange (get prepared :messages) response results)}))
 
 ;; Linked only when an author explicitly requires tlon.conversation.
 ;; This is an ordinary bounded function. All effects retain the caller's scope.
 (defn run [options]
-  (let [limit (get options :max_rounds)
-        tools (get options :tools [])]
+  (let [limit (get options :max_rounds)]
     (assert (and (integer? limit) (> limit 0)) "max_rounds must be a positive integer")
     (while [history (get options :messages) round 0]
       true
       (if (>= round limit)
-        {:content nil :messages history :reason "round-limit"}
-        (let [prepared (context/fit (assoc options :messages history))
-              result (model-call {:messages (get prepared :messages) :tools tools
-                                  :cache_prefix_len (get options :cache_prefix_len 0)
-                                  :max_tokens (get options :max_tokens)})
-              calls (get result :tool_calls [])
-              ends (filter call (= (get call :name) "finish-turn") calls)]
-          (if (> (count ends) 0)
-            (let [single (assert (= (count calls) 1) "finish-turn cannot mix with other tools")
-                  offered (assert (contains? tools "finish-turn") "finish-turn was not offered")
-                  empty-args (assert (= (get (reduce previous call call nil calls) :arguments) {})
-                                     "finish-turn arguments must be empty")]
-              {:content (get result :content)
-               :messages (messages/exchange (get prepared :messages) result
-                            [{:id (get (reduce previous call call nil calls) :id) :name "finish-turn"
-                              :success true :data {:finished true} :error nil}])
-               :reason "finish-turn"})
-            (if (= (count calls) 0)
-              {:content (get result :content)
-               :messages (messages/append (get prepared :messages) (messages/response result))
-               :reason "complete"}
-              (let [results (tool-execute {:tools tools :tool_calls calls})]
-                (recur (messages/exchange (get prepared :messages) result results) (+ round 1))))))))))
+        (assert false "conversation round-limit reached before finish-turn")
+        (let [result (step (assoc options :messages history))]
+          (if (get result :finished)
+            {:content nil :messages (get result :messages) :reason "finish-turn"}
+            (recur (get result :messages) (+ round 1))))))))

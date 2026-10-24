@@ -166,6 +166,8 @@ class AgentConfig(BaseModel):
     # None = no llm section in agent.yaml. Assembly requires a declared
     # llm.model_name (ADR 0016) — a member without one fails to assemble.
     llm: LLMConfig | None = None
+    # Shared output allowance for one program entry or maintenance execution.
+    program_token_budget: int = Field(default=100000, gt=0, strict=True)
     docker: DockerRuntimeConfig = Field(default_factory=DockerRuntimeConfig)
     tool: ToolConfig = Field(default_factory=ToolConfig)
     # Idle seconds before a lazy member is drained.

@@ -1,4 +1,4 @@
-"""Ordinary delivery policy reviews before sending and trusts committed receipts."""
+"""Action loops deliver and finish only through successfully executed tools."""
 
 from typing import Any
 
@@ -120,34 +120,63 @@ def call() -> dict[str, Any]:
     }
 
 
-def test_review_occurs_before_actual_delivery_without_duplicate_reply() -> None:
+def finish() -> dict[str, Any]:
+    return {"tool_calls": [{"id": "done", "name": "finish-turn", "arguments": {}}]}
+
+
+def test_review_occurs_before_delivery_and_sending_does_not_finish() -> None:
+    trace: dict[str, Any] = {}
     requests, deliveries = execute(
-        [
-            call(),
-            {"content": "reviewed delivery"},
-            {"content": "summary"},
-            {"content": "reviewed summary"},
-        ]
+        [call(), {"content": "reviewed delivery"}, finish()], trace=trace
     )
-    assert len(requests) == 4
-    assert len(deliveries) == 1
-    assert deliveries[0]["content"] == "reviewed delivery"
+    assert len(requests) == 3
+    assert [delivery["content"] for delivery in deliveries] == ["reviewed delivery"]
     assert "BEFORE it is sent" in requests[1]["messages"][-1]["content"]
     assert "known fact" in requests[0]["messages"][0]["content"]
+    assert [item["name"] for item in trace["tool_calls"]] == ["mail-send", "finish-turn"]
+    assert trace["marked"] == [{"mail_ids": ["mail"]}]
 
 
-def test_failed_delivery_does_not_suppress_automatic_reply() -> None:
-    _, deliveries = execute(
-        [
-            call(),
-            {"content": "reviewed delivery"},
-            {"content": "report failed delivery"},
-            {"content": "honest reply"},
-        ],
-        succeeds=False,
-    )
-    assert len(deliveries) == 1
-    assert deliveries[0]["content"] == "honest reply"
+@pytest.mark.parametrize("content", [None, "", "answer"])
+def test_text_without_tool_call_never_delivers_or_marks_read(content: str | None) -> None:
+    from tlosure.eval import EvalError
+
+    trace: dict[str, Any] = {}
+    with pytest.raises(EvalError, match="requires tool calls"):
+        execute([{"content": content}], trace=trace)
+    assert trace["marked"] == trace["deliveries"] == trace["tool_calls"] == []
+
+
+def test_failed_finish_never_marks_read() -> None:
+    from tlosure.eval import EvalError
+
+    trace: dict[str, Any] = {}
+    with pytest.raises(EvalError, match="finish-turn execution failed"):
+        execute([finish()], succeeds=False, trace=trace)
+    assert trace["marked"] == []
+
+
+@pytest.mark.parametrize("response", [call(), finish(), {"content": "partial"}])
+def test_truncated_action_never_executes_tools_or_marks_read(response: dict[str, Any]) -> None:
+    from tlosure.eval import EvalError
+
+    trace: dict[str, Any] = {}
+    with pytest.raises(EvalError, match="model output truncated"):
+        execute([{**response, "finish_reason": "length"}], trace=trace)
+    assert trace["marked"] == trace["deliveries"] == trace["tool_calls"] == []
+
+
+@pytest.mark.parametrize("phase", ["reviewed", "plan-then-act"])
+def test_truncated_internal_text_cannot_trigger_actions(phase: str) -> None:
+    from tlosure.eval import EvalError
+
+    trace: dict[str, Any] = {}
+    responses = [{"content": "partial", "finish_reason": "length"}]
+    if phase == "reviewed":
+        responses.insert(0, call())
+    with pytest.raises(EvalError, match="model output truncated"):
+        execute(responses, method=phase, trace=trace)
+    assert trace["marked"] == trace["deliveries"] == trace["tool_calls"] == []
 
 
 def test_empty_review_cannot_deliver_unreviewed_mail() -> None:
@@ -157,13 +186,11 @@ def test_empty_review_cannot_deliver_unreviewed_mail() -> None:
         execute([call(), {"content": ""}])
 
 
-def test_peer_delivery_preserves_user_reply() -> None:
+def test_peer_delivery_does_not_create_an_automatic_reply() -> None:
     response = call()
     response["tool_calls"][0]["arguments"]["to"] = ["peer@tlon.internal"]
-    _, deliveries = execute(
-        [response, {"content": "peer delivery"}, {"content": "answer"}, {"content": "user reply"}]
-    )
-    assert [delivery["content"] for delivery in deliveries] == ["peer delivery", "user reply"]
+    _, deliveries = execute([response, {"content": "peer delivery"}, finish()])
+    assert [delivery["content"] for delivery in deliveries] == ["peer delivery"]
 
 
 def test_finish_turn_is_a_local_signal_without_an_extra_model_call() -> None:
@@ -179,90 +206,17 @@ def test_finish_turn_is_a_local_signal_without_an_extra_model_call() -> None:
     assert deliveries == []
 
 
-@pytest.mark.parametrize(
-    "sender,receipt,expected",
-    [
-        ("alice@external.com", {"local_recipients": ["alice"], "gateways": []}, False),
-        (
-            "alice@external.com",
-            {
-                "local_recipients": [],
-                "gateways": [{"address": "alice@external.com", "status": "failed"}],
-            },
-            False,
-        ),
-        (
-            "alice@external.com",
-            {
-                "local_recipients": [],
-                "gateways": [{"address": "alice@external.com", "status": "delivered"}],
-            },
-            True,
-        ),
-        ("alice@tlon.internal", {"local_recipients": ["alice"], "gateways": []}, True),
-        ("alice@tlon.internal", {"local_recipients": ["bob"], "gateways": []}, False),
-    ],
-)
-def test_delivery_detection_requires_exact_recipient_receipt(
-    sender: str,
-    receipt: dict[str, Any],
-    expected: bool,
-) -> None:
-    from importlib.resources import files
-
-    from tests.agents.test_workflow_library import edn
-
-    builtins = program_builtins()
-    source = files("tlon").joinpath("resources/stdlib/agent.tlon").read_text()
-    # Test the private ordinary helper through a same-module public wrapper.
-    source = source.replace("(:export respond)", "(:export respond receipt-check)")
-    source += (
-        "\n(defn receipt-check [event] (replied? (get event :exchanges) (get event :sender)))\n"
-    )
-    sources = program_module_sources(
-        {
-            "test.tlon": "(ns test (:require [tlon.agent :as agent]) (:export handle)) (defn handle [event] (agent/receipt-check event))"
-        }
-    )
-    sources["tlon/agent.tlon"] = source
-    package = ModulePackage.from_sources(sources, builtins)
-    # CC delivery is proven by local_recipients even though original :to excludes alice.
-    event = {
-        "sender": sender,
-        "exchanges": [
-            {
-                "calls": [
-                    {
-                        "id": "send",
-                        "name": "mail-send",
-                        "arguments": {"to": ["bob@tlon.internal"], "cc": [sender]},
-                    }
-                ],
-                "results": [{"id": "send", "name": "mail-send", "success": True, "data": receipt}],
-            }
-        ],
-    }
-    result = eval_form(
-        loads("(handle " + edn(event) + ")"),
-        {"handle": package.entry("test/handle")},
-        builtins,
-        fuel=1000,
-    )
-    assert result is expected
-
-
 def test_plan_is_computed_once_before_tool_execution() -> None:
     requests, deliveries = execute(
         [
             {"content": "plan"},
             call(),
             {"content": "reviewed delivery"},
-            {"content": "answer"},
-            {"content": "reviewed answer"},
+            finish(),
         ],
         method="plan-then-act",
     )
-    assert len(requests) == 5
+    assert len(requests) == 4
     assert requests[0]["tools"] == []
     assert "Plan at most five steps" in requests[0]["messages"][-1]["content"]
     assert "Execute the plan" in requests[1]["messages"][-1]["content"]
@@ -292,3 +246,18 @@ def test_round_limit_fails_without_marking_mail_read_or_delivering(method: str) 
     assert len(trace["tool_calls"]) == 50
     assert trace["marked"] == []
     assert trace["deliveries"] == []
+
+
+@pytest.mark.parametrize("mixed", [True, False])
+def test_malformed_finish_never_executes_or_marks_read(mixed: bool) -> None:
+    from tlosure.eval import EvalError
+
+    response = finish()
+    if mixed:
+        response["tool_calls"].extend(call()["tool_calls"])
+    else:
+        response["tool_calls"][0]["arguments"] = {"extra": True}
+    trace: dict[str, Any] = {}
+    with pytest.raises(EvalError, match="empty standalone"):
+        execute([response], trace=trace)
+    assert trace["marked"] == trace["deliveries"] == trace["tool_calls"] == []

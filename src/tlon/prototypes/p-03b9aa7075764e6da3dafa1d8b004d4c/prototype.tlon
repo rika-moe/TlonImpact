@@ -1,1 +1,1 @@
-{:name :p-03b9aa7075764e6da3dafa1d8b004d4c :display-name "标准无执行迭代" :description "L0 执行能力；最多 10 次迭代、每次模型输出最多 512 token，完整上下文与交卷前自评审，后台维护按成员配置反思。" :trusted true :program-digest "e9fa0a3f074f41e56b4207809786f9f17ef0b0a6951dd07971e708f8f7142b95"}
+{:name :p-03b9aa7075764e6da3dafa1d8b004d4c :display-name "标准无执行迭代" :description "L0 执行能力；最多 10 次迭代，完整上下文与交卷前自评审，后台维护按成员配置反思。" :trusted true :program-digest "c4c42e0f10b1d886edc81424f3a96bb0c1f1f507ece90057957663ddb04b074a"}
