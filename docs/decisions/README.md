@@ -63,7 +63,7 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 
 ## 行为与扩展
 
-宿主操作已统一到 Operation，Capability 与复合操作由 ADR 0045 删除。新的工作程序方向见 [ADR 0046](0046-programmable-workflows.md) 与 [实施计划](../design/programmable-workflows-plan.md)，尚未实施；旧操作计划保留历史证据。
+宿主操作已统一到 Operation，Capability 与复合操作由 ADR 0045 删除。新的工作程序方向见 [ADR 0046](0046-programmable-workflows.md) 与 [实施计划](../design/programmable-workflows-plan.md)，P1–P5 已实施；旧操作计划保留历史证据。
 
 | 决策 | 当前设计 | 有效范围与修订关系 |
 |---|---|---|
@@ -88,3 +88,5 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 [ADR 0046：以模块函数统一成员工作程序](0046-programmable-workflows.md)：已实施；module、完整模型/工具交互、单一恢复权威与 stage 退役，见[目标设计](../design/programmable-workflows.md)。
 
 [ADR 0047：私人资料通过普通 workspace 文件访问](0047-workspace-contact-files.md)：CONTACTS.md 按需读取，三个等级均可直接操作自己的 workspace，删除联系人专用工具与系统提示全文注入。
+
+[ADR 0048：跨事件持续维护一段 Agent 主历史](0048-continuous-agent-history.md)：已接受，尚未实施；所有邮件共用主历史、优先追加、配置显式生效，保留事件独立预算。见[设计](../design/continuous-agent-history.md)与[计划](../design/continuous-agent-history-plan.md)。

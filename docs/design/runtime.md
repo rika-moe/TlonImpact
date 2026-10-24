@@ -22,6 +22,10 @@ ContextBuilder 只提供成员资料读取及人格缓存，不解释工作流�
 
 SessionJournal 提供旧 SQLite 历史和 ProgramStore 交互投影的只读查询、摘要与导出。它没有 append/resume/find_unfinished。客户端连接 SessionManager、REST `/sessions` 和 SSE 继续由 serving 层管理，和已删除的 AgentSession 不同。
 
+## 后续方向：持续主历史（尚未实施）
+
+[ADR 0048](../decisions/0048-continuous-agent-history.md) 已接受所有邮件共用一段持久主历史、跨事件优先追加的方向。历史由普通模块管理，每次事件的运行身份、预算、恢复和完成边界保持独立；配置显式应用，不因每封邮件自动重建提示前缀。保存点、未知结果阻塞、批量压缩与配置语义统一见[目标设计](continuous-agent-history.md)，实施见[计划](continuous-agent-history-plan.md)。上述当前机制尚未因此改变。
+
 ## 旧记录处置
 
 启动前只读检查旧 session 和非入口 program 的未完成记录。发现旧 pending、未知数据库格式或读取失败，成员阻塞并显示路径与身份；不重放、不迁移、不标记成功、不清库。已完成历史仍可读取。操作员保留证据、确认原外部效果后选择处置；完整说明见 [P5 实施计划](programmable-workflows-plan.md)。

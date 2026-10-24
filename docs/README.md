@@ -48,6 +48,12 @@ architecture 区分规范与当前实现；design 负责当前领域模型和机
 - [可编程工作流程](design/programmable-workflows.md)：module、Behavior、模型、工具、状态、调度和恢复边界。
 - [分阶段实施计划](design/programmable-workflows-plan.md)：两个 EPIC 的完成矩阵、合并 PR、验收证据及历史阶段范围；当前[用法](guides/writing-a-module-program.md)。
 
+## 持续主历史（已接受，尚未实施）
+
+- [ADR 0048](decisions/0048-continuous-agent-history.md)：所有邮件共用一段主历史，优先追加与稳定前缀，保留每事件独立预算。
+- [目标设计](design/continuous-agent-history.md)：历史保存点、失败恢复、压缩与配置显式生效；不新增 Session 引擎。
+- [分阶段实施计划](design/continuous-agent-history-plan.md)：H1 最小闭环、H2 标准程序统一、H3 批量压缩、H4 显式配置应用，逐阶段范围、验收与删除项。
+
 ## 共享操作的当前机制与后续范围
 
 - [统一宿主操作](design/operations.md)：宿主契约与 DSL/LLM 入口；Capability 已删除。

@@ -109,6 +109,10 @@ SessionJournal/SessionStore 为旧历史保留读取，新运行的消息和完�
 
 入口完成与投影发布之间故障后，消费者不得重复计完成次数或重复产生维护任务。维护任务以来源运行/批次稳定身份创建，反思和蒸馏继续使用自己的维护预算根。
 
+## 后续方向：持续主历史（尚未实施）
+
+[ADR 0048](../decisions/0048-continuous-agent-history.md) 已接受所有邮件共用一段持久主历史、跨事件优先追加的方向。历史由普通模块管理，每次事件的运行身份、预算、恢复和完成边界保持独立；配置显式应用，不因每封邮件自动重建提示前缀。保存点、未知结果阻塞、批量压缩与配置语义统一见[目标设计](continuous-agent-history.md)，实施见[计划](continuous-agent-history-plan.md)。上述当前机制尚未因此改变。
+
 ## 7. 退役与非目标
 
 P5 已删除 run-loop ActionRequest、SessionRecipe、stage/section 专属解释器、LoopDriver、StageOutcome、AgentSession 的执行状态及 SessionScheduler 的旧恢复循环。通用 PromptBuilder、provider 适配、预算、OperationExecutor、领域服务与交互历史读取保留或按职责拆出。
