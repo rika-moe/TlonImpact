@@ -127,7 +127,7 @@ def _read_metadata(proto_dir: Any) -> PrototypeInfo:
 
     No runtime is derived or declared (ADR 0006, unified member model):
     a prototype is a behavior template, not a member class — whether a
-    spawned member invokes session services through its program.
+    spawned member invokes run services through its program.
     """
     name = proto_dir.name
     parameters = _read_parameters(proto_dir)

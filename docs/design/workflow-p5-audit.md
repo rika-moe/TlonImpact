@@ -1,5 +1,6 @@
 # P5 执行链退役审计
 
+> 后续修订：[ADR 0049](../decisions/0049-retire-agent-session.md) 已删除 agent session 及旧历史读取；下文旧阶段验收记录保留为历史，不代表当前兼容能力。
 > 后续清理：宿主查询已转为普通 Operation，旧写入 API、handler 重复投影及独立 effects 路径已删除。本文保留 P5 阶段结论，现行边界见 [退役代码清理](workflow-retirement-cleanup.md)。
 
 基线 main `04e48da`（#212）；对应任务 [#206](https://github.com/rika-moe/TlonImpact/issues/206)。本文记录本阶段实际边界；旧记录操作手册见 [实施计划](programmable-workflows-plan.md#p5-实施记录与旧记录处置)。

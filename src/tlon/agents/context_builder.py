@@ -8,13 +8,13 @@ from typing import Any
 
 from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
-from tlon.agents.session_journal import SessionJournal
+from tlon.agents.run_journal import RunJournal
 from tlon.agents.skills import Signature, render_skills_index, scan_signature, scan_skills
 from tlon.base.config import AgentConfig
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.memory.manager import MemoryManager
-from tlon.memory.models import build_session_projection
+from tlon.memory.models import build_run_projection
 from tlon.organization.mail.mail import Mail, is_external_address
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tasks.manager import TaskManager
@@ -22,7 +22,7 @@ from tlon.tasks.manager import TaskManager
 logger = get_logger(__name__)
 
 #: Truncation bounds for the ``thread-recap`` section: the recap is a
-#: bounded digest, never a transcript — one completed session, a few
+#: bounded digest, never a transcript — one completed run, a few
 #: clipped fields.
 _RECAP_TRIGGER_MAX = 100
 _RECAP_TOOL_MAX = 120
@@ -60,17 +60,17 @@ def _clip(text: str, limit: int) -> str:
 
 
 def _render_thread_recap(events: list[dict[str, Any]]) -> str:
-    """Render one completed session's journal events as a bounded digest.
+    """Render one completed run's journal events as a bounded digest.
 
     The recap complements ``mail-history`` (raw correspondence) with what
-    the correspondence does not show: the previous session's tool activity
+    the correspondence does not show: the previous run's tool activity
     and conclusion. Event parsing is shared with distillation via
-    :func:`build_session_projection` — this function only renders the
+    :func:`build_run_projection` — this function only renders the
     projection: the wake trigger text, one clipped line per tool result,
-    the last LLM response as the conclusion, and the ``session/end``
+    the last LLM response as the conclusion, and the ``run/end``
     reason.
     """
-    projection = build_session_projection(events)
+    projection = build_run_projection(events)
     trigger = projection.trigger_content
     end_reason = projection.end_reason
     tool_lines = [_clip(line, _RECAP_TOOL_MAX) for line in projection.tool_results]
@@ -78,10 +78,8 @@ def _render_thread_recap(events: list[dict[str, Any]]) -> str:
         projection.llm_responses[-1] if projection.llm_responses else projection.program_result
     )
 
-    lines = ["[最近会话摘要]"]
-    source = next(
-        (event.get("session_id") for event in events if event["type"] == "session/start"), None
-    )
+    lines = ["[最近运行摘要]"]
+    source = next((event.get("run_id") for event in events if event["type"] == "run/start"), None)
     if source:
         lines.append(f"来源：{source}")
     if trigger:
@@ -116,7 +114,7 @@ class ContextBuilder:
         memory: MemoryManager,
         task_manager: TaskManager,
         address: str,
-        journal: SessionJournal | None = None,
+        journal: RunJournal | None = None,
         *,
         tlon_paths: TlonPaths,
     ):
@@ -125,7 +123,7 @@ class ContextBuilder:
         self._memory = memory
         self._task_manager = task_manager
         self._address = address
-        # Session journal (ADR 0007): read-only, feeds the thread-recap
+        # Run journal (ADR 0049): read-only, feeds the thread-recap
         # section; None degrades that section to empty.
         self._journal = journal
         # Path resolver for the lessons/skills/persona file reads.
@@ -211,9 +209,9 @@ class ContextBuilder:
         reads are in-memory, but failures still degrade to empty — a
         broken task store must never block context assembly.
 
-        Anchor caveat: the context is built once per session (the first
-        program call), so a task started or completed mid-session
-        is only reflected from the next session on.
+        Anchor caveat: the context is built once per run (the first
+        program call), so a task started or completed mid-run
+        is only reflected from the next run on.
         """
         try:
             doing = self._task_manager.list_tasks(status_filter="doing")
@@ -244,19 +242,19 @@ class ContextBuilder:
 
     async def build_thread_recap(self) -> str:
         """Build the ``(thread-recap)`` section: a digest of the member's
-        most recent completed session (ADR 0028 — thread-agnostic: session
+        most recent completed run (ADR 0028 — thread-agnostic: run
         identity is no longer mail-derived, so the section recaps the
-        member's latest completed session, whatever it worked on).
+        member's latest completed run, whatever it worked on).
 
-        Data source is the session journal (ADR 0007), not the
+        Data source is the run journal (ADR 0049), not the
         distilled claims: a claim batch is window-triggered (ADR 0017,
         pending count must reach ``distillation_window``) and spans
-        several sessions, so the previous session is usually not
+        several runs, so the previous run is usually not
         distilled yet when the next one starts. The journal log
-        is complete at session end, per-session, and reading it needs no
+        is complete at run end, per-run, and reading it needs no
         LLM call — the recap is a deterministic, bounded rendering.
 
-        With no completed session at all (the member's first session)
+        With no completed run at all (the member's first run)
         the section is skipped — same empty-state convention as
         knowledge/skills. Journal failures degrade to empty — a broken
         recap must never block context assembly.

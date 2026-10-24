@@ -323,7 +323,7 @@ async def test_member_runtime_recovers_a_read_publication_before_program_complet
                 # or a gap between those runs does not mean startup is idle.
                 if (
                     not member._deferred_boot
-                    and member.active_session_count == 0
+                    and not member.is_busy
                     and not member._program_store.pending()
                 ):
                     return

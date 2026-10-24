@@ -10,7 +10,7 @@
 
 `OperationExecutor.call_pure` 仅执行纯操作；`call` 支持两类操作。纯操作直接执行；宿主效果操作依次执行输入严格 JSON 复制与 schema 校验、稳定身份与历史核对、持久化 intent、handler、输出校验及回执提交。已有回执在进入当前 handler 前还原；参数错误不写 intent。修改 handler 参数、返回值或 Tool schema 投影都不能污染原调用数据或权威 schema。
 
-尚不提供通用授权名单或动态工具视图；共享执行作用域已覆盖现有模型调用入口。真实 runtime 为两入口注入同一成员 ProgramStore；SessionJournal 提供历史及程序交互只读投影，PostOffice 保留邮件领域幂等回执，不另建第三权威日志。member-sleeping、member-running、member-lazy 与 member-roster 均为普通只读 Operation，通过同一 invocation 回执记录采样值，旧宿主 builtin 及独立 effects 路径已删除。受限宿主失败通知仍属于宿主故障处理出口，详见 [退役代码清理](../design/workflow-retirement-cleanup.md)。上下文隔离不是完整授权系统。输出不合约报 `OutputError`，不得据此假定效果未发生或自动重试。
+尚不提供通用授权名单或动态工具视图；共享执行作用域已覆盖现有模型调用入口。真实 runtime 为两入口注入同一成员 ProgramStore；RunJournal 提供程序交互只读投影，PostOffice 保留邮件领域幂等回执，不另建第三权威日志。member-sleeping、member-running、member-lazy 与 member-roster 均为普通只读 Operation，通过同一 invocation 回执记录采样值，旧宿主 builtin 及独立 effects 路径已删除。受限宿主失败通知仍属于宿主故障处理出口，详见 [退役代码清理](../design/workflow-retirement-cleanup.md)。上下文隔离不是完整授权系统。输出不合约报 `OutputError`，不得据此假定效果未发生或自动重试。
 
 ## 调用记录与指纹 P4a
 
@@ -60,7 +60,7 @@ Tool 协议根参数必须是 JSON object 的字符串键。OperationTool 在 To
 
 ## 记忆、任务、人格/联系人、观测与状态 P3b
 
-各域定义见[工具参考](tools-reference.md#memory)。记忆与会话读取绑定成员 MemoryManager/SessionJournal，任务绑定自己的 TaskManager，人格与联系人只接触自身文件；identity/soul 可以修改，RULES 不可自改。观测为 read，保留原有公开声誉/trace 与自身邮箱统计的边界。旧 Tool 类、名称和任务 manager 的旧包路径直接删除。
+各域定义见[工具参考](tools-reference.md#memory)。记忆与运行历史读取绑定成员 MemoryManager/RunJournal，任务绑定自己的 TaskManager，人格与联系人只接触自身文件；identity/soul 可以修改，RULES 不可自改。观测为 read，保留原有公开声誉/trace 与自身邮箱统计的边界。旧 Tool 类、名称和任务 manager 的旧包路径直接删除。
 
 state-get/state-put 使用一个对象参数，例如 `(state-get {:key "edition"})`、`(state-put {:key "edition" :value {:period "001"}})`，直接返回严格 JSON 值，缺失返回 null。输入根始终是闭合对象，value 和返回值用原生 boolean schema 表达动态 JSON；DSL 键不做 snake/kebab 隐式转换。
 
@@ -106,4 +106,6 @@ prototype-write 必填完整 v2 behavior/modules，发布后返回 pending_appro
 
 model-context 接受与 model-call 相同的 messages/tools/max_tokens 受控输入，返回 input_tokens/context_window/output_tokens/fits。它是持久只读估算，不请求 provider 或消费模型额度，使用冻结系统/工具/模型配置；token 估算不保证 provider 实际计数。普通上下文库据此组织压缩，模型请求和额度仍由原回执负责。
 
-P4b 的 session-read 接受旧会话 ID 或 program:<run_id>。SessionJournal 只读联合旧历史与 ProgramStore 权威快照，返回的摘要带可追踪来源、模型/工具结果和程序返回值；查询不调用恢复入口。客户端连接 REST /sessions 的契约不变。
+P4b 的 run-read 接受原始 run_id。RunJournal 只读查询 ProgramStore 权威快照，返回的摘要带可追踪来源、模型/工具结果和程序返回值；查询不调用恢复入口。客户端连接 REST /sessions 的契约不变。
+
+当前历史边界以 [ADR 0049](../decisions/0049-retire-agent-session.md) 为准：agent session 已退役，run-read/run_id/source_run_ids 为唯一程序历史协议；不提供旧历史兼容或迁移，client session 保留。

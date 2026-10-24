@@ -6,7 +6,7 @@ the real memory stack — distillation (LLM), vector indexing (embedding),
 JIT injection and search — and asserts per-scenario expectations on what
 must and must not surface. Four dimensions, aligned with LongMemEval:
 
-- ``fact-recall``: a fact buried in a session must be retrieved by a
+- ``fact-recall``: a fact buried in a run must be retrieved by a
   related query;
 - ``knowledge-update``: a newer fact supersedes the contradicting older
   one — retrieval surfaces the new, never the invalidated old;
@@ -58,7 +58,7 @@ SURFACES = ("injection", "search", "both")
 DEFAULT_DATASET = Path(__file__).parent / "memory_eval" / "scenarios.json"
 DEFAULT_MODEL = "deepseek/deepseek-chat"
 
-#: Eval tuning: every completed session distills immediately (per-scenario
+#: Eval tuning: every completed run distills immediately (per-scenario
 #: control), and the injection top-k stays small enough that the refusal
 #: dimension can assert selectivity (memory must hold more claims than k).
 _EVAL_DISTILLATION_WINDOW = 1
@@ -76,8 +76,8 @@ _SEARCH_EMPTY_MARKER = "未找到相关记忆"
 
 
 @dataclass
-class SessionSpec:
-    """One scripted completed session: a trigger mail plus agent replies."""
+class RunSpec:
+    """One scripted completed run: a trigger mail plus agent replies."""
 
     ts: str
     trigger: str
@@ -102,24 +102,24 @@ class Expectation:
 class Scenario:
     name: str
     dimension: str
-    sessions: list[SessionSpec]
+    runs: list[RunSpec]
     query: str
     expect: Expectation
 
 
-def _parse_session(raw: Any, scenario_name: str) -> SessionSpec:
+def _parse_run(raw: Any, scenario_name: str) -> RunSpec:
     if not isinstance(raw, dict):
-        raise ValueError(f"场景 {scenario_name}: session 必须是对象")
+        raise ValueError(f"场景 {scenario_name}: run 必须是对象")
     ts = raw.get("ts")
     trigger = raw.get("trigger")
     if not isinstance(ts, str) or not ts:
-        raise ValueError(f"场景 {scenario_name}: session 缺少 ts")
+        raise ValueError(f"场景 {scenario_name}: run 缺少 ts")
     if not isinstance(trigger, str) or not trigger:
-        raise ValueError(f"场景 {scenario_name}: session 缺少 trigger")
+        raise ValueError(f"场景 {scenario_name}: run 缺少 trigger")
     responses = raw.get("responses", [])
     if not isinstance(responses, list) or not all(isinstance(r, str) for r in responses):
         raise ValueError(f"场景 {scenario_name}: responses 必须是字符串列表")
-    return SessionSpec(ts=ts, trigger=trigger, responses=list(responses))
+    return RunSpec(ts=ts, trigger=trigger, responses=list(responses))
 
 
 def _parse_expectation(raw: Any, scenario_name: str) -> Expectation:
@@ -157,16 +157,16 @@ def _parse_scenario(raw: Any) -> Scenario:
     dimension = raw.get("dimension")
     if dimension not in DIMENSIONS:
         raise ValueError(f"场景 {name}: dimension 必须是 {DIMENSIONS} 之一，得到 {dimension!r}")
-    sessions_raw = raw.get("sessions", [])
-    if not isinstance(sessions_raw, list):
-        raise ValueError(f"场景 {name}: sessions 必须是列表")
+    runs_raw = raw.get("runs", [])
+    if not isinstance(runs_raw, list):
+        raise ValueError(f"场景 {name}: runs 必须是列表")
     query = raw.get("query")
     if not isinstance(query, str) or not query:
         raise ValueError(f"场景 {name}: 缺少 query")
     return Scenario(
         name=name,
         dimension=dimension,
-        sessions=[_parse_session(s, name) for s in sessions_raw],
+        runs=[_parse_run(s, name) for s in runs_raw],
         query=query,
         expect=_parse_expectation(raw.get("expect"), name),
     )
@@ -187,14 +187,14 @@ def load_scenarios(dataset_path: Path) -> list[Scenario]:
     return scenarios
 
 
-# ── Fake journal (in-memory SessionLogReader) ────────────────────────────
+# ── Fake journal (in-memory RunLogReader) ────────────────────────────
 
 
 class FakeJournal:
-    """In-memory ``SessionLogReader``: completed sessions scripted by the
+    """In-memory ``RunLogReader``: completed runs scripted by the
     scenario, in the real journal's event shape (ADR 0007).
 
-    The ``session/start`` timestamp is the scenario's ``ts`` — distillation
+    The ``run/start`` timestamp is the scenario's ``ts`` — distillation
     pending-order and the watermark compare against it, so scenarios
     control distillation order through timestamps.
     """
@@ -202,25 +202,25 @@ class FakeJournal:
     def __init__(self) -> None:
         self._logs: dict[str, list[dict[str, Any]]] = {}
 
-    def add_completed_session(
-        self, session_id: str, ts: str, trigger: str, responses: list[str]
+    def add_completed_run(
+        self, run_id: str, ts: str, trigger: str, responses: list[str]
     ) -> None:
         events: list[dict[str, Any]] = [
-            {"type": "session/start", "ts": ts, "trigger_content": trigger}
+            {"type": "run/start", "ts": ts, "trigger_content": trigger}
         ]
         events.extend(
             {"type": "llm/response", "response": {"content": content}} for content in responses
         )
-        events.append({"type": "session/end", "ts": ts})
-        self._logs[session_id] = events
+        events.append({"type": "run/end", "ts": ts})
+        self._logs[run_id] = events
 
     async def list_completed(self, started_after: datetime | None = None) -> list[str]:
         completed: list[str] = []
-        for session_id, events in self._logs.items():
-            if not any(e.get("type") == "session/end" for e in events):
+        for run_id, events in self._logs.items():
+            if not any(e.get("type") == "run/end" for e in events):
                 continue
             if started_after is not None:
-                start = next((e for e in events if e.get("type") == "session/start"), None)
+                start = next((e for e in events if e.get("type") == "run/start"), None)
                 raw_ts = start.get("ts") if start is not None else None
                 try:
                     started_at = datetime.fromisoformat(str(raw_ts)) if raw_ts else None
@@ -228,14 +228,14 @@ class FakeJournal:
                     started_at = None
                 if started_at is not None and started_at <= started_after:
                     continue
-            completed.append(session_id)
+            completed.append(run_id)
         return completed
 
     async def count_completed(self, started_after: datetime | None = None) -> int:
         return len(await self.list_completed(started_after=started_after))
 
-    async def read_events(self, session_id: str) -> list[dict[str, Any]]:
-        return [dict(event) for event in self._logs[session_id]]
+    async def read_events(self, run_id: str) -> list[dict[str, Any]]:
+        return [dict(event) for event in self._logs[run_id]]
 
 
 # ── Evaluation ───────────────────────────────────────────────────────────
@@ -292,17 +292,17 @@ class ScenarioResult:
 
 async def run_scenario(scenario: Scenario, manager_factory: ManagerFactory) -> ScenarioResult:
     """Run one scenario end to end: fresh isolated memory -> scripted
-    sessions distilled one by one (window=1, timestamp-ordered) -> query
+    runs distilled one by one (window=1, timestamp-ordered) -> query
     both retrieval surfaces -> evaluate."""
     with tempfile.TemporaryDirectory(prefix="tlon-memory-eval-") as tmp:
         manager = manager_factory(Path(tmp))
         await manager.load()
         journal = FakeJournal()
-        for i, session in enumerate(scenario.sessions):
-            journal.add_completed_session(
-                f"eval-{scenario.name}-{i}", session.ts, session.trigger, session.responses
+        for i, run in enumerate(scenario.runs):
+            journal.add_completed_run(
+                f"eval-{scenario.name}-{i}", run.ts, run.trigger, run.responses
             )
-            await manager.maybe_distill_completed_sessions(journal)
+            await manager.maybe_distill_completed_runs(journal)
 
         blocks = await manager.build_context_blocks(scenario.query)
         injection_text = "\n".join(block.content for block in blocks)
@@ -324,12 +324,12 @@ async def run_scenario(scenario: Scenario, manager_factory: ManagerFactory) -> S
 
 
 def _print_estimate(scenarios: list[Scenario]) -> None:
-    session_count = sum(len(s.sessions) for s in scenarios)
-    print(f"即将运行 {len(scenarios)} 个场景（共 {session_count} 个 session）。")
+    run_count = sum(len(s.runs) for s in scenarios)
+    print(f"即将运行 {len(scenarios)} 个场景（共 {run_count} 个 run）。")
     print(
         "预估调用量："
-        f"蒸馏 LLM 调用 {session_count} 次（window=1，每 session 一批），"
-        f"冲突判定 LLM 调用至多 {session_count} 次（仅有相似旧 claim 时发起）；"
+        f"蒸馏 LLM 调用 {run_count} 次（window=1，每 run 一批），"
+        f"冲突判定 LLM 调用至多 {run_count} 次（仅有相似旧 claim 时发起）；"
         f"embedding 调用约 {len(scenarios) * 2} 次检索 query + 每场景数条 claim 写入。"
         "失败场景会整体重试一次，调用量最多翻倍。"
     )
@@ -461,7 +461,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.list:
         for scenario in selected:
-            print(f"{scenario.dimension} / {scenario.name}（{len(scenario.sessions)} sessions）")
+            print(f"{scenario.dimension} / {scenario.name}（{len(scenario.runs)} runs）")
         return 0
     if not selected:
         print("错误: 过滤后没有可运行的场景", file=sys.stderr)

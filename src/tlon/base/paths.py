@@ -30,8 +30,6 @@ Layout:
     │   │   ├── lessons.md
     │   │   ├── claims.jsonl
     │   │   └── distillation.json
-    │   ├── sessions.sqlite3
-    │   ├── sessions/ (legacy offline archive; never read by the session journal)
     │   ├── tasks.jsonl
     │   ├── ledger.jsonl
     │   ├── workspace/
@@ -160,10 +158,6 @@ class TlonPaths:
         parent directory on append.
         """
         return self._home / agent_id / "ledger.jsonl"
-
-    def agent_sessions_database_file(self, agent_id: str) -> Path:
-        """~/.tlon/{agent_id}/sessions.sqlite3 — session events (ADR 0032)."""
-        return self.agent_dir(agent_id) / "sessions.sqlite3"
 
     def agent_program_database_file(self, agent_id: str) -> Path:
         """Member private structured state and program effect records (ADR 0043)."""
@@ -305,9 +299,9 @@ class TlonPaths:
     def spawn_quota_ledger_file(self) -> Path:
         """~/.tlon/shared/spawn-quota.json — persisted spawn quota ledger.
 
-        The (spawner, session) spawn quota ledger (``agents/spawn.py``
-        ``SpawnManager``) survives process restarts: sessions themselves
-        persist via journal replay (ADR 0007), so the anti-runaway quota
+        The (spawner, run) spawn quota ledger (``agents/spawn.py``
+        ``SpawnManager``) survives process restarts: runs themselves
+        persist in ProgramStore, so the anti-runaway quota
         must persist too.
         """
         return self.shared_dir() / "spawn-quota.json"

@@ -30,7 +30,7 @@ from tlon.agents.prompt_context import AgentPromptContext
 from tlon.agents.recovery import RecoveryBlockedError, blocked_reason, blocks_recovery
 from tlon.agents.reflection import ReflectionEngine
 from tlon.agents.registry_queries import RegistryQueries
-from tlon.agents.session_journal import SessionJournal
+from tlon.agents.run_journal import RunJournal
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.agents.vocabulary import entry_env
 from tlon.base.component import Component
@@ -266,14 +266,14 @@ class MemberRuntime(Member):
         self._maintenance_sources: frozenset[str] | None = None
         self._distillation_retry = MaintenanceRetry()
         self._journal = (
-            SessionJournal(
+            RunJournal(
                 member_id,
                 services.tlon_paths,
                 program_store=self._program_store,
             )
             if services
             else (
-                SessionJournal(
+                RunJournal(
                     member_id,
                     tlon_paths,
                     program_store=self._program_store,
@@ -319,7 +319,7 @@ class MemberRuntime(Member):
 
     def get_state(self) -> str:
         """Public scheduling state; I/O and background reflection remain active."""
-        return "active" if self.active_session_count > 0 else "waiting"
+        return "active" if self.is_busy else "waiting"
 
     def get_diagnostic_error(self) -> str | None:
         """Runtime failure is a diagnostic, never a scheduling state."""
@@ -342,19 +342,19 @@ class MemberRuntime(Member):
         )
 
     @property
-    def active_session_count(self) -> int:
-        """Count all live work: program handlers and background reflection.
+    def is_busy(self) -> bool:
+        """Whether program handlers or background maintenance are running.
 
         Draining must wait for every kind of work, including external I/O.
         """
-        return self._active_actions + int(
+        return self._active_actions > 0 or (
             self._reflection is not None and self._reflection.is_running
         )
 
     @property
     def idle_seconds(self) -> float:
         """Idle time covers program effects and background maintenance."""
-        if self.active_session_count > 0 or self._initialized_at is None:
+        if self.is_busy or self._initialized_at is None:
             return 0.0
         since = self._last_action_at or self._initialized_at
         elapsed = time.monotonic() - since
@@ -543,7 +543,7 @@ class MemberRuntime(Member):
                     if self._registry is not None:
                         await self._registry.publish_scheduling_state(self._member_id)
                     with bind_execution(self._maintenance_execution("distill")):
-                        await self._services.memory.maybe_distill_completed_sessions(self._journal)
+                        await self._services.memory.maybe_distill_completed_runs(self._journal)
                     self._maintenance_sources = sources
                 self._distillation_retry.succeeded()
             except Exception as error:

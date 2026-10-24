@@ -64,20 +64,20 @@ async def test_spawn_binds_owner_session_params_and_preserves_budget_rejection()
     )
     executor = _executor(LifecycleService("worker", registry=registry))
     arguments = {"prototype": "source", "name": "Child", "params": {"topics": ["a", "b"]}}
-    with bound_contextvars(session_id="session-a"):
+    with bound_contextvars(run_id="session-a"):
         result = await executor.call("member-spawn", arguments)
     assert result == {"agent_id": "child", "name": "Child", "prototype": "source", "spawn_depth": 1}
     registry.spawn_member.assert_awaited_once_with(
         prototype="source",
         name="Child",
         spawner_id="worker",
-        session_id="run",
+        run_id="run",
         params={"topics": ["a", "b"]},
     )
-    registry.spawn_member.side_effect = SpawnRejectedError("session_quota", "quota reached")
+    registry.spawn_member.side_effect = SpawnRejectedError("run_quota", "quota reached")
     with pytest.raises(RejectedError) as rejection:
         await executor.call("member-spawn", arguments)
-    assert rejection.value.data == {"reason": "session_quota"}
+    assert rejection.value.data == {"reason": "run_quota"}
 
 
 async def test_probationary_spawn_rejected_even_if_definition_is_present() -> None:
@@ -161,7 +161,7 @@ async def test_real_spawn_quota_uses_frozen_root_for_normal_and_recovered_calls(
     tool = OperationTool(executor, "member-spawn")
     for index in range(2):
         context = CallContext("agent1", "frozen-root", f"spawn:{index}", origin=origin)
-        with bound_contextvars(session_id=f"untrusted-log-{index}"):
+        with bound_contextvars(run_id=f"untrusted-log-{index}"):
             result = await tool.execute_context(
                 {"prototype": "worker", "name": f"Child {index}"}, context
             )
@@ -171,10 +171,10 @@ async def test_real_spawn_quota_uses_frozen_root_for_normal_and_recovered_calls(
     if origin == "tool":
         context = CallContext("agent1", "frozen-root", "tool-third", origin="tool")
         result = await tool.execute_context(args, context)
-        assert not result.success and "session_quota" in result.error
+        assert not result.success and "run_quota" in result.error
         # Durable rejection replays with the same identity without consuming quota.
         result = await tool.execute_context(args, context)
-        assert not result.success and "session_quota" in result.error
+        assert not result.success and "run_quota" in result.error
     elif origin == "program":
         adapter = DSLAdapter(executor)
         call = BuiltinCall(
@@ -183,12 +183,12 @@ async def test_real_spawn_quota_uses_frozen_root_for_normal_and_recovered_calls(
             [{Keyword(key): value for key, value in args.items()}],
             {},
         )
-        with pytest.raises(RejectedError, match="session_quota"):
+        with pytest.raises(RejectedError, match="run_quota"):
             await adapter.handle(
                 call, CallContext("agent1", "frozen-root", "dsl-third", origin="program")
             )
     else:
-        with pytest.raises(RejectedError, match="session_quota"):
+        with pytest.raises(RejectedError, match="run_quota"):
             await executor.call(
                 "member-spawn", args, CallContext("agent1", "frozen-root", "direct-third")
             )

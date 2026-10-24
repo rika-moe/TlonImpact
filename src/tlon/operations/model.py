@@ -101,7 +101,7 @@ def make_model_operations(
                 max_tokens=arguments.get("max_tokens"),
                 cache_prefix_len=arguments.get("cache_prefix_len"),
                 purpose="program" if context.origin == "program" else "tool",
-                session_id=context.run_id,
+                run_id=context.run_id,
             )
             return response_data(response)
         except (OperationError, BudgetExceededError, ExecutionDeadlineError):

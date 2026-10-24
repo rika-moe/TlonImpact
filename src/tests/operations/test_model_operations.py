@@ -54,7 +54,7 @@ async def test_model_entries_charge_only_the_bound_member(tmp_path: Path) -> Non
         ]
         assert len(records) == 1
         assert records[0]["completion_tokens"] == 3
-        assert records[0]["session_id"] == f"run:{member}"
+        assert records[0]["run_id"] == f"run:{member}"
         assert records[0]["model"] == "openai/test"
     assert len(paths.agent_ledger_file("a").read_text().splitlines()) == 1
 

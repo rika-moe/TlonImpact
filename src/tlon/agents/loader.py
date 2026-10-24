@@ -50,23 +50,6 @@ def legacy_work_error(agent_id: str, tlon_paths: TlonPaths) -> str | None:
     schema initialization or progress writes are allowed during this scan.
     """
     problems: list[str] = []
-    sessions = tlon_paths.agent_sessions_database_file(agent_id)
-    if sessions.exists():
-        try:
-            with sqlite3.connect(f"{sessions.resolve().as_uri()}?mode=ro", uri=True) as connection:
-                if connection.execute("PRAGMA user_version").fetchone()[0] != 1:
-                    raise ValueError("unrecognized legacy session database")
-                unfinished = [
-                    row[0]
-                    for row in connection.execute(
-                        "SELECT session_id FROM sessions WHERE started_at IS NOT NULL "
-                        "AND ended_at IS NULL ORDER BY session_id"
-                    )
-                ]
-            if unfinished:
-                problems.append(f"{sessions}: unfinished legacy session IDs={unfinished}")
-        except (sqlite3.Error, ValueError, OSError) as error:
-            problems.append(f"{sessions}: legacy session scan failed: {error}")
     database = tlon_paths.agent_program_database_file(agent_id)
     if database.exists():
         try:

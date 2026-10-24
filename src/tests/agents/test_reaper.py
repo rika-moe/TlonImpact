@@ -1,9 +1,9 @@
 """IdleReaper — idle fact detection and drain race-window re-checks.
 
 Pins the scale-to-zero contract: AGENT_IDLE facts are published only for
-lazy members past their timeout with no live sessions, and ``drain``
+lazy members past their timeout with no live work, and ``drain``
 re-validates under the per-agent wake lock right before shutdown — a
-session (or resumed activity) that lands in the race window between the
+run (or resumed activity) that lands in the race window between the
 stale fact and the stop request keeps the member alive, and a shutdown
 failure still leaves the member out of the run table so a later start
 assembles a fresh activation.
@@ -25,15 +25,15 @@ from tlon.base.events.event_bus import EventBus
 
 
 class _FakeAgent:
-    """Duck-typed MemberRuntime: session/idle facts plus a shutdown hook."""
+    """Duck-typed MemberRuntime: run/idle facts plus a shutdown hook."""
 
     def __init__(
         self,
-        active_session_count: int = 0,
+        is_busy: bool = False,
         idle_seconds: float = 9999.0,
         shutdown_error: Exception | None = None,
     ) -> None:
-        self.active_session_count = active_session_count
+        self.is_busy = is_busy
         self.idle_seconds = idle_seconds
         self.shutdown_calls = 0
         self._shutdown_error = shutdown_error
@@ -117,9 +117,9 @@ async def test_idle_fact_published_for_idle_lazy_member() -> None:
         await bus.shutdown()
 
 
-async def test_idle_fact_skipped_with_live_session() -> None:
+async def test_idle_fact_skipped_with_live_run() -> None:
     reaper, registry, bus, idle_events, _ = await _make_reaper({"a": _config("a")}, {"a"})
-    registry._agents["a"] = _FakeAgent(active_session_count=1, idle_seconds=9999.0)
+    registry._agents["a"] = _FakeAgent(is_busy=True, idle_seconds=9999.0)
     try:
         await reaper._report_if_idle("a")
         await asyncio.sleep(0.05)  # give any misfired publish a chance to dispatch
@@ -181,11 +181,11 @@ async def test_drain_sleeps_idle_member() -> None:
         await bus.shutdown()
 
 
-async def test_drain_keeps_member_with_live_session() -> None:
-    """The fact was stale on arrival: a session started before the stop
+async def test_drain_keeps_member_with_live_run() -> None:
+    """The fact was stale on arrival: a run started before the stop
     request executed, so the pre-lock check already saves the member."""
     reaper, registry, bus, _, sleeping_events = await _make_reaper({"a": _config("a")}, {"a"})
-    agent = _FakeAgent(active_session_count=1, idle_seconds=9999.0)
+    agent = _FakeAgent(is_busy=True, idle_seconds=9999.0)
     registry._agents["a"] = agent
     try:
         await reaper.drain("a", reason="drain")
@@ -198,13 +198,13 @@ async def test_drain_keeps_member_with_live_session() -> None:
         await bus.shutdown()
 
 
-async def test_drain_recheck_under_lock_saves_session_started_in_window() -> None:
+async def test_drain_recheck_under_lock_saves_run_started_in_window() -> None:
     """The race window the wake lock exists for: the member passes the
-    pre-lock check idle, then a session starts while drain waits on the
+    pre-lock check idle, then a run starts while drain waits on the
     lock (a concurrent wake holds it). The under-lock re-check must keep
     the member alive."""
     reaper, registry, bus, _, sleeping_events = await _make_reaper({"a": _config("a")}, {"a"})
-    agent = _FakeAgent(active_session_count=0, idle_seconds=9999.0)
+    agent = _FakeAgent(is_busy=False, idle_seconds=9999.0)
     registry._agents["a"] = agent
     lock = asyncio.Lock()
     registry._wake_locks["a"] = lock
@@ -212,7 +212,7 @@ async def test_drain_recheck_under_lock_saves_session_started_in_window() -> Non
     try:
         task = asyncio.create_task(reaper.drain("a", reason="drain"))
         await asyncio.sleep(0)  # let drain pass the pre-lock check and block on the lock
-        agent.active_session_count = 1  # session starts inside the race window
+        agent.is_busy = True  # run starts inside the race window
         lock.release()
         await task
 
@@ -227,12 +227,12 @@ async def test_drain_recheck_under_lock_saves_session_started_in_window() -> Non
 
 
 async def test_drain_recheck_under_lock_saves_resumed_activity() -> None:
-    """Same window, no session: background activity resumed (idle clock
+    """Same window, no run: background activity resumed (idle clock
     reset below the timeout) while drain waited on the lock."""
     reaper, registry, bus, _, sleeping_events = await _make_reaper(
         {"a": _config("a", idle_timeout_seconds=600)}, {"a"}
     )
-    agent = _FakeAgent(active_session_count=0, idle_seconds=9999.0)
+    agent = _FakeAgent(is_busy=False, idle_seconds=9999.0)
     registry._agents["a"] = agent
     lock = asyncio.Lock()
     registry._wake_locks["a"] = lock

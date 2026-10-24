@@ -53,7 +53,7 @@ async def test_admin_termination_waits_for_work_then_preserves_history(
         await registry._start_agent_guarded("worker")
         work = {"count": 1}
         monkeypatch.setattr(
-            MemberRuntime, "active_session_count", property(lambda self: work["count"])
+            MemberRuntime, "is_busy", property(lambda self: work["count"])
         )
         monkeypatch.setattr(AgentRegistry, "_PENDING_STOP_POLL_SECONDS", 0.01)
         handler = RESTAPIHandler(

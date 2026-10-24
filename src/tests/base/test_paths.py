@@ -22,7 +22,7 @@ def _call_every_accessor(paths: TlonPaths, agent_id: str = "dev-001") -> None:
     paths.agent_workspace_dir(agent_id)
     paths.agent_tasks_file(agent_id)
     paths.agent_ledger_file(agent_id)
-    paths.agent_sessions_database_file(agent_id)
+    paths.agent_program_database_file(agent_id)
     paths.agent_mail_dir(agent_id)
     paths.member_mail_dir(agent_id)
     paths.member_mail_dir("human:alice")
@@ -50,13 +50,6 @@ def test_accessors_create_nothing(tmp_path: Path) -> None:
     home.mkdir()
     _call_every_accessor(TlonPaths(home=home))
     assert list(home.iterdir()) == []
-
-
-def test_agent_sessions_database_file(tmp_path: Path) -> None:
-    paths = TlonPaths(home=tmp_path)
-    assert paths.agent_sessions_database_file("dev-001") == (
-        tmp_path / "dev-001" / "sessions.sqlite3"
-    )
 
 
 def test_member_mail_dir_maps_human_id(tmp_path: Path) -> None:

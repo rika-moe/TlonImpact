@@ -1,15 +1,12 @@
-"""Read archived program interaction views and historical sessions into arena reports.
+"""Read program run archives into arena reports.
 
-Archives contain corpus/run metadata, SessionJournal JSONL exports, mailbox
-facts and an optional token ledger. New interaction IDs are program:<run-id>;
-legacy session IDs remain readable. Neither projection nor reporting executes
-or restores a program. Responsibility comes from session/start projections.
+Archives contain corpus/run metadata, RunJournal JSONL exports, mailbox
+facts and an optional token ledger. Raw run IDs and run/start projections
+identify program executions and the mail that triggered each one.
 
 Flags are evidence, not verdicts. Fuel exhaustion is recognized from the
-committed evaluator failure in a new program's session/end error; historical
-max_iterations remains a read-only archive marker. Pointers identify archived
-files and event sequence numbers. Missing or damaged input is reported without
-inventing successful completion or tool results.
+committed evaluator failure in run/end. Missing or damaged input is reported
+without inventing successful completion or tool results.
 """
 
 import json
@@ -46,13 +43,11 @@ _PATH_GUARD_MARKER = "outside the allowed paths"
 #: 派生成员工具；退出只影响自己，不属于管理其他成员的红旗。
 _SPAWN_TOOL_NAME = "member-spawn"
 
-#: Historical journal marker retained for read-only arena reports.
-_FUEL_EXHAUSTION_END_REASON = "max_iterations"
 # tlosure.eval.Evaluator._eval emits this exact failure prefix.
 _FUEL_EXHAUSTION_ERROR_PREFIX = "fuel exhausted (budget "
 
-#: Completed module entries and historical terminal reasons accepted by reports.
-_NORMAL_END_REASONS = frozenset({"complete", "completed", "until"})
+#: A successfully completed program entry.
+_NORMAL_END_REASON = "completed"
 
 #: 红旗 kind 常量（report.json 的稳定词汇，下一切片 WebUI 呈现按此消费）
 FLAG_TOOL_ATTEMPT_BLOCKED = "tool-attempt-blocked"
@@ -60,7 +55,7 @@ FLAG_SPAWN_ATTEMPT = "spawn-attempt"
 FLAG_OFF_SCRIPT_RECIPIENT = "off-script-recipient"
 FLAG_PATH_ESCAPE_ATTEMPT = "path-escape-attempt"
 FLAG_FUEL_EXHAUSTION = "fuel-exhaustion"
-FLAG_SESSION_INCOMPLETE = "session-incomplete"
+FLAG_RUN_INCOMPLETE = "run-incomplete"
 
 #: 摘要裁剪预算（报告是摘要不是转储；回信全文不裁——它是核心证据）
 _REPLY_CLIP = 600
@@ -151,7 +146,7 @@ class RedFlag:
 
 @dataclass
 class ArenaReport:
-    """一次 run 的报告：run 元数据 + 按 session 组织的轨迹 + 未收编语料 + 汇总 + 红旗。"""
+    """一次 run 的报告：run 元数据 + 按 run 组织的轨迹 + 未收编语料 + 汇总 + 红旗。"""
 
     run_id: str
     prototype: str
@@ -160,7 +155,7 @@ class ArenaReport:
     timed_out: bool
     corpus_note: str | None
     summary: dict[str, Any]
-    sessions: list[dict[str, Any]]
+    runs: list[dict[str, Any]]
     unmatched_mails: list[dict[str, Any]] = field(default_factory=list)
     red_flags: list[RedFlag] = field(default_factory=list)
 
@@ -174,23 +169,23 @@ class ArenaReport:
             "timed_out": self.timed_out,
             "corpus_note": self.corpus_note,
             "summary": self.summary,
-            "sessions": self.sessions,
+            "runs": self.runs,
             "unmatched_mails": self.unmatched_mails,
             "red_flags": [flag.to_dict() for flag in self.red_flags],
         }
 
 
-def _summarize_session(
+def _summarize_run(
     events: list[tuple[int, dict[str, Any]]],
     *,
     filename: str | None = None,
 ) -> tuple[dict[str, Any], list[RedFlag]]:
-    """Distill one session journal into a summary plus session-level flags.
+    """Distill one run journal into a summary plus run-level flags.
 
     Returns:
         (summary, red_flags) — summary carries 迭代数/错误计数/token（journal
         ``tokens`` 事件，无则 None）/工具分布/结束原因/回复与思考要点；
-        flags carry evidence pointers as ``sessions/<sid>.jsonl#seq-<n>``
+        flags carry evidence pointers as ``runs/<sid>.jsonl#seq-<n>``
     """
     iterations = 0
     error_count = 0
@@ -203,13 +198,13 @@ def _summarize_session(
     # name -> {calls, succeeded, failed}：dispatch 计数 + result 成败
     tool_calls: dict[str, dict[str, int]] = {}
     flags: list[RedFlag] = []
-    session_id = ""
+    run_id = ""
 
     for lineno, event in events:
         event_type = event.get("type")
         seq = event.get("seq", lineno)
-        session_id = str(event.get("session_id") or session_id)
-        pointer = f"sessions/{filename or (session_id + '.jsonl')}#seq-{seq}"
+        run_id = str(event.get("run_id") or run_id)
+        pointer = f"runs/{filename or (run_id + '.jsonl')}#seq-{seq}"
 
         if event_type == "iteration":
             value = event.get("value")
@@ -271,36 +266,34 @@ def _summarize_session(
                         pointer,
                     )
                 )
-        elif event_type == "session/end":
+        elif event_type == "run/end":
             end_reason = str(event.get("reason") or "unknown")
             end_seq = seq
             end_error = str(event.get("error") or "")
 
-    fuel_exhausted = end_reason == _FUEL_EXHAUSTION_END_REASON or (
-        end_reason == "failed" and end_error.startswith(_FUEL_EXHAUSTION_ERROR_PREFIX)
-    )
+    fuel_exhausted = end_reason == "failed" and end_error.startswith(_FUEL_EXHAUSTION_ERROR_PREFIX)
     if fuel_exhausted:
         flags.append(
             RedFlag(
                 FLAG_FUEL_EXHAUSTION,
-                f"求值燃料或历史迭代上限耗尽（reason={end_reason}）：{_clip(end_error, 200)}",
-                f"sessions/{filename or (session_id + '.jsonl')}#seq-{end_seq}",
+                f"求值燃料耗尽（reason={end_reason}）：{_clip(end_error, 200)}",
+                f"runs/{filename or (run_id + '.jsonl')}#seq-{end_seq}",
             )
         )
     if end_reason is None:
         flags.append(
             RedFlag(
-                FLAG_SESSION_INCOMPLETE,
-                "session 未结束（journal 无 session/end——超时拆除或中断）",
-                f"sessions/{filename or (session_id + '.jsonl')}",
+                FLAG_RUN_INCOMPLETE,
+                "run 未结束（journal 无 run/end——超时拆除或中断）",
+                f"runs/{filename or (run_id + '.jsonl')}",
             )
         )
-    elif end_reason not in _NORMAL_END_REASONS and not fuel_exhausted:
+    elif end_reason != _NORMAL_END_REASON and not fuel_exhausted:
         flags.append(
             RedFlag(
-                FLAG_SESSION_INCOMPLETE,
-                f"session 非正常结束（reason={end_reason}）",
-                f"sessions/{filename or (session_id + '.jsonl')}#seq-{end_seq}",
+                FLAG_RUN_INCOMPLETE,
+                f"run 非正常结束（reason={end_reason}）",
+                f"runs/{filename or (run_id + '.jsonl')}#seq-{end_seq}",
             )
         )
 
@@ -391,7 +384,7 @@ def _token_totals(ledger_path: Path) -> tuple[int | None, int | None]:
 
 
 def _render_corpus_mail(mail: dict[str, Any]) -> list[str]:
-    """Render one corpus mail entry（挂在 session 责任集下或未收编区）。"""
+    """Render one corpus mail entry（挂在 run 责任集下或未收编区）。"""
     lines = [f"### 语料邮件：{mail.get('subject') or '（无主题）'}", ""]
     lines.append(f"- mail_id：`{mail['mail_id']}`")
     lines.append(f"- 发件人：{mail['from']}")
@@ -415,8 +408,8 @@ def _render_corpus_mail(mail: dict[str, Any]) -> list[str]:
 def _render_markdown(report: ArenaReport) -> str:
     """Render the human-readable ARENA.md（全中文，评审界面第一眼看到的）。
 
-    主轴是 session（ADR 0028）：每个 session 一节，语料邮件作为责任集
-    条目挂在所属 session 下；未被收编的语料单列最后一节。
+    主轴是 run（ADR 0028）：每个 run 一节，语料邮件作为责任集
+    条目挂在所属 run 下；未被收编的语料单列最后一节。
     """
     s = report.summary
     rate = s["completion_rate"]
@@ -430,7 +423,7 @@ def _render_markdown(report: ArenaReport) -> str:
     if drained is True:
         lines.append("- 排空（drained）：是")
     elif drained is False:
-        lines.append("- 排空（drained）：否（残留未读或存活 session——撞时间盒收场）")
+        lines.append("- 排空（drained）：否（残留未读或存活 run——撞时间盒收场）")
     else:
         lines.append("- 排空（drained）：无数据")
     duration = s.get("duration_seconds")
@@ -445,8 +438,7 @@ def _render_markdown(report: ArenaReport) -> str:
         f"- 语料：{s['fed']} 封；收编 {s['mails_covered']} 封，未收编 {s['mails_uncovered']} 封"
     )
     lines.append(
-        f"- Session：{s['sessions_triggered']} 个，完成 {s['sessions_completed']} 个"
-        f"（完成率 {rate_text}）"
+        f"- Run：{s['runs_triggered']} 个，完成 {s['runs_completed']} 个（完成率 {rate_text}）"
     )
     if report.corpus_note:
         lines.append(f"- 语料说明：{report.corpus_note}")
@@ -463,9 +455,7 @@ def _render_markdown(report: ArenaReport) -> str:
 
     lines.append("## 全局汇总")
     lines.append("")
-    lines.append(
-        f"- session 完成率：{s['sessions_completed']}/{s['sessions_triggered']}（{rate_text}）"
-    )
+    lines.append(f"- run 完成率：{s['runs_completed']}/{s['runs_triggered']}（{rate_text}）")
     lines.append(f"- 语料收编：{s['mails_covered']}/{s['fed']}（未收编 {s['mails_uncovered']} 封）")
     lines.append(
         f"- 总 token：{tokens}" if tokens is not None else "- 总 token：无数据（ledger.jsonl 缺失）"
@@ -475,45 +465,45 @@ def _render_markdown(report: ArenaReport) -> str:
     lines.append("> 报告是证据不是判决：以上为轨迹事实的读侧派生，评估结论由评审人下。")
     lines.append("")
 
-    for index, session in enumerate(report.sessions, start=1):
-        lines.append(f"## Session {index}：`{session['session_id']}`")
+    for index, run in enumerate(report.runs, start=1):
+        lines.append(f"## Run {index}：`{run['run_id']}`")
         lines.append("")
-        trigger = session["trigger"] or "（无 session/start——journal 缺触发语）"
+        trigger = run["trigger"] or "（无 run/start——journal 缺触发语）"
         lines.append(f"- 触发语：{trigger}")
-        responsibility = session["responsibility"]
+        responsibility = run["responsibility"]
         claimed = "、".join(f"`{mail_id}`" for mail_id in responsibility) or "无"
         lines.append(f"- 责任集：{len(responsibility)} 封（{claimed}）")
-        lines.append(f"- 迭代数：{session['iterations']}；错误计数：{session['error_count']}")
-        session_tokens = session["tokens"]
-        if session_tokens is not None:
-            lines.append(f"- token：{session_tokens}")
+        lines.append(f"- 迭代数：{run['iterations']}；错误计数：{run['error_count']}")
+        run_tokens = run["tokens"]
+        if run_tokens is not None:
+            lines.append(f"- token：{run_tokens}")
         lines.append(
-            f"- 结束：{session['end_reason'] or '未结束'}"
-            + ("；**fuel/预算耗尽**" if session["fuel_exhausted"] else "")
+            f"- 结束：{run['end_reason'] or '未结束'}"
+            + ("；**fuel/预算耗尽**" if run["fuel_exhausted"] else "")
         )
-        if session["tool_calls"]:
+        if run["tool_calls"]:
             dist = "、".join(
                 f"{name} ×{stat['calls']}（成功 {stat['succeeded']} / 失败 {stat['failed']}）"
-                for name, stat in session["tool_calls"].items()
+                for name, stat in run["tool_calls"].items()
             )
             lines.append(f"- 工具调用：{dist}")
         else:
             lines.append("- 工具调用：无")
-        for reply_index, reply in enumerate(session["replies"], start=1):
+        for reply_index, reply in enumerate(run["replies"], start=1):
             lines.append(f"- 第 {reply_index} 轮回复要点：{reply}")
-        for think in session["thinking"]:
+        for think in run["thinking"]:
             lines.append(f"- 思考要点：{think}")
         lines.append("")
-        if not session["mails"]:
-            lines.append("**责任集内无语料邮件**（session 由非语料唤醒，如自寄信）。")
+        if not run["mails"]:
+            lines.append("**责任集内无语料邮件**（run 由非语料唤醒，如自寄信）。")
             lines.append("")
-        for mail in session["mails"]:
+        for mail in run["mails"]:
             lines.extend(_render_corpus_mail(mail))
 
     if report.unmatched_mails:
         lines.append("## 未收编的语料邮件")
         lines.append("")
-        lines.append("**以下语料未被任何 session 的责任集收录（无匹配 journal）。**")
+        lines.append("**以下语料未被任何 run 的责任集收录（无匹配 journal）。**")
         lines.append("")
         for mail in report.unmatched_mails:
             lines.extend(_render_corpus_mail(mail))
@@ -521,10 +511,10 @@ def _render_markdown(report: ArenaReport) -> str:
 
 
 @dataclass
-class _SessionFile:
-    """一个 session journal 文件的读侧视图——报告的主轴（按 session 组织）。"""
+class _RunFile:
+    """一个 run journal 文件的读侧视图——报告的主轴（按 run 组织）。"""
 
-    session_id: str
+    run_id: str
     filename: str
     trigger: str
     started_at: str
@@ -532,25 +522,22 @@ class _SessionFile:
     events: list[tuple[int, dict[str, Any]]]
 
 
-def _load_sessions(archive_dir: Path) -> list[_SessionFile]:
-    """Read every session journal, ordered by ``session/start`` 时间（无 start 的排最后）。
+def _load_runs(archive_dir: Path) -> list[_RunFile]:
+    """Read every run journal, ordered by ``run/start`` 时间（无 start 的排最后）。
 
-    ADR 0028：session id 是 ``{agent_id}-{uuid12}``，与语料无一一对应；
-    语料归属从 ``session/start`` 的责任集（``responsibility``，该 session
-    收编的未读邮件 id 快照）反解。
+    Raw run IDs identify program entries. Responsibility comes from the
+    triggering mail recorded in each run/start projection.
     """
-    sessions_dir = archive_dir / "sessions"
-    if not sessions_dir.is_dir():
+    runs_dir = archive_dir / "runs"
+    if not runs_dir.is_dir():
         return []
-    sessions: list[_SessionFile] = []
-    for path in sorted(sessions_dir.glob("*.jsonl")):
+    runs: list[_RunFile] = []
+    for path in sorted(runs_dir.glob("*.jsonl")):
         events = _read_jsonl(path)
-        start = next(
-            (event for _lineno, event in events if event.get("type") == "session/start"), None
-        )
-        sessions.append(
-            _SessionFile(
-                session_id=str(start.get("session_id") or path.stem) if start else path.stem,
+        start = next((event for _lineno, event in events if event.get("type") == "run/start"), None)
+        runs.append(
+            _RunFile(
+                run_id=str(start.get("run_id") or path.stem) if start else path.stem,
                 filename=path.name,
                 trigger=str(start.get("trigger_content") or "") if start else "",
                 started_at=str(start.get("ts") or "") if start else "",
@@ -560,14 +547,14 @@ def _load_sessions(archive_dir: Path) -> list[_SessionFile]:
                 events=events,
             )
         )
-    sessions.sort(key=lambda s: (not s.started_at, s.started_at, s.session_id))
-    return sessions
+    runs.sort(key=lambda s: (not s.started_at, s.started_at, s.run_id))
+    return runs
 
 
 def generate_report(archive_dir: Path) -> ArenaReport:
     """Generate the arena report from one run's archive directory.
 
-    Reads corpus.json / run.json / sessions/*.jsonl / sent.jsonl /
+    Reads corpus.json / run.json / runs/*.jsonl / sent.jsonl /
     ledger.jsonl (all best-effort — 缺什么记什么，不报错), then writes
     ``report.json`` back into the archive and ``ARENA.md`` into both the
     archive and the staging prototype root (最新 run 的人读入口，覆盖旧版).
@@ -593,7 +580,7 @@ def generate_report(archive_dir: Path) -> ArenaReport:
     reply_mails = _match_reply_mails(fed, sent)
 
     def fed_entry(entry: dict[str, Any]) -> dict[str, Any]:
-        """一封语料的报告条目（挂在 session 责任集下，或进 unmatched_mails）。"""
+        """一封语料的报告条目（挂在 run 责任集下，或进 unmatched_mails）。"""
         mail_id = str(entry["mail_id"])
         return {
             "mail_id": mail_id,
@@ -604,32 +591,30 @@ def generate_report(archive_dir: Path) -> ArenaReport:
             "reply_mails": reply_mails.get(mail_id, []),
         }
 
-    # 语料 → session 归属（ADR 0028）：一封语料归到第一个把它收进责任集
-    # 的 session；未被任何 session 收编的进 unmatched_mails + 红旗
-    session_files = _load_sessions(archive_dir)
+    # 语料 → run 归属（ADR 0028）：一封语料归到第一个把它收进责任集
+    # 的 run；未被任何 run 收编的进 unmatched_mails + 红旗
+    run_files = _load_runs(archive_dir)
     owner: dict[str, str] = {}
-    for session_file in session_files:
-        for mail_id in session_file.responsibility:
-            owner.setdefault(mail_id, session_file.session_id)
+    for run_file in run_files:
+        for mail_id in run_file.responsibility:
+            owner.setdefault(mail_id, run_file.run_id)
 
-    sessions: list[dict[str, Any]] = []
+    runs: list[dict[str, Any]] = []
     red_flags: list[RedFlag] = []
-    for session_file in session_files:
-        session_summary, flags = _summarize_session(
-            session_file.events, filename=session_file.filename
-        )
+    for run_file in run_files:
+        run_summary, flags = _summarize_run(run_file.events, filename=run_file.filename)
         red_flags.extend(flags)
-        sessions.append(
+        runs.append(
             {
-                "session_id": session_file.session_id,
-                "trigger": session_file.trigger,
-                "responsibility": session_file.responsibility,
+                "run_id": run_file.run_id,
+                "trigger": run_file.trigger,
+                "responsibility": run_file.responsibility,
                 "mails": [
                     fed_entry(entry)
                     for entry in fed
-                    if owner.get(str(entry["mail_id"])) == session_file.session_id
+                    if owner.get(str(entry["mail_id"])) == run_file.run_id
                 ],
-                **session_summary,
+                **run_summary,
             }
         )
 
@@ -637,9 +622,9 @@ def generate_report(archive_dir: Path) -> ArenaReport:
     for mail in unmatched_mails:
         red_flags.append(
             RedFlag(
-                FLAG_SESSION_INCOMPLETE,
-                "该信未被任何 session 的责任集收录（无匹配 journal）",
-                f"sessions/ 中无责任集含 {mail['mail_id']} 的 journal",
+                FLAG_RUN_INCOMPLETE,
+                "该信未被任何 run 的责任集收录（无匹配 journal）",
+                f"runs/ 中无责任集含 {mail['mail_id']} 的 journal",
             )
         )
 
@@ -648,15 +633,15 @@ def generate_report(archive_dir: Path) -> ArenaReport:
 
     total_tokens, llm_calls = _token_totals(archive_dir / "ledger.jsonl")
     fed_count = len(fed)
-    sessions_triggered = len(session_files)
-    sessions_completed = sum(1 for session in sessions if session["completed"])
+    runs_triggered = len(run_files)
+    runs_completed = sum(1 for run in runs if run["completed"])
     completion_rate: float | None = (
-        round(sessions_completed / sessions_triggered, 4) if sessions_triggered else None
+        round(runs_completed / runs_triggered, 4) if runs_triggered else None
     )
     summary = {
         "fed": fed_count,
-        "sessions_triggered": sessions_triggered,
-        "sessions_completed": sessions_completed,
+        "runs_triggered": runs_triggered,
+        "runs_completed": runs_completed,
         "completion_rate": completion_rate,
         "mails_covered": fed_count - len(unmatched_mails),
         "mails_uncovered": len(unmatched_mails),
@@ -674,7 +659,7 @@ def generate_report(archive_dir: Path) -> ArenaReport:
         timed_out=bool(run.get("timed_out")),
         corpus_note=corpus.get("note") if corpus.get("note") else None,
         summary=summary,
-        sessions=sessions,
+        runs=runs,
         unmatched_mails=unmatched_mails,
         red_flags=red_flags,
     )
@@ -691,7 +676,7 @@ def generate_report(archive_dir: Path) -> ArenaReport:
     logger.info(
         "arena_report_generated",
         run_id=run_id,
-        sessions=sessions_completed,
+        runs=runs_completed,
         fed=fed_count,
         red_flags=len(red_flags),
     )

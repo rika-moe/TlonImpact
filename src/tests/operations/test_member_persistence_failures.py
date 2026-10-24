@@ -136,7 +136,7 @@ async def test_real_memory_write_failure_projects_unknown(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     memory = MemoryManager("a", MemoryConfig(), tmp_path / "a")
-    # session-read is not used; no journal methods are invoked by memory writes.
+    # run-read is not used; no journal methods are invoked by memory writes.
     executor = OperationExecutor(
         OperationRegistry(make_memory_operations(memory, None)), CallContext("a", "run", "call")
     )  # type: ignore[arg-type]

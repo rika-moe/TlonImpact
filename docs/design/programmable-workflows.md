@@ -105,7 +105,7 @@ ProgramDriver 统一执行冻结入口，ProgramStore 是新运行恢复权威�
 
 恢复按以下顺序进行：校验宿主构建与契约身份 → 读取原程序包/输入 → 从入口重放纯计算 → 以确定序号核对并还原既有操作结果 → 处理未提交调用或阻塞 unknown → 提交入口结果。时间、随机、外部读取不能藏进纯计算；不序列化 Python generator、函数对象或进程任务。
 
-SessionJournal/SessionStore 为旧历史保留读取，新运行的消息和完成索引从运行权威记录构建。投影采用按需只读重建，读取失败不能触发重新生成或重发邮件；用稳定来源 ID 消费完成事实，无独立投影数据库。反思、蒸馏及其水位、thread recap、memory-read、退休归档、实际 API 和可观测性消费者都必须完成核对。客户端连接 REST `/sessions` 与 WebUI SessionsView 不属于 AgentSession，不迁移；本轮不新增运行轨迹 UI。现有历史数据不删除、不迁移；旧历史和新记录按明确来源查询，读取历史不保留旧执行引擎。
+RunJournal/SessionStore 为旧历史保留读取，新运行的消息和完成索引从运行权威记录构建。投影采用按需只读重建，读取失败不能触发重新生成或重发邮件；用稳定来源 ID 消费完成事实，无独立投影数据库。反思、蒸馏及其水位、thread recap、memory-read、退休归档、实际 API 和可观测性消费者都必须完成核对。客户端连接 REST `/sessions` 与 WebUI SessionsView 不属于 AgentSession，不迁移；本轮不新增运行轨迹 UI。现有历史数据不删除、不迁移；旧历史和新记录按明确来源查询，读取历史不保留旧执行引擎。
 
 入口完成与投影发布之间故障后，消费者不得重复计完成次数或重复产生维护任务。维护任务以来源运行/批次稳定身份创建，反思和蒸馏继续使用自己的维护预算根。
 
@@ -119,4 +119,6 @@ P5 已删除 run-loop ActionRequest、SessionRecipe、stage/section 专属解释
 
 ### P4b 当前实现
 
-SessionJournal 联合旧历史与 ProgramStore 的只读派生事件，来源为 program:<run_id>。完成索引只读元数据，单个来源回读模型与工具回执、未决证据、入口结果和错误；不创建第二份恢复日志。蒸馏与反思按来源 ID 集合、固定批次和独立额度根消费，较早开始但较晚完成的运行不会被时间水位遗漏。session-read、thread recap、教训、退休归档及演武场证据导出使用同一视图；客户端连接会话不变，旧引擎已随 #213 退役。
+RunJournal 联合旧历史与 ProgramStore 的只读派生事件，来源为 program:<run_id>。完成索引只读元数据，单个来源回读模型与工具回执、未决证据、入口结果和错误；不创建第二份恢复日志。蒸馏与反思按来源 ID 集合、固定批次和独立额度根消费，较早开始但较晚完成的运行不会被时间水位遗漏。run-read、thread recap、教训、退休归档及演武场证据导出使用同一视图；客户端连接会话不变，旧引擎已随 #213 退役。
+
+当前历史边界以 [ADR 0049](../decisions/0049-retire-agent-session.md) 为准：agent session 已退役，run-read/run_id/source_run_ids 为唯一程序历史协议；不提供旧历史兼容或迁移，client session 保留。

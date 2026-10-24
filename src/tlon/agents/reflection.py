@@ -16,7 +16,7 @@ from importlib import resources
 from typing import Any, cast
 
 from tlon.agents.member_spec import ReflectSpec
-from tlon.agents.session_journal import SessionJournal
+from tlon.agents.run_journal import RunJournal
 from tlon.base.execution import ExecutionScope, bind_execution
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
@@ -44,7 +44,7 @@ class ReflectionEngine:
     Initial enabled/interval come from explicit reflection settings;
     ``enabled`` stays a runtime switch.
 
-    The engine receives its services (memory, LLM client, session
+    The engine receives its services (memory, LLM client, run
     journal) and reflection settings directly — no back-reference to the
     owning member runtime.
     """
@@ -54,7 +54,7 @@ class ReflectionEngine:
         memory: MemoryManager,
         llm_client: LLMClient,
         reflect: ReflectSpec,
-        journal: SessionJournal,
+        journal: RunJournal,
         state_changed: Callable[[], Awaitable[None]] | None = None,
         execution_factory: Callable[[str], ExecutionScope] | None = None,
     ):
@@ -123,7 +123,7 @@ class ReflectionEngine:
             not isinstance(digest, dict)
             or not isinstance(digest.get("claims"), list)
             or type(digest.get("claim_count")) is not int
-            or type(digest.get("undistilled_session_count")) is not int
+            or type(digest.get("undistilled_run_count")) is not int
             or not isinstance(digest.get("recent_interactions", []), list)
         ):
             raise ValueError("pending digest must contain memory counts and claims")
@@ -298,7 +298,7 @@ class ReflectionEngine:
                 fact=op.get("description", ""),
                 importance=float(op.get("importance", 0.5)),
                 claim_id=claim_id,
-                source_session_ids=sources,
+                source_run_ids=sources,
             )
         elif action == "delete_claim":
             for target in op.get("claim_ids", []):
@@ -308,7 +308,7 @@ class ReflectionEngine:
         """Build the reflection prompt from memory digest."""
         parts = ["## 当前记忆状态\n"]
 
-        parts.append(f"未蒸馏会话数：{digest['undistilled_session_count']}")
+        parts.append(f"未蒸馏运行数：{digest['undistilled_run_count']}")
         parts.append(f"记忆数：{digest['claim_count']}")
         parts.append("")
 

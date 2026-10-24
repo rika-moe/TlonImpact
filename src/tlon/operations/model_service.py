@@ -26,7 +26,7 @@ class ModelClient(Protocol):
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int | None = None,
         purpose: str | None = None,
-        session_id: str | None = None,
+        run_id: str | None = None,
         cache_prefix_len: int | None = None,
     ) -> LLMResponse: ...
 
@@ -93,7 +93,7 @@ class ModelService:
         tools: list[str] | None = None,
         max_tokens: int | None = None,
         purpose: str | None = None,
-        session_id: str | None = None,
+        run_id: str | None = None,
         cache_prefix_len: int | None = None,
     ) -> LLMResponse:
         host = await self.host_context()
@@ -122,7 +122,7 @@ class ModelService:
             tools=selected or None,
             max_tokens=max_tokens,
             purpose=purpose,
-            session_id=session_id,
+            run_id=run_id,
             cache_prefix_len=cache_prefix_len,
         )
         if history is None:

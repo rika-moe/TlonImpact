@@ -36,7 +36,7 @@ class TestLoadScenarios:
             assert scenario.name
             assert scenario.query
 
-    def test_sessions_and_expectation_parsed(self, tmp_path: Path) -> None:
+    def test_runs_and_expectation_parsed(self, tmp_path: Path) -> None:
         dataset = tmp_path / "s.json"
         dataset.write_text(
             json.dumps(
@@ -44,7 +44,7 @@ class TestLoadScenarios:
                     {
                         "name": "s1",
                         "dimension": "fact-recall",
-                        "sessions": [
+                        "runs": [
                             {"ts": "2026-08-01T10:00:00", "trigger": "t", "responses": ["r"]}
                         ],
                         "query": "q",
@@ -61,7 +61,7 @@ class TestLoadScenarios:
             encoding="utf-8",
         )
         (scenario,) = eval_memory.load_scenarios(dataset)
-        assert scenario.sessions[0].ts == "2026-08-01T10:00:00"
+        assert scenario.runs[0].ts == "2026-08-01T10:00:00"
         assert scenario.expect.surface == "injection"
         assert scenario.expect.must_contain == ["a", ["b", "c"]]
 
@@ -88,10 +88,10 @@ class TestLoadScenarios:
                     "name": "s",
                     "dimension": "fact-recall",
                     "query": "q",
-                    "sessions": [{"trigger": "t"}],
+                    "runs": [{"trigger": "t"}],
                     "expect": {},
                 },
-                "session missing ts",
+                "run missing ts",
             ),
             (
                 {
@@ -122,19 +122,19 @@ class TestLoadScenarios:
 
 
 class TestFakeJournal:
-    async def test_completed_sessions_listed_in_insertion_order(self) -> None:
+    async def test_completed_runs_listed_in_insertion_order(self) -> None:
         journal = eval_memory.FakeJournal()
-        journal.add_completed_session("s1", "2026-08-01T10:00:00", "t1", ["r1"])
-        journal.add_completed_session("s2", "2026-08-02T10:00:00", "t2", [])
+        journal.add_completed_run("s1", "2026-08-01T10:00:00", "t1", ["r1"])
+        journal.add_completed_run("s2", "2026-08-02T10:00:00", "t2", [])
         assert await journal.list_completed() == ["s1", "s2"]
         assert await journal.count_completed() == 2
 
     async def test_events_carry_start_ts_trigger_responses_and_end(self) -> None:
         journal = eval_memory.FakeJournal()
-        journal.add_completed_session("s1", "2026-08-01T10:00:00", "真触发", ["回复一", "回复二"])
+        journal.add_completed_run("s1", "2026-08-01T10:00:00", "真触发", ["回复一", "回复二"])
         events = await journal.read_events("s1")
         assert events[0] == {
-            "type": "session/start",
+            "type": "run/start",
             "ts": "2026-08-01T10:00:00",
             "trigger_content": "真触发",
         }
@@ -142,11 +142,11 @@ class TestFakeJournal:
             "回复一",
             "回复二",
         ]
-        assert events[-1]["type"] == "session/end"
+        assert events[-1]["type"] == "run/end"
 
     async def test_read_events_returns_copies(self) -> None:
         journal = eval_memory.FakeJournal()
-        journal.add_completed_session("s1", "2026-08-01T10:00:00", "t", [])
+        journal.add_completed_run("s1", "2026-08-01T10:00:00", "t", [])
         (await journal.read_events("s1"))[0]["trigger_content"] = "篡改"
         assert (await journal.read_events("s1"))[0]["trigger_content"] == "t"
 
@@ -230,13 +230,13 @@ class TestRunScenarioOffline:
         return eval_memory.Scenario(
             name="offline-recall",
             dimension="fact-recall",
-            sessions=[
-                eval_memory.SessionSpec(
+            runs=[
+                eval_memory.RunSpec(
                     ts="2026-08-01T10:00:00",
                     trigger="项目依赖统一用 uv 管理",
                     responses=["收到"],
                 ),
-                eval_memory.SessionSpec(
+                eval_memory.RunSpec(
                     ts="2026-08-02T10:00:00",
                     trigger="文档站用 mkdocs 搭建",
                     responses=["收到"],
@@ -246,11 +246,11 @@ class TestRunScenarioOffline:
             expect=eval_memory.Expectation(surface="both", must_contain=["uv", "mkdocs"]),
         )
 
-    async def test_scenario_passes_and_every_session_distilled_once(self) -> None:
+    async def test_scenario_passes_and_every_run_distilled_once(self) -> None:
         result = await eval_memory.run_scenario(self._scenario(), _offline_factory)
         assert result.passed, result.failures
         # window=1 with increasing timestamps: one distilled claim per
-        # session (mechanical fallback), watermark consumed both.
+        # run (mechanical fallback), watermark consumed both.
         assert result.claim_count == 2
         assert "uv" in result.injection_text
         assert "uv" in result.search_text

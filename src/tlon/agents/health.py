@@ -1,6 +1,6 @@
 """Social public-health monitor.
 
-Backpressure (bounded bus queues, session schedulers) protects the
+Backpressure (bounded bus queues, run schedulers) protects the
 *plumbing*; this monitor watches the *society*:
 
 - Noise detection (real-time): a pure event consumer of MAIL_NEW. Each

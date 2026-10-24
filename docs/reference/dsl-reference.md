@@ -145,7 +145,7 @@
 
 ## 4. 资源与恢复
 
-模型、工具、压缩及嵌套函数共享根预算和截止时间；持久执行身份与回执来自 ProgramStore。未知外部结果阻塞，不能改根身份绕过。SessionJournal 只读历史与程序投影，不参与恢复或追加新执行记录。
+模型、工具、压缩及嵌套函数共享根预算和截止时间；持久执行身份与回执来自 ProgramStore。未知外部结果阻塞，不能改根身份绕过。RunJournal 只读 ProgramStore 运行投影，不参与恢复或追加新执行记录。
 
 <!-- BEGIN GENERATED: dsl-fuel-defaults -->
 语言级求值预算常量（`tlosure/eval.py`，3 个；上文的默认值/上限数字以此表为准）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）

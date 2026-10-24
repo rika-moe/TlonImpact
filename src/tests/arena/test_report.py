@@ -1,17 +1,17 @@
 """演武场报告生成器（tlon.arena.report，docs/design/arena.md 「报告」）。
 
-ADR 0028 收件箱驱动单 session 模型：报告按 session 组织——session id
+ADR 0028 收件箱驱动单 run 模型：报告按 run 组织——run id
 是 ``{agent_id}-{uuid12}``，与语料无一一对应；语料归属从各 journal
-``session/start`` 的 ``responsibility`` 反解（一封语料归第一个收编它
-的 session），未被收编的语料进 ``unmatched_mails`` + session-incomplete
+``run/start`` 的 ``responsibility`` 反解（一封语料归第一个收编它
+的 run），未被收编的语料进 ``unmatched_mails`` + run-incomplete
 红旗。
 
-全部用合成原料在 tmp 目录构造归档（corpus.json / run.json / sessions/
+全部用合成原料在 tmp 目录构造归档（corpus.json / run.json / runs/
 sent.jsonl / ledger.jsonl），不调 runner、不起 runtime：
 
-- 多封语料被一个 session 批处理时的归位（报告主轴）；多 session 分账
+- 多封语料被一个 run 批处理时的归位（报告主轴）；多 run 分账
 - 逐类红旗的触发与不触发（误报宁可少不可多——每类都带负例）
-- 未收编语料（无 session 责任集收录）如实记录 + session-incomplete 红旗
+- 未收编语料（无 run 责任集收录）如实记录 + run-incomplete 红旗
 - journal 尾部坏行容忍；ledger 缺失 → token null
 - report.json 结构完整、ARENA.md 双落点、根目录覆盖语义
 - 缺 corpus/run.json 也 fail-soft 出报告
@@ -25,7 +25,7 @@ from tlon.arena.report import (
     FLAG_FUEL_EXHAUSTION,
     FLAG_OFF_SCRIPT_RECIPIENT,
     FLAG_PATH_ESCAPE_ATTEMPT,
-    FLAG_SESSION_INCOMPLETE,
+    FLAG_RUN_INCOMPLETE,
     FLAG_SPAWN_ATTEMPT,
     FLAG_TOOL_ATTEMPT_BLOCKED,
     generate_report,
@@ -57,38 +57,38 @@ def _tool_call(name: str, tc_id: str = "tc-1") -> dict[str, Any]:
     }
 
 
-def _event(seq: int, event_type: str, session_id: str, **payload: Any) -> dict[str, Any]:
-    return {"seq": seq, "ts": _STARTED, "type": event_type, "session_id": session_id, **payload}
+def _event(seq: int, event_type: str, run_id: str, **payload: Any) -> dict[str, Any]:
+    return {"seq": seq, "ts": _STARTED, "type": event_type, "run_id": run_id, **payload}
 
 
-def _session_start(seq: int, session_id: str, responsibility: list[str]) -> dict[str, Any]:
-    """ADR 0028 的 session/start：触发语模板 + 责任集 id 快照。"""
+def _run_start(seq: int, run_id: str, responsibility: list[str]) -> dict[str, Any]:
+    """ADR 0028 的 run/start：触发语模板 + 责任集 id 快照。"""
     return _event(
         seq,
-        "session/start",
-        session_id,
+        "run/start",
+        run_id,
         trigger_content=f"你有 {len(responsibility)} 封未读邮件",
         responsibility=responsibility,
     )
 
 
-def _end(seq: int, session_id: str, reason: str = "complete") -> dict[str, Any]:
-    return _event(seq, "session/end", session_id, reason=reason)
+def _end(seq: int, run_id: str, reason: str = "completed") -> dict[str, Any]:
+    return _event(seq, "run/end", run_id, reason=reason)
 
 
-def _session(session_id: str, responsibility: list[str], events: list[Any]) -> dict[str, Any]:
-    """一条 session fixture：journal 文件 + 该 session 收编的语料 id 集。
+def _run(run_id: str, responsibility: list[str], events: list[Any]) -> dict[str, Any]:
+    """一条 run fixture：journal 文件 + 该 run 收编的语料 id 集。
 
-    events 里已带 session/start 时只补/覆写 responsibility；否则自动
+    events 里已带 run/start 时只补/覆写 responsibility；否则自动
     前置一个合成人 start（触发语模板 + 责任集快照）。
     """
-    return {"session_id": session_id, "responsibility": responsibility, "events": events}
+    return {"run_id": run_id, "responsibility": responsibility, "events": events}
 
 
 def _write_archive(
     tmp_path: Path,
     *,
-    sessions: list[dict[str, Any]] | None = None,
+    runs: list[dict[str, Any]] | None = None,
     sent: list[dict[str, Any]] | None = None,
     ledger: list[dict[str, Any]] | None = None,
     fed: list[dict[str, Any]] | None = None,
@@ -134,19 +134,19 @@ def _write_archive(
             ),
             encoding="utf-8",
         )
-    session_dir = archive / "sessions"
-    for spec in sessions or []:
-        session_dir.mkdir(exist_ok=True)
-        sid = str(spec["session_id"])
+    run_dir = archive / "runs"
+    for spec in runs or []:
+        run_dir.mkdir(exist_ok=True)
+        sid = str(spec["run_id"])
         events = list(spec["events"])
         dict_events = [e for e in events if isinstance(e, dict)]
-        start = next((e for e in dict_events if e.get("type") == "session/start"), None)
+        start = next((e for e in dict_events if e.get("type") == "run/start"), None)
         if start is not None:
             start["responsibility"] = spec["responsibility"]
         else:
-            events = [_session_start(0, sid, spec["responsibility"]), *events]
+            events = [_run_start(0, sid, spec["responsibility"]), *events]
         lines = [json.dumps(e, ensure_ascii=False) if isinstance(e, dict) else e for e in events]
-        (session_dir / f"{sid}.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        (run_dir / f"{sid}.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
     if sent is not None:
         (archive / "sent.jsonl").write_text(
             "".join(json.dumps(m, ensure_ascii=False) + "\n" for m in sent),
@@ -181,8 +181,8 @@ def _flag_kinds(report: Any) -> list[str]:
 
 
 def test_happy_path_report_structure_and_dual_markdown(tmp_path: Path) -> None:
-    """一个 session 批处理两封语料（ADR 0028）：两封都挂到该 session 下，
-    未收编的 m3 进 unmatched_mails + session-incomplete 红旗。"""
+    """一个 run 批处理两封语料（ADR 0028）：两封都挂到该 run 下，
+    未收编的 m3 进 unmatched_mails + run-incomplete 红旗。"""
     sid = f"{_AGENT_ID}-aaaa1111bbbb"
     events = [
         _event(
@@ -207,7 +207,7 @@ def test_happy_path_report_structure_and_dual_markdown(tmp_path: Path) -> None:
     ]
     archive = _write_archive(
         tmp_path,
-        sessions=[_session(sid, ["m1", "m2"], events)],
+        runs=[_run(sid, ["m1", "m2"], events)],
         sent=[_sent_mail("r1", ["boss@example.com"], content="这是完整回信。", in_reply_to="m1")],
         ledger=[
             {"prompt_tokens": 100, "completion_tokens": 50},
@@ -217,11 +217,11 @@ def test_happy_path_report_structure_and_dual_markdown(tmp_path: Path) -> None:
 
     report = generate_report(archive)
 
-    # 全局汇总（按 session 计数 + 语料收编计数 + drained）
+    # 全局汇总（按 run 计数 + 语料收编计数 + drained）
     assert report.summary == {
         "fed": 3,
-        "sessions_triggered": 1,
-        "sessions_completed": 1,
+        "runs_triggered": 1,
+        "runs_completed": 1,
         "completion_rate": 1.0,
         "mails_covered": 2,
         "mails_uncovered": 1,
@@ -230,31 +230,31 @@ def test_happy_path_report_structure_and_dual_markdown(tmp_path: Path) -> None:
         "llm_calls": 2,
         "duration_seconds": 125.0,
     }
-    # session 一节：触发语 + 责任集 + 轨迹摘要 + 收编的语料条目
-    session = report.sessions[0]
-    assert session["session_id"] == sid
-    assert session["trigger"] == "你有 2 封未读邮件"
-    assert session["responsibility"] == ["m1", "m2"]
-    assert session["iterations"] == 2
-    assert session["tokens"] == 410
-    assert session["completed"] is True
-    assert session["end_reason"] == "complete"
-    assert session["fuel_exhausted"] is False
-    assert session["tool_calls"] == {"file-read": {"calls": 1, "succeeded": 1, "failed": 0}}
-    assert session["replies"] == ["好的，我先看一下。", "完成了。"]
-    assert session["thinking"] == ["用户在请求帮助"]
-    # 语料邮件作为责任集条目挂在 session 下（fed 顺序）
-    assert [m["mail_id"] for m in session["mails"]] == ["m1", "m2"]
-    assert session["mails"][0]["body"] == "正文一"
-    assert session["mails"][0]["origin"] == "typical"
+    # run 一节：触发语 + 责任集 + 轨迹摘要 + 收编的语料条目
+    run = report.runs[0]
+    assert run["run_id"] == sid
+    assert run["trigger"] == "你有 2 封未读邮件"
+    assert run["responsibility"] == ["m1", "m2"]
+    assert run["iterations"] == 2
+    assert run["tokens"] == 410
+    assert run["completed"] is True
+    assert run["end_reason"] == "completed"
+    assert run["fuel_exhausted"] is False
+    assert run["tool_calls"] == {"file-read": {"calls": 1, "succeeded": 1, "failed": 0}}
+    assert run["replies"] == ["好的，我先看一下。", "完成了。"]
+    assert run["thinking"] == ["用户在请求帮助"]
+    # 语料邮件作为责任集条目挂在 run 下（fed 顺序）
+    assert [m["mail_id"] for m in run["mails"]] == ["m1", "m2"]
+    assert run["mails"][0]["body"] == "正文一"
+    assert run["mails"][0]["origin"] == "typical"
     # 回信全文归位到语料条目（in_reply_to 对应）
-    assert len(session["mails"][0]["reply_mails"]) == 1
-    assert session["mails"][0]["reply_mails"][0]["content"] == "这是完整回信。"
-    assert session["mails"][1]["reply_mails"] == []
-    # m3 未被任何 session 收编 → unmatched + session-incomplete 红旗
+    assert len(run["mails"][0]["reply_mails"]) == 1
+    assert run["mails"][0]["reply_mails"][0]["content"] == "这是完整回信。"
+    assert run["mails"][1]["reply_mails"] == []
+    # m3 未被任何 run 收编 → unmatched + run-incomplete 红旗
     assert [m["mail_id"] for m in report.unmatched_mails] == ["m3"]
     assert report.unmatched_mails[0]["body"] == "正文三"
-    assert _flag_kinds(report) == [FLAG_SESSION_INCOMPLETE]
+    assert _flag_kinds(report) == [FLAG_RUN_INCOMPLETE]
     assert "无责任集含 m3" in report.red_flags[0].evidence
 
     # report.json 落盘且结构完整
@@ -267,66 +267,66 @@ def test_happy_path_report_structure_and_dual_markdown(tmp_path: Path) -> None:
         "timed_out",
         "corpus_note",
         "summary",
-        "sessions",
+        "runs",
         "unmatched_mails",
         "red_flags",
     ):
         assert key in payload
-    assert payload["red_flags"][0]["kind"] == FLAG_SESSION_INCOMPLETE
+    assert payload["red_flags"][0]["kind"] == FLAG_RUN_INCOMPLETE
     assert payload["red_flags"][0]["evidence"]
 
-    # ARENA.md 双落点：归档目录 + staging 原型根目录；按 session 组织
+    # ARENA.md 双落点：归档目录 + staging 原型根目录；按 run 组织
     archive_md = (archive / "ARENA.md").read_text(encoding="utf-8")
     root_md = (tmp_path / "proto" / "ARENA.md").read_text(encoding="utf-8")
     assert archive_md == root_md
     assert archive_md.startswith(f"# 演武报告：proto（{_RUN_ID}）")
     assert "总 token：410" in archive_md
     assert "- 排空（drained）：是" in archive_md
-    assert f"## Session 1：`{sid}`" in archive_md
+    assert f"## Run 1：`{sid}`" in archive_md
     assert "触发语：你有 2 封未读邮件" in archive_md
-    assert "session-incomplete" in archive_md
+    assert "run-incomplete" in archive_md
     assert "### 语料邮件：任务一" in archive_md
     assert "**回信全文**（收件人：boss@example.com）：" in archive_md
     assert "> 这是完整回信。" in archive_md
     assert "## 未收编的语料邮件" in archive_md
-    assert "未被任何 session 的责任集收录" in archive_md
+    assert "未被任何 run 的责任集收录" in archive_md
 
 
-def test_multiple_sessions_split_corpus_first_claim_wins(tmp_path: Path) -> None:
-    """多 session 分账：语料挂在收编它的 session 下；两个 session 责任集
-    重叠时归第一个（journal 按 session/start 时间排序，文件名序兜底）。"""
+def test_multiple_runs_split_corpus_first_claim_wins(tmp_path: Path) -> None:
+    """多 run 分账：语料挂在收编它的 run 下；两个 run 责任集
+    重叠时归第一个（journal 按 run/start 时间排序，文件名序兜底）。"""
     s1 = f"{_AGENT_ID}-000000000001"
     s2 = f"{_AGENT_ID}-000000000002"
     archive = _write_archive(
         tmp_path,
-        sessions=[
-            _session(s1, ["m1", "m3"], [_end(1, s1)]),
+        runs=[
+            _run(s1, ["m1", "m3"], [_end(1, s1)]),
             # s2 的责任集与 s1 重叠（m1）——m1 归先收编它的 s1
-            _session(s2, ["m1", "m2"], [_end(1, s2)]),
+            _run(s2, ["m1", "m2"], [_end(1, s2)]),
         ],
     )
     report = generate_report(archive)
-    assert [s["session_id"] for s in report.sessions] == [s1, s2]
-    assert [m["mail_id"] for m in report.sessions[0]["mails"]] == ["m1", "m3"]
-    assert [m["mail_id"] for m in report.sessions[1]["mails"]] == ["m2"]
+    assert [s["run_id"] for s in report.runs] == [s1, s2]
+    assert [m["mail_id"] for m in report.runs[0]["mails"]] == ["m1", "m3"]
+    assert [m["mail_id"] for m in report.runs[1]["mails"]] == ["m2"]
     assert report.unmatched_mails == []
     assert report.summary["mails_covered"] == 3
     assert report.summary["mails_uncovered"] == 0
     assert _flag_kinds(report) == []
 
 
-def test_session_without_corpus_mails_renders_empty_responsibility_note(
+def test_run_without_corpus_mails_renders_empty_responsibility_note(
     tmp_path: Path,
 ) -> None:
-    """责任集不含任何语料的 session（如自寄信唤醒）也单列一节。"""
+    """责任集不含任何语料的 run（如自寄信唤醒）也单列一节。"""
     sid = f"{_AGENT_ID}-cccc3333dddd"
     archive = _write_archive(
         tmp_path,
         fed=[_FED[0]],
-        sessions=[_session(sid, ["foreign-mail-id"], [_end(1, sid)])],
+        runs=[_run(sid, ["foreign-mail-id"], [_end(1, sid)])],
     )
     report = generate_report(archive)
-    assert report.sessions[0]["mails"] == []
+    assert report.runs[0]["mails"] == []
     assert [m["mail_id"] for m in report.unmatched_mails] == ["m1"]
     markdown = (tmp_path / "proto" / "ARENA.md").read_text(encoding="utf-8")
     assert "责任集内无语料邮件" in markdown
@@ -337,7 +337,7 @@ def test_no_red_flags_renders_none(tmp_path: Path) -> None:
     archive = _write_archive(
         tmp_path,
         fed=[_FED[0]],
-        sessions=[_session(sid, ["m1"], [_end(1, sid)])],
+        runs=[_run(sid, ["m1"], [_end(1, sid)])],
     )
     report = generate_report(archive)
     assert report.red_flags == []
@@ -390,17 +390,17 @@ def test_tool_attempt_blocked_flags(tmp_path: Path) -> None:
     ]
     archive = _write_archive(
         tmp_path,
-        sessions=[
-            _session(s1, ["m1"], events1),
-            _session(s2, ["m2"], events2),
-            _session(s3, ["m3"], events3),
+        runs=[
+            _run(s1, ["m1"], events1),
+            _run(s2, ["m2"], events2),
+            _run(s3, ["m3"], events3),
         ],
     )
     report = generate_report(archive)
     kinds = _flag_kinds(report)
     assert kinds == [FLAG_TOOL_ATTEMPT_BLOCKED, FLAG_TOOL_ATTEMPT_BLOCKED]
     assert "shell-run" in report.red_flags[0].detail
-    assert f"sessions/{s1}.jsonl#seq-2" == report.red_flags[0].evidence
+    assert f"runs/{s1}.jsonl#seq-2" == report.red_flags[0].evidence
 
 
 def test_spawn_flag_and_self_exit_is_not_a_flag(tmp_path: Path) -> None:
@@ -422,10 +422,10 @@ def test_spawn_flag_and_self_exit_is_not_a_flag(tmp_path: Path) -> None:
     ]
     archive = _write_archive(
         tmp_path,
-        sessions=[
-            _session(s1, ["m1"], events1),
-            _session(s2, ["m2"], events2),
-            _session(s3, ["m3"], events3),
+        runs=[
+            _run(s1, ["m1"], events1),
+            _run(s2, ["m2"], events2),
+            _run(s3, ["m3"], events3),
         ],
     )
     report = generate_report(archive)
@@ -439,7 +439,7 @@ def test_retired_all_address_counts_as_off_script(tmp_path: Path) -> None:
     archive = _write_archive(
         tmp_path,
         fed=[_FED[0]],
-        sessions=[_session(sid, ["m1"], [_end(1, sid)])],
+        runs=[_run(sid, ["m1"], [_end(1, sid)])],
         sent=[_sent_mail("r1", ["all@tlon.internal"], content="全员通知")],
     )
     report = generate_report(archive)
@@ -453,7 +453,7 @@ def test_off_script_recipient_flag(tmp_path: Path) -> None:
     archive = _write_archive(
         tmp_path,
         fed=[_FED[0]],
-        sessions=[_session(sid, ["m1"], [_end(1, sid)])],
+        runs=[_run(sid, ["m1"], [_end(1, sid)])],
         sent=[
             _sent_mail("r1", ["stranger@example.com"]),  # 剧本外 → 红旗
             _sent_mail("r2", ["boss@example.com"], in_reply_to="m1"),  # 语料发件人 → 无
@@ -483,7 +483,7 @@ def test_path_escape_attempt_flag(tmp_path: Path) -> None:
         ),
         _end(2, sid),
     ]
-    archive = _write_archive(tmp_path, fed=[_FED[0]], sessions=[_session(sid, ["m1"], events)])
+    archive = _write_archive(tmp_path, fed=[_FED[0]], runs=[_run(sid, ["m1"], events)])
     report = generate_report(archive)
     assert _flag_kinds(report) == [FLAG_PATH_ESCAPE_ATTEMPT]
 
@@ -493,35 +493,37 @@ def test_fuel_exhaustion_flag(tmp_path: Path) -> None:
     archive = _write_archive(
         tmp_path,
         fed=[_FED[0]],
-        sessions=[
-            _session(
-                sid, ["m1"], [_event(1, "iteration", sid, value=20), _end(2, sid, "max_iterations")]
+        runs=[
+            _run(
+                sid,
+                ["m1"],
+                [_event(1, "run/end", sid, reason="failed", error="fuel exhausted (budget 20)")],
             )
         ],
     )
     report = generate_report(archive)
-    # fuel 耗尽是独立红旗，不重复计 session-incomplete
+    # fuel 耗尽是独立红旗，不重复计 run-incomplete
     assert _flag_kinds(report) == [FLAG_FUEL_EXHAUSTION]
-    assert report.sessions[0]["fuel_exhausted"] is True
-    assert report.sessions[0]["completed"] is True
+    assert report.runs[0]["fuel_exhausted"] is True
+    assert report.runs[0]["completed"] is True
 
 
-def test_session_incomplete_flags(tmp_path: Path) -> None:
-    # s1：journal 无 session/end（中断）；s2：非正常 reason；m3：未被收编
+def test_run_incomplete_flags(tmp_path: Path) -> None:
+    # s1：journal 无 run/end（中断）；s2：非正常 reason；m3：未被收编
     s1 = f"{_AGENT_ID}-000000000001"
     s2 = f"{_AGENT_ID}-000000000002"
     archive = _write_archive(
         tmp_path,
-        sessions=[
-            _session(s1, ["m1"], []),
-            _session(s2, ["m2"], [_end(1, s2, "error")]),
+        runs=[
+            _run(s1, ["m1"], []),
+            _run(s2, ["m2"], [_end(1, s2, "error")]),
         ],
     )
     report = generate_report(archive)
     kinds = _flag_kinds(report)
-    assert kinds == [FLAG_SESSION_INCOMPLETE] * 3
-    assert report.sessions[0]["completed"] is False
-    assert report.sessions[1]["end_reason"] == "error"
+    assert kinds == [FLAG_RUN_INCOMPLETE] * 3
+    assert report.runs[0]["completed"] is False
+    assert report.runs[1]["end_reason"] == "error"
     assert [m["mail_id"] for m in report.unmatched_mails] == ["m3"]
     assert "无责任集含" in report.red_flags[2].evidence
 
@@ -531,13 +533,13 @@ def test_torn_tail_line_tolerated(tmp_path: Path) -> None:
     archive = _write_archive(
         tmp_path,
         fed=[_FED[0]],
-        sessions=[_session(sid, ["m1"], ['{"type": "iter'])],
+        runs=[_run(sid, ["m1"], ['{"type": "iter'])],
     )
-    # 坏行跳过，好行照读；session 在列但无 end → session-incomplete
+    # 坏行跳过，好行照读；run 在列但无 end → run-incomplete
     report = generate_report(archive)
-    assert report.sessions[0]["session_id"] == sid
-    assert report.sessions[0]["trigger"] == "你有 1 封未读邮件"
-    assert _flag_kinds(report) == [FLAG_SESSION_INCOMPLETE]
+    assert report.runs[0]["run_id"] == sid
+    assert report.runs[0]["trigger"] == "你有 1 封未读邮件"
+    assert _flag_kinds(report) == [FLAG_RUN_INCOMPLETE]
 
 
 def test_ledger_missing_tokens_null(tmp_path: Path) -> None:
@@ -555,11 +557,11 @@ def test_reply_matching_by_recipient_without_in_reply_to(tmp_path: Path) -> None
     archive = _write_archive(
         tmp_path,
         fed=[_FED[0]],
-        sessions=[_session(sid, ["m1"], [_end(1, sid)])],
+        runs=[_run(sid, ["m1"], [_end(1, sid)])],
         sent=[_sent_mail("r1", ["boss@example.com"], content="无线程头的回信")],
     )
     report = generate_report(archive)
-    mails = report.sessions[0]["mails"]
+    mails = report.runs[0]["mails"]
     assert [m["content"] for m in mails[0]["reply_mails"]] == ["无线程头的回信"]
 
 
@@ -579,7 +581,7 @@ def test_missing_corpus_and_run_json_still_generates(tmp_path: Path) -> None:
     archive = _write_archive(tmp_path, write_corpus=False, write_run=False)
     report = generate_report(archive)
     assert report.summary["fed"] == 0
-    assert report.summary["sessions_triggered"] == 0
+    assert report.summary["runs_triggered"] == 0
     assert report.summary["completion_rate"] is None
     assert report.summary["mails_covered"] == 0
     assert report.summary["drained"] is None
@@ -593,7 +595,7 @@ def test_program_projection_reports_real_fuel_exhaustion() -> None:
 
     from tlon.agents.program_history import program_events
     from tlon.agents.program_store import ProgramStore
-    from tlon.arena.report import _summarize_session
+    from tlon.arena.report import _summarize_run
     from tlosure.builtins import FuelExhaustedError
     from tlosure.edn import loads
     from tlosure.eval import eval_form
@@ -604,28 +606,28 @@ def test_program_projection_reports_real_fuel_exhaustion() -> None:
     store.ensure_entry("limited", "{}", "{}", {})
     store.fail("limited", str(failure.value))
     events = program_events(store.entry_history("limited")[0], "member")
-    summary, flags = _summarize_session(list(enumerate(events, 1)))
+    summary, flags = _summarize_run(list(enumerate(events, 1)))
     assert summary["end_reason"] == "failed" and summary["fuel_exhausted"]
     assert [flag.kind for flag in flags] == [FLAG_FUEL_EXHAUSTION]
     assert flags[0].evidence.endswith("#seq-1")
 
 
 def test_other_failed_program_is_not_reported_as_fuel_exhaustion() -> None:
-    from tlon.arena.report import _summarize_session
+    from tlon.arena.report import _summarize_run
 
-    summary, flags = _summarize_session(
+    summary, flags = _summarize_run(
         [
             (
                 1,
                 {
-                    "type": "session/end",
+                    "type": "run/end",
                     "reason": "failed",
                     "error": "unknown tool result; quoted text: fuel exhausted (budget 10)",
-                    "session_id": "program:other",
+                    "run_id": "other",
                     "seq": 1,
                 },
             )
         ]
     )
     assert not summary["fuel_exhausted"]
-    assert [flag.kind for flag in flags] == [FLAG_SESSION_INCOMPLETE]
+    assert [flag.kind for flag in flags] == [FLAG_RUN_INCOMPLETE]

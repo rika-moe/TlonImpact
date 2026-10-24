@@ -10,8 +10,8 @@ class SpawnRejectedError(ValueError):
     """Spawn refused by a budget or precondition check.
 
     ``reason`` is a machine-readable token: "max_activations" /
-    "max_spawn_depth" / "session_quota" / "config_reload_failed" /
-    "untrusted_prototype".
+    "max_spawn_depth" / "run_quota" / "config_reload_failed" /
+    "untrusted_prototype" / "invalid_run".
     """
 
     def __init__(self, reason: str, message: str) -> None:
@@ -23,7 +23,7 @@ class StopRejectedError(ValueError):
     """Stop refused by a precondition check.
 
     ``reason`` is a machine-readable token: "unknown_agent" /
-    "active_sessions".
+    "active_work".
     """
 
     def __init__(self, reason: str, message: str) -> None:
@@ -45,7 +45,7 @@ class AgentLifecycle(Protocol):
         prototype: str,
         name: str,
         spawner_id: str,
-        session_id: str | None,
+        run_id: str,
         params: dict[str, Any] | None = None,
     ) -> AgentConfig: ...
 

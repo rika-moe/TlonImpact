@@ -11,13 +11,13 @@ Record shapes (one JSON object per line)::
 
     {"ts", "event": "llm_call", "model", "prompt_tokens",
      "completion_tokens", "duration_ms", "cpu_ms", "purpose",
-     "session_id"}
+     "run_id"}
     {"ts", "event": "persona_update", "agent_id", "file",
      "sha256", "bytes"}
 
 ``duration_ms`` is the wall time of the whole chat call (retries
 included); ``cpu_ms`` is the ``time.process_time()`` delta, best-effort.
-``purpose`` / ``session_id`` are attribution labels from the call site
+``purpose`` / ``run_id`` are attribution labels from the call site
 (``None`` when unknown). The ``persona_update`` record carries the owning
 ``agent_id``, the logical persona ``file`` (``identity`` / ``soul``), and
 the ``sha256`` / byte size of the new content — the content hash makes a
@@ -32,7 +32,7 @@ metabolic folds consider only ``event == "llm_call"`` records, so audit
 records never pollute the consumption accounting.
 
 Writes are serialized by one asyncio lock per ledger file, shared
-process-wide (bounded LRU — same pattern as the session journal and the
+process-wide (bounded LRU — same pattern as the run journal and the
 mailbox). The reader tolerates a torn tail line: each line is parsed
 independently and a bad line is skipped with a warning.
 """

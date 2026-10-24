@@ -109,7 +109,7 @@ def _existing_society(paths: TlonPaths) -> bool:
         if any(
             path.exists()
             for path in (
-                paths.agent_sessions_database_file(entry.name),
+                paths.agent_program_database_file(entry.name),
                 paths.agent_tasks_file(entry.name),
                 paths.agent_ledger_file(entry.name),
                 paths.agent_memory_dir(entry.name),

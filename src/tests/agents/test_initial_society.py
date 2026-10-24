@@ -67,13 +67,13 @@ def test_restart_preserves_edits_and_deleted_members(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "evidence", ["invalid-config", "sessions", "mail", "identity", "old-memory", "old-persona"]
+    "evidence", ["invalid-config", "program", "mail", "identity", "old-memory", "old-persona"]
 )
 def test_existing_society_is_skipped_permanently(tmp_path: Path, evidence: str) -> None:
     paths = TlonPaths(tmp_path)
     evidence_path = {
         "invalid-config": paths.agent_config_file("old-member"),
-        "sessions": paths.agent_sessions_database_file("m-retired"),
+        "program": paths.agent_program_database_file("m-retired"),
         "mail": paths.mail_database_file(),
         "identity": paths.webui_identity_file(),
         "old-memory": paths.agent_memory_dir("old-member") / "claims.jsonl",

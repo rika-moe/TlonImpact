@@ -350,7 +350,7 @@ class AdminAgentHandlers(RestHandlerBase):
 
         Returns:
             200 removed; 409 unknown agent or rejection (e.g. live
-            sessions); 503 admin context unavailable.
+            work); 503 admin context unavailable.
         """
         guard = self._require_admin_context()
         if guard is not None:

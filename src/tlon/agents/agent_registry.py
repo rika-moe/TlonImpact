@@ -9,11 +9,11 @@ policy/mechanism split):
   ``_waking`` dedup, run-state re-validation)
 - Idle *fact* detection: the monitor (``agents/reaper.py`` ``IdleReaper``)
   publishes AGENT_IDLE for lazy agents (no ``:handlers {:boot ...}`` handler) idle past
-  their timeout with no live sessions — deciding what to do with that
+  their timeout with no live work — deciding what to do with that
   fact is not the registry's job
 - Spawn/stop of members (stage 6b, unified member model ADR 0006):
   prototype instantiation under a spawn budget (global activation cap,
-  spawn depth, per-session quota — ``agents/spawn.py`` ``SpawnManager``);
+  spawn depth, per-run quota — ``agents/spawn.py`` ``SpawnManager``);
   spawned members connect to the registry directly (= fork) and are
   retained on idle unload; explicit permanent exit retires them
 - Social public-health facts: the monitor
@@ -130,7 +130,7 @@ class AgentRegistry(Component):
     _START_TIMEOUT_SECONDS = 60
 
     # Pending-stop watcher poll interval (seconds): a stop registered with
-    # when_idle=true fires as soon as the member's sessions drain — it
+    # when_idle=true fires as soon as the member's work drains — it
     # must not wait for the idle reaper's timeout.
     _PENDING_STOP_POLL_SECONDS = 1.0
 
@@ -141,7 +141,7 @@ class AgentRegistry(Component):
         tlon_paths: "TlonPaths",
         max_activations: int = 8,
         max_spawn_depth: int = 3,
-        session_spawn_quota: int = 2,
+        run_spawn_quota: int = 2,
         metrics_service: MetricsService | None = None,
         trace_store: TraceStore | None = None,
         post_office: PostOffice | None = None,
@@ -158,8 +158,8 @@ class AgentRegistry(Component):
                 (boot-set members included); spawning beyond it is rejected
             max_spawn_depth: spawn budget — a spawned member's depth is
                 spawner.depth + 1; exceeding this rejects the spawn
-            session_spawn_quota: spawn budget — max spawns per
-                (spawner, session) pair
+            run_spawn_quota: spawn budget — max spawns per
+                (spawner, run) pair
             metrics_service: Metrics pillar injected into each member's
                 observability tools (read-only snapshot); None
                 skips the metrics-read tool
@@ -185,7 +185,7 @@ class AgentRegistry(Component):
         self._trace_store = trace_store
 
         # Spawn budget + idle reaper (stage 6b / scale-to-zero). The
-        # per-session quota ledger is persisted (sessions survive a
+        # per-run quota ledger is persisted (program runs survive a
         # restart via journal replay, so the anti-runaway cap must too).
         # The quota is tilted per spawn by the target bloodline's fitness
         # (ADR 0014), gated by its solvency (ADR 0014), and capped at 1
@@ -196,7 +196,7 @@ class AgentRegistry(Component):
             self,
             max_activations,
             max_spawn_depth,
-            session_spawn_quota,
+            run_spawn_quota,
             tilt_provider=policy_tilt_provider(self._paths),
             solvency=policy_solvency_provider(self._paths),
             probation=policy_probation_provider(self._paths),
@@ -224,10 +224,10 @@ class AgentRegistry(Component):
         self._registered_ids: list[str] = []
 
         # Running agents (activations): one unified member runtime — all
-        # expose shutdown / get_state / active_session_count / idle_seconds
+        # expose shutdown / get_state / is_busy / idle_seconds
         self._agents: dict[str, MemberRuntime] = {}
 
-        # Docker runtimes are built during session assembly, keyed by
+        # Docker runtimes are built during run assembly, keyed by
         # agent id — but the registry deliberately does NOT hold handles
         # for reclaim: a sleeping member keeps its container (zero-cost
         # wake / lazy reuse on next boot, unified member model — members
@@ -242,7 +242,7 @@ class AgentRegistry(Component):
         # Pending stops (member-stop when_idle=true): agent_id → stopped_by,
         # with one watcher task per entry. In-memory only — a pending stop
         # is a one-shot intent tied to the current activation; across a
-        # restart the target's session state changes anyway and the caller
+        # restart the target's run state changes anyway and the caller
         # can re-issue, so persistence would add nothing ( precedent:
         # transient runtime intents are not journaled).
         self._pending_stops: dict[str, str] = {}
@@ -848,7 +848,7 @@ class AgentRegistry(Component):
         prototype: str,
         name: str,
         spawner_id: str,
-        session_id: str | None,
+        run_id: str,
         params: dict[str, Any] | None = None,
     ) -> AgentConfig:
         """Spawn a new member from a prototype and start it immediately.
@@ -860,21 +860,20 @@ class AgentRegistry(Component):
             SpawnRejectedError: a budget cap was hit (see ``.reason``)
             PrototypeError: prototype missing
         """
-        return await self._spawn.spawn_member(prototype, name, spawner_id, session_id, params)
+        return await self._spawn.spawn_member(prototype, name, spawner_id, run_id, params)
 
     async def stop_member(self, agent_id: str, stopped_by: str, when_idle: bool = False) -> bool:
         """Retire a member after draining; future mail and starts are rejected.
 
         ADR 0030: explicit stop retires the mailbox permanently without
         deleting history. Idle drain unloads a waiting instance.
-        Drain semantics mirror the idle reaper: a member with any live
-        (ACTIVE/WAITING) session is never stopped. Whether a stop request
+        Drain semantics mirror the idle reaper: a member with active work is never stopped. Whether a stop request
         is accepted is policy (decision 7); the registry executes requests
         idempotently and re-checks drain conditions under the lock.
 
         Pending semantics (``when_idle=True``): instead of rejecting a
-        member with live sessions, register a "stop when idle" intent —
-        a watcher fires the stop the moment the sessions drain (it does
+        member with live work, register a "stop when idle" intent —
+        a watcher fires the stop the moment the work drains (it does
         not wait for the idle timeout). Registration is idempotent:
         re-registering just refreshes the audit ``stopped_by``. A member
         that wakes back up during the wait simply keeps the watcher
@@ -884,14 +883,14 @@ class AgentRegistry(Component):
             agent_id: member to stop
             stopped_by: agent id requesting the stop (audit)
             when_idle: register a pending stop instead of rejecting when
-                the member has live sessions
+                the member has live work
 
         Returns:
             True when the member was retired; False when a
             pending stop was registered instead (``when_idle=True`` only).
 
         Raises:
-            StopRejectedError: unknown agent / live sessions without
+            StopRejectedError: unknown agent / live work without
                 ``when_idle``
         """
         config = self._agent_info.get_config(agent_id)
@@ -908,14 +907,14 @@ class AgentRegistry(Component):
                     MailStore(self._paths.mail_database_file()).is_retired, agent_id
                 )
                 agent = self._agents.get(agent_id)
-                if not retired and agent is not None and agent.active_session_count > 0:
+                if not retired and agent is not None and agent.is_busy:
                     if when_idle:
                         self._register_pending_stop(agent_id, stopped_by)
                         return False
                     raise StopRejectedError(
-                        "active_sessions",
-                        f"agent '{agent_id}' has {agent.active_session_count} live session(s); "
-                        "wait for them to finish (drain), or stop with when_idle=true",
+                        "active_work",
+                        f"agent '{agent_id}' has active work; "
+                        "wait for it to finish (drain), or stop with when_idle=true",
                     )
                 if not retired:
                     await asyncio.to_thread(
@@ -970,9 +969,9 @@ class AgentRegistry(Component):
         self._pending_stop_tasks[agent_id] = asyncio.create_task(self._watch_pending_stop(agent_id))
 
     async def _watch_pending_stop(self, agent_id: str) -> None:
-        """Fire a pending stop the moment the member's sessions drain.
+        """Fire a pending stop the moment the member's work drains.
 
-        Polls ``active_session_count`` (the same criterion ``stop_member``
+        Polls ``is_busy`` (the same criterion ``stop_member``
         drains on) and delegates the actual stop to ``stop_member`` so the
         drain re-check under the wake lock stays the single guard. The
         watcher exits when the intent is cancelled (stopped by other
@@ -991,7 +990,7 @@ class AgentRegistry(Component):
                     # Idle unload does not retire the member: finish the exit intent.
                     await self.stop_member(agent_id, stopped_by)
                     return
-                if agent.active_session_count > 0:
+                if agent.is_busy:
                     continue
                 try:
                     stopped_now = await self.stop_member(
@@ -1005,7 +1004,7 @@ class AgentRegistry(Component):
                 if stopped_now:
                     logger.info("pending_stop_fired", agent_id=agent_id)
                     return
-                # A session slipped into the race window: stop_member
+                # A run slipped into the race window: stop_member
                 # re-registered the intent — keep watching.
         finally:
             self._pending_stop_tasks.pop(agent_id, None)
@@ -1028,7 +1027,7 @@ class AgentRegistry(Component):
             True when the member was removed.
 
         Raises:
-            StopRejectedError: unknown agent / live sessions
+            StopRejectedError: unknown agent / live work
         """
         config = self._agent_info.get_config(agent_id)
         if config is None:
@@ -1039,11 +1038,11 @@ class AgentRegistry(Component):
         async with lock:
             agent = self._agents.pop(agent_id, None)
             if agent is not None:
-                if agent.active_session_count > 0:
+                if agent.is_busy:
                     self._agents[agent_id] = agent
                     raise StopRejectedError(
-                        "active_sessions",
-                        f"agent '{agent_id}' has live sessions; stop it first",
+                        "active_work",
+                        f"agent '{agent_id}' has live work; stop it first",
                     )
                 try:
                     await agent.shutdown()
@@ -1182,11 +1181,7 @@ class AgentRegistry(Component):
             await self._require_live_member(member_id)
             intent = self._scheduling_intents.get(member_id)
             agent = self._agents.get(member_id)
-            if (
-                intent is None
-                or intent[0] != "sleep"
-                or (agent is not None and agent.active_session_count > 0)
-            ):
+            if intent is None or intent[0] != "sleep" or (agent is not None and agent.is_busy):
                 raise StopRejectedError("state_conflict", "member is not sleeping")
             await asyncio.to_thread(self._scheduling_store.delete, member_id)
             self._scheduling_intents.pop(member_id, None)
@@ -1218,7 +1213,7 @@ class AgentRegistry(Component):
             await self._require_live_member(member_id)
             old = self._scheduling_intents.get(member_id)
             agent = self._agents.get(member_id)
-            busy = agent is not None and agent.active_session_count > 0
+            busy = agent is not None and agent.is_busy
             if old is not None and (action == "wait" or busy or old[0] != "sleep"):
                 raise StopRejectedError("state_conflict", "another scheduling request is pending")
             phase = "pending" if busy else "committed"
@@ -1243,7 +1238,7 @@ class AgentRegistry(Component):
         return True
 
     async def prepare_scheduling_request(
-        self, member_id: str, request: dict[str, Any], session_id: str
+        self, member_id: str, request: dict[str, Any], run_id: str
     ) -> None:
         """Commit a self intention without overriding administrator drain requests."""
         action = request["action"]
@@ -1266,10 +1261,10 @@ class AgentRegistry(Component):
                 old[0] == "exit" or (action != "exit" and old[2].startswith("admin:"))
             ):
                 return
-            self._scheduling_intents[member_id] = (action, wake_at, session_id)
+            self._scheduling_intents[member_id] = (action, wake_at, run_id)
             try:
                 await asyncio.to_thread(
-                    self._scheduling_store.put, member_id, action, wake_at, session_id
+                    self._scheduling_store.put, member_id, action, wake_at, run_id
                 )
             except Exception:
                 if old is None:
@@ -1350,7 +1345,7 @@ class AgentRegistry(Component):
                 ):
                     return
                 agent = self._agents.get(member_id)
-                if agent is None or agent.active_session_count == 0:
+                if agent is None or not agent.is_busy:
                     if agent is not None:
                         await agent.shutdown()
                         self._agents.pop(member_id, None)
@@ -1371,7 +1366,7 @@ class AgentRegistry(Component):
                             self._scheduling_intents[member_id] = committed
                         self._schedule_deadline(member_id, expected[1])
                     break
-            # A completing session may need this same lock to commit self intent.
+            # A completing run may need this same lock to commit self intent.
             await asyncio.sleep(0.05)
         await self.publish_scheduling_state(member_id)
         if expected[0] == "wait":
@@ -1439,7 +1434,7 @@ class AgentRegistry(Component):
         if retired:
             state = "dead"
             self._dead.add(agent_id)
-        elif agent is not None and agent.active_session_count > 0:
+        elif agent is not None and agent.is_busy:
             state = "active"
         elif (
             agent_id in self._scheduling_intents

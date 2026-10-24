@@ -44,7 +44,7 @@ class StopRequest:
     """Adam's decision that an agent should be stopped.
 
     Payload of AGENT_STOP_REQUEST. The registry re-validates under the
-    per-agent wake lock (the agent may have gained a session or fresh
+    per-agent wake lock (the agent may have started work or fresh
     activity since the idle fact was reported) before executing.
 
     Attributes:

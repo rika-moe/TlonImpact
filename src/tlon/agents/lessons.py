@@ -33,7 +33,7 @@ import aiofiles
 
 from tlon.agents.assembly import _build_llm_config
 from tlon.agents.program_store import ProgramStore
-from tlon.agents.session_journal import SessionJournal
+from tlon.agents.run_journal import RunJournal
 from tlon.base.component import Component
 from tlon.base.config import yaml_load_file
 from tlon.base.device import Device
@@ -138,7 +138,7 @@ class LessonsDistiller(Component, Device):
             data_dir=self._paths.agent_dir(agent_id),
             tlon_paths=self._paths,
         )
-        journal = SessionJournal(agent_id, self._paths)
+        journal = RunJournal(agent_id, self._paths)
         digest = await memory.get_memory_digest(journal)
         if digest["claim_count"] == 0 and not digest["recent_interactions"]:
             logger.info("lessons_distill_skipped", agent_id=agent_id, reason="empty_digest")

@@ -20,7 +20,7 @@ from tlon.base.execution import (
 )
 from tlon.memory.distiller import Distiller
 from tlon.memory.manager import MemoryManager
-from tlon.memory.models import MemoryConfig, SessionProjection
+from tlon.memory.models import MemoryConfig, RunProjection
 from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
 from tlon.operations.memory import make_memory_operations
 from tlon.operations.schema import RecoveryMismatchError
@@ -79,8 +79,8 @@ async def test_maintenance_waits_for_operation_writer_but_read_can_pass(
             return await engine._apply_operation(
                 {"action": "record_claim", "description": "reflected fact"}
             )
-        return await manager._distill_sessions(
-            [SessionProjection("history", "completed work", llm_responses=["useful result"])]
+        return await manager._distill_runs(
+            [RunProjection("history", "completed work", llm_responses=["useful result"])]
         )
 
     waiting = asyncio.create_task(maintenance())
@@ -151,9 +151,7 @@ async def test_distillation_control_failure_never_falls_back_to_memory_commit(
     distiller.llm_client.chat = AsyncMock(side_effect=error)
     manager.distiller = distiller
     with pytest.raises(type(error)):
-        await manager._distill_sessions(
-            [SessionProjection("history", "trigger", llm_responses=["result"])]
-        )
+        await manager._distill_runs([RunProjection("history", "trigger", llm_responses=["result"])])
     assert await manager.claims.get_all_claims() == []
     assert not manager._consumed and manager._pending_batch is not None
 

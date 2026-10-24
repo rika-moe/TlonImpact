@@ -147,7 +147,7 @@ class MembersFacade:
         """Administratively remove a member (stop, unregister, delete home).
 
         Raises:
-            StopRejectedError: removal rejected (e.g. live sessions)
+            StopRejectedError: removal rejected (e.g. active work)
         """
         return await self._registry.remove_member(agent_id, removed_by=removed_by)
 

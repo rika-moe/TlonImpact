@@ -1,111 +1,68 @@
-"""Construct archived legacy evidence in tests; production journals are read-only."""
+"""Construct real ProgramStore execution facts for read-only history tests."""
 
-import asyncio
 import json
 import sqlite3
 from contextlib import closing
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
-from tlon.agents.session_journal import SessionJournal
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS sessions (
-    session_id TEXT PRIMARY KEY,
-    started_at TEXT,
-    ended_at TEXT,
-    end_reason TEXT,
-    last_seq INTEGER NOT NULL DEFAULT -1
-);
-CREATE TABLE IF NOT EXISTS events (
-    session_id TEXT NOT NULL REFERENCES sessions(session_id),
-    seq INTEGER NOT NULL,
-    ts TEXT NOT NULL,
-    type TEXT NOT NULL,
-    event_json TEXT NOT NULL,
-    PRIMARY KEY(session_id, seq)
-);
-CREATE INDEX IF NOT EXISTS sessions_completed ON sessions(ended_at, session_id);
-CREATE INDEX IF NOT EXISTS sessions_started ON sessions(started_at, session_id);
-"""
+from tlon.agents.program_store import ProgramStore
+from tlon.agents.run_journal import RunJournal
+from tlon.operations.invocation import Invocation, InvocationOutcome
+from tlon.operations.schema import edn_value
+from tlosure.edn import dumps
 
 
-class LegacyHistoryFixture:
-    def __init__(self, database: Path) -> None:
-        self.database = database
-
-    def initialize(self) -> None:
-        self.database.parent.mkdir(parents=True, exist_ok=True)
-        with closing(sqlite3.connect(self.database)) as connection:
-            connection.execute("PRAGMA user_version=1")
-            connection.executescript(_SCHEMA)
-            connection.commit()
-
-    def append(self, session_id: str, event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
-        """Commit one event and its lifecycle metadata atomically."""
-        self.initialize()
-        with closing(sqlite3.connect(self.database)) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            connection.execute(
-                "INSERT OR IGNORE INTO sessions(session_id) VALUES (?)", (session_id,)
-            )
-            row = connection.execute(
-                "SELECT last_seq FROM sessions WHERE session_id=?", (session_id,)
-            ).fetchone()
-            if row is None:
-                raise RuntimeError("session row missing after insert")
-            seq = int(row[0]) + 1
-            ts = datetime.now(UTC).isoformat()
-            event = {
-                "seq": seq,
-                "ts": ts,
-                "type": event_type,
-                "session_id": session_id,
-                **payload,
+async def append_history(journal: RunJournal, run_id: str, event_type: str, **payload: Any) -> None:
+    """Record run inputs and model/tool receipts through the execution authority."""
+    if journal._program_store is None:
+        journal._program_store = ProgramStore(journal._program_database)
+    store = journal._program_store
+    if event_type == "run/start":
+        responsibility = payload.get("responsibility") or []
+        source_mail_id = (
+            payload.get("source_mail_id")
+            or payload.get("mail_id")
+            or (responsibility[0] if responsibility else None)
+        )
+        snapshot = {
+            "payload": {
+                "mail": {
+                    "content": payload.get("trigger_content", ""),
+                    "id": source_mail_id,
+                }
             }
-            connection.execute(
-                "INSERT INTO events(session_id,seq,ts,type,event_json) VALUES (?,?,?,?,?)",
-                (
-                    session_id,
-                    seq,
-                    ts,
-                    event_type,
-                    json.dumps(event, ensure_ascii=False),
-                ),
-            )
-            if event_type == "session/start":
-                connection.execute(
-                    "UPDATE sessions SET last_seq=?,started_at=COALESCE(started_at,?) "
-                    "WHERE session_id=?",
-                    (seq, ts, session_id),
-                )
-            elif event_type in ("session/end", "session/recovery-blocked"):
-                connection.execute(
-                    "UPDATE sessions SET last_seq=?,ended_at=?,end_reason=? WHERE session_id=?",
-                    (
-                        seq,
-                        ts,
-                        "recovery_blocked"
-                        if event_type == "session/recovery-blocked"
-                        else str(payload.get("reason", "unknown")),
-                        session_id,
-                    ),
-                )
-            else:
-                connection.execute(
-                    "UPDATE sessions SET last_seq=? WHERE session_id=?", (seq, session_id)
-                )
-            connection.commit()
-        return event
-
-
-async def append_history(
-    journal: SessionJournal, session_id: str, event_type: str, **payload: Any
-) -> None:
-    await asyncio.to_thread(
-        LegacyHistoryFixture(journal._store.database).append, session_id, event_type, payload
+        }
+        store.ensure_entry(run_id, "{}", dumps(edn_value(snapshot)), {})
+        return
+    if event_type == "run/end":
+        if payload.get("reason") == "failed":
+            store.fail(run_id, payload.get("error", "failed"))
+        else:
+            store.complete_entry(run_id, payload.get("result"))
+        return
+    if event_type == "tool/dispatch":
+        return  # Dispatch is derived from each committed tool receipt.
+    if event_type == "llm/response":
+        name = "_model-request"
+        arguments = {"request": {"messages": []}}
+        outcome = InvocationOutcome(True, value=payload["response"])
+    elif event_type == "tool/result":
+        call = payload["tool_call"]
+        name = call.get("function", {}).get("name", call.get("function_name", "tool"))
+        arguments = {}
+        result = payload["result"]
+        outcome = InvocationOutcome(
+            bool(result.get("success")), value=result.get("data"), error_message=result.get("error")
+        )
+    else:
+        raise ValueError(f"unsupported history fixture fact: {event_type}")
+    call_id = uuid4().hex
+    invocation = Invocation(
+        call_id, run_id, (call_id,), name, json.dumps(arguments), "test", store.build_id
     )
+    store.commit_invocation(invocation, outcome)
 
 
 def insert_legacy_run(

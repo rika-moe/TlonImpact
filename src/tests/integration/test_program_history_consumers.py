@@ -9,7 +9,7 @@ from typing import Any
 import aiohttp
 import pytest
 
-from tlon.agents.session_journal import SessionJournal
+from tlon.agents.run_journal import RunJournal
 from tlon.base.paths import TlonPaths
 
 from .conftest import WEBUI_HEADERS, _read_inbox, _send_mail
@@ -44,8 +44,8 @@ async def test_module_mail_distills_once_and_reads_provenance(
     (ns work (:export handle))
     (defn handle [event]
       (let [task (get (get event :mail) :content)
-            answer (if (contains? task "program:")
-                     (get (session-read {:session_id task}) :digest)
+            answer (if (contains? task ":handler:")
+                     (get (run-read {:run_id task}) :digest)
                      (str "done:" task))]
         (mail-send {:to [(get event :sender)] :content answer})
         {:result answer}))
@@ -77,7 +77,7 @@ async def test_module_mail_distills_once_and_reads_provenance(
         sources = []
         for index in range(3):
             receipt = await _send_mail(http, url, f"核验-{index}", to=[member])
-            sources.append(f"program:{receipt['mail_id']}:handler:mail-delivered")
+            sources.append(f"{receipt['mail_id']}:handler:mail-delivered")
         progress = home / member / "memory/distillation.json"
         async with asyncio.timeout(15):
             while True:
@@ -95,7 +95,7 @@ async def test_module_mail_distills_once_and_reads_provenance(
                     break
                 await asyncio.sleep(0.02)
         assert any("程序返回" in item["content"] for item in replies)
-        journal = SessionJournal(member, TlonPaths(home=home))
+        journal = RunJournal(member, TlonPaths(home=home))
         async with asyncio.timeout(10):
             while await journal.list_pending():
                 await asyncio.sleep(0.01)

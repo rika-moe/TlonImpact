@@ -1,5 +1,6 @@
 # ADR 0007：Session 事件溯源——append-only 日志是 session 的唯一真相
 
+> 修订：[ADR 0049](0049-retire-agent-session.md) 已退役 agent session 及旧历史查询；以下 session 存储/读取设计仅为历史记录，当前以 ProgramStore run 历史为准。
 > P4b 当前说明：程序 output 根保持获准输出预留不退款；session total 根统一覆盖 stage、压缩及工具内模型调用，按可靠 usage 结算，未知保留预留。ProgramStore 保存模型回执与额度事实，journal 只投影；预算与 UTC deadline 冻结，进程取消不是永久撤销。本文保留历史，现行契约见 [执行作用域](../design/execution-scope.md)。
 
 > P4a 当前说明：session journal 保留会话历史；DSL 与模型 Tool 的叶子操作提交统一由 ProgramStore roots/invocations 判定，state 与同次回执原子提交。恢复核对构建和契约指纹，未知非幂等写不自动重做。本文保留历史决策，现行边界见 [调用恢复](../design/invocation-recovery.md)。
