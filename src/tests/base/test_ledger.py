@@ -45,7 +45,9 @@ def _client(
     agent_id: str | None = "dev-001",
     model_name: str = "openai/gpt-test",
 ) -> LLMClient:
-    config = LLMConfig(model_name=model_name, max_retries=1)
+    config = LLMConfig(
+        model_name=model_name, max_retries=1, max_output_tokens=8192, context_window=128000
+    )
     return LLMClient(config, agent_id=agent_id, tlon_paths=tlon_paths)
 
 

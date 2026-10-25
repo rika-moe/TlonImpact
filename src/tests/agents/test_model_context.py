@@ -35,7 +35,13 @@ def test_frozen_context_is_first_wins_strict_and_isolated(store: ProgramStore) -
 
 
 async def test_changed_configuration_uses_frozen_client_for_new_calls(store: ProgramStore) -> None:
-    original = LLMConfig(model_name="openai/old", max_tokens=4, max_retries=1, base_delay=0.1)
+    original = LLMConfig(
+        model_name="openai/old",
+        max_output_tokens=4,
+        context_window=128000,
+        max_retries=1,
+        base_delay=0.1,
+    )
     client = LLMClient(original)
     observed: list[tuple[str | None, int, int]] = []
 
@@ -48,12 +54,14 @@ async def test_changed_configuration_uses_frozen_client_for_new_calls(store: Pro
     with patch.object(LLMClient, "_chat_accounted", capture):
         with bind_execution(ExecutionScope(store, "root", 12, "output")):
             await client.chat("system", [{"role": "user", "content": "one"}])
-        client.config = LLMConfig(model_name="openai/new", max_tokens=10, max_retries=9)
+        client.config = LLMConfig(
+            model_name="openai/new", max_output_tokens=10, context_window=128000, max_retries=9
+        )
         with bind_execution(ExecutionScope(store, "root", 12, "output")):
             await client.chat("system", [{"role": "user", "content": "one"}])
             await client.chat("system", [{"role": "user", "content": "two"}])
     assert observed == [("openai/old", 1, 4), ("openai/old", 1, 4)]
-    assert store.budget_usage("root")["used"] == 8
+    assert store.budget_usage("root")["used"] == 2
     assert client.config.model_name == "openai/new"
 
 

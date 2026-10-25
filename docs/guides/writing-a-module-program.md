@@ -74,16 +74,16 @@ ProgramStore 的 entry_programs 保存结果与调度意图，运行完成与意
 ```clojure
 (ns work.writing (:require [tlon.messages :as m]) (:export generate))
 (defn generate [task]
-  (model-call {:messages [(m/user task)] :tools [] :max_tokens 128}))
+  (model-call {:messages [(m/user task)] :tools []}))
 ```
 
 `user` 和 `assistant` 构造包含 role/content 的消息 map，`append` 返回追加一个消息的新列表；这些函数没有宿主效果。`tlon.*` 是保留命名空间，作者不能覆盖。宿主标准源码只在链接与运行冻结时加入，不写进作者的 modules、管理 API 返回值或审批作者源码。
 
-`model-call` 必填 `messages`，可选正整数 `max_tokens`（省略时使用冻结成员配置的单次输出上限 `llm.max_tokens`）；`tools` 是工具名称列表，省略等同 `[]`。消息 role 可用 user、assistant、tool，作者不能提供 system 消息或任意工具 schema。工具目录由成员装配提供；模型只生成工具建议，工具执行由显式 tool-execute 编排端口负责。
+`model-call` 必填 `messages`，可选正整数 `max_tokens`（省略时按冻结模型输出能力、剩余上下文和 run 剩余预算取小值）；`tools` 是工具名称列表，省略等同 `[]`。消息 role 可用 user、assistant、tool，作者不能提供 system 消息或任意工具 schema。工具目录由成员装配提供；模型只生成工具建议，工具执行由显式 tool-execute 编排端口负责。
 
 返回值含 `content`（工具专用响应可为 nil）、`tool_calls`、`finish_reason`、`usage`、`reasoning_content`。每条 tool_call 是 `{:id "..." :name "..." :arguments {...}}`；usage 保留 provider 的 snake_case 键。不要将 nil content 当成模型调用失败。完整示例见 [生成—核验—修订回信程序](../../src/tlon/resources/examples/reviewed-reply/README.md)，三个普通函数共享同一根预算（成员 `program_token_budget`，默认 100000，与单次输出上限分开）。
 
-v2 受理时原子冻结宿主系统提示词、模型配置及工具定义；恢复沿用冻结配置。新模型请求校验当前工具目录，已提交结果允许按原工具契约重放。如果模型响应与额度已提交，但外层 Operation 回执尚未提交，恢复从同一 ProgramStore 模型记录补回执，不调用 provider、不重复扣额。已派发但结果未提交仍是 unknown，不能自动重发。output 模式按获准输出上限预留且不退款，total 模式沿用实际 usage 结算和缺失用量时的保守预留。
+v2 受理时原子冻结宿主系统提示词、模型配置及工具定义；恢复沿用冻结配置。新模型请求校验当前工具目录，已提交结果允许按原工具契约重放。如果模型响应与额度已提交，但外层 Operation 回执尚未提交，恢复从同一 ProgramStore 模型记录补回执，不调用 provider、不重复扣额。已派发但结果未提交仍是 unknown，不能自动重发。output 模式按获准输出额度预留，成功后按可靠 completion_tokens 结算；total 模式按可靠总 usage 结算。缺失可靠用量时保留预留。
 
 输入历史中的 assistant `tool_calls` 使用 provider 消息结构：`{:id "..." :type "function" :function {:name "..." :arguments "JSON字符串"}}`，tool 消息用 `tool_call_id` 关联。它与输出的规范化 `{id,name,arguments}` 不同，P2 不自动把建议执行成消息历史；P3 的 tlon.messages 和 tlon.conversation 完成协议拼接。
 
@@ -109,7 +109,7 @@ v2 受理时原子冻结宿主系统提示词、模型配置及工具定义；�
 
 只有输入/领域拒绝可转换为模型可修正的工具失败。取消、截止、预算、恢复失配、未知效果和基础设施异常传播给运行器。工具结果按原 ID 关联完整 assistant 响应，不能把部分成功拼成缺少 tool 结果的新模型请求。
 
-完整示例见 [工具辅助核验回信](../../src/tlon/resources/examples/tool-reviewed-reply/README.md)：子对话读取时钟后返回，外层继续核验、修订和发信。内置原型均为 v2 模块程序；旧 session 仅保留只读历史。
+完整示例见 [工具辅助核验回信](../../src/tlon/resources/examples/tool-reviewed-reply/README.md)：子对话读取时钟后返回，外层继续核验、修订和发信。内置原型均为 v2 模块程序；旧 agent session 已删除，历史归属 program run。
 
 ## Agent 起草、审阅和派生（P4a）
 

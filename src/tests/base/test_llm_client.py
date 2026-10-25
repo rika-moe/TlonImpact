@@ -26,7 +26,10 @@ def _fake_litellm_response() -> SimpleNamespace:
 
 
 def _client(model_name: str, **overrides: Any) -> LLMClient:
-    config = LLMConfig(model_name=model_name, **{"max_retries": 1, **overrides})
+    config = LLMConfig(
+        model_name=model_name,
+        **{"max_retries": 1, "max_output_tokens": 8192, "context_window": 128000, **overrides},
+    )
     return LLMClient(config)
 
 

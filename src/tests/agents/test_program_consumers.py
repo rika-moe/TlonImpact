@@ -39,9 +39,7 @@ async def test_memory_read_recap_and_retirement_include_undistilled_program(tmp_
     events = await journal.read_events(source)
     recap = _render_thread_recap(events)
     assert source in recap and "核验部署" in recap and "已核验" in recap
-    operation = next(
-        op for op in make_memory_operations(memory, journal) if op.name == "run-read"
-    )
+    operation = next(op for op in make_memory_operations(memory, journal) if op.name == "run-read")
     result = await operation.handler(CallContext("a", "root", "read"), {"run_id": source})
     assert result["run_id"] == source
     assert "已核验" in result["digest"]
@@ -56,7 +54,9 @@ async def test_retirement_lessons_replay_model_for_same_source(tmp_path: Path) -
     paths = TlonPaths(home=tmp_path)
     _completed(paths)
     client = LLMClient(
-        LLMConfig(model_name="openai/test", max_tokens=128), agent_id="a", tlon_paths=paths
+        LLMConfig(model_name="openai/test", max_output_tokens=128, context_window=10000),
+        agent_id="a",
+        tlon_paths=paths,
     )
     provider = AsyncMock(return_value=LLMResponse(content="- 发布前核验部署\n"))
     client._chat_with_retries = provider

@@ -1,12 +1,11 @@
 """Read the frozen model window and estimate the complete request without sampling."""
 
 import asyncio
-import json
 from typing import Any
 
-import litellm
-
+from tlon.base.config import LLMConfig
 from tlon.base.execution import current_execution
+from tlon.base.model_limits import estimate_model_input, model_output_limit
 from tlon.operations.core import CallContext, Operation
 from tlon.operations.model_service import ModelService
 from tlon.operations.schema import OperationError, RecoveryMismatchError
@@ -28,24 +27,25 @@ def context_operation(service: ModelService | None, input_schema: dict[str, Any]
         host = await service.host_context()
         selected = service.select_tools(host["tools"], arguments.get("tools", []))
         tokens = await asyncio.to_thread(
-            litellm.token_counter,
-            model=config["model_name"],
-            messages=[{"role": "system", "content": host["system_prompt"]}, *arguments["messages"]],
+            estimate_model_input,
+            config["model_name"],
+            [{"role": "system", "content": host["system_prompt"]}, *arguments["messages"]],
+            selected,
         )
-        # LiteLLM's tool-schema walker does not accept JSON Schema boolean nodes.
-        # Count serialized tools just as LLMClient's total-budget estimator does.
-        if selected:
-            tokens += await asyncio.to_thread(
-                litellm.token_counter,
-                model=config["model_name"],
-                text=json.dumps(selected, ensure_ascii=False, separators=(",", ":")),
-            )
-        output = min(config["max_tokens"], arguments.get("max_tokens", config["max_tokens"]))
+        await scope.initialize()
+        budget = await asyncio.to_thread(scope.store.budget_usage, scope.root_id)
+        output = model_output_limit(
+            LLMConfig.model_validate(config),
+            tokens,
+            arguments.get("max_tokens"),
+            remaining=budget["remaining"],
+            measure=scope.measure,
+        )
         return {
             "input_tokens": tokens,
             "context_window": window,
             "output_tokens": output,
-            "fits": tokens + output <= window,
+            "fits": output > 0,
         }
 
     return Operation(
@@ -57,7 +57,7 @@ def context_operation(service: ModelService | None, input_schema: dict[str, Any]
             "properties": {
                 "input_tokens": {"type": "integer", "minimum": 0},
                 "context_window": {"type": "integer", "minimum": 1},
-                "output_tokens": {"type": "integer", "minimum": 1},
+                "output_tokens": {"type": "integer", "minimum": 0},
                 "fits": {"type": "boolean"},
             },
             "required": ["input_tokens", "context_window", "output_tokens", "fits"],

@@ -29,7 +29,7 @@
 生成表只搬字段形状，语义补充（手写）：
 
 - `id` / `name` 必填；`id` 只允许字母/数字/`-`/`_`（校验器强制），agent 目录名即此 id，`name` 是显示名（他人 `@` 此名可与之对话）。
-- `program_token_budget`：单次工作程序入口或维护执行的共享输出预算，正整数，默认 100000；规划、行动、自评与压缩共享。沿用 output 账本按请求预留且成功不退预留的规则，恢复使用原冻结预算。
+- `program_token_budget`：单次工作程序入口或维护执行的共享输出预算，正整数，默认 100000；规划、行动、自评与压缩共享。请求前原子预留，成功后按可靠 completion_tokens 结算并释放差额；缺少可靠用量则保留预留。恢复使用原冻结预算。
 - `prototype` / `spawned_by` / `spawn_depth`：血缘审计（统一成员模型，ADR 0006）——spawn 出本成员的 agent id 与 spawn 链深度，非 spawn 为 `null` / `0`。
 - `idle_timeout_seconds`：lazy 成员空闲多少秒后睡（scale-to-zero；成员永不删除，档案归档）。
 - `mail_rescan_interval_seconds`：慢速重扫未读邮件的间隔（ADR 0028 决策 4）——agent 搁置未处理的未读与被崩溃吞掉的投递由这个重扫兜底唤醒。
@@ -42,7 +42,7 @@
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `model_name` | `str \| None` | None |  |
-| `max_tokens` | `int` | 4096 |  |
+| `max_output_tokens` | `int \| None` | None | 运行时字段，不进 YAML |
 | `top_p` | `float` | 0.9 |  |
 | `context_window` | `int \| None` | None |  |
 | `api_base` | `str \| None` | None |  |
@@ -54,7 +54,7 @@
 
 首装 30 位预设成员使用 `deepseek/deepseek-flash`，明确写入各自配置；后续可在 WebUI 调整，不是进程级兜底。
 
-`model_name` 是**必填**的成员级声明（ADR 0016——没有进程级兜底）：`provider/model` 形式（如 `deepseek/deepseek-chat`），创建成员时经 WebUI / admin API 的 `model` 字段落盘，未声明的成员装配期硬报错；API key 不在此配置——litellm 原生读取 `{PROVIDER}_API_KEY` 环境变量（见第 4 节）。采样参数不配置——请求从不携带 temperature，供应商默认生效。`max_tokens` / `top_p` 每 agent 可调。`llm.max_tokens` 仅限制每次模型输出（默认 4096，包含推理 tokens），不再表示整个程序的预算；`model-call` / `model-context` 省略 `max_tokens` 时采用此值，显式值只能进一步收紧。`api_base`（默认 `null`）是成员级的端点覆盖：私有部署 / 代理 / OpenAI 兼容端点配 `model_name: openai/<model>` + `api_base: <url>`，`null` 时走 litellm 注册表路由。`context_window` 为 `null`（默认）时启动组装自动从 litellm 模型注册表解析（ADR 0012 阶段 2），显式值作为注册表缺失/滞后时的覆盖。`embedding_model_name`（默认 `null`，ADR 0017 阶段 2）是成员级 embedding 模型声明，同为 `provider/model` 形式、同走 `{PROVIDER}_API_KEY` 约定；配置后记忆检索启用 sqlite-vec 向量索引 + JIT 相关性注入，`null`（或 provider 无 embedding 端点）时检索降级为「最近 N 条」——降级是一等行为，不影响记忆与会话。运行时字段（`max_retries`、`base_delay`、`request_timeout`）只有代码默认值（不再有环境变量来源），Pydantic 标注 `exclude=True`，不落盘。
+`model_name` 是**必填**的成员级声明（ADR 0016——没有进程级兜底）：`provider/model` 形式（如 `deepseek/deepseek-chat`），创建成员时经 WebUI / admin API 的 `model` 字段落盘，未声明的成员装配期硬报错；API key 不在此配置——litellm 原生读取 `{PROVIDER}_API_KEY` 环境变量（见第 4 节）。采样参数不配置——请求从不携带 temperature，供应商默认生效。`top_p` 每 agent 可调。单次输出默认按 LiteLLM 元数据中的模型输出能力、剩余上下文和 run 剩余预算取小值（含推理消耗）；不再配置 `llm.max_tokens`，程序显式传入 `max_tokens` 只能进一步收紧。模型输出能力是冻结的运行时字段，不写入成员 YAML；无法解析时明确报错。`api_base`（默认 `null`）是成员级的端点覆盖：私有部署 / 代理 / OpenAI 兼容端点配 `model_name: openai/<model>` + `api_base: <url>`，`null` 时走 litellm 注册表路由。`context_window` 为 `null`（默认）时启动组装自动从 litellm 模型注册表解析（ADR 0012 阶段 2），显式值作为注册表缺失/滞后时的覆盖。`embedding_model_name`（默认 `null`，ADR 0017 阶段 2）是成员级 embedding 模型声明，同为 `provider/model` 形式、同走 `{PROVIDER}_API_KEY` 约定；配置后记忆检索启用 sqlite-vec 向量索引 + JIT 相关性注入，`null`（或 provider 无 embedding 端点）时检索降级为「最近 N 条」——降级是一等行为，不影响记忆与会话。运行时字段（`max_retries`、`base_delay`、`request_timeout`）只有代码默认值（不再有环境变量来源），Pydantic 标注 `exclude=True`，不落盘。
 
 ### `docker`
 
@@ -239,3 +239,5 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 - **增/删 agent**：[base/config.py](../../src/tlon/base/config.py) 的 `yaml_save` / `yaml_delete`（删除即 `rm -rf ~/.tlon/{agent_id}/`）；热加载走 REST `POST /admin/config/agents/{agent_id}/reload`（条件注册，见 `reference/api-reference.md`）。
 - **交互式管理**：ops 的 Agents 视图——创建成员（`c`，需选模型）/ 编辑人格与模型（`e`）/ 删除（`d`）/ 原型审批（`s`）；全新实例首启创建 30 位预设成员（[初始社会](../design/initial-society.md)，ADR 0036）；已有实例不补种。
 - **agent 目录结构假设**：任何新路径需求必须加进 `TlonPaths`，不许在其他模块硬编码目录结构（[base/paths.py](../../src/tlon/base/paths.py) 模块 docstring 的硬性规定）。
+
+模型请求和普通工具分别限时：model-call 使用模型 request_timeout（当前为运行时默认 300 秒），普通工具使用 tool.per_timeout（默认 30 秒），两者均受当前执行域更早的截止时间约束。嵌套模型调用不能扩大父工具期限。派发后未知请求不会自动重发，详见 [ADR 0050](../decisions/0050-model-operation-timeouts.md)。

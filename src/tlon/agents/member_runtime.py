@@ -200,6 +200,7 @@ class MemberRuntime(Member):
                     event_bus=self.event_bus,
                     member_id=member_id,
                     model_name=services.llm_client.config.model_name or "",
+                    request_timeout=services.llm_client.config.request_timeout,
                 )
             )
         if not any(operation.name == "time-now" for operation in operations):

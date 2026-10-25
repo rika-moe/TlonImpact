@@ -24,7 +24,7 @@
 
 ## 创建与生命周期
 
-bootstrap 先播种现有内置行为原型、技能，再初始化成员。全部成员复用“标准工具迭代”原型（L2），模型明确写入各自的 `agent.yaml`：`deepseek/deepseek-flash`，max_tokens=4096、top_p=0.9。其余部署设置沿用 AgentConfig 的默认值。API key 仍由用户在实例 `.env` 配置，不打包密钥；手工创建其他成员仍需明确选择模型。
+bootstrap 先播种现有内置行为原型、技能，再初始化成员。全部成员复用“标准工具迭代”原型（L2），模型明确写入各自的 `agent.yaml`：`deepseek/deepseek-flash`，top_p=0.9；单次输出按模型能力、剩余上下文和 run 剩余预算决定。其余部署设置沿用 AgentConfig 的默认值。API key 仍由用户在实例 `.env` 配置，不打包密钥；手工创建其他成员仍需明确选择模型。
 
 `initial-society.json` 保存计划与完成/跳过状态，`initial-society-lock.sqlite3` 用 SQLite 事务互斥，`.initial-society-staging/` 暂存完整成员。首次创建保存完整地址计划，暂存完整成员后发布，最后记录完成状态。初始化锁避免同一实例并发创建；状态损坏直接报错。中断后继续原计划，已经发布的成员文件不覆盖。完成后重启或升级不再创建、补回或覆盖成员。
 

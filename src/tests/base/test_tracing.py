@@ -170,6 +170,8 @@ def _make_llm_client(
     """Build an LLMClient whose underlying litellm call is mocked out."""
     config = LLMConfig(
         model_name="openai/test-model",
+        max_output_tokens=8192,
+        context_window=128000,
         max_retries=1,
         base_delay=0.0,
     )

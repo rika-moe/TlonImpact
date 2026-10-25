@@ -588,7 +588,9 @@ async def test_model_service_publishes_real_usage_once_across_replay(
     await bus.initialize()
     await metrics_service.initialize()
     client = LLMClient(
-        LLMConfig(model_name="openai/test"), agent_id="a", tlon_paths=TlonPaths(home=tmp_path)
+        LLMConfig(model_name="openai/test", max_output_tokens=8192, context_window=128000),
+        agent_id="a",
+        tlon_paths=TlonPaths(home=tmp_path),
     )
     client._chat_with_retries = AsyncMock(
         return_value=LLMResponse(
@@ -676,7 +678,9 @@ async def test_tool_metrics_count_dispatches_not_receipts_or_program_operations(
         assert await executor.call("read", {}) == 1
         assert await executor.call("read", {}) == 1
         assert (
-            await executor.call("read", {}, CallContext("a", "other", "read-program", origin="program"))
+            await executor.call(
+                "read", {}, CallContext("a", "other", "read-program", origin="program")
+            )
             == 1
         )
         for _ in range(2):

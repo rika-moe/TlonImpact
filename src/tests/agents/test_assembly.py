@@ -32,7 +32,7 @@ _MODEL = "moonshot/kimi-k2.5"
 
 
 def _file(**overrides: object) -> LLMConfig:
-    return LLMConfig(model_name=_MODEL, **overrides)  # type: ignore[arg-type]
+    return LLMConfig(model_name=_MODEL, max_output_tokens=8192, **overrides)  # type: ignore[arg-type]
 
 
 class TestContextWindowResolution:
@@ -87,10 +87,12 @@ class TestModelNameRequired:
 
     def test_llm_section_without_model_raises(self) -> None:
         with pytest.raises(ValueError, match="llm.model_name"):
-            _build_llm_config(LLMConfig(max_tokens=2048), "member-1")
+            _build_llm_config(LLMConfig(), "member-1")
 
     def test_declared_model_passes_through(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        get_model_info = MagicMock(return_value={"max_input_tokens": 64000})
+        get_model_info = MagicMock(
+            return_value={"max_input_tokens": 64000, "max_output_tokens": 8192}
+        )
         monkeypatch.setattr("litellm.get_model_info", get_model_info)
         file_config = LLMConfig(model_name="deepseek/deepseek-chat")
 
@@ -108,15 +110,17 @@ class TestFileValuesTakeEffect:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
-            "litellm.get_model_info", MagicMock(return_value={"max_input_tokens": 64000})
+            "litellm.get_model_info",
+            MagicMock(return_value={"max_input_tokens": 64000, "max_output_tokens": 8192}),
         )
 
         built = _build_llm_config(
-            _file(max_tokens=2048, top_p=0.5, api_base="https://proxy.example/v1"),
+            _file(top_p=0.5, api_base="https://proxy.example/v1"),
             "member-1",
         )
 
-        assert built.max_tokens == 2048
+        assert built.max_output_tokens == 8192
+        assert "max_output_tokens" not in built.model_dump()
         assert built.top_p == 0.5
         assert built.api_base == "https://proxy.example/v1"
 
@@ -160,7 +164,7 @@ class TestExecutionLevelAssembly:
         config = AgentConfig(
             id=f"member-{level.lower()}",
             name=f"member-{level.lower()}",
-            llm=LLMConfig(model_name="test/model"),
+            llm=LLMConfig(model_name="test/model", max_output_tokens=8192, context_window=64000),
             docker=DockerRuntimeConfig(level=level),
         )
         return await assemble_member_services(
@@ -243,7 +247,7 @@ async def test_real_assembly_evolution_writes_use_injected_paths(
     config = AgentConfig(
         id="author",
         name="author",
-        llm=LLMConfig(model_name="test/model", context_window=64000),
+        llm=LLMConfig(model_name="test/model", max_output_tokens=8192, context_window=64000),
         docker=DockerRuntimeConfig(level="L0"),
     )
     monkeypatch.setattr(

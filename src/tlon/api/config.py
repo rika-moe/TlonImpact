@@ -50,7 +50,7 @@ class ConfigFacade:
     ) -> AgentConfig | None:
         """Rewrite a member's agent.yaml with updated LLM knobs.
 
-        model_copy preserves the untouched knobs (max_tokens / top_p / an
+        model_copy preserves the untouched knobs (top_p / an
         explicit context_window override); a fresh LLMConfig would
         silently reset them to defaults. Fields left None keep their
         current value. The caller hot-adopts the member afterwards so the

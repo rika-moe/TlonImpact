@@ -54,11 +54,11 @@ Behavior 目标示意为 `{:handlers {:mail-delivered work.reply/handle-mail}}`�
 
 ### P2 当前实现
 
-`model-call` 必填 `messages`，可选 `max_tokens`（省略时使用冻结成员的 `llm.max_tokens` 单次上限）、`tools`（工具名列表，默认空）与 `cache_prefix_len`。返回 content（可为 null）、规范化的 `{id,name,arguments}` tool_calls、finish_reason、usage 和 reasoning_content。输入拒绝旧 prompt 字段、system 消息及任意工具 schema。所有普通程序使用 ModelService；P5 已删除旧 StageServices 与 stage 引擎。
+`model-call` 必填 `messages`，可选 `max_tokens`（省略时按冻结模型输出能力、剩余上下文和 run 剩余预算取小值）、`tools`（工具名列表，默认空）与 `cache_prefix_len`。返回 content（可为 null）、规范化的 `{id,name,arguments}` tool_calls、finish_reason、usage 和 reasoning_content。输入拒绝旧 prompt 字段、system 消息及任意工具 schema。所有普通程序使用 ModelService；P5 已删除旧 StageServices 与 stage 引擎。
 
 宿主提供纯模块 `tlon.messages`（user/assistant/append），保留 tlon 命名空间；链接时合并标准源码，运行快照包含完整标准源码，作者模块与审批 API 保持原作者内容。v2 受理事务同时冻结 host（系统词、工具定义）与 config（有效非秘密模型配置，包括运行时重试/超时参数）；同一根运行复用它们。模型的工具选择只影响本次声明，不执行工具。
 
-Operation 的恢复 hook 只读取同根、同稳定调用路径的已提交模型结果，核对有效消息/系统词/工具/max_tokens/缓存前缀，再补外层回执。未知模型请求保持阻塞。新请求还校验当前工具契约；历史已提交结果不要求工具仍可执行。程序根额度使用成员 program_token_budget（默认 100000），与单次 llm.max_tokens 分离；output 按获准输出额度计量，total 沿用现有结算，不另设账本。
+Operation 的恢复 hook 只读取同根、同稳定调用路径的已提交模型结果，核对有效消息/系统词/工具/max_tokens/缓存前缀，再补外层回执。未知模型请求保持阻塞。新请求还校验当前工具契约；历史已提交结果不要求工具仍可执行。程序根额度使用成员 program_token_budget（默认 100000），与模型单次输出能力分离；output 按可靠 completion_tokens 结算，total 按可靠总 usage 结算，缺失用量则保留预留，不另设账本。
 
 ## 4. 工具分派和错误
 

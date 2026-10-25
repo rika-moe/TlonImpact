@@ -33,7 +33,7 @@ def response(actual: int | None = None) -> dict[str, Any]:
     ).to_dict()
 
 
-async def test_output_preserves_requested_allowance_and_replay_is_free(store: ProgramStore) -> None:
+async def test_output_releases_unused_allowance_and_replay_is_free(store: ProgramStore) -> None:
     calls: list[int] = []
 
     async def execute(allowed: int) -> dict[str, Any]:
@@ -42,11 +42,11 @@ async def test_output_preserves_requested_allowance_and_replay_is_free(store: Pr
 
     for _ in range(2):
         scope = ExecutionScope(store, "root", 5, "output")
-        await scope.model_call({"question": 1}, 4, execute)
-        await scope.model_call({"question": 2}, 4, execute)
+        for question in range(5):
+            await scope.model_call({"question": question}, 4, execute)
         with pytest.raises(BudgetExceededError):
-            await scope.model_call({"question": 3}, 4, execute)
-    assert calls == [4, 1]
+            await scope.model_call({"question": 5}, 4, execute)
+    assert calls == [4, 4, 3, 2, 1]
     assert store.budget_usage("root")["used"] == 5
 
 
@@ -170,7 +170,9 @@ async def test_child_session_cancellation_does_not_cancel_program(store: Program
 
 
 async def test_llm_client_gateway_returns_persisted_model_response(store: ProgramStore) -> None:
-    client = LLMClient(LLMConfig(model_name="openai/test", max_tokens=5))
+    client = LLMClient(
+        LLMConfig(model_name="openai/test", max_output_tokens=5, context_window=128000)
+    )
     client._chat_with_retries = AsyncMock(return_value=LLMResponse("answer", usage=None))
     for _ in range(2):
         with bind_execution(ExecutionScope(store, "root", 5, "output")):
@@ -181,7 +183,9 @@ async def test_llm_client_gateway_returns_persisted_model_response(store: Progra
 
 
 async def test_llm_context_rejection_type_survives_replay(store: ProgramStore) -> None:
-    client = LLMClient(LLMConfig(model_name="openai/test", max_tokens=5))
+    client = LLMClient(
+        LLMConfig(model_name="openai/test", max_output_tokens=5, context_window=128000)
+    )
     client._chat_with_retries = AsyncMock(side_effect=ContextWindowExceededError("too large"))
     for _ in range(2):
         with (
@@ -229,7 +233,9 @@ async def test_model_commit_failure_keeps_reservation_and_refuses_resend(
 
 
 async def test_ledger_failure_keeps_known_response_and_does_not_resend(store: ProgramStore) -> None:
-    client = LLMClient(LLMConfig(model_name="openai/test", max_tokens=5))
+    client = LLMClient(
+        LLMConfig(model_name="openai/test", max_output_tokens=5, context_window=128000)
+    )
     client._chat_with_retries = AsyncMock(
         return_value=LLMResponse("committed", usage={"completion_tokens": 3})
     )
@@ -238,7 +244,7 @@ async def test_ledger_failure_keeps_known_response_and_does_not_resend(store: Pr
         with bind_execution(ExecutionScope(store, "root", 5, "output")):
             assert (await client.chat("system", [])).content == "committed"
     assert client._chat_with_retries.await_count == 1
-    assert store.budget_usage("root")["used"] == 5
+    assert store.budget_usage("root")["used"] == 3
 
 
 async def test_scoped_provider_timeout_is_not_automatically_retried(
@@ -249,7 +255,11 @@ async def test_scoped_provider_timeout_is_not_automatically_retried(
     monkeypatch.setenv("OPENAI_API_KEY", "test-only")
     provider = AsyncMock(side_effect=Timeout("lost", model="test", llm_provider="openai"))
     monkeypatch.setattr("tlon.base.llm_client.litellm.acompletion", provider)
-    client = LLMClient(LLMConfig(model_name="openai/test", max_tokens=5, max_retries=3))
+    client = LLMClient(
+        LLMConfig(
+            model_name="openai/test", max_output_tokens=5, context_window=128000, max_retries=3
+        )
+    )
     for _ in range(2):
         with (
             bind_execution(ExecutionScope(store, "root", 5, "output")),
@@ -261,7 +271,9 @@ async def test_scoped_provider_timeout_is_not_automatically_retried(
 
 
 async def test_llm_total_gateway_accounts_all_calls_under_same_scope(store: ProgramStore) -> None:
-    client = LLMClient(LLMConfig(model_name="openai/test", max_tokens=5))
+    client = LLMClient(
+        LLMConfig(model_name="openai/test", max_output_tokens=5, context_window=128000)
+    )
     client._chat_with_retries = AsyncMock(
         return_value=LLMResponse("answer", usage={"prompt_tokens": 3, "completion_tokens": 2})
     )
@@ -308,8 +320,9 @@ async def test_result_commit_and_reconciliation_failure_still_reports_unknown(
     assert store.budget_usage("root")["used"] == 4
 
 
+@pytest.mark.parametrize("measure", ["output", "total"])
 async def test_receipt_and_settlement_rollback_together_on_commit_fault(
-    store: ProgramStore, monkeypatch: pytest.MonkeyPatch
+    store: ProgramStore, monkeypatch: pytest.MonkeyPatch, measure: str
 ) -> None:
     original = store._commit
 
@@ -319,10 +332,13 @@ async def test_receipt_and_settlement_rollback_together_on_commit_fault(
 
     monkeypatch.setattr(store, "_commit", failed)
     with pytest.raises(UnknownModelOutcomeError):
-        await ExecutionScope(store, "root", 30, "total").model_call(
-            {}, 10, AsyncMock(return_value=response(3)), estimated_input=5
+        await ExecutionScope(store, "root", 30, measure).model_call(
+            {},
+            10,
+            AsyncMock(return_value={"usage": {"completion_tokens": 3, "total_tokens": 3}}),
+            estimated_input=5,
         )
-    assert store.budget_usage("root")["used"] == 15
+    assert store.budget_usage("root")["used"] == (10 if measure == "output" else 15)
     assert store.peek_model("root", ("model:0",), '{"output_limit":10,"request":{}}') == {
         "status": "unknown"
     }
@@ -358,7 +374,7 @@ async def test_real_assembled_tool_schemas_with_boolean_values_are_counted_as_te
     config = AgentConfig(
         id="counter",
         name="Counter",
-        llm=LLMConfig(model_name="openai/gpt-4o-mini", max_tokens=5, context_window=128000),
+        llm=LLMConfig(model_name="openai/gpt-4o-mini", max_output_tokens=5, context_window=128000),
         docker=DockerRuntimeConfig(level="L0"),
     )
     paths = TlonPaths(home=tmp_path / "member")
@@ -389,9 +405,10 @@ async def test_real_assembled_tool_schemas_with_boolean_values_are_counted_as_te
     from tlon.operations.model_service import ModelService
 
     context_scope = ExecutionScope(store, "estimate", 100000, "output")
-    store.freeze_model_context("estimate", "config", config.llm.model_dump())
+    store.freeze_model_context("estimate", "config", services.llm_client.configuration_snapshot())
     estimator = context_operation(
-        ModelService(services.llm_client, AsyncMock(return_value="system"), lambda: tools), {"type": "object", "properties": {}, "required": [], "additionalProperties": False}
+        ModelService(services.llm_client, AsyncMock(return_value="system"), lambda: tools),
+        {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
     )
     with bind_execution(context_scope):
         size = await estimator.handler(
@@ -456,3 +473,118 @@ async def test_child_cannot_extend_frozen_root_deadline(store: ProgramStore) -> 
     with pytest.raises(ExecutionDeadlineError):
         child.check()
     assert store.budget_usage("expired-root")["deadline"] == now - 1
+
+
+@pytest.mark.parametrize("actual", [None, True, -1, 1.5, "2"])
+async def test_output_missing_or_invalid_usage_keeps_full_reservation(
+    store: ProgramStore, actual: Any
+) -> None:
+    result = {"content": "answer", "usage": {"completion_tokens": actual}}
+    execute = AsyncMock(return_value=result)
+    for _ in range(2):
+        scope = ExecutionScope(store, "invalid-usage", 8, "output")
+        assert await scope.model_call({}, 6, execute) == result
+    assert store.budget_usage("invalid-usage")["used"] == 6
+    assert execute.await_count == 1
+
+
+@pytest.mark.parametrize("actual", [0, 3, 25])
+async def test_output_settles_exact_actual_including_zero_and_overage(
+    store: ProgramStore, actual: int
+) -> None:
+    result = {"content": "answer", "usage": {"completion_tokens": actual}}
+    execute = AsyncMock(return_value=result)
+    for _ in range(2):
+        scope = ExecutionScope(store, "actual-usage", 20, "output")
+        assert await scope.model_call({}, 12, execute) == result
+    assert execute.await_count == 1
+    assert store.budget_usage("actual-usage")["used"] == actual
+    if actual > 20:
+        with pytest.raises(BudgetExceededError):
+            await scope.model_call({"next": True}, 1, execute)
+        assert execute.await_count == 1
+
+
+async def test_output_concurrent_settlement_releases_only_completed_reservations(
+    store: ProgramStore,
+) -> None:
+    scope = ExecutionScope(store, "concurrent-refund", 10, "output")
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def pending(allowed: int) -> dict[str, Any]:
+        assert allowed == 6
+        entered.set()
+        await release.wait()
+        return {"usage": {"completion_tokens": 2}}
+
+    task = asyncio.create_task(scope.child("pending").model_call({}, 6, pending))
+    await entered.wait()
+    settled = AsyncMock(return_value={"usage": {"completion_tokens": 1}})
+    await scope.child("settled").model_call({}, 8, settled)
+    settled.assert_awaited_once_with(4)
+    # The uncommitted provider still owns six tokens; only the settled
+    # request's unused three tokens become available to another request.
+    assert store.budget_usage("concurrent-refund")["used"] == 7
+    again = AsyncMock(return_value={"usage": {"completion_tokens": 1}})
+    await scope.child("again").model_call({}, 8, again)
+    again.assert_awaited_once_with(3)
+    release.set()
+    await task
+    assert store.budget_usage("concurrent-refund")["used"] == 4
+    assert store.budget_usage("concurrent-refund")["pending_count"] == 0
+
+
+@pytest.mark.parametrize("measure", ["output", "total"])
+def test_store_settlement_replay_never_charges_twice(store: ProgramStore, measure: str) -> None:
+    store.ensure_budget("store-root", 30, measure)
+    request = '{"request":"same"}'
+    first = store.reserve_model("store-root", ("model:0",), request, 20, 3)
+    assert first["output_limit"] == 20
+    result = {"usage": {"completion_tokens": 2, "total_tokens": 5}}
+    actual = 2 if measure == "output" else 5
+    assert store.commit_model("store-root", ("model:0",), result, actual) == result
+    assert store.commit_model("store-root", ("model:0",), result, actual) == result
+    replay = store.reserve_model("store-root", ("model:0",), request, 20, 3)
+    assert replay["status"] == "replay"
+    assert store.budget_usage("store-root")["used"] == actual
+    assert store.budget_usage("store-root")["pending_count"] == 0
+
+
+@pytest.mark.parametrize("invalid", [True, -1, 1.5, "2"])
+def test_store_rejects_invalid_settlement_without_releasing_unknown_reservation(
+    store: ProgramStore, invalid: Any
+) -> None:
+    store.ensure_budget("invalid-settlement", 10, "output")
+    store.reserve_model("invalid-settlement", ("model:0",), "{}", 8, 0)
+    with pytest.raises(ValueError, match="Invalid actual model usage"):
+        store.commit_model("invalid-settlement", ("model:0",), {}, invalid)
+    assert store.budget_usage("invalid-settlement")["used"] == 8
+    assert store.budget_usage("invalid-settlement")["pending_count"] == 1
+    store.reject_model("invalid-settlement", ("model:0",), "Rejected", "known rejection")
+    assert store.budget_usage("invalid-settlement")["used"] == 0
+    assert store.budget_usage("invalid-settlement")["pending_count"] == 0
+
+
+def test_sqlite_output_settlement_survives_reopen_without_double_charge(tmp_path: Path) -> None:
+    database = tmp_path / "reopened.sqlite"
+    request = '{"request":"persisted"}'
+    result = {"usage": {"completion_tokens": 3}}
+    store = ProgramStore(database, build_id="test")
+    try:
+        store.ensure_budget("restart", 100, "output")
+        store.reserve_model("restart", ("model:0",), request, 90, 0)
+        store.commit_model("restart", ("model:0",), result, 3)
+    finally:
+        store.close()
+    recovered = ProgramStore(database, build_id="test")
+    try:
+        recovered.ensure_budget("restart", 100, "output")
+        assert recovered.reserve_model("restart", ("model:0",), request, 90, 0) == {
+            "status": "replay",
+            "response": result,
+        }
+        recovered.commit_model("restart", ("model:0",), result, 3)
+        assert recovered.budget_usage("restart")["used"] == 3
+        assert recovered.reserve_model("restart", ("model:1",), "{}", 90, 0)["output_limit"] == 90
+    finally:
+        recovered.close()

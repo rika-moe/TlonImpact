@@ -8,7 +8,7 @@ from pathlib import Path
 import aiohttp
 import pytest
 
-from .conftest import WEBUI_HEADERS, _read_inbox, _send_mail
+from .conftest import TEST_MODEL_OUTPUT_TOKENS, WEBUI_HEADERS, _read_inbox, _send_mail
 
 
 async def test_module_prototype_member_replies_through_real_mail_store(
@@ -165,4 +165,5 @@ async def test_module_generation_review_revision_share_root_model_budget(
             )
         )
     assert len(budgets) == 1
-    assert budgets[0][1:] == (384, 3)  # Output budgets charge the three 128-token caps.
+    assert budgets[0][1:] == (9, 3)  # Settle three actual three-token completions.
+    assert all(call["max_tokens"] == TEST_MODEL_OUTPUT_TOKENS for call in calls)

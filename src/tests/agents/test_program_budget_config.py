@@ -1,4 +1,4 @@
-"""Member request caps and durable program allowances are independent."""
+"""Model capabilities and durable program allowances are independent."""
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,12 +24,23 @@ def test_program_allowance_must_be_a_positive_integer(invalid: Any) -> None:
 
 
 @pytest.mark.parametrize("budget", [None, 12000])
-async def test_entry_freezes_program_allowance_independently_of_request_cap(
-    tmp_path: Path, budget: int | None
+@pytest.mark.parametrize("capability", [73, 200000])
+async def test_entry_freezes_program_allowance_independently_of_model_capability(
+    tmp_path: Path, budget: int | None, capability: int
 ) -> None:
-    config = AgentConfig(id="member", name="Member", llm=LLMConfig(max_tokens=73))
+    config = AgentConfig(
+        id="member",
+        name="Member",
+        llm=LLMConfig(
+            model_name="openai/test", max_output_tokens=capability, context_window=300000
+        ),
+    )
     if budget is not None:
         config.program_token_budget = budget
+    assert config.llm is not None
+    assert "max_tokens" not in config.llm.model_dump()
+    assert "max_output_tokens" not in config.llm.model_dump()
+    assert "max_output_tokens" not in config.model_dump()["llm"]
     expected = 100000 if budget is None else budget
     member = MemberRuntime(
         member_id=config.id,
@@ -51,7 +62,7 @@ async def test_entry_freezes_program_allowance_independently_of_request_cap(
         assert loads(record.package_edn)["token_budget"] == expected
         config.program_token_budget = 42
         assert config.llm is not None
-        config.llm.max_tokens = 1
+        config.llm.max_output_tokens = 1
         await member._run_handler_body(handler, None, run_id="entry")
         restored = member._run_entry_record.await_args.args[0]
         assert loads(restored.package_edn)["token_budget"] == expected

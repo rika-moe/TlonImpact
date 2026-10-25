@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
+import litellm
 import pytest
 
 from tlon.base.paths import TlonPaths
@@ -39,6 +40,24 @@ SERVER_SHUTDOWN_TIMEOUT = 15.0
 SERVER_TERMINATE_TIMEOUT = 10.0
 SERVER_KILL_TIMEOUT = 5.0
 logger = logging.getLogger(__name__)
+TEST_MODEL_OUTPUT_TOKENS = 8192
+TEST_MODEL_CONTEXT_WINDOW = 32768
+
+
+@pytest.fixture(autouse=True)
+def fictional_model_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give the integration-only model explicit capabilities in every server fixture."""
+    real_model_info = litellm.get_model_info
+
+    def model_info(model: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        if model == "openai/gpt-test":
+            return {
+                "max_output_tokens": TEST_MODEL_OUTPUT_TOKENS,
+                "max_input_tokens": TEST_MODEL_CONTEXT_WINDOW,
+            }
+        return real_model_info(model, *args, **kwargs)
+
+    monkeypatch.setattr(litellm, "get_model_info", model_info)
 
 
 def _free_port() -> int:

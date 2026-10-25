@@ -43,7 +43,10 @@ def member_at(
         config=AgentConfig(
             id="device-member", name="Device", llm=LLMConfig(model_name="test/model"), docker=config
         ),
-        llm_client=MagicMock(configuration_snapshot=MagicMock(return_value={})),
+        llm_client=MagicMock(
+            config=LLMConfig(model_name="test/model"),
+            configuration_snapshot=MagicMock(return_value={}),
+        ),
         memory=MagicMock(),
         task_manager=MagicMock(),
         tool_executor=ToolExecutor(),

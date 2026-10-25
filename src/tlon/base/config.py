@@ -75,7 +75,7 @@ class LLMConfig(BaseModel):
     # runtime never sees None — _build_llm_config raises before the
     # client is constructed.
     model_name: str | None = None
-    max_tokens: int = 4096
+    max_output_tokens: int | None = Field(default=None, gt=0, exclude=True)
     top_p: float = 0.9
     # Model context window (tokens); drives context-pressure management
     # (ADR 0008). None = auto: resolved at assembly from litellm's model

@@ -52,7 +52,7 @@ Tool 协议根参数必须是 JSON object 的字符串键。OperationTool 在 To
 
 文件服务只使用成员的 ExecutionDevice，沿用容器工作目录、读写路径白名单与 archive-only 文件柜。读取额外允许自身只读 `/tlon-home`；写入仅可到配置的 allowed_paths。没有通用宿主文件系统后门。归档内容仅在内存读取，成员路径和归档条目仍需独立校验。
 
-`default_timeout` 是宿主操作默认执行秒数，覆盖成员的 tool.per_timeout；schema 声明的显式 timeout 参数再优先。`timeout_grace` 是操作声明的清理宽限（默认 0，Shell 为 10 秒），与继承根剩余期限取小。两入口均由 OperationExecutor 实施，LoopDriver 不再维护第二套计时。局部期限向内部模型传播，但不改写预算根冻结期限。
+`default_timeout` 是宿主操作默认执行秒数。普通工具默认采用成员 tool.per_timeout；model-call 使用成员模型 request_timeout（默认 300 秒），不受普通工具默认 30 秒限制；schema 声明的显式 timeout 参数再优先。`timeout_grace` 是操作声明的清理宽限（默认 0，Shell 为 10 秒），与当前执行域剩余期限取小。两入口均由 OperationExecutor 实施，LoopDriver 不再维护第二套计时。局部期限向内部模型传播，但不改写预算根冻结期限。
 
 `retry_safe` 是宿主对中断后重新调用是否安全的最小声明。程序沿用同一 ProgramStore 数据库：非幂等 write 先写 intent，再调用 handler，再记录结果；已有结果重放，只有 intent 而无结果时返回 unknown，禁止自动重新执行。取消同样不能当作无副作用。邮件仍使用 PostOffice 的稳定 request_id 幂等重试。P4a 将这些 intent 和回执统一到 ProgramStore 的 invocations；P4b 新增共享额度根，并让新写入按成员 gate 及模型声明顺序执行。
 
@@ -70,11 +70,11 @@ state-put 将状态与该次调用结果放在 ProgramStore 的同一事务；�
 
 ## 生命周期、演化与模型 P3c
 
-[lifecycle](../../src/tlon/operations/lifecycle.py)、[evolution](../../src/tlon/operations/evolution.py)、[model](../../src/tlon/operations/model.py) 共用成员注册表。旧 camelCase 名称删除；模型调用为 `(model-call {:messages [{:role "user" :content "任务"}] :tools [] :max_tokens 256})`，输出使用 snake_case，session recipe 的 `:max-tokens` 配置保持原有含义。
+[lifecycle](../../src/tlon/operations/lifecycle.py)、[evolution](../../src/tlon/operations/evolution.py)、[model](../../src/tlon/operations/model.py) 共用成员注册表。旧 camelCase 名称删除；模型调用为 `(model-call {:messages [{:role "user" :content "任务"}] :tools [] :max_tokens 256})`，输出使用 snake_case。
 
 Operation 没有 control 分类或 sole/direct/literal 嵌套限制。`finish-turn` 返回普通局部信号，调度由根入口结果及宿主生命周期决定。
 
-程序直接模型调用使用持久 output 根，额度来自成员 program_token_budget（默认 100000）；llm.max_tokens 仅为单次输出上限，model-call/model-context 未指定 max_tokens 时使用该成员配置；获准的输出预留成功后不退款，实际输出上限还受请求值和剩余额度限制。旧 run-loop/recipe total 根入口已删除。既有 total 预算账本语义仍供相关宿主调用使用；普通程序及其压缩、提案、评审共享冻结根。total 成功按可靠的实际 usage 结算；缺少 usage 或提交未知时保留预留，实际超额如实记账并阻止后续请求，token 估算不是硬上界。
+程序直接模型调用使用持久 output 根，额度来自成员 program_token_budget（默认 100000）；单次输出默认按冻结模型输出能力、剩余上下文和 run 剩余额度取小值，显式 max_tokens 可进一步收紧；成功后按可靠 completion_tokens 结算并释放预留差额。旧 run-loop/recipe total 根入口已删除。既有 total 预算账本语义仍供相关宿主调用使用；普通程序及其压缩、提案、评审共享冻结根。output 与 total 成功均按各自口径的可靠实际 usage 结算；缺少 usage 或提交未知时保留预留，实际超额如实记账并阻止后续请求，token 估算不是硬上界。
 
 模型响应与额度结算原子提交，已提交历史只还原，不重新扣额或请求 provider；未知提交不自动重发。后台反思和蒸馏另建维护根。宿主 ContextVar 传播作用域，业务参数不能重置额度；取消只作用于当前进程任务树，冻结 deadline 和预算跨重启保留。详情见 [执行作用域](../design/execution-scope.md)。
 
@@ -88,9 +88,9 @@ spawn 的配额归属取冻结 CallContext.run_id：Tool 与 DSL 使用所属冻
 
 ## 可编程工作流程 P2：模型请求与恢复
 
-`model-call` 必填 `messages`，可选正整数 `max_tokens`（默认使用冻结成员的单次输出上限）；`tools` 是工具名列表（默认空），可选 `cache_prefix_len`。输入消息允许 user/assistant/tool，system 由宿主绑定；prompt 与任意工具 schema 拒绝。返回 content（可为 null）、tool_calls（id/name/arguments）、finish_reason、usage、reasoning_content，不执行工具建议。工具执行由 tool-execute 显式完成。
+`model-call` 必填 `messages`，可选正整数 `max_tokens`（默认按冻结模型输出能力、剩余上下文和 run 剩余预算取小值）；`tools` 是工具名列表（默认空），可选 `cache_prefix_len`。输入消息允许 user/assistant/tool，system 由宿主绑定；prompt 与任意工具 schema 拒绝。返回 content（可为 null）、tool_calls（id/name/arguments）、finish_reason、usage、reasoning_content，不执行工具建议。工具执行由 tool-execute 显式完成。
 
-普通程序通过 ModelService 使用统一模型调用账本。v2 受理原子冻结 host（系统输入及工具定义）与 config（有效成员模型配置）；已有结果重放不受后来系统词或模型配置变化影响，新请求仍校验当前工具目录。已提交模型结果缺外层回执时，恢复 hook 核对稳定路径和有效请求，只读补回执；unknown 不自动重发。output 模式维持获准输出上限预留，total 模式维持现有实际用量结算与缺失用量的保守处理。
+普通程序通过 ModelService 使用统一模型调用账本。v2 受理原子冻结 host（系统输入及工具定义）与 config（有效成员模型配置）；已有结果重放不受后来系统词或模型配置变化影响，新请求仍校验当前工具目录。已提交模型结果缺外层回执时，恢复 hook 核对稳定路径和有效请求，只读补回执；unknown 不自动重发。output 模式按获准输出额度预留，成功后按可靠 completion_tokens 结算；total 按可靠总 usage 结算。缺少可靠用量时保留预留。
 
 输入历史中的 assistant `tool_calls` 使用 provider 消息结构：`{:id "..." :type "function" :function {:name "..." :arguments "JSON字符串"}}`，tool 消息用 `tool_call_id` 关联。它与输出的规范化 `{id,name,arguments}` 不同，P2 不自动把建议执行成消息历史；工具执行和完整协议拼接在 P3 提供。
 

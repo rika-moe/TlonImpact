@@ -93,7 +93,11 @@ class TestRegistryStart:
             agent_info_provider=_StaticProvider(
                 {
                     "relay-1": AgentConfig(
-                        id="relay-1", name="转发者", llm=LLMConfig(model_name="test/model")
+                        id="relay-1",
+                        name="转发者",
+                        llm=LLMConfig(
+                            model_name="test/model", max_output_tokens=8192, context_window=128000
+                        ),
                     )
                 }
             ),
@@ -313,7 +317,11 @@ class TestWakeOnMail:
             agent_info_provider=_StaticProvider(
                 {
                     agent_id: AgentConfig(
-                        id=agent_id, name=agent_id, llm=LLMConfig(model_name="test/model")
+                        id=agent_id,
+                        name=agent_id,
+                        llm=LLMConfig(
+                            model_name="test/model", max_output_tokens=8192, context_window=128000
+                        ),
                     )
                 }
             ),
@@ -413,7 +421,11 @@ class TestWakeOnMail:
             agent_info_provider=_StaticProvider(
                 {
                     "gu-yanxi-9": AgentConfig(
-                        id="gu-yanxi-9", name="客服", llm=LLMConfig(model_name="test/model")
+                        id="gu-yanxi-9",
+                        name="客服",
+                        llm=LLMConfig(
+                            model_name="test/model", max_output_tokens=8192, context_window=128000
+                        ),
                     )
                 }
             ),
@@ -523,7 +535,9 @@ class TestMemberStopAndDrain:
                 id=agent_id,
                 name="外包",
                 idle_timeout_seconds=0,
-                llm=LLMConfig(model_name="test/model"),
+                llm=LLMConfig(
+                    model_name="test/model", max_output_tokens=8192, context_window=128000
+                ),
             )
         }
         registry, p = await self._make_registry(
@@ -557,7 +571,11 @@ class TestPendingStop:
             agent_info_provider=_StaticProvider(
                 {
                     agent_id: AgentConfig(
-                        id=agent_id, name=agent_id, llm=LLMConfig(model_name="test/model")
+                        id=agent_id,
+                        name=agent_id,
+                        llm=LLMConfig(
+                            model_name="test/model", max_output_tokens=8192, context_window=128000
+                        ),
                     )
                 }
             ),

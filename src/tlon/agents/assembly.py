@@ -33,11 +33,12 @@ from tlon.agents.prototypes.staging import (
 from tlon.agents.reputation import reputation_provider
 from tlon.agents.run_journal import RunJournal
 from tlon.agents.tool_executor import ToolExecutor
-from tlon.base.config import DEFAULT_CONTEXT_WINDOW, AgentConfig, LLMConfig
+from tlon.base.config import AgentConfig, LLMConfig
 from tlon.base.execution import MemberWriteGate
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.metrics import MetricsService
+from tlon.base.model_limits import resolve_model_limits
 from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_store import TraceStore
 from tlon.evolution.get_lineage import PrototypeLineage
@@ -81,38 +82,12 @@ logger = get_logger(__name__)
 REPRODUCTION_TOOLS: frozenset[str] = frozenset({"member-spawn", "prototype-write"})
 
 
-def _resolve_context_window(file_config: LLMConfig, model_name: str) -> int:
-    """Resolve the model's context window (ADR 0012 phase 2).
-
-    An explicit ``context_window`` in agent.yaml wins (fallback for
-    missing/stale registry metadata); otherwise litellm's model registry
-    (``get_model_info`` → ``max_input_tokens``); otherwise
-    ``DEFAULT_CONTEXT_WINDOW``.
-    """
-    import litellm
-
-    if file_config.context_window is not None:
-        return file_config.context_window
-    try:
-        max_input_tokens = litellm.get_model_info(model_name).get("max_input_tokens")
-        if max_input_tokens:
-            return int(max_input_tokens)
-    except Exception:
-        pass
-    logger.info(
-        "context_window_fallback",
-        model=model_name,
-        context_window=DEFAULT_CONTEXT_WINDOW,
-    )
-    return DEFAULT_CONTEXT_WINDOW
-
-
 def _build_llm_config(file_config: LLMConfig | None, agent_id: str) -> LLMConfig:
     """Resolve the member's LLM config from its agent.yaml ``llm`` section.
 
     Member-level only (ADR 0016) — no process-level fallback anywhere:
     ``model_name`` must be declared, and the per-agent knobs
-    ``max_tokens`` / ``top_p`` / ``context_window`` pass through
+    ``top_p`` / ``context_window`` pass through
     (context_window None = auto-resolve from litellm's model registry).
     Sampling is never configured — requests carry no temperature, the
     provider default applies. The returned config always carries a
@@ -126,16 +101,7 @@ def _build_llm_config(file_config: LLMConfig | None, agent_id: str) -> LLMConfig
             f"member '{agent_id}' 未配置模型：在 agent.yaml 的 llm.model_name "
             "声明 provider/model（或经 WebUI 成员编辑设置）"
         )
-    model_name = file_config.model_name
-
-    return LLMConfig(
-        model_name=model_name,
-        max_tokens=file_config.max_tokens,
-        top_p=file_config.top_p,
-        context_window=_resolve_context_window(file_config, model_name),
-        api_base=file_config.api_base,
-        embedding_model_name=file_config.embedding_model_name,
-    )
+    return resolve_model_limits(file_config)
 
 
 async def assemble_member_services(

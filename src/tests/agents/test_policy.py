@@ -318,7 +318,7 @@ class TestAssemblyToolSubset:
             id="rookie",
             name="rookie",
             spawned_by=spawned_by,
-            llm=LLMConfig(model_name="test/model"),
+            llm=LLMConfig(model_name="test/model", max_output_tokens=8192, context_window=128000),
         )
         yaml_save(config, tlon_paths.tlon_home())
         caps = await assemble_member_services(
