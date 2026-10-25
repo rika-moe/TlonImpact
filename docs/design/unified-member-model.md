@@ -45,9 +45,9 @@ finish-turn 结束自己的本次工作；sleep-until 定时睡眠；exit-agent 
 
 ### 经验传到下一代
 
-成员反思和长期记忆为提案提供材料。普通 tlon.authoring/draft 接收任务/经验，用文件工具读取作者资料，经模型编写、program-check 校验与修订返回完整模块候选，调用方再 prototype-write 写入 staging 并记录父原型与变更说明；它不直接更新自身。
+成员自行维护的私有笔记可为提案提供材料。普通 tlon.authoring/draft 接收任务/经验，用文件工具读取作者资料，经模型编写、program-check 校验与修订返回完整模块候选，调用方再 prototype-write 写入 staging 并记录父原型与变更说明；它不直接更新自身。
 
-永久退休会触发 `LessonsDistiller` 离线蒸馏归档记忆，产出 `memory/lessons.md`；`RetirementCeremony` 记录交接清点事件，不再发送死亡后的告别信。教训可作为原型 `LESSONS.md` 随包传递，实例化后落入新成员 `config/LESSONS.md`，由 spec 的 `(lessons)` section 显式注入。这是受控的教训继承，不是任意跨成员私有记忆读取，也不是原型携带完整知识库。
+永久退休只触发 `RetirementCeremony` 清点未完成任务、待回复邮件与已有笔记文件路径，不读取笔记正文或以退休成员身份调用模型。成员可在普通程序中显式整理教训，经原型审核后作为 `LESSONS.md` 随包传递，实例化后落入新成员 `config/LESSONS.md`。这不是任意跨成员私有笔记读取，也不是原型携带完整知识库。
 
 ## 成员信任阶梯
 
@@ -87,7 +87,7 @@ wake-on-mail 由注册表根据 spec 机械派生，不经过 Adam。`MAIL_ORPHA
 | 生命周期、退休、待停与唤醒 | [agent_registry.py](../../src/tlon/agents/agent_registry.py) |
 | 默认生命周期政策 | [adam.py](../../src/tlon/agents/adam.py) |
 | 信任政策 provider | [policy.py](../../src/tlon/agents/policy.py) |
-| 教训蒸馏与交接 | [lessons.py](../../src/tlon/agents/lessons.py)、[retirement.py](../../src/tlon/agents/retirement.py) |
+| 退休交接清点 | [retirement.py](../../src/tlon/agents/retirement.py) |
 
 ## 未实施方向
 

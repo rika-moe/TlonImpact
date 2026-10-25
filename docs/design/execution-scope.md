@@ -24,7 +24,7 @@ run-loop 的程序调用位置对应稳定 session ID。同进程重入和进程
 
 ## 成员写入与取消
 
-成员只装配一个写 gate，显式注入 OperationExecutor 与 MemoryManager；反思、蒸馏和直接记忆写入也使用同一把锁。读操作仍可并发；写操作在 gate 内检查当前取消、截止和实际领域授权后执行。同一 asyncio task 的嵌套 await 可以重入；同一根的不同 task 不能借相同 root_id 重入。父程序等待 run-loop 时不持有写锁。
+成员只装配一个写 gate，显式注入 OperationExecutor；笔记写入使用普通文件操作，不另建记忆维护锁或后台模型工作流。读操作仍可并发；写操作在 gate 内检查当前取消、截止和实际领域授权后执行。同一 asyncio task 的嵌套 await 可以重入；同一根的不同 task 不能借相同 root_id 重入。父程序等待 run-loop 时不持有写锁。
 
 一批 Tool 里的写操作显式按模型声明顺序排等待链，读操作不进入该链。单靠锁的等待顺序不足以兑现声明顺序，因为 SQLite 查询等 await 会改变到锁先后。任务创建与登记之间不插入 await，随后才发布分发事件；取消时能够找到并等待全部子任务，不留下游离写入。
 

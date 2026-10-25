@@ -460,18 +460,10 @@ async def test_program_replay_after_exit_cannot_resurrect_member(registry: Agent
     assert registry._scheduling_store.load() == {}
 
 
-@pytest.mark.parametrize(
-    "actions,reflecting,expected",
-    [(0, False, False), (1, False, True), (0, True, True), (2, True, True)],
-)
-def test_member_busy_covers_handlers_and_maintenance(
-    actions: int, reflecting: bool, expected: bool
-) -> None:
-    from types import SimpleNamespace
-
+@pytest.mark.parametrize("actions,expected", [(0, False), (1, True), (2, True)])
+def test_member_busy_covers_explicit_work(actions: int, expected: bool) -> None:
     from tlon.agents.member_runtime import MemberRuntime
 
     member = object.__new__(MemberRuntime)
     member._active_actions = actions
-    member._reflection = SimpleNamespace(is_running=reflecting)  # type: ignore[assignment]
     assert member.is_busy is expected

@@ -10,8 +10,8 @@ import pytest
 from tests.history_helpers import append_history
 from tlon.agents.program_store import ProgramStore
 from tlon.agents.run_journal import RunJournal
+from tlon.agents.run_projection import build_run_projection
 from tlon.base.paths import TlonPaths
-from tlon.memory.models import build_run_projection
 from tlon.operations.invocation import Invocation, InvocationOutcome
 
 
@@ -126,7 +126,7 @@ async def test_partial_failure_keeps_committed_and_pending_facts(tmp_path: Path)
     projection = build_run_projection(events, "interrupted")
     assert "未决调用：shell unresolved" in projection.errors
     assert "unsafe invocation outcome unknown" in projection.errors
-    from tlon.memory.run_digest import render_run_digest
+    from tlon.operations.run_digest import render_run_digest
 
     digest = render_run_digest(events)
     assert "未决调用" in digest and "unsafe invocation outcome unknown" in digest

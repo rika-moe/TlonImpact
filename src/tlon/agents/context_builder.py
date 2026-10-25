@@ -9,12 +9,11 @@ from typing import Any
 from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
 from tlon.agents.run_journal import RunJournal
+from tlon.agents.run_projection import build_run_projection
 from tlon.agents.skills import Signature, render_skills_index, scan_signature, scan_skills
 from tlon.base.config import AgentConfig
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
-from tlon.memory.manager import MemoryManager
-from tlon.memory.models import build_run_projection
 from tlon.organization.mail.mail import Mail, is_external_address
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tasks.manager import TaskManager
@@ -64,7 +63,7 @@ def _render_thread_recap(events: list[dict[str, Any]]) -> str:
 
     The recap complements ``mail-history`` (raw correspondence) with what
     the correspondence does not show: the previous run's tool activity
-    and conclusion. Event parsing is shared with distillation via
+    and conclusion. Event parsing uses
     :func:`build_run_projection` — this function only renders the
     projection: the wake trigger text, one clipped line per tool result,
     the last LLM response as the conclusion, and the ``run/end``
@@ -111,7 +110,6 @@ class ContextBuilder:
         self,
         config: AgentConfig,
         mailbox: Mailbox | None,
-        memory: MemoryManager,
         task_manager: TaskManager,
         address: str,
         journal: RunJournal | None = None,
@@ -120,7 +118,6 @@ class ContextBuilder:
     ):
         self._config = config
         self._mailbox = mailbox
-        self._memory = memory
         self._task_manager = task_manager
         self._address = address
         # Run journal (ADR 0049): read-only, feeds the thread-recap
@@ -135,27 +132,6 @@ class ContextBuilder:
         # signature changes (ADR 0010)
         self._skills_index_cache: str | None = None
         self._skills_signature: Signature | None = None
-
-    async def build_knowledge_context(self, query: str | None = None) -> str:
-        """Build knowledge text from memory blocks for user prompt injection.
-
-        Args:
-            query: The responsibility set's text — the relevance query for
-                JIT memory retrieval (ADR 0017 stage 2); None degrades
-                retrieval to recency order
-        """
-        try:
-            blocks = await self._memory.build_context_blocks(query)
-            if not blocks:
-                return ""
-            parts = []
-            for block in blocks:
-                msg = block.to_openai_message()
-                parts.append(msg["content"])
-            return "\n\n".join(parts)
-        except Exception:
-            logger.warning("knowledge_context_build_failed", exc_info=True)
-            return ""
 
     async def build_skills_index(self) -> str:
         """Build the skills index text (mtime-signature cached, ADR 0010).
@@ -177,14 +153,13 @@ class ContextBuilder:
             return ""
 
     def build_lessons(self) -> str:
-        """Build the ``(lessons)`` section text (docs/design/memory.md
-        「退休蒸馏」).
+        """Read inherited prototype lessons as ordinary data.
 
         Reads the member's inherited ``config/LESSONS.md`` — lessons
-        distilled from a retired member, packaged with the prototype and
+        explicitly authored and packaged with the prototype and
         copied in by ``instantiate``. Empty string when the member has no
         lessons file (the section is then skipped, same empty-state
-        convention as knowledge/skills); read failures degrade to empty —
+        convention as skills); read failures degrade to empty —
         a missing/corrupt file must never block context assembly.
         """
         try:
@@ -205,7 +180,7 @@ class ContextBuilder:
         full task list, and unlike ``TaskManager.get_current_task`` no
         paused-task fallback — a paused task is not what the agent is
         doing. Empty string when no task is doing (the section is then
-        skipped, same empty-state convention as knowledge/skills). Task
+        skipped, same empty-state convention as skills). Task
         reads are in-memory, but failures still degrade to empty — a
         broken task store must never block context assembly.
 
@@ -246,17 +221,12 @@ class ContextBuilder:
         identity is no longer mail-derived, so the section recaps the
         member's latest completed run, whatever it worked on).
 
-        Data source is the run journal (ADR 0049), not the
-        distilled claims: a claim batch is window-triggered (ADR 0017,
-        pending count must reach ``distillation_window``) and spans
-        several runs, so the previous run is usually not
-        distilled yet when the next one starts. The journal log
-        is complete at run end, per-run, and reading it needs no
-        LLM call — the recap is a deterministic, bounded rendering.
+        The run journal is complete at run end. Reading it needs no
+        LLM call: the recap is a deterministic, bounded rendering.
 
         With no completed run at all (the member's first run)
         the section is skipped — same empty-state convention as
-        knowledge/skills. Journal failures degrade to empty — a broken
+        skills. Journal failures degrade to empty — a broken
         recap must never block context assembly.
         """
         if self._journal is None:

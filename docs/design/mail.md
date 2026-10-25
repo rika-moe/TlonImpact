@@ -172,9 +172,9 @@ stage 继续声明数据，外部效果由引擎执行；区别在于工具回�
 
 ## 死亡归档清点
 
-成员死亡（AGENT_STOPPED）后，RetirementCeremony 只读盘点未完成任务、未回复线程及记忆摘要，发布 AGENT_RETIRED 归档事件。该消费者不调用模型、不通过邮局发信，尤其不能以死亡成员身份生成“最后一封告别信”。事件包含 open_tasks、open_threads 和 memory_digest，历史仍保留在原处。
+成员死亡（AGENT_STOPPED）后，RetirementCeremony 只读盘点未完成任务、未回复线程及现有笔记文件路径，发布 AGENT_RETIRED 归档事件。该消费者不调用模型、不通过邮局发信，尤其不能以死亡成员身份生成“最后一封告别信”。事件包含 open_tasks、open_threads 和 memory_files，历史仍保留在原处。
 
-系统离线 LessonsDistiller 仍可从归档蒸馏可继承教训，但这是系统档案处理，不恢复成员、不执行其工具、不发送邮件。任务认领由后续成员或人类决定，不自动移交。
+停止后不再运行隐式教训蒸馏模型；成员可在普通程序中显式整理经验并提议原型教训。任务认领由后续成员或人类决定，不自动移交。
 
 ## 人类接入
 

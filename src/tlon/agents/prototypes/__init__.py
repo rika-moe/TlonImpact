@@ -11,7 +11,7 @@ genome):
 - ``behavior.tlon`` — a v2 event-handler declaration with a complete
   ``modules/`` source package
 - ``LESSONS.md`` — optional (see docs/design/prototypes.md): lessons
-  distilled from a retired member's memory, packaged with the prototype
+  explicitly authored and packaged with the prototype
   and copied to the member's ``config/`` at instantiation; the DSL
   ``member-context`` read makes it available to ordinary programs
 - ``REVIEW.md`` — optional (heterogeneous review, see

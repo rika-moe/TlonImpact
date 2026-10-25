@@ -55,7 +55,6 @@ async def test_entry_freezes_program_allowance_independently_of_model_capability
     member._run_entry_record = AsyncMock(return_value=True)
     handler = member.spec.handlers[0]
     try:
-        assert member._maintenance_execution("audit").token_limit == expected
         await member._run_handler_body(handler, None, run_id="entry")
         record = member._program_store.get_run("entry")
         assert record is not None and record.package_edn is not None

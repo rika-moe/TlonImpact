@@ -184,11 +184,12 @@ class TestExecutionLevelAssembly:
 
         runtime_ctor.assert_not_called()
         assert caps.docker_runtime is None
-        assert caps.memory.write_gate is caps.write_gate
+        assert not hasattr(caps, "memory")
         names = set(caps.tool_executor.list_tools()) | {op.name for op in caps.operations}
         assert names & DEVICE_TOOLS == FILE_TOOLS
         # 其余工具照常装配
-        assert {"time-now", "memory-remember"} <= names
+        assert {"time-now", "run-read"} <= names
+        assert not any(name.startswith("memory-") for name in names)
         # Mail tools bind later in MemberRuntime, with its actual mailbox/PostOffice.
         assert "mail-send" not in names
 

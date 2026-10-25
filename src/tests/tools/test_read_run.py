@@ -1,10 +1,4 @@
-"""readRun tool (ADR 0017 stage 4): the claim → source read-back.
-
-searchMemories exposes each claim's ``source_run_ids``; the tool
-renders that run's journal as a bounded digest (trigger + replies +
-tool activity), clips every piece, caps the total, and answers a missing
-run with a clean error instead of an exception.
-"""
+"""Read original run evidence through an independent bounded read operation."""
 
 from datetime import datetime
 from pathlib import Path
@@ -15,25 +9,22 @@ import pytest
 from tests.history_helpers import append_history
 from tlon.agents.run_journal import RunJournal
 from tlon.base.paths import TlonPaths
-from tlon.memory.manager import MemoryManager
-from tlon.memory.models import MemoryConfig
-from tlon.memory.run_digest import (
+from tlon.operations.adapters import OperationTool
+from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.run_digest import (
     _RESPONSE_MAX,
     _RESPONSES_LIMIT,
     _TOTAL_MAX,
     render_run_digest,
 )
-from tlon.operations.adapters import OperationTool
-from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
-from tlon.operations.memory import make_memory_operations
+from tlon.operations.runs import make_run_read_operations
 from tlon.operations.schema import OperationError
 
 
 def _tool(tmp_path: Path) -> tuple[OperationTool, RunJournal]:
     journal = RunJournal("agent1", TlonPaths(home=tmp_path))
-    memory = MemoryManager("agent1", MemoryConfig(), tmp_path / "agent1")
     executor = OperationExecutor(
-        OperationRegistry(make_memory_operations(memory, journal)),
+        OperationRegistry(make_run_read_operations(journal, "agent1")),
         CallContext("agent1", "run", "call"),
     )
     return OperationTool(executor, "run-read"), journal
@@ -170,12 +161,21 @@ class _BrokenLogs:
 
 
 async def test_journal_failure_propagates(tmp_path: Path) -> None:
-    memory = MemoryManager("agent1", MemoryConfig(), tmp_path / "agent1")
     executor = OperationExecutor(
-        OperationRegistry(make_memory_operations(memory, _BrokenLogs())),
+        OperationRegistry(make_run_read_operations(_BrokenLogs(), "agent1")),
         CallContext("agent1", "run", "call"),
     )
     tool = OperationTool(executor, "run-read")
 
     with pytest.raises(OperationError, match="disk gone"):
         await tool.execute_context({"run_id": "agent1-x"})
+
+
+async def test_run_read_rejects_other_member(tmp_path: Path) -> None:
+    journal = RunJournal("agent1", TlonPaths(home=tmp_path))
+    executor = OperationExecutor(
+        OperationRegistry(make_run_read_operations(journal, "agent1")),
+        CallContext("agent2", "run", "call"),
+    )
+    with pytest.raises(OperationError, match="another member"):
+        await executor.call("run-read", {"run_id": "agent1-run"})

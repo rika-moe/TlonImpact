@@ -14,8 +14,6 @@ from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.llm_client import LLMClient
 from tlon.base.paths import TlonPaths
-from tlon.memory.manager import MemoryManager
-from tlon.memory.models import MemoryConfig
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.mail.post_office import PostOffice
@@ -37,9 +35,10 @@ def _write_config(p: TlonPaths, agent_id: str, name: str, spawned_by: str | None
     p.agent_config_file(agent_id).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-async def _remember(p: TlonPaths, agent_id: str, fact: str) -> None:
-    manager = MemoryManager(agent_id, MemoryConfig(), data_dir=p.agent_dir(agent_id))
-    await manager.remember_fact(fact)
+def _write_note(p: TlonPaths, agent_id: str, fact: str) -> None:
+    note = p.agent_workspace_dir(agent_id) / "memory" / "notes.md"
+    note.parent.mkdir(parents=True, exist_ok=True)
+    note.write_text(fact)
 
 
 def _mail(
@@ -93,7 +92,7 @@ async def test_dead_member_inventory_preserves_archive_without_llm_or_mail(
     paths = TlonPaths(home=tmp_path)
     _write_behavior(paths, "retiree", _SESSION_PROGRAM)
     _write_config(paths, "retiree", "老张", "spawner-1")
-    await _remember(paths, "retiree", "部署前先跑质量门")
+    _write_note(paths, "retiree", "部署前先跑质量门")
     tasks = TaskManager("retiree", paths)
     tasks.create_task("写完文档")
     box = Mailbox(paths.mail_database_file(), "retiree")
@@ -130,14 +129,14 @@ async def test_dead_member_inventory_preserves_archive_without_llm_or_mail(
                 "from": "other@tlon.internal",
             }
         ]
-        assert payload["memory_digest"]["claim_count"] == 1
+        assert payload["memory_files"] == ["memory/notes.md"]
         assert set(payload) == {
             "agent_id",
             "name",
             "stopped_by",
             "open_tasks",
             "open_threads",
-            "memory_digest",
+            "memory_files",
         }
         chat.assert_not_called()
         post.assert_not_called()
@@ -199,7 +198,7 @@ async def test_relay_inventory_includes_unfinished_tasks(tmp_path: Path) -> None
         await ceremony._on_agent_stopped(_stopped_event("relay-1"))
         assert await _wait_for(lambda: len(retired) == 1)
         assert retired[0].payload["open_tasks"] == ["还没转完的信"]
-        assert retired[0].payload["memory_digest"] is None
+        assert retired[0].payload["memory_files"] == []
     finally:
         await bus.shutdown()
 
@@ -282,3 +281,32 @@ async def test_open_threads_no_mailbox(tmp_path: Path) -> None:
     ceremony, _ = _make_ceremony(EventBus(), TlonPaths(home=tmp_path))
 
     assert await ceremony._open_threads("ghost") == []
+
+
+def test_note_inventory_is_read_only_and_excludes_symlinks(tmp_path: Path) -> None:
+    paths = TlonPaths(home=tmp_path)
+    ceremony = RetirementCeremony(EventBus(), paths)
+    workspace = paths.agent_workspace_dir("a")
+    assert ceremony._memory_files("a") == []
+    assert not workspace.exists()
+    notes = workspace / "memory"
+    (notes / "projects").mkdir(parents=True)
+    (notes / "projects" / "a.md").write_text("private note")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("not a note")
+    (notes / "escape").symlink_to(outside, target_is_directory=True)
+    (notes / "secret.md").symlink_to(outside / "secret.md")
+    assert ceremony._memory_files("a") == ["memory/projects/a.md"]
+    assert (notes / "projects" / "a.md").read_text() == "private note"
+
+
+def test_note_inventory_rejects_symlink_note_root(tmp_path: Path) -> None:
+    paths = TlonPaths(home=tmp_path)
+    workspace = paths.agent_workspace_dir("a")
+    workspace.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "private.md").write_text("not accessible")
+    (workspace / "memory").symlink_to(outside, target_is_directory=True)
+    assert RetirementCeremony(EventBus(), paths)._memory_files("a") == []

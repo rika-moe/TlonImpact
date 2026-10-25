@@ -2,7 +2,7 @@
 ``ServerApp.initialize()`` 的 runtime 装配段——首启种子、EventBus、
 ConfigService、ContainerResourceMonitor、MetricsService、TraceStore、
 AgentRegistry、
-LessonsDistiller、RetirementCeremony、Adam、guardian 包装、外部网关
+RetirementCeremony、Adam、guardian 包装、外部网关
 注册表、AdapterManager、PostOffice、可选的 GitHubAdapter——并在其上
 构造八个 domain facade。
 
@@ -22,7 +22,6 @@ from dataclasses import dataclass
 from tlon.agents.adam import make_adam
 from tlon.agents.agent_registry import AgentRegistry
 from tlon.agents.bootstrap import bootstrap_society
-from tlon.agents.lessons import LessonsDistiller
 from tlon.agents.member_runtime import MemberRuntime
 from tlon.agents.retirement import RetirementCeremony
 from tlon.api.arena import ArenaFacade
@@ -65,7 +64,6 @@ class Runtime:
     metrics_service: MetricsService
     trace_store: FileTraceStore
     agent_registry: AgentRegistry
-    lessons_distiller: LessonsDistiller
     retirement_ceremony: RetirementCeremony
     adam: MemberRuntime
     gateway_registry: ExternalGatewayRegistry
@@ -96,7 +94,6 @@ class Runtime:
         if self.github_adapter:
             await self.github_adapter.shutdown()
         await self.agent_registry.shutdown()
-        await self.lessons_distiller.shutdown()
         await self.retirement_ceremony.shutdown()
         await self.metrics_service.shutdown()
         await self.resource_monitor.shutdown()
@@ -182,26 +179,8 @@ async def build_runtime(runtime_paths: TlonPaths, settings: Settings) -> Runtime
     await agent_registry.initialize()
     logger.info("agents_loaded", agent_count=len(agent_registry.get_all_ids()))
 
-    # LessonsDistiller — retirement distillation (docs/design/memory.md
-    # 「退休蒸馏」).
-    # Pure event consumer like MetricsService, but layered in agents
-    # (it depends on memory + agents): on AGENT_STOPPED it rebuilds
-    # the retired member's archive offline and distills lessons to
-    # memory/lessons.md. (Registry shutdown stops members directly
-    # without publishing AGENT_STOPPED, so server shutdown never
-    # triggers distillation — only deliberate stops do.)
-    lessons_distiller = LessonsDistiller(event_bus=event_bus, tlon_paths=runtime_paths)
-    await lessons_distiller.initialize()
-    logger.info("component_initialized", component="lessons_distiller")
-
-    # RetirementCeremony — retirement handover (docs/design/mail.md
-    # 「退休交接信」).
-    # Same pure-event-consumer mold as the LessonsDistiller, on the
-    # same AGENT_STOPPED trigger: inventory the retiree's archive
-    # offline and publish the AGENT_RETIRED inventory without LLM or
-    # mail activity from the dead member. Administrative
-    # removals (payload ``removed=True``) skip the ceremony entirely —
-    # removal is not retirement: the archive is already deleted.
+    # Retired members are inventoried offline without model calls or outgoing mail.
+    # Administrative removal has no remaining archive and is skipped.
     retirement_ceremony = RetirementCeremony(event_bus=event_bus, tlon_paths=runtime_paths)
     await retirement_ceremony.initialize()
     logger.info("component_initialized", component="retirement_ceremony")
@@ -264,7 +243,6 @@ async def build_runtime(runtime_paths: TlonPaths, settings: Settings) -> Runtime
         metrics_service=metrics_service,
         trace_store=trace_store,
         agent_registry=agent_registry,
-        lessons_distiller=lessons_distiller,
         retirement_ceremony=retirement_ceremony,
         adam=adam,
         gateway_registry=gateway_registry,

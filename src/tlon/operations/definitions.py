@@ -9,11 +9,10 @@ from tlon.operations.filesystem import filesystem_operation_definitions
 from tlon.operations.identity import identity_operation_definitions
 from tlon.operations.lifecycle import lifecycle_operation_definitions
 from tlon.operations.mail import mail_operation_definitions
-from tlon.operations.memory import memory_operation_definitions
 from tlon.operations.model import model_operation_definitions
 from tlon.operations.observability import observability_operation_definitions
 from tlon.operations.registry import make_registry_query_operations
-from tlon.operations.runs import run_operation_definitions
+from tlon.operations.runs import run_operation_definitions, run_read_operation_definitions
 from tlon.operations.shell import shell_operation_definitions
 from tlon.operations.state import state_operation_definitions
 from tlon.operations.tasks import task_operation_definitions
@@ -34,7 +33,7 @@ def host_operation_definitions() -> tuple[Operation, ...]:
             filesystem_operation_definitions,
             shell_operation_definitions,
             time_operation_definitions,
-            memory_operation_definitions,
+            run_read_operation_definitions,
             task_operation_definitions,
             identity_operation_definitions,
             observability_operation_definitions,

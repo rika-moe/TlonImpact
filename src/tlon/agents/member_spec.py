@@ -17,14 +17,6 @@ class MemberSpecValidationError(ValueError):
 
 
 @dataclass(frozen=True)
-class ReflectSpec:
-    """Periodic background memory audit settings."""
-
-    enabled: bool
-    interval_minutes: int
-
-
-@dataclass(frozen=True)
 class MemberHandler:
     """One event subscription and its ordinary module entry."""
 

@@ -51,7 +51,7 @@ from tlon.operations.filesystem import filesystem_operation_definitions
 from tlon.operations.identity import identity_operation_definitions
 from tlon.operations.lifecycle import lifecycle_operation_definitions
 from tlon.operations.mail import mail_operation_definitions
-from tlon.operations.memory import memory_operation_definitions
+from tlon.operations.runs import run_operation_definitions, run_read_operation_definitions
 from tlon.operations.model import model_operation_definitions
 from tlon.operations.observability import observability_operation_definitions
 from tlon.operations.registry import make_registry_query_operations
@@ -583,7 +583,7 @@ def operation_domains() -> dict[str, list[Operation]]:
         "filesystem": list(filesystem_operation_definitions()),
         "shell": list(shell_operation_definitions()),
         "time": list(time_operation_definitions()),
-        "memory": list(memory_operation_definitions()),
+        "run": [*run_read_operation_definitions(), *run_operation_definitions()],
         "tasks": list(task_operation_definitions()),
         "identity": list(identity_operation_definitions()),
         "observability": list(observability_operation_definitions()),
@@ -798,7 +798,7 @@ def render_bridge_query_ports() -> str:
     """Registry queries share ordinary operation contracts and receipts."""
     return (
         "注册表读取使用普通只读 Operation：`member-sleeping`、`member-running`、"
-        "`member-lazy` 接受 `{:agent_id \"…\"}`，`member-roster` 接受 `{}`。"
+        '`member-lazy` 接受 `{:agent_id "…"}`，`member-roster` 接受 `{}`。'
         "调用结果经统一 invocation 回执采样与重放；不再注入独立宿主谓词或写入 effects 表。"
         + GENERATED_NOTE
     )

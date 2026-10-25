@@ -21,7 +21,7 @@ Component 源文件还保留「仅 EventBus 通信」「ServerApp 唯一装配�
 2. `build_runtime` 播种内置原型和技能，不创建标准成员团队。
 3. 建立 EventBus、ConfigService、ContainerResourceMonitor、MetricsService 和 FileTraceStore。资源监控的快照查询在构造 MetricsService 时注入，不使用 setter。
 4. 构造 guardian 信息提供者、外部网关注册表、地址解析器和 PostOffice，在线程中初始化邮件存储。
-5. 构造 AgentRegistry，注册配置中的成员并初始化；再构造退休蒸馏、交接服务和 Adam。Adam 的 boot 策略可以发起成员启动，runtime 装配期间不打开 HTTP 端口不意味着成员从不运行。
+5. 构造 AgentRegistry，注册配置中的成员并初始化；再构造退休交接清点服务和 Adam（不运行自动记忆或教训蒸馏）。Adam 的 boot 策略可以发起成员启动，runtime 装配期间不打开 HTTP 端口不意味着成员从不运行。
 6. 装配人类适配器和可选 GitHubAdapter、注册外部网关，构造各 domain facade，返回 Runtime。
 7. ServerApp 装配 SessionManager、NotificationService、MemberDirectory、ClientGateway 和 RESTServer，发布 SYSTEM_STARTUP；`start()` 才开始监听。
 

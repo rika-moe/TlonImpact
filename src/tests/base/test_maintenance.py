@@ -1,7 +1,5 @@
 """Maintenance pacing cannot grant a fresh root or spin terminal receipts."""
 
-from pathlib import Path
-
 import pytest
 
 from tlon.base.execution import (
@@ -9,7 +7,7 @@ from tlon.base.execution import (
     ModelRequestRejectedError,
     UnknownModelOutcomeError,
 )
-from tlon.base.maintenance import MaintenanceCheckpointError, MaintenanceRetry
+from tlon.base.maintenance import MaintenanceRetry
 
 
 def test_transient_retries_back_off_and_reset(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -37,7 +35,6 @@ def test_transient_retries_back_off_and_reset(monkeypatch: pytest.MonkeyPatch) -
         BudgetExceededError("spent"),
         ModelRequestRejectedError("rejected"),
         UnknownModelOutcomeError("unknown"),
-        MaintenanceCheckpointError(Path("checkpoint.json"), "bad JSON"),
     ],
 )
 def test_terminal_receipts_do_not_retry(error: Exception, monkeypatch: pytest.MonkeyPatch) -> None:

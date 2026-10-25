@@ -38,7 +38,7 @@
                       (contains? (get mail :cc []) (get self :address)))]
     (if (not addressed) {:result nil}
       (let [source (run-previous {})
-            data (member-context {:query (get mail :content) :history_limit (get options :history_limit 20)})
+            data (member-context {:history_limit (get options :history_limit 20)})
             previous (get source :previous)
             prior (get previous :result)
             continued (and (not (= previous nil))
@@ -50,7 +50,7 @@
                      (get (get prior :continuation) :messages (get prior :messages))
                      (reduce result message (conj result message) [stable] (get data :mail_history [])))
             dynamic (messages/user (str "Source run: " (get source :run_id)
-                         "\nKnowledge:\n" (get data :knowledge) "\nCurrent task:\n" (get data :current_task)
+                         "\nCurrent task:\n" (get data :current_task)
                          "\nThread recap:\n" (get data :thread_recap)
                          (if continued (str "\nCurrent Skills:\n" (get data :skills)
                                               "\nCurrent Lessons:\n" (get data :lessons)) "")))

@@ -77,7 +77,7 @@ def test_existing_society_is_skipped_permanently(tmp_path: Path, evidence: str) 
         "program": paths.agent_program_database_file("m-retired"),
         "mail": paths.mail_database_file(),
         "identity": paths.webui_identity_file(),
-        "old-memory": paths.agent_memory_dir("old-member") / "claims.jsonl",
+        "old-memory": (paths.agent_dir("old-member") / "memory") / "claims.jsonl",
         "old-persona": paths.agent_identity_file("old-persona"),
     }[evidence]
     evidence_path.parent.mkdir(parents=True, exist_ok=True)

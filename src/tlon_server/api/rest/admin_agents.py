@@ -280,7 +280,7 @@ class AdminAgentHandlers(RestHandlerBase):
         """PATCH /admin/config/agents/{agent_id} - edit persona / LLM knobs.
 
         Body: ``{"persona"?: {identity?, profile?, behavior?}, "llm"?:
-        {model_name?, embedding_model_name?}}``. Persona files take effect
+        {model_name?}}``. Persona files take effect
         on the next prompt build (the cache keys on file mtimes). Omitted
         persona fields stay unchanged; empty strings clear the supplied files.
         An LLM change
@@ -323,9 +323,6 @@ class AdminAgentHandlers(RestHandlerBase):
             updated = self.configs.update_llm(
                 agent_id,
                 model_name=str(llm["model_name"]) if llm.get("model_name") else None,
-                embedding_model_name=(
-                    str(llm["embedding_model_name"]) if llm.get("embedding_model_name") else None
-                ),
             )
             assert updated is not None  # loaded above
             cfg = updated
