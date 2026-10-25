@@ -1,5 +1,14 @@
-(ns work.methods (:require [tlon.workflows :as workflows]) (:export answer))
-;; Replace this composition freely; no Python stage or recipe registration.
+(ns work.methods
+  (:require [tlon.workflows :as workflows] [tlon.context :as context] [tlon.messages :as messages])
+  (:export answer))
+;; Author-defined review is explicit composition, not a standard delivery policy.
 (defn answer [options]
-  (let [planned (workflows/plan-then-act options)]
-    (workflows/reviewed (assoc options :messages (get planned :messages)))))
+  (let [planned (workflows/plan-then-act options)
+        reviewing (messages/append (get planned :messages)
+                    (messages/user "Review unsupported claims, tool failures, and missing evidence. Suggestions are not execution."))
+        review (context/complete (assoc options :messages reviewing :tools []))
+        revising (messages/append (messages/append reviewing (messages/response review))
+                   (messages/user "Write the answer using this review; preserve uncertainty."))
+        revised (context/complete (assoc options :messages revising :tools []))]
+    {:content (get revised :content)
+     :messages (messages/append revising (messages/response revised))}))

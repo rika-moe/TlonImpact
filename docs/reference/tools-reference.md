@@ -1209,6 +1209,9 @@ Estimate the complete frozen model request size and window; does not call the pr
 | `context_window` | integer | 是 | minimum=1 |
 | `output_tokens` | integer | 是 | minimum=0 |
 | `fits` | boolean | 是 | — |
+| `token_budget_remaining` | integer | 是 | minimum=0 |
+| `token_budget_limit` | integer | 是 | minimum=0 |
+| `token_budget_measure` | string | 是 | enum=['output', 'total'] |
 <!-- END GENERATED: model-operations -->
 
 ## context

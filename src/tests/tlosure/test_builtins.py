@@ -74,7 +74,19 @@ class TestRegistries:
         }
 
     def test_arithmetic_vocabulary_names(self):
-        assert set(ARITHMETIC_BUILTINS) == {"+", "-", "*", "/", "inc", "dec", "<", ">", "<=", ">="}
+        assert set(ARITHMETIC_BUILTINS) == {
+            "+",
+            "-",
+            "*",
+            "/",
+            "quot",
+            "inc",
+            "dec",
+            "<",
+            ">",
+            "<=",
+            ">=",
+        }
 
     def test_general_vocabulary_is_pure(self):
         for registry in (CORE_BUILTINS, ARITHMETIC_BUILTINS):
@@ -283,3 +295,23 @@ class TestNumCoercion:
     def test_keyword_rejected(self):
         with pytest.raises(EvalError, match="expected a number, got Keyword"):
             _call("+", Keyword("a"))
+
+
+@pytest.mark.parametrize(
+    "a,b,expected", [(7, 2, 3), (-7, 2, -3), (7, -2, -3), (-7, -2, 3), (10**40 + 1, 10, 10**39)]
+)
+def test_integer_quotient_preserves_precision_and_truncates_toward_zero(
+    a: int, b: int, expected: int
+) -> None:
+    assert _call("quot", a, b) == expected
+
+
+@pytest.mark.parametrize("a,b", [(True, 2), (2, False), (3.5, 2), (3, 2.0), (3, "2")])
+def test_integer_quotient_rejects_nonintegers(a: Any, b: Any) -> None:
+    with pytest.raises(EvalError, match="quot expects integers"):
+        _call("quot", a, b)
+
+
+def test_integer_quotient_rejects_zero_divisor() -> None:
+    with pytest.raises(EvalError, match="division by zero"):
+        _call("quot", 3, 0)

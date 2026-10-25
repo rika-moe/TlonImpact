@@ -74,7 +74,7 @@ Operation 的恢复 hook 只读取同根、同稳定调用路径的已提交模�
 
 `tool-execute` 是 DSLAdapter 的编排端口，接受 tools 名称列表和规范化 tool_calls，返回按输入顺序排列的 `{id,name,success,data,error}`。批次不写父 intent；每个叶子都经 OperationExecutor 独立持久化，身份绑定完整批次与位置。先还原历史，再检查新效果的当前目录；撤权/定义变化阻塞，未知结果不能作为模型重试建议。
 
-`tlon.conversation/run` 是普通模块函数，参数含 messages/tools/max_rounds 及可选 max_tokens。max_rounds 为正整数；行动循环要求工具调用，必须成功执行独立且空参数的 finish-turn 才返回局部 reason=finish-turn。达到轮数、截断或缺失工具调用明确失败，纯文本不自动结束或发信。short-turn 最多三轮，允许发信后再显式结束。内部规划、自评和压缩通过 context/complete 返回文本，截断同样失败。`tlon.messages/response` 与 exchange 转换和校验完整消息协议。仅显式依赖时装配 conversation；无需模型的模块继续独立运行。模型工具执行只接受宿主叶子，模块函数不注册为 Tool。
+`tlon.conversation/run` 是普通模块函数，参数含 messages/tools/max_rounds 及可选 max_tokens。max_rounds 为正整数；行动循环要求工具调用，必须成功执行独立且空参数的 finish-turn 才返回局部 reason=finish-turn。达到轮数、截断或缺失工具调用明确失败，纯文本不自动结束或发信。short-turn 最多三轮，允许发信后再显式结束。内部规划和显式交接可返回文本，标准循环不自动自评，截断同样失败。`tlon.messages/response` 与 exchange 转换和校验完整消息协议。仅显式依赖时装配 conversation；无需模型的模块继续独立运行。模型工具执行只接受宿主叶子，模块函数不注册为 Tool。
 
 ### P4a 当前实现
 
@@ -122,3 +122,13 @@ P5 已删除 run-loop ActionRequest、SessionRecipe、stage/section 专属解释
 RunJournal 联合旧历史与 ProgramStore 的只读派生事件，来源为 program:<run_id>。完成索引只读元数据，单个来源回读模型与工具回执、未决证据、入口结果和错误；不创建第二份恢复日志。蒸馏与反思按来源 ID 集合、固定批次和独立额度根消费，较早开始但较晚完成的运行不会被时间水位遗漏。run-read、thread recap、教训、退休归档及演武场证据导出使用同一视图；客户端连接会话不变，旧引擎已随 #213 退役。
 
 当前历史边界以 [ADR 0049](../decisions/0049-retire-agent-session.md) 为准：agent session 已退役，run-read/run_id/source_run_ids 为唯一程序历史协议；不提供旧历史兼容或迁移，client session 保留。
+
+## 连续消息与 run 边界
+
+标准 agent 的上下文、规划、行动与交接由 Lisp 标准库组织。删除内置的发信前自评和替换工具参数路径，模型响应及工具调用原样进入历史，实际工具回执随后追加。标准 agent 主消息流的后续模型请求必须延续完整前缀，不截断、压缩或改写此前消息；通用工作流仍由作者显式组合普通函数。
+
+跨 run 使用 run-previous 只读操作取得同一入口、当前 run 开始之前已成功完成的上一 run 结果及模型输入契约指纹。指纹由冻结的系统提示、工具目录和模型配置生成，不以构建版本代替输入契约。Lisp 决定是否继承结果中的消息；契约改变则建立新起点。来源 run_id 随结果保存，失败、未知和未完成运行不冒充成功上下文。不新增 session、指针状态、历史表或恢复权威。每个 run 的预算及终态独立。
+
+首个起点按稳定资料、原始邮件历史、本次动态检索与任务组织。后续入口延续已提交消息，新的知识、任务、资料变更按来源标注后追加到末尾。模型每次收到的指令与工具目录来自本 run 冻结输入；资料更新不覆盖旧消息。
+
+窗口交接发生在完成任务的 run 边界：由 Lisp 预留窗口与 run 总预算各十分之一（total 模式同时计入交接重读完整输入的成本），提前为交接输入与摘要输出留出空间，摘要请求也沿原消息流追加；完整原文留在原 run，下一 run 可从带来源的交接摘要建立新起点。单个 run 无法在资源内完成时明确失败并保留原邮件和已提交效果，不隐式新建预算根继续执行。不能依靠模型 token 估算保证任意大小的工具结果都能容纳，超限时不得通过改写历史绕过。

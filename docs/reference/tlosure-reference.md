@@ -147,7 +147,7 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 任意元算术与二元数值比较；拒绝布尔与非数字。
 
 <!-- BEGIN GENERATED: dsl-builtins-arithmetic -->
-`ARITHMETIC_BUILTINS`（10 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`ARITHMETIC_BUILTINS`（11 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 名称 | pure | 说明 |
 |---|---|---|
@@ -155,6 +155,7 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 | `-` | 是 |  |
 | `*` | 是 |  |
 | `/` | 是 | Left-fold float division: ``(/ a b c)`` = ``a / b / c``. |
+| `quot` | 是 | Integer quotient truncated toward zero, without float precision loss. |
 | `inc` | 是 |  |
 | `dec` | 是 |  |
 | `<` | 是 |  |

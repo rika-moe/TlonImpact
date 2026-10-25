@@ -46,6 +46,9 @@ def context_operation(service: ModelService | None, input_schema: dict[str, Any]
             "context_window": window,
             "output_tokens": output,
             "fits": output > 0,
+            "token_budget_remaining": budget["remaining"],
+            "token_budget_limit": budget["token_limit"],
+            "token_budget_measure": budget["measure"],
         }
 
     return Operation(
@@ -59,8 +62,19 @@ def context_operation(service: ModelService | None, input_schema: dict[str, Any]
                 "context_window": {"type": "integer", "minimum": 1},
                 "output_tokens": {"type": "integer", "minimum": 0},
                 "fits": {"type": "boolean"},
+                "token_budget_remaining": {"type": "integer", "minimum": 0},
+                "token_budget_limit": {"type": "integer", "minimum": 0},
+                "token_budget_measure": {"type": "string", "enum": ["output", "total"]},
             },
-            "required": ["input_tokens", "context_window", "output_tokens", "fits"],
+            "required": [
+                "input_tokens",
+                "context_window",
+                "output_tokens",
+                "fits",
+                "token_budget_remaining",
+                "token_budget_limit",
+                "token_budget_measure",
+            ],
             "additionalProperties": False,
         },
         inspect,

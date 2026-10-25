@@ -54,6 +54,7 @@ from tlon.operations.lifecycle import make_lifecycle_operations
 from tlon.operations.mail import make_mail_operations
 from tlon.operations.model import make_model_operations
 from tlon.operations.registry import make_registry_query_operations
+from tlon.operations.runs import make_run_operations
 from tlon.operations.schema import RecoveryMismatchError, UnknownOutcomeError, json_value
 from tlon.operations.state import make_state_operations
 from tlon.operations.time import time_operation_definitions
@@ -191,6 +192,7 @@ class MemberRuntime(Member):
         if self._registry is not None:
             operations.extend(make_registry_query_operations(RegistryQueries(self._registry)))
         operations.extend(make_state_operations(self._program_store))
+        operations.extend(make_run_operations(self._program_store, self._member_id))
         if services is not None:
             operations.extend(
                 make_model_operations(

@@ -65,7 +65,7 @@
 `member-context` 是固定结构的只读操作，返回知识、教训、技能索引、当前任务、最近交互摘要、邮件历史与可用工具名。程序决定如何组织这些值；宿主不解释 section 配置。文档和标准库源码可通过 workspace 的只读映射及现有读取工具查询。
 
 <!-- BEGIN GENERATED: dsl-builtins-pure -->
-`SCRIPT_BUILTINS`（30 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`SCRIPT_BUILTINS`（31 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 名称 | pure | 说明 |
 |---|---|---|
@@ -90,6 +90,7 @@
 | `-` | 是 |  |
 | `*` | 是 |  |
 | `/` | 是 | Left-fold float division: ``(/ a b c)`` = ``a / b / c``. |
+| `quot` | 是 | Integer quotient truncated toward zero, without float precision loss. |
 | `inc` | 是 |  |
 | `dec` | 是 |  |
 | `<` | 是 |  |
@@ -106,7 +107,7 @@
 策略仍是独立纯函数式计算，不驱动 Agent 工作流程。
 
 <!-- BEGIN GENERATED: dsl-builtins-policy -->
-`POLICY_BUILTINS`（27 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`POLICY_BUILTINS`（28 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 名称 | pure | 说明 |
 |---|---|---|
@@ -131,6 +132,7 @@
 | `-` | 是 |  |
 | `*` | 是 |  |
 | `/` | 是 | Left-fold float division: ``(/ a b c)`` = ``a / b / c``. |
+| `quot` | 是 | Integer quotient truncated toward zero, without float precision loss. |
 | `inc` | 是 |  |
 | `dec` | 是 |  |
 | `<` | 是 |  |

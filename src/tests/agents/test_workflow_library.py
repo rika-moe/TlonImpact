@@ -72,36 +72,15 @@ def edn(value: Any) -> str:
     return dumps(convert(value))
 
 
-def test_complete_tool_groups_and_unexecuted_proposal_are_distinct() -> None:
+def test_fit_preserves_every_complete_exchange_without_model_call() -> None:
     history = [
         {"role": "user", "content": "fixed prefix"},
-        {"role": "assistant", "content": "draft; no tool execution"},
-        {
-            "role": "assistant",
-            "content": None,
-            "tool_calls": [
-                {"id": "c1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}
-            ],
-        },
-        {"role": "tool", "tool_call_id": "c1", "content": '{"success":true,"data":"source fact"}'},
+        {"role": "assistant", "content": "draft, not executed"},
         {"role": "user", "content": "latest"},
     ]
-    result, requests = run(
-        "(context/compact {:messages "
-        + edn(history)
-        + " :cache_prefix_len 1 :max_tokens 40 :recent_groups 1})",
-        [{"content": "draft unexecuted"}, {"content": "source fact; draft unexecuted"}],
-    )
-    assert result["messages"][0] == history[0]
-    assert result["messages"][-1] == history[-1]
-    assert result["cache_prefix_len"] == 1
-    assert len(requests) == 2 and requests[0]["tools"] == []
-    assert "UNEXECUTED" in requests[0]["messages"][0]["content"]
-    assert "source fact" in requests[1]["messages"][0]["content"]
-    assert "draft; no tool execution" in requests[0]["messages"][0]["content"]
-    assert result["messages"][1]["content"].startswith(
-        "Historical summary (not a new execution receipt)"
-    )
+    result, requests = run("(context/fit {:messages " + edn(history) + "})")
+    assert result["messages"] == history
+    assert requests == []
 
 
 @pytest.mark.parametrize(
@@ -120,56 +99,54 @@ def test_compaction_rejects_incomplete_protocol(history: Any) -> None:
         run("(context/groups " + edn(history) + ")")
 
 
-def test_prefix_cannot_split_tool_exchange() -> None:
-    history = [
-        {"role": "assistant", "tool_calls": [{"id": "x"}]},
-        {"role": "tool", "tool_call_id": "x", "content": "fact"},
-        {"role": "user", "content": "latest"},
-    ]
-    with pytest.raises(EvalError, match="prefix splits"):
-        run("(context/compact {:messages " + edn(history) + " :prefix_count 1 :max_tokens 10})")
-
-
-def test_two_nested_methods_return_before_outer_continues() -> None:
+def test_nested_evidence_method_retains_all_request_prefixes() -> None:
     result, requests = run(
-        '(let [options {:messages [{:role "user" :content "verify"}] :tools [] :max_tokens 32 :max_rounds 2} '
-        "checked (workflows/evidence-check options) "
-        "reviewed (workflows/reviewed options)] "
-        '{:checked (get checked :content) :reviewed (get reviewed :content) :outer "continued"})',
+        '(let [checked (workflows/evidence-check {:messages [{:role "user" :content "verify"}] '
+        ':tools ["finish-turn"] :max_tokens 32 :max_rounds 2})] '
+        '{:checked (get checked :content) :messages (get checked :messages) :outer "continued"})',
         [
             {
                 "content": value,
-                "tool_calls": [{"id": "done", "name": "finish-turn", "arguments": {}}],
+                "tool_calls": [{"id": f"done-{index}", "name": "finish-turn", "arguments": {}}],
             }
-            if value in {"source A", "source B", "draft"}
+            if index < 2
             else {"content": value}
-            for value in ["source A", "source B", "cross check", "draft", "review", "revision"]
+            for index, value in enumerate(["source A", "source B", "cross check"])
         ],
     )
-    assert result == {"checked": "cross check", "reviewed": "revision", "outer": "continued"}
-    assert len(requests) == 6
-    assert "source A" in requests[2]["messages"][0]["content"]
-    assert "source B" in requests[2]["messages"][0]["content"]
+    assert result["checked"] == "cross check" and result["outer"] == "continued"
+    assert len(requests) == 3
+    for previous, current in zip(requests, requests[1:], strict=False):
+        assert current["messages"][: len(previous["messages"])] == previous["messages"]
+    assert result["messages"][:-1] == requests[-1]["messages"]
+    assert any(message.get("content") == "source A" for message in requests[-1]["messages"])
+    assert any(message.get("content") == "source B" for message in requests[-1]["messages"])
 
 
-def test_pressure_compacts_incrementally_when_batch_cannot_fit() -> None:
-    history = [{"role": "user", "content": "x" * 200} for _ in range(4)]
-    history.append({"role": "user", "content": "latest"})
+def test_plan_prompt_is_retained_in_action_history() -> None:
     result, requests = run(
-        "(context/fit {:messages " + edn(history) + " :max_tokens 32})",
-        [{"content": "brief source summary"} for _ in range(4)],
-        window=800,
+        '(workflows/plan-then-act {:messages [{:role "user" :content "task"}] '
+        ':tools ["finish-turn"] :max_rounds 2})',
+        [
+            {"content": "plan"},
+            {"tool_calls": [{"id": "done", "name": "finish-turn", "arguments": {}}]},
+        ],
     )
-    assert len(requests) == 4
-    assert result["messages"][-1] == history[-1]
-    assert len(result["messages"]) == 2
+    assert requests[1]["messages"][: len(requests[0]["messages"])] == requests[0]["messages"]
+    assert "Plan the work" in requests[0]["messages"][-1]["content"]
+    assert result["messages"][: len(requests[1]["messages"])] == requests[1]["messages"]
+
+
+def test_pressure_rejects_without_compaction_or_provider_call() -> None:
+    history = [{"role": "user", "content": "x" * 200} for _ in range(4)]
+    with pytest.raises(EvalError, match="history cannot be rewritten"):
+        run("(context/fit {:messages " + edn(history) + "})", window=800)
 
 
 def test_single_oversized_exchange_does_not_call_provider() -> None:
     history = [{"role": "user", "content": "x" * 2000}, {"role": "user", "content": "latest"}]
-    # No mock responses: any provider dispatch would fail instead of this explicit rejection.
-    with pytest.raises(EvalError, match="single exchange"):
-        run("(context/fit {:messages " + edn(history) + " :max_tokens 32})", window=800)
+    with pytest.raises(EvalError, match="history cannot be rewritten"):
+        run("(context/fit {:messages " + edn(history) + "})", window=800)
 
 
 def test_forward_uses_original_mail_identity() -> None:
@@ -185,15 +162,6 @@ def test_omitted_output_limit_stays_absent_from_model_request() -> None:
     )
     assert result["content"] == "plan"
     assert "max_tokens" not in requests[0]
-
-
-def test_compaction_rejects_truncated_summary() -> None:
-    history = [{"role": "user", "content": value} for value in ["old", "recent"]]
-    with pytest.raises(EvalError, match="model output truncated"):
-        run(
-            "(context/compact {:messages " + edn(history) + "})",
-            [{"content": "partial", "finish_reason": "length"}],
-        )
 
 
 def test_short_turn_allows_delivery_followed_by_explicit_finish() -> None:
@@ -225,7 +193,6 @@ def test_standard_work_example_composes_methods_then_delivers_with_tools() -> No
         {"content": "plan"},
         {"tool_calls": [{"id": "clock", "name": "time-now", "arguments": {}}]},
         {"tool_calls": [{"id": "planned", "name": "finish-turn", "arguments": {}}]},
-        {"tool_calls": [{"id": "drafted", "name": "finish-turn", "arguments": {}}]},
         {"content": "review"},
         {"content": "revised answer"},
         {
@@ -279,11 +246,12 @@ def test_standard_work_example_composes_methods_then_delivers_with_tools() -> No
         fuel=10000,
     )
     assert result["result"]["reason"] == "finish-turn"
-    assert len(requests) == 8
+    assert len(requests) == 7
+    for previous, current in zip(requests, requests[1:], strict=False):
+        assert current["messages"][: len(previous["messages"])] == previous["messages"]
     assert all("max_tokens" not in request for request in requests)
     assert [call["name"] for call in calls] == [
         "time-now",
-        "finish-turn",
         "finish-turn",
         "mail-send",
         "finish-turn",

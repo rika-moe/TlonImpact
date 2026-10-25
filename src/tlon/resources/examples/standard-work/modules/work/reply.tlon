@@ -10,9 +10,10 @@
                  :tools ["time-now" "finish-turn"] :max_rounds 3}
         answer (methods/answer options)
         delivered (conversation/run
-                    {:messages [(messages/user (str "Send this reviewed answer to " (get event :sender)
+                    {:messages (messages/append (get answer :messages)
+                                (messages/user (str "Send this reviewed answer to " (get event :sender)
                                   " using mail-send with in_reply_to " (get mail :id)
-                                  ", then call finish-turn alone. Answer: " (get answer :content)))]
+                                  ", then call finish-turn alone. Answer: " (get answer :content))))
                      :tools ["mail-send" "finish-turn"] :max_rounds 3})
         read (mail-mark-read {:mail_ids [(get mail :id)]})]
     {:result delivered}))

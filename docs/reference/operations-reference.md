@@ -104,8 +104,10 @@ OperationTool 与 ToolExecutor 只将 InputError/RejectedError 变为普通失�
 
 prototype-write 必填完整 v2 behavior/modules，发布后返回 pending_approval。program-check 是只读静态校验，返回 valid/digest/diagnostics，不执行候选；原 behavior-propose 操作已删除，起草改由普通 tlon.authoring/draft 使用文件工具、模型与校验反馈组合。prototype-review 读取完整包，谱系 diff 覆盖每个作者文件，实际批准仍由人类执行。
 
-model-context 接受与 model-call 相同的 messages/tools/max_tokens 受控输入，返回 input_tokens/context_window/output_tokens/fits。它是持久只读估算，不请求 provider 或消费模型额度，使用冻结系统/工具/模型配置；token 估算不保证 provider 实际计数。普通上下文库据此组织压缩，模型请求和额度仍由原回执负责。
+model-context 接受与 model-call 相同的 messages/tools/max_tokens 受控输入，返回 input_tokens/context_window/output_tokens/fits 和 token_budget_limit/token_budget_remaining/token_budget_measure。它是持久只读估算，不请求 provider 或消费模型额度，使用冻结系统/工具/模型配置；token 估算不保证 provider 实际计数。普通上下文库据此核查资源和组织 run 边界交接，模型请求和额度仍由原回执负责。
 
 P4b 的 run-read 接受原始 run_id。RunJournal 只读查询 ProgramStore 权威快照，返回的摘要带可追踪来源、模型/工具结果和程序返回值；查询不调用恢复入口。客户端连接 REST /sessions 的契约不变。
 
 当前历史边界以 [ADR 0049](../decisions/0049-retire-agent-session.md) 为准：agent session 已退役，run-read/run_id/source_run_ids 为唯一程序历史协议；不提供旧历史兼容或迁移，client session 保留。
+
+`run-previous {}` 是成员所属 ProgramStore 的只读结果查询：返回当前 run_id/contract 与 previous（同入口、当前 run 开始前最近成功完成 run 的 run_id/contract/result，或 null）。契约指纹使用冻结 host+config，不包含构建或模块源码版本。Lisp 决定继承消息或在契约变化时另起上下文；没有会话状态、指针或迁移。

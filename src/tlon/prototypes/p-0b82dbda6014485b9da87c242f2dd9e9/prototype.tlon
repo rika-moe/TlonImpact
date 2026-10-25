@@ -1,1 +1,1 @@
-{:name :p-0b82dbda6014485b9da87c242f2dd9e9 :display-name "标准文件迭代" :description "L1 执行能力；最多 10 次迭代，完整上下文与交卷前自评审，后台维护按成员配置反思。" :trusted true :program-digest "6763099a66cf0f11ee46d0f9ca0b96df103b7d322af2949b29ee590896e31263"}
+{:name :p-0b82dbda6014485b9da87c242f2dd9e9 :display-name "标准文件迭代" :description "L1 执行能力；最多 10 次迭代，连续追加完整消息与工具回执，后台维护按成员配置反思。" :trusted true :program-digest "df7235183e8d149bbfd0d7f444a1ff92c21faf2cd5f04dcd3047e970d9172442"}
