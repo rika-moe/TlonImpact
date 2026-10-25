@@ -369,12 +369,8 @@ class TestDegradation:
         assert old is not None and old.get("status", "active") == "active"
         assert len(await manager.claims.get_all_claims()) == 2
 
-    async def test_fallback_claims_degrade_to_pure_append_when_llm_down(
-        self, tmp_path: Path
-    ) -> None:
-        """The mechanical fallback claims (produced when the LLM is
-        down) walk the same append path — judgment is equally down, so
-        they simply append."""
+    async def test_empty_distillation_does_not_add_or_judge_claims(self, tmp_path: Path) -> None:
+        """An explicit empty result consumes successfully without inventing facts."""
         manager = await _seed(
             _manager(tmp_path, FakeEmbedder({})),
             [{"id": "c-old", "text": "旧记忆", "timestamp": "2026-09-10T08:00:00"}],
@@ -385,9 +381,10 @@ class TestDegradation:
 
         claim_count = await manager._distill_runs(projections)
 
-        assert claim_count == 1
+        assert claim_count == 0
         texts = [c["text"] for c in await manager.claims.get_all_claims()]
-        assert any("整理部署文档" in t for t in texts)  # mechanical fallback claim
+        assert texts == ["旧记忆"]
+        assert not fake.judge_calls
         old = await manager.claims.get_claim("c-old")
         assert old is not None and old.get("status", "active") == "active"
 

@@ -55,8 +55,10 @@ class MaintenanceRetry:
         )
         delay = min(30 * 2 ** (self._failures - 1), 300)
         self._retry_at = monotonic() + delay
-        status = (
-            "blocked; inspect saved batch and rebuild member instance after repair"
-            if self.blocked else f"retry in {delay}s"
-        )
+        if isinstance(error, UnknownModelOutcomeError):
+            status = "blocked; outcome unknown; manual reconciliation required; keep reservation and do not resend"
+        elif self.blocked:
+            status = "blocked; inspect saved batch and rebuild member instance after repair"
+        else:
+            status = f"retry in {delay}s"
         self.error = f"{type(error).__name__}: {error} ({status})"

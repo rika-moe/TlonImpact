@@ -11,7 +11,7 @@ import asyncio
 import json
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -19,7 +19,8 @@ from tests.history_helpers import append_history
 from tlon.agents.member_spec import ReflectSpec
 from tlon.agents.reflection import ReflectionEngine
 from tlon.agents.run_journal import RunJournal
-from tlon.base.execution import ModelRequestRejectedError, UnknownModelOutcomeError
+from tlon.base.config import LLMConfig
+from tlon.base.execution import ExecutionScope, ModelRequestRejectedError, UnknownModelOutcomeError
 from tlon.base.llm_client import LLMClient, LLMResponse
 from tlon.base.paths import TlonPaths
 from tlon.memory.manager import MemoryManager
@@ -132,9 +133,7 @@ class TestRunEndToEnd:
         )
 
         for index in range(5):
-            await append_history(
-                engine._journal, str(index), "run/start", trigger_content="hello"
-            )
+            await append_history(engine._journal, str(index), "run/start", trigger_content="hello")
             await append_history(engine._journal, str(index), "run/end", reason="complete")
         await engine.check_trigger()
         assert engine._task is not None
@@ -161,8 +160,8 @@ class TestLifecycle:
     (docs/design/runtime.md).
 
     An in-flight reflection reports itself as running (the member
-    runtime's idle accounting reads this), and ``shutdown`` cancels it
-    instead of leaving an orphaned coroutine.
+    runtime's idle accounting reads this). Shutdown drains it within a
+    bounded window before cancellation, without leaving an orphaned coroutine.
     """
 
     async def _trigger(self, tmp_path: Path) -> tuple[ReflectionEngine, _BlockingLLM]:
@@ -193,7 +192,10 @@ class TestLifecycle:
         assert not engine.is_running
         assert engine._task is None
 
-    async def test_shutdown_cancels_in_flight_reflection(self, tmp_path: Path) -> None:
+    async def test_shutdown_cancels_in_flight_reflection(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(ReflectionEngine, "SHUTDOWN_GRACE_SECONDS", 0.02)
         engine, _llm = await self._trigger(tmp_path)
         task = engine._task
         assert task is not None
@@ -320,9 +322,7 @@ async def test_reflection_prompt_includes_undistilled_program_interactions(tmp_p
             "claim_count": 0,
             "claims": [],
             "undistilled_run_count": 1,
-            "recent_interactions": [
-                {"run_id": "run-1", "trigger_content": "source text"}
-            ],
+            "recent_interactions": [{"run_id": "run-1", "trigger_content": "source text"}],
         }
     )
     assert "run-1" in prompt
@@ -411,3 +411,130 @@ async def test_transient_reflection_failure_retries_frozen_batch_after_backoff(
         await engine._task
     assert engine._load_checkpoint()["pending"] is None
     assert engine.diagnostic_error is None
+
+
+async def _durable_blocking_reflection(
+    tmp_path: Path,
+) -> tuple[ReflectionEngine, asyncio.Event, AsyncMock, str]:
+    engine, manager = _engine(tmp_path)
+    await manager.remember_fact("a verified claim for reflection")
+    await _complete_sources(engine)
+    store = engine._journal._program_store
+    assert store is not None
+    client = LLMClient(
+        LLMConfig(model_name="openai/test", max_output_tokens=32, context_window=100000)
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def provider(*args: Any) -> LLMResponse:
+        entered.set()
+        await release.wait()
+        return LLMResponse(content='{"operations": []}', usage={"completion_tokens": 2})
+
+    request = AsyncMock(side_effect=provider)
+    client._chat_with_retries = request
+    engine._llm_client = client
+    engine._execution_factory = lambda purpose: ExecutionScope(
+        store, "maintenance:" + purpose, 100, "output"
+    )
+    await engine.check_trigger()
+    await asyncio.wait_for(entered.wait(), 2)
+    root_id = "maintenance:reflection:" + engine._load_checkpoint()["pending"]["id"]
+    return engine, release, request, root_id
+
+
+async def test_shutdown_drains_provider_commit_and_checkpoint_before_closing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ReflectionEngine, "SHUTDOWN_GRACE_SECONDS", 0.5)
+    engine, release, request, root_id = await _durable_blocking_reflection(tmp_path)
+    closing = asyncio.create_task(engine.shutdown())
+    await asyncio.sleep(0.02)
+    release.set()
+    await asyncio.wait_for(closing, 1)
+    store = engine._journal._program_store
+    assert store is not None
+    assert store.budget_usage(root_id)["pending_count"] == 0
+    assert store.budget_usage(root_id)["used"] == 2
+    assert engine._load_checkpoint()["pending"] is None
+    assert engine.diagnostic_error is None
+    request.assert_awaited_once()
+    await engine.check_trigger()
+    assert engine._task is None
+
+
+async def test_shutdown_timeout_preserves_unknown_reservation_and_restart_never_resends(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ReflectionEngine, "SHUTDOWN_GRACE_SECONDS", 0.02)
+    engine, _release, request, root_id = await _durable_blocking_reflection(tmp_path)
+    await engine.shutdown()
+    store = engine._journal._program_store
+    assert store is not None
+    assert store.budget_usage(root_id)["pending_count"] == 1
+    assert store.budget_usage(root_id)["used"] == 32
+    state = engine._load_checkpoint()
+    assert state["pending"] is not None and state["seen"] == []
+    assert "manual reconciliation required" in (engine.diagnostic_error or "")
+    assert "keep reservation" in (engine.diagnostic_error or "")
+    assert not engine.is_running
+    # Rebuilding checks the same durable request identity and fixed budget, not a new root.
+    restarted, _ = _engine(tmp_path)
+    restarted._llm_client = engine._llm_client
+    restarted._execution_factory = engine._execution_factory
+    await restarted.check_trigger()
+    assert restarted._task is not None
+    await restarted._task
+    assert "UnknownModelOutcomeError" in (restarted.diagnostic_error or "")
+    assert "manual reconciliation required" in (restarted.diagnostic_error or "")
+    with patch("tlon.base.maintenance.monotonic", return_value=1e12):
+        for _ in range(3):
+            await restarted.check_trigger()
+    request.assert_awaited_once()
+    assert restarted._load_checkpoint() == state
+    assert store.budget_usage(root_id)["pending_count"] == 1
+
+
+async def test_shutdown_closes_admission_even_if_check_trigger_is_suspended(tmp_path: Path) -> None:
+    engine, _ = _engine(tmp_path)
+    await _complete_sources(engine)
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = engine._journal.list_completed
+
+    async def list_sources() -> list[str]:
+        entered.set()
+        await release.wait()
+        return await original()
+
+    with patch.object(engine._journal, "list_completed", side_effect=list_sources):
+        checking = asyncio.create_task(engine.check_trigger())
+        await entered.wait()
+        await engine.shutdown()
+        release.set()
+        await checking
+    await engine.check_trigger()
+    assert engine._task is None and not engine.is_running
+
+
+async def test_empty_boot_sources_are_consumed_without_starting_reflection(tmp_path: Path) -> None:
+    engine, manager = _engine(tmp_path)
+    await manager.remember_fact("existing memory does not make inert boot meaningful")
+    from tlon.agents.program_store import ProgramStore
+
+    store = ProgramStore(engine._journal._program_database)
+    engine._journal._program_store = store
+    sources = [f"run-{index}:handler:boot" for index in range(5)]
+    for source in sources:
+        store.ensure_entry(source, "{}", "{:payload nil}", {})
+        store.complete_entry(source, None)
+    with patch.object(
+        engine._llm_client, "chat", side_effect=AssertionError("inert boot requested model")
+    ) as request:
+        await engine.check_trigger()
+        assert engine._task is None
+        await engine.check_trigger()
+        request.assert_not_awaited()
+    assert engine._load_checkpoint()["seen"] == sources
+    assert engine._load_checkpoint()["pending"] is None

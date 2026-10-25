@@ -138,6 +138,28 @@ class MemoryConfig:
         return config
 
 
+def is_empty_boot_run(events: list[dict[str, Any]], run_id: str) -> bool:
+    """Skip only inert boot entries; model calls and tool effects retain their evidence."""
+    if not run_id.endswith(":handler:boot"):
+        return False
+    for event in events:
+        kind = event.get("type")
+        if kind in {
+            "llm/response",
+            "tool/result",
+            "program/invocation-pending",
+            "program/model-failure",
+        }:
+            return False
+        if kind == "run/start" and event.get("trigger_content") not in (None, "", "null"):
+            return False
+        if kind == "run/end" and (
+            event.get("error") or event.get("result") not in (None, {}, {"result": None})
+        ):
+            return False
+    return True
+
+
 @dataclass
 class RunProjection:
     """One completed run's distillation view.

@@ -4,6 +4,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
 from tlon.base.config import LLMConfig
 from tlon.base.execution import (
     BudgetExceededError,
@@ -20,6 +22,28 @@ from tlon.operations.schema import RecoveryMismatchError
 from .models import RunProjection
 
 logger = get_logger(__name__)
+
+
+class DistillationResponseError(ValueError):
+    """A committed response is invalid and cannot be repaired by replaying it."""
+
+
+class DistilledClaim(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    text: str = Field(min_length=1)
+    importance: float = Field(ge=0.0, le=1.0)
+
+    @field_validator("text")
+    @classmethod
+    def nonempty_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("claim text must not be blank")
+        return value.strip()
+
+
+class DistillationResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    claims: list[DistilledClaim]
 
 
 @dataclass
@@ -41,9 +65,8 @@ class Distiller:
 
     One call per batch: the projections (rebuilt from the run
     journals) go in, a list of natural-language claims (text +
-    importance) comes out. Without an LLM (or on LLM failure) the caller
-    falls back to mechanical claims — distillation must never lose a
-    batch to provider flakiness.
+    importance) comes out. Empty claims are successful. Invalid responses
+    preserve the batch and block replay until an operator resolves it.
 
     Example:
         >>> distiller = Distiller(llm_config)
@@ -75,7 +98,7 @@ class Distiller:
 
         Returns:
             List of claim dictionaries with ``text`` and ``importance``;
-            empty when the LLM yields nothing usable (caller falls back)
+            empty when the LLM explicitly returns no claims
         """
         if not runs:
             return []
@@ -104,54 +127,23 @@ class Distiller:
             {"role": "user", "content": f"请从以下程序运行中蒸馏记忆断言：\n\n{formatted_runs}"}
         ]
 
+        response = await self.llm_client.chat(
+            system_prompt=system_prompt,
+            messages=messages,
+            timeout=30.0,
+            purpose="distill",
+            response_format={"type": "json_object"},
+        )
+        if response.finish_reason == "length":
+            raise DistillationResponseError("distillation response truncated")
+        if not response.content or response.tool_calls:
+            raise DistillationResponseError("distillation requires a nonempty JSON response")
         try:
-            response = await self.llm_client.chat(
-                system_prompt=system_prompt,
-                messages=messages,
-                timeout=30.0,
-                purpose="distill",
-            )
-
-            if not response.content:
-                logger.warning("distill_response_empty")
-                return []
-
-            try:
-                result = self._extract_json(response.content)
-                claims = result.get("claims", [])
-                if not isinstance(claims, list):
-                    return []
-
-                validated = []
-                for claim in claims:
-                    if isinstance(claim, dict) and str(claim.get("text", "")).strip():
-                        validated.append(
-                            {
-                                "text": str(claim["text"]).strip(),
-                                "importance": min(
-                                    1.0, max(0.0, float(claim.get("importance", 0.5)))
-                                ),
-                            }
-                        )
-                return validated
-
-            except (json.JSONDecodeError, ValueError) as e:
-                logger.warning("distill_json_parse_failed", error=str(e))
-                return []
-
-        except (
-            BudgetExceededError,
-            ExecutionDeadlineError,
-            ModelRequestRejectedError,
-            UnknownModelOutcomeError,
-            RecoveryMismatchError,
-        ):
-            raise
-        except Exception as e:
-            if current_execution() is not None:
-                raise
-            logger.error("distill_failed", error=str(e), exc_info=True)
-            return []
+            result = DistillationResult.model_validate_json(response.content)
+        except ValidationError as error:
+            logger.error("distill_response_invalid", error=str(error))
+            raise DistillationResponseError(f"invalid distillation JSON/schema: {error}") from error
+        return [claim.model_dump() for claim in result.claims]
 
     def _format_runs(self, runs: list[RunProjection]) -> str:
         """Format run projections for LLM prompt."""
@@ -315,26 +307,3 @@ class Distiller:
             # as ADD (the safe direction: never invalidate on a guess).
             return index, ConflictVerdict()
         return index, ConflictVerdict(action="supersede", superseded_ids=superseded_ids)
-
-    @staticmethod
-    def fallback_claims(runs: list[RunProjection]) -> list[dict[str, Any]]:
-        """Mechanical claims without LLM: quote the real trigger text plus
-        the run's first reply, one claim per run.
-
-        The projection carries the run's trigger content (ADR 0028:
-        the wake template, not a user request), so the fallback records
-        the run's wake context, never the agent's own reply mistaken
-        for user input.
-        """
-        claims = []
-        for run in runs:
-            trigger = run.trigger_content[:60]
-            if not trigger and not run.program_result:
-                continue
-            text = f"处理过程序运行（触发语：{trigger}）"
-            if run.llm_responses:
-                text += f"；回复要点：{run.llm_responses[-1][:80]}"
-            if run.program_result:
-                text += f"；程序返回：{run.program_result[:80]}"
-            claims.append({"text": text, "importance": 0.3})
-        return claims

@@ -167,7 +167,9 @@ class ProgramStore:
         with self._lock:
             if self.database is None:
                 return [r for r in self._runs.values() if r.package_edn is not None and r.error]
-            with self._connection() as connection:
+            if not self.database.exists():
+                return []
+            with self._history_connection() as connection:
                 ids = connection.execute(
                     "SELECT r.run_id FROM runs r JOIN entry_programs e ON e.run_id=r.run_id "
                     "WHERE r.error IS NOT NULL ORDER BY r.rowid"
@@ -350,6 +352,37 @@ class ProgramStore:
                 "Invocation identity, path, arguments or definition changed"
             )
         return row
+
+    def read_invocation_fact(
+        self, root_id: str, path: tuple[str, ...]
+    ) -> tuple[Invocation, InvocationOutcome | None] | None:
+        """Read one leaf's identity and outcome, without authorizing execution.
+
+        No row means no recorded intent; a row with no outcome is unresolved.
+        Callers must validate the identity before treating a success as evidence.
+        """
+        with self._lock:
+            if self.database is None:
+                rows = (
+                    (self._identity(invocation), outcome)
+                    for invocation, outcome in self._invocations.values()
+                    if invocation.root_id == root_id and invocation.path == path
+                )
+                row = next(rows, None)
+            else:
+                if not self.database.exists():
+                    return None
+                with self._history_connection() as connection:
+                    row = connection.execute(
+                        "SELECT identity_json,outcome_json FROM invocations "
+                        "WHERE root_id=? AND path_json=?",
+                        (root_id, json.dumps(path)),
+                    ).fetchone()
+            if row is None:
+                return None
+            identity = json.loads(row[0])
+            identity["path"] = tuple(identity["path"])
+            return Invocation(**identity), self._decode(row[1])
 
     def lookup_invocation(self, invocation: Invocation) -> InvocationOutcome | None:
         with self._lock:

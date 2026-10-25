@@ -17,11 +17,12 @@ from typing import Any, cast
 
 from tlon.agents.member_spec import ReflectSpec
 from tlon.agents.run_journal import RunJournal
-from tlon.base.execution import ExecutionScope, bind_execution
+from tlon.base.execution import ExecutionScope, UnknownModelOutcomeError, bind_execution
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.maintenance import MaintenanceCheckpointError, MaintenanceRetry
 from tlon.memory.manager import MemoryManager
+from tlon.memory.models import is_empty_boot_run
 from tlon.operations.schema import RecoveryMismatchError, UnknownOutcomeError
 
 logger = get_logger(__name__)
@@ -49,6 +50,8 @@ class ReflectionEngine:
     owning member runtime.
     """
 
+    SHUTDOWN_GRACE_SECONDS = 5.0
+
     def __init__(
         self,
         memory: MemoryManager,
@@ -70,6 +73,7 @@ class ReflectionEngine:
         self._min_interactions: int = memory.config.reflection_min_interactions
         self._retry = MaintenanceRetry()
         self._running = False
+        self._closing = False
         self._task: asyncio.Task[None] | None = None
 
     @property
@@ -145,14 +149,32 @@ class ReflectionEngine:
             os.fsync(stream.fileno())
         os.replace(temporary, self._checkpoint)
 
+    def _can_trigger(self) -> bool:
+        return (
+            not self._closing
+            and self.enabled
+            and not self._running
+            and self._task is None
+            and self._retry.ready()
+        )
+
     async def check_trigger(self) -> None:
         """Count durable completed sources, retaining one frozen batch on failure."""
-        if not self.enabled or self._running or not self._retry.ready():
+        if not self._can_trigger():
             return
         try:
             state = await asyncio.to_thread(self._load_checkpoint)
             if state["pending"] is None:
                 sources = sorted(set(await self._journal.list_completed()) - set(state["seen"]))
+                empty_boot = [
+                    source
+                    for source in sources
+                    if is_empty_boot_run(await self._journal.read_events(source), source)
+                ]
+                if empty_boot:
+                    state["seen"] = sorted(set(state["seen"]) | set(empty_boot))
+                    await asyncio.to_thread(self._save_checkpoint, state)
+                    sources = [source for source in sources if source not in empty_boot]
                 if len(sources) < self._min_interactions:
                     return
                 if state["last_completed"] is not None:
@@ -170,6 +192,8 @@ class ReflectionEngine:
                     "next": 0,
                 }
                 await asyncio.to_thread(self._save_checkpoint, state)
+            if not self._can_trigger():
+                return
             self._running = True
             self._task = asyncio.create_task(self._run(state))
         except Exception as error:
@@ -178,21 +202,32 @@ class ReflectionEngine:
             )
             logger.warning("reflection_failed", error=str(error))
 
-    async def shutdown(self) -> None:
-        """Cancel an in-flight reflection and await it.
+    def stop_accepting(self) -> None:
+        """Close admission synchronously before the member stops its worker."""
+        self._closing = True
 
-        Called from the member runtime's shutdown so no free-floating
-        reflection task survives the member.
-        """
-        if self._task is None:
+    async def shutdown(self) -> None:
+        """Drain existing work for one bounded window, then cancel and await it."""
+        self.stop_accepting()
+        task = self._task
+        if task is None:
             return
-        self._task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await self._task
-        self._task = None
+        try:
+            done, _ = await asyncio.wait({task}, timeout=self.SHUTDOWN_GRACE_SECONDS)
+            if not done:
+                task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        except asyncio.CancelledError:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            raise
 
     async def _run(self, state: dict[str, Any]) -> None:
         """Run an independently budgeted, replayable maintenance batch."""
+        scope = None
+        scope_initialized = False
         try:
             if self._state_changed is not None:
                 await self._state_changed()
@@ -205,6 +240,7 @@ class ReflectionEngine:
             with bind_execution(scope):
                 if scope is not None:
                     await scope.initialize()
+                    scope_initialized = True
                 if pending["digest"] is None:
                     pending["digest"] = await self._memory.get_memory_digest(self._journal)
                     await asyncio.to_thread(self._save_checkpoint, state)
@@ -244,6 +280,19 @@ class ReflectionEngine:
                 await asyncio.to_thread(self._save_checkpoint, state)
                 self._retry.succeeded()
                 logger.info("reflection_completed", operation_count=len(operations))
+        except asyncio.CancelledError:
+            if scope is not None and scope_initialized:
+                budget = await asyncio.to_thread(scope.store.budget_usage, scope.root_id)
+                if budget["pending_count"]:
+                    self._retry.failed(
+                        UnknownModelOutcomeError(
+                            f"Reflection interrupted with unresolved model intent: {scope.root_id}"
+                        )
+                    )
+                    logger.warning(
+                        "reflection_outcome_unknown", root_id=scope.root_id, error=self._retry.error
+                    )
+            raise
         except Exception as error:
             self._retry.failed(
                 error, blocked=isinstance(error, (RecoveryMismatchError, UnknownOutcomeError))
@@ -251,9 +300,11 @@ class ReflectionEngine:
             logger.warning("reflection_failed", error=str(error))
         finally:
             self._running = False
-            self._task = None
-            if self._state_changed is not None:
-                await self._state_changed()
+            try:
+                if self._state_changed is not None:
+                    await self._state_changed()
+            finally:
+                self._task = None
 
     async def _freeze_operations(
         self, operations: list[dict[str, Any]], claims: list[dict[str, Any]]

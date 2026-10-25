@@ -3,13 +3,16 @@
 The runner itself needs real LLM/embedding (a manual gate, not CI); these
 tests pin the offline parts: dataset loading/validation, the fake journal,
 the assertion logic, and the full scenario flow with a fake embedder and
-no LLM (mechanical fallback claims) — no network anywhere.
+a deterministic model fixture — no network anywhere.
 """
 
 import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -44,9 +47,7 @@ class TestLoadScenarios:
                     {
                         "name": "s1",
                         "dimension": "fact-recall",
-                        "runs": [
-                            {"ts": "2026-08-01T10:00:00", "trigger": "t", "responses": ["r"]}
-                        ],
+                        "runs": [{"ts": "2026-08-01T10:00:00", "trigger": "t", "responses": ["r"]}],
                         "query": "q",
                         "expect": {
                             "surface": "injection",
@@ -215,14 +216,23 @@ class _FakeEmbedder:
 
 
 def _offline_factory(data_dir: Path) -> MemoryManager:
-    # No llm_config: distillation falls back to mechanical claims quoting
-    # the real triggers — deterministic and offline.
-    return MemoryManager(
+    manager = MemoryManager(
         "eval-test",
         MemoryConfig(distillation_window=1, context_max_claims=5),
         data_dir=data_dir,
         embedder=_FakeEmbedder(),
     )
+    manager.distiller = cast(
+        Any,
+        SimpleNamespace(
+            distill=AsyncMock(
+                side_effect=lambda runs: [
+                    {"text": run.trigger_content, "importance": 0.7} for run in runs
+                ]
+            )
+        ),
+    )
+    return manager
 
 
 class TestRunScenarioOffline:
@@ -250,7 +260,7 @@ class TestRunScenarioOffline:
         result = await eval_memory.run_scenario(self._scenario(), _offline_factory)
         assert result.passed, result.failures
         # window=1 with increasing timestamps: one distilled claim per
-        # run (mechanical fallback), watermark consumed both.
+        # run through the deterministic model fixture; both sources are consumed.
         assert result.claim_count == 2
         assert "uv" in result.injection_text
         assert "uv" in result.search_text

@@ -38,7 +38,7 @@ store 一把 `asyncio.Lock`，以缓存服务运行时读写，`claims.jsonl` �
 
 ### 批量蒸馏：journal → claims
 
-蒸馏由 [memory/distiller.py](../../src/tlon/memory/distiller.py) 的 `Distiller` 完成：一次 LLM 调用（30 秒超时），从整批 run 投影蒸馏出若干条 claim（每条 `text` + `importance`），prompt 要求模型以 JSON 返回，`_extract_json` 容忍 markdown 代码块包裹。LLM 不可用时（未配置、调用失败或产出为空）回退到 `fallback_claims`——每个 run 一条机械 claim（「处理过程序运行（触发语：…）」+ 回复要点拼接）。降级是设计意图：记忆蒸馏不能因 LLM 抖动而丢失；且因为输入来自 journal，fallback 引用的是真触发语（来自 run 冻结输入），而不是 agent 自己的回信。
+蒸馏由 [memory/distiller.py](../../src/tlon/memory/distiller.py) 的 `Distiller` 完成：一次 LLM 调用（30 秒超时），从固定批次 run 投影提取 claim（`text` + `importance`）。请求使用 JSON object 输出模式，结果严格校验；合法 `claims: []` 成功完成且不写记忆。拒绝截断、空正文、尾随说明、markdown 包裹和非法结构，保留原始回执与待处理批次供诊断；没有蒸馏器或模型调用失败也不伪造机械断言。无实质内容的 boot 直接完成来源消费，不请求模型。
 
 Distiller 的输入是 **run 事件投影**（`RunProjection`，[memory/models.py](../../src/tlon/memory/models.py)）：`trigger_content`（`run/start` 的触发语，来自 run 冻结输入）+ 每轮 `llm/response` 的 content + 每条 `tool/result` 的一行摘要。投影由 `build_run_projection` 从只读事件视图重建，也包含无模型程序的返回值和结束状态。来源 ID 随 claim 保存。
 
@@ -60,7 +60,7 @@ Distiller 的输入是 **run 事件投影**（`RunProjection`，[memory/models.p
 
 **失效不删除**：被取代的 claim 留在 `claims.jsonl` 里可审计（借鉴 Zep 双时态，与「信件永存」一致）——supersede 是原地改三个生命周期字段 + 全量原子重写，与删除同模式但语义相反。所有读取面（`get_recent_claims` / `get_all_claims` / 关键词搜索 / JIT 检索 / 冲突候选）都只出 active，superseded 只在 `include_superseded=True` 的审计视角出现；向量索引里被取代 claim 的残留向量无害（检索候选本来就用 active 集合过滤），启动时的 backfill 会顺手清掉。
 
-**降级是一等公民**：无向量索引（未配 embedding）、无 LLM（`distiller=None`——此时 fallback 机械 claim 也走同一追加路径，判定自然同样不可用）、embedding/检索失败、判定调用失败、判定结果解析失败、单条 verdict 畸形——一律退化为纯追加（ADD），只记日志。冲突判定是增强，绝不能阻断写入。判定 prompt 约束模型只能引用给出的旧 claim id，幻觉 id 在解析层被丢弃（无有效目标的 SUPERSEDE 视为 ADD——绝不在猜测上失效旧记忆）。
+**降级是一等公民**：无向量索引（未配 embedding）、无冲突判定器（已有真实 claim 可直接追加）、embedding/检索失败、判定调用失败、判定结果解析失败、单条 verdict 畸形——一律退化为纯追加（ADD），只记日志。冲突判定是增强，绝不能阻断写入。判定 prompt 约束模型只能引用给出的旧 claim id，幻觉 id 在解析层被丢弃（无有效目标的 SUPERSEDE 视为 ADD——绝不在猜测上失效旧记忆）。
 
 ## 向量索引：claims 的派生视图
 
@@ -156,7 +156,7 @@ ADR 0017 的业界调研结论：主流现成 memory 产品无可直接引入者
 
 ### 为什么蒸馏用 LLM 而不是规则
 
-哪句话是决策、哪个偏好值得长期保留，规则写不出来。但 LLM 蒸馏有两个固有风险，设计上分别兜住：**丢内容**靠蒸馏输入永不删除（journal 只增不减，失败时固定批次保留，后续维护恢复原任务）与 fallback 机械 claim（蒸馏失败不等于 run 白跑）；**编内容**靠 prompt 约束（「不要推测」）加 `source_run_ids` 溯源。反思引擎是这个信任模型的第二层：蒸馏时没提取到的、提取错的，由反思在事后审计中补记或删除。
+哪句话是决策、哪个偏好值得长期保留，规则写不出来。但 LLM 蒸馏有两个固有风险，设计上分别兜住：**丢内容**靠蒸馏输入永不删除（journal 只增不减，失败时固定批次保留，后续维护恢复原任务）；失败不写新 claim，空结果也不填充机械断言；**编内容**靠 prompt 约束（「不要推测」）加 `source_run_ids` 溯源。反思引擎是这个信任模型的第二层：蒸馏时没提取到的、提取错的，由反思在事后审计中补记或删除。
 
 ### 为什么记忆是 agent 私有的
 
@@ -186,3 +186,11 @@ checkpoint 保存冻结输入、claims/operations 和应用进度。损坏 JSON�
 当前固定批次一次包含全部待消费来源，长 backlog 仍可能形成较大 checkpoint；一个无法读取的来源会阻塞这一维护消费者，需恢复其权威数据后继续。批次大小和逐来源隔离尚未扩展，本修复不引入另一套维护队列。
 
 退休成员首次执行教训模型维护时，如果此前没有 program.sqlite3，会为独立额度和模型回执建立该库；路径由 TlonPaths.agent_program_database_file 提供。单纯读取 run 交互不会创建程序库，也不会转换历史。
+
+## 维护结果与关闭边界
+
+记忆蒸馏使用结构化 JSON 响应并严格校验 claims。合法空列表表示成功但无可提取记忆；解析或结构校验失败保持原批次和原始响应，不消费来源、不产生机械兜底断言。仅包含 boot、没有触发任务、模型响应和实质工具效果的来源无需调用模型，不生成长期记忆。
+
+关服停止接收新维护任务后，给已有反思最多 5 秒排空；成员并行关闭，避免排空时间随成员数累加。超过排空期限才取消并保留未决模型意图。恢复不会自动重发未知请求；诊断须区分等待人工处理的未决状态与可重试故障，不把未知用量当作零。
+
+旧运行失败通知先读取已提交投递事实，已有成功回执不再进入当前构建的效果执行路径。没有成功回执时仍遵守构建和恢复身份校验；不可安全恢复的错误停止自动重试，可重试故障使用退避，不每秒重复刷日志。不更改旧主 run 或伪造通知成功。
