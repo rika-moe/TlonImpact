@@ -28,7 +28,7 @@ run-loop 的程序调用位置对应稳定 session ID。同进程重入和进程
 
 一批 Tool 里的写操作显式按模型声明顺序排等待链，读操作不进入该链。单靠锁的等待顺序不足以兑现声明顺序，因为 SQLite 查询等 await 会改变到锁先后。任务创建与登记之间不插入 await，随后才发布分发事件；取消时能够找到并等待全部子任务，不留下游离写入。
 
-历史回执在锁和当前取消检查之前返回。新效果在等锁后、写 intent 前以及进入 handler 前检查控制信号；超时由共享 executor 实施：成员 tool.per_timeout 是默认值，操作 default_timeout 覆盖，schema 声明的显式 timeout 再覆盖，另加操作 timeout_grace（Shell 为 10 秒），最后与根期限取小。该局部期限传给内部模型请求，但只收紧执行，不改写预算根冻结期限。LoopDriver 不另套计时或合成超时回执。取消不能回滚已经派发的外部效果，未知提交继续沿调用恢复契约处理。该写边界不是统一授权闸；当前没有统一操作 allowlist 或受控授权阶段，不能声称已经支持统一撤权。tools 尽量固定，未来执行授权与工具展示稳定性分开设计；工具是否展示不能代替现有领域授权检查。spawn 配额根取宿主 CallContext.run_id，不取日志上下文；恢复仍使用原会话配额，直接 DSL 使用程序根。
+历史回执在锁和当前取消检查之前返回。新效果在等锁后、写 intent 前以及进入 handler 前检查控制信号；超时由共享 executor 实施：普通工具以成员 tool.per_timeout 为默认值；model-call 显式采用成员模型 request_timeout（默认 300 秒），不继承普通工具的 30 秒。其他操作 default_timeout 覆盖，schema 声明的显式 timeout 再覆盖，另加操作 timeout_grace（Shell 为 10 秒），最后与当前执行域剩余期限取小。该局部期限传给内部模型请求，但只收紧执行，不改写预算根冻结期限。LoopDriver 不另套计时或合成超时回执。取消不能回滚已经派发的外部效果，未知提交继续沿调用恢复契约处理。该写边界不是统一授权闸；当前没有统一操作 allowlist 或受控授权阶段，不能声称已经支持统一撤权。tools 尽量固定，未来执行授权与工具展示稳定性分开设计；工具是否展示不能代替现有领域授权检查。spawn 配额根取宿主 CallContext.run_id，不取日志上下文；恢复仍使用原 run 配额，直接 DSL 使用程序根。
 
 并发控制复用 [asyncio 任务取消](https://docs.python.org/3.13/library/asyncio-task.html#task-cancellation)与[锁](https://docs.python.org/3.13/library/asyncio-sync.html#lock)机制；保留项目现有跨轮 pending 任务所有权，不新增工作流框架。
 
@@ -43,3 +43,5 @@ pure 仅表示确定性计算；外部查询直接声明非 pure 并正常挂起
 普通程序与 v1 stage 通过同一 ModelService 调用成员模型。v2 入口受理时将宿主系统提示、工具定义和非秘密模型配置随源码包原子冻结；后续调用使用冻结值。新请求还校验当前工具定义，已提交的历史结果则按冻结契约重放。纯消息模块 `tlon.messages` 随运行源码冻结，不新增模型结果日志。
 
 `model-call` 外层 Operation 与内部模型调用各有稳定路径。模型成功响应与额度结算已提交、外层回执缺失时，executor 在预算、取消和截止检查之前校验原请求并补回外层结果；明确拒绝已记录时补回 RejectedError，保留已退款事实。恢复只读取原模型记录，不派发 provider 请求。内部只有未知 intent 时仍拒绝自动重发，保留预留。output 成功保留输出上限费用，total 按可信实际用量结算，核验函数不会另建预算根。
+
+模型与普通工具的独立超时策略见 [ADR 0050](../decisions/0050-model-operation-timeouts.md)。provider 实际请求同样受执行域剩余时间约束；内部模型不能逃逸父工具期限。派发前超时不执行，派发后结果未落盘保留 unknown，已提交回执优先恢复。

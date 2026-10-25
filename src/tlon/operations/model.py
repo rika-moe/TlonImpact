@@ -3,6 +3,7 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from tlon.base.config import LLMConfig
 from tlon.base.events.event_bus import EventBus
 from tlon.base.execution import (
     BudgetExceededError,
@@ -72,6 +73,7 @@ def make_model_operations(
     event_bus: EventBus | None = None,
     member_id: str = "unknown",
     model_name: str = "unknown",
+    request_timeout: float = LLMConfig().request_timeout,
 ) -> tuple[Operation, ...]:
     service = (
         ModelService(
@@ -179,6 +181,7 @@ def make_model_operations(
             complete,
             effects=frozenset({"write"}),
             recover=recover,
+            default_timeout=request_timeout,
         ),
         context_operation(service, MODEL_INPUT_SCHEMA),
     )

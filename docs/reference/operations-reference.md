@@ -52,7 +52,7 @@ Tool 协议根参数必须是 JSON object 的字符串键。OperationTool 在 To
 
 文件服务只使用成员的 ExecutionDevice，沿用容器工作目录、读写路径白名单与 archive-only 文件柜。读取额外允许自身只读 `/tlon-home`；写入仅可到配置的 allowed_paths。没有通用宿主文件系统后门。归档内容仅在内存读取，成员路径和归档条目仍需独立校验。
 
-`default_timeout` 是宿主操作默认执行秒数，覆盖成员的 tool.per_timeout；schema 声明的显式 timeout 参数再优先。`timeout_grace` 是操作声明的清理宽限（默认 0，Shell 为 10 秒），与继承根剩余期限取小。两入口均由 OperationExecutor 实施，LoopDriver 不再维护第二套计时。局部期限向内部模型传播，但不改写预算根冻结期限。
+`default_timeout` 是宿主操作默认执行秒数。普通工具默认采用成员 tool.per_timeout；model-call 使用成员模型 request_timeout（默认 300 秒），不受普通工具默认 30 秒限制；schema 声明的显式 timeout 参数再优先。`timeout_grace` 是操作声明的清理宽限（默认 0，Shell 为 10 秒），与当前执行域剩余期限取小。两入口均由 OperationExecutor 实施，LoopDriver 不再维护第二套计时。局部期限向内部模型传播，但不改写预算根冻结期限。
 
 `retry_safe` 是宿主对中断后重新调用是否安全的最小声明。程序沿用同一 ProgramStore 数据库：非幂等 write 先写 intent，再调用 handler，再记录结果；已有结果重放，只有 intent 而无结果时返回 unknown，禁止自动重新执行。取消同样不能当作无副作用。邮件仍使用 PostOffice 的稳定 request_id 幂等重试。P4a 将这些 intent 和回执统一到 ProgramStore 的 invocations；P4b 新增共享额度根，并让新写入按成员 gate 及模型声明顺序执行。
 

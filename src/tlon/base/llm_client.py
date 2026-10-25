@@ -590,6 +590,14 @@ class LLMClient:
         last_error: Exception | None = None
 
         for attempt in range(self.max_retries):
+            # Narrow transport timeouts at dispatch; never put the decreasing
+            # remainder into the durable model request used for recovery.
+            scope = current_execution()
+            if scope is not None:
+                scope.check()
+                remaining = scope.remaining_seconds()
+                if remaining is not None:
+                    params["timeout"] = min(params["timeout"], remaining)
             try:
                 response = await litellm.acompletion(**params)
                 return self._parse_response(response)

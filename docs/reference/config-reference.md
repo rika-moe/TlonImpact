@@ -239,3 +239,5 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 - **增/删 agent**：[base/config.py](../../src/tlon/base/config.py) 的 `yaml_save` / `yaml_delete`（删除即 `rm -rf ~/.tlon/{agent_id}/`）；热加载走 REST `POST /admin/config/agents/{agent_id}/reload`（条件注册，见 `reference/api-reference.md`）。
 - **交互式管理**：ops 的 Agents 视图——创建成员（`c`，需选模型）/ 编辑人格与模型（`e`）/ 删除（`d`）/ 原型审批（`s`）；全新实例首启创建 30 位预设成员（[初始社会](../design/initial-society.md)，ADR 0036）；已有实例不补种。
 - **agent 目录结构假设**：任何新路径需求必须加进 `TlonPaths`，不许在其他模块硬编码目录结构（[base/paths.py](../../src/tlon/base/paths.py) 模块 docstring 的硬性规定）。
+
+模型请求和普通工具分别限时：model-call 使用模型 request_timeout（当前为运行时默认 300 秒），普通工具使用 tool.per_timeout（默认 30 秒），两者均受当前执行域更早的截止时间约束。嵌套模型调用不能扩大父工具期限。派发后未知请求不会自动重发，详见 [ADR 0050](../decisions/0050-model-operation-timeouts.md)。
