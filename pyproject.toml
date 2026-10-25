@@ -34,7 +34,6 @@ dependencies = [
     # LLM（litellm 次版本间有 breaking change，锁定次版本，ADR 0012）
     "litellm==1.105.*",
     "croniter>=6.2.4",
-    "sqlite-vec>=0.1.9",
 ]
 
 [project.optional-dependencies]
@@ -115,11 +114,6 @@ disallow_untyped_calls = false
 module = "telegram.*"
 ignore_missing_imports = true
 
-# sqlite-vec 无类型 stub（纯 C 扩展的薄 Python 绑定）
-[[tool.mypy.overrides]]
-module = "sqlite_vec.*"
-ignore_missing_imports = true
-
 [tool.pytest.ini_options]
 minversion = "7.0"
 testpaths = ["src/tests"]
@@ -173,23 +167,6 @@ source_modules = "tlon.base"
 forbidden_modules = [
     "tlon.agents",
     "tlon.organization",
-    "tlon.memory",
-    "tlon_server",
-    "tlon_client",
-    "tlon_launcher",
-    "tlon.tools",
-    "tlon.sandbox",
-    "tlon.prototypes",
-]
-
-# memory 只依赖 base
-[[tool.importlinter.contracts]]
-name = "memory 不依赖 agents/organization/server/client/launcher/tools/sandbox/prototypes"
-type = "forbidden"
-source_modules = "tlon.memory"
-forbidden_modules = [
-    "tlon.agents",
-    "tlon.organization",
     "tlon_server",
     "tlon_client",
     "tlon_launcher",
@@ -200,12 +177,11 @@ forbidden_modules = [
 
 # organization(mail/messaging) 只依赖 base
 [[tool.importlinter.contracts]]
-name = "organization 不依赖 agents/memory/server/client/launcher/tools/sandbox/prototypes"
+name = "organization 不依赖 agents/server/client/launcher/tools/sandbox/prototypes"
 type = "forbidden"
 source_modules = "tlon.organization"
 forbidden_modules = [
     "tlon.agents",
-    "tlon.memory",
     "tlon_server",
     "tlon_client",
     "tlon_launcher",
@@ -216,13 +192,12 @@ forbidden_modules = [
 
 # sandbox 只依赖 base
 [[tool.importlinter.contracts]]
-name = "sandbox 不依赖 agents/organization/memory/server/client/launcher/tools/prototypes"
+name = "sandbox 不依赖 agents/organization/server/client/launcher/tools/prototypes"
 type = "forbidden"
 source_modules = "tlon.sandbox"
 forbidden_modules = [
     "tlon.agents",
     "tlon.organization",
-    "tlon.memory",
     "tlon_server",
     "tlon_client",
     "tlon_launcher",
@@ -291,7 +266,6 @@ source_modules = "tlon_server"
 forbidden_modules = [
     "tlon.agents",
     "tlon.organization",
-    "tlon.memory",
     "tlon.sandbox",
     "tlon.tools",
     "tlon.prototypes",
@@ -308,7 +282,6 @@ source_modules = "tlon_launcher"
 forbidden_modules = [
     "tlon.agents",
     "tlon.organization",
-    "tlon.memory",
     "tlon.sandbox",
     "tlon.tools",
     "tlon.prototypes",

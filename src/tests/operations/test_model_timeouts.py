@@ -20,7 +20,6 @@ from tlon.base.events.event_bus import EventBus
 from tlon.base.execution import ExecutionDeadlineError, ExecutionScope, MemberWriteGate
 from tlon.base.llm_client import LLMClient
 from tlon.base.paths import TlonPaths
-from tlon.memory.models import MemoryConfig
 from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
 from tlon.operations.model import make_model_operations
 from tlon.operations.schema import UnknownOutcomeError
@@ -92,7 +91,6 @@ async def test_runtime_model_exceeds_tool_cap_but_ordinary_tool_still_times_out(
             request_timeout=3.0,
         )
     )
-    memory = MagicMock(storage_path=tmp_path / "memory", config=MemoryConfig())
 
     async def slow_tool(context: CallContext, arguments: dict[str, Any]) -> None:
         await asyncio.sleep(10)
@@ -100,7 +98,6 @@ async def test_runtime_model_exceeds_tool_cap_but_ordinary_tool_still_times_out(
     services = MemberServices(
         config=AgentConfig(id="member", name="Member"),
         llm_client=client,
-        memory=memory,
         task_manager=MagicMock(),
         tool_executor=ToolExecutor(),
         tlon_paths=TlonPaths(home=tmp_path),

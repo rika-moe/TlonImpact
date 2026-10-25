@@ -1,10 +1,10 @@
 # Tlon 配置参考
 
-三块配置，职责严格分开：**每 agent 的行为**在 `~/.tlon/{agent_id}/config/`（`agent.yaml` + 人格 `.md` + `behavior.tlon`），**进程级基础设施与密钥**走环境变量（[base/settings.py](../../src/tlon/base/settings.py) 的 `Settings`），**记忆调参**在 `~/.tlon/{agent_id}/memory/config.json`。本文只描述当前实现，配置项以代码中的字段/默认值为准。
+运行配置与普通笔记职责分开：**每 agent 的行为**在 `~/.tlon/{agent_id}/config/`（`agent.yaml` + 人格 `.md` + `behavior.tlon`），**进程级基础设施与密钥**走环境变量（[base/settings.py](../../src/tlon/base/settings.py) 的 `Settings`）；长期笔记是 workspace 中的普通文件，没有专用配置。本文只描述当前实现，配置项以代码中的字段/默认值为准。
 
 ## 1. agent.yaml（每 agent 配置）
 
-位置：`~/.tlon/{agent_id}/config/agent.yaml`（路径由 [base/paths.py](../../src/tlon/base/paths.py) 的 `agent_config_file` 给出）。YAML 顶层是一个 `agent:` 键，其值对 [base/config.py](../../src/tlon/base/config.py) 的 `AgentConfig`（Pydantic v2 `BaseModel`）`model_validate`。未知字段被忽略（旧字段如 `proactive`、[memory](../../src/tlon/memory)、ADR 0028 退役的 `message_queue_size` / `max_concurrent_sessions` 不生效、可清理——记忆调参唯一入口是 `memory/config.json`）。
+位置：`~/.tlon/{agent_id}/config/agent.yaml`（路径由 [base/paths.py](../../src/tlon/base/paths.py) 的 `agent_config_file` 给出）。YAML 顶层是一个 `agent:` 键，其值对 [base/config.py](../../src/tlon/base/config.py) 的 `AgentConfig`（Pydantic v2 `BaseModel`）`model_validate`。未知字段被忽略（旧字段如 `proactive`、`memory`、ADR 0028 退役的 `message_queue_size` / `max_concurrent_sessions` 不生效、可清理；没有自动记忆服务）。
 
 ### 顶层字段
 
@@ -29,7 +29,7 @@
 生成表只搬字段形状，语义补充（手写）：
 
 - `id` / `name` 必填；`id` 只允许字母/数字/`-`/`_`（校验器强制），agent 目录名即此 id，`name` 是显示名（他人 `@` 此名可与之对话）。
-- `program_token_budget`：单次工作程序入口或维护执行的共享输出预算，正整数，默认 100000；规划、行动、自评与压缩共享。请求前原子预留，成功后按可靠 completion_tokens 结算并释放差额；缺少可靠用量则保留预留。恢复使用原冻结预算。
+- `program_token_budget`：单次工作程序入口的共享输出预算，正整数，默认 100000；规划、行动、自评与压缩共享。请求前原子预留，成功后按可靠 completion_tokens 结算并释放差额；缺少可靠用量则保留预留。恢复使用原冻结预算。
 - `prototype` / `spawned_by` / `spawn_depth`：血缘审计（统一成员模型，ADR 0006）——spawn 出本成员的 agent id 与 spawn 链深度，非 spawn 为 `null` / `0`。
 - `idle_timeout_seconds`：lazy 成员空闲多少秒后睡（scale-to-zero；成员永不删除，档案归档）。
 - `mail_rescan_interval_seconds`：慢速重扫未读邮件的间隔（ADR 0028 决策 4）——agent 搁置未处理的未读与被崩溃吞掉的投递由这个重扫兜底唤醒。
@@ -37,7 +37,7 @@
 ### `llm`
 
 <!-- BEGIN GENERATED: agent-yaml-fields-llm -->
-`LLMConfig` 字段（9 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`LLMConfig` 字段（8 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
@@ -46,7 +46,6 @@
 | `top_p` | `float` | 0.9 |  |
 | `context_window` | `int \| None` | None |  |
 | `api_base` | `str \| None` | None |  |
-| `embedding_model_name` | `str \| None` | None |  |
 | `max_retries` | `int` | 3 | 运行时字段，不进 YAML |
 | `base_delay` | `float` | 1.0 | 运行时字段，不进 YAML |
 | `request_timeout` | `float` | 300.0 | 运行时字段，不进 YAML |
@@ -54,7 +53,7 @@
 
 首装 30 位预设成员使用 `deepseek/deepseek-flash`，明确写入各自配置；后续可在 WebUI 调整，不是进程级兜底。
 
-`model_name` 是**必填**的成员级声明（ADR 0016——没有进程级兜底）：`provider/model` 形式（如 `deepseek/deepseek-chat`），创建成员时经 WebUI / admin API 的 `model` 字段落盘，未声明的成员装配期硬报错；API key 不在此配置——litellm 原生读取 `{PROVIDER}_API_KEY` 环境变量（见第 4 节）。采样参数不配置——请求从不携带 temperature，供应商默认生效。`top_p` 每 agent 可调。单次输出默认按 LiteLLM 元数据中的模型输出能力、剩余上下文和 run 剩余预算取小值（含推理消耗）；不再配置 `llm.max_tokens`，程序显式传入 `max_tokens` 只能进一步收紧。模型输出能力是冻结的运行时字段，不写入成员 YAML；无法解析时明确报错。`api_base`（默认 `null`）是成员级的端点覆盖：私有部署 / 代理 / OpenAI 兼容端点配 `model_name: openai/<model>` + `api_base: <url>`，`null` 时走 litellm 注册表路由。`context_window` 为 `null`（默认）时启动组装自动从 litellm 模型注册表解析（ADR 0012 阶段 2），显式值作为注册表缺失/滞后时的覆盖。`embedding_model_name`（默认 `null`，ADR 0017 阶段 2）是成员级 embedding 模型声明，同为 `provider/model` 形式、同走 `{PROVIDER}_API_KEY` 约定；配置后记忆检索启用 sqlite-vec 向量索引 + JIT 相关性注入，`null`（或 provider 无 embedding 端点）时检索降级为「最近 N 条」——降级是一等行为，不影响记忆与会话。运行时字段（`max_retries`、`base_delay`、`request_timeout`）只有代码默认值（不再有环境变量来源），Pydantic 标注 `exclude=True`，不落盘。
+`model_name` 是**必填**的成员级声明（ADR 0016——没有进程级兜底）：`provider/model` 形式（如 `deepseek/deepseek-chat`），创建成员时经 WebUI / admin API 的 `model` 字段落盘，未声明的成员装配期硬报错；API key 不在此配置——litellm 原生读取 `{PROVIDER}_API_KEY` 环境变量（见第 4 节）。采样参数不配置——请求从不携带 temperature，供应商默认生效。`top_p` 每 agent 可调。单次输出默认按 LiteLLM 元数据中的模型输出能力、剩余上下文和 run 剩余预算取小值（含推理消耗）；不再配置 `llm.max_tokens`，程序显式传入 `max_tokens` 只能进一步收紧。模型输出能力是冻结的运行时字段，不写入成员 YAML；无法解析时明确报错。`api_base`（默认 `null`）是成员级的端点覆盖：私有部署 / 代理 / OpenAI 兼容端点配 `model_name: openai/<model>` + `api_base: <url>`，`null` 时走 litellm 注册表路由。`context_window` 为 `null`（默认）时启动组装自动从 litellm 模型注册表解析（ADR 0012 阶段 2），显式值作为注册表缺失/滞后时的覆盖。运行时字段（`max_retries`、`base_delay`、`request_timeout`）只有代码默认值（不再有环境变量来源），Pydantic 标注 `exclude=True`，不落盘。
 
 ### `docker`
 
@@ -118,36 +117,9 @@ agent:
 | `RULES.md` | 必须遵循的工作规则、流程与明确约束（人类维护；实际权限由代码执行） |
 | `behavior.tlon` | **成员的全部行为规约**——EDN rules-form，语法见 `reference/dsl-reference.md`；spec 是 total 的，规则统一通过 actions 组合会话与普通计算；模型、人格和装置配置仍有各自来源 |
 
-## 3. 记忆配置 memory/config.json
+## 3. 长期笔记
 
-`~/.tlon/{agent_id}/memory/config.json`（[memory/models.py](../../src/tlon/memory/models.py) 的 `MemoryConfig`，读写由 [memory/manager.py](../../src/tlon/memory/manager.py) 负责）。完整结构：
-
-```json
-{
-  "version": "1.0",
-  "agent_id": "su-wanqing",
-  "distillation": { "window": 3 },
-  "context": {
-    "max_claims_in_context": 10
-  },
-  "reflection": { "min_interactions": 5 },
-  "retrieval": {
-    "alpha_similarity": 1.0,
-    "beta_recency": 0.3,
-    "gamma_importance": 0.5,
-    "recency_half_life_days": 7.0,
-    "pool_factor": 4
-  },
-  "conflict": {
-    "similarity_threshold": 0.75,
-    "candidate_limit": 3
-  }
-}
-```
-
-各段与 `MemoryConfig` 字段对应：`distillation.window`（批量蒸馏窗口——已终态且 run_id 尚未被 `memory/distillation.json` 消费集合覆盖的运行数达到该值即触发批量蒸馏，ADR 0017）、`context.max_claims_in_context`（注入上下文的 claim 条数）、`reflection.min_interactions`（自驱动记忆审计的最小终态运行数；开/关与间隔在 `behavior.tlon` 的 `:reflect` 声明）。`retrieval` 段是 JIT 检索调参（ADR 0017 阶段 2）：`alpha_similarity`/`beta_recency`/`gamma_importance` 是复合打分 `α·similarity + β·recency + γ·importance` 的三个权重，`recency_half_life_days` 是 recency 指数衰减的半衰期（天），`pool_factor` 是 KNN 候选池相对 k 的放大倍数。`conflict` 段是冲突判定调参（ADR 0017 阶段 3）：`similarity_threshold` 是触发 LLM 判定的相似度门限（余弦，定高控制成本），`candidate_limit` 是每条新 claim 拉取的候选旧 claim 数。ADR 0017 之前的 `summary`/`episodic`/旧 `context` 段与 ADR 0009 之前的 `working`/`triggers` 段读取时自然忽略，无需清理。
-
-> **生效路径**：`MemoryManager.load`（成员启动时调用）在 `config.json` 存在时以磁盘文件为准加载并绑定 `agent_id`——生产装配（[agents/assembly.py](../../src/tlon/agents/assembly.py) 的 `assemble_member_services`）传入默认 `MemoryConfig()`，不预填 `agent_id`，因此**磁盘调参在生产环境直接生效**。`agent.yaml` 无 `memory:` 段（[base/config.py](../../src/tlon/base/config.py) 的旧 `MemoryConfig` 已删除，其字段从未被消费）。
+成员可按需使用普通文件工具读写自己的 `workspace/memory/`，不要求建立目录或索引，也不要求每个 run 读写。笔记不自动进入提示词，没有蒸馏、反思、embedding 或冲突裁决配置。旧 `memory/` 的 claims 和维护 checkpoint 不再读取、迁移或自动删除，详见 [记忆设计](../design/memory.md)。
 
 ## 4. 环境变量
 
@@ -214,13 +186,10 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 │   │   ├── agent.yaml                # 本 agent 配置
 │   │   ├── IDENTITY.md / SOUL.md / RULES.md   # 身份/人格及约束（IDENTITY/SOUL 可自主修改，RULES 不可自改，见 identity design）
 │   │   └── behavior.tlon             # 行为规约（唯一权威，一切派生）
-│   ├── memory/
-│   │   ├── config.json               # 记忆调参
-│   │   ├── claims.jsonl              # 记忆 claim（ADR 0017，追加优先，允许删除/重写）
-│   │   └── distillation.json         # 蒸馏水位线（last_distilled_at）
 │   ├── program.sqlite3               # program run、模型及工具回执唯一权威
 │   ├── tasks.jsonl                   # TaskManager 持久化
 │   └── workspace/                  # 成员工作目录（各等级普通文件工具均可读写，无需 Docker）
+│       ├── memory/                 # 可选普通笔记，不自动读取或写入
 │       └── CONTACTS.md              # 私人联系簿，按需读取，缺失时可自行创建；ADR 0047
 ```
 

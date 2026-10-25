@@ -47,7 +47,6 @@ def member_at(
             config=LLMConfig(model_name="test/model"),
             configuration_snapshot=MagicMock(return_value={}),
         ),
-        memory=MagicMock(),
         task_manager=MagicMock(),
         tool_executor=ToolExecutor(),
         tlon_paths=TlonPaths(home=home),

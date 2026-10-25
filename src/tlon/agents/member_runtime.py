@@ -17,7 +17,6 @@ from tlon.agents.loader import has_frozen_work, legacy_work_error
 from tlon.agents.member_spec import (
     MemberHandler,
     MemberSpec,
-    ReflectSpec,
 )
 from tlon.agents.program_driver import ProgramDriver
 from tlon.agents.program_package import (
@@ -29,7 +28,6 @@ from tlon.agents.program_store import ProgramRun, ProgramStore
 from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
 from tlon.agents.recovery import RecoveryBlockedError, blocked_reason, blocks_recovery
-from tlon.agents.reflection import ReflectionEngine
 from tlon.agents.registry_queries import RegistryQueries
 from tlon.agents.run_journal import RunJournal
 from tlon.agents.tool_executor import ToolExecutor
@@ -45,7 +43,6 @@ from tlon.base.logger import get_logger
 from tlon.base.maintenance import MaintenanceRetry
 from tlon.base.paths import TlonPaths
 from tlon.lifecycle.service import LifecycleService
-from tlon.memory.manager import MemoryManager
 from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
 from tlon.operations.definitions import host_operation_definitions
@@ -95,7 +92,6 @@ class MemberServices:
 
     config: AgentConfig
     llm_client: LLMClient
-    memory: MemoryManager
     task_manager: TaskManager
     tool_executor: ToolExecutor
     tlon_paths: TlonPaths
@@ -151,7 +147,7 @@ class MemberRuntime(Member):
                 read-marking (None only for bare test instances; Adam
                 carries ``~/.tlon/adam/mail/`` — docs/design/mail.md
                 「守护者信箱」)
-            services: The member's services (LLM/memory/tools).
+            services: The member's services (LLM/tasks/tools).
                 Programs invoke module entries directly.
                 Bare host-service members may omit these services.
             registry: Agent registry for ``spawn`` actions (None, e.g.
@@ -256,8 +252,6 @@ class MemberRuntime(Member):
         self._initialized_at: float | None = None
         self._last_action_at: float | None = None
         self._active_actions = 0
-        # Background reflection shares the same committed interaction history.
-        self._reflection: ReflectionEngine | None = None
         self._logger = logger.bind(agent_id=member_id)
         self._state: MemberState | None = None
         # The one background mail-rescan task (ADR 0028 决策 4: boot scan +
@@ -267,8 +261,6 @@ class MemberRuntime(Member):
         self._queued_mail: set[str] = set()
         self._program_task: asyncio.Task[None] | None = None
         self._deferred_boot: list[MemberHandler] = []
-        self._maintenance_sources: frozenset[str] | None = None
-        self._distillation_retry = MaintenanceRetry()
         self._failure_notification_done: set[str] = set()
         self._failure_notification_retry: dict[str, MaintenanceRetry] = {}
         self._journal = (
@@ -288,28 +280,6 @@ class MemberRuntime(Member):
                 else None
             )
         )
-        if services is not None:
-            assert self._journal is not None
-            registry = self._registry
-            self._reflection = ReflectionEngine(
-                services.memory,
-                services.llm_client,
-                ReflectSpec(True, 30),
-                self._journal,
-                state_changed=(lambda: registry.publish_scheduling_state(self._member_id))
-                if registry
-                else None,
-                execution_factory=self._maintenance_execution,
-            )
-
-    def _maintenance_execution(self, purpose: str) -> ExecutionScope:
-        limit = self._services.config.program_token_budget if self._services else 100000
-        root = (
-            f"maintenance:{purpose}"
-            if purpose.startswith("reflection:")
-            else f"maintenance:{purpose}:{uuid.uuid4().hex}"
-        )
-        return ExecutionScope(self._program_store, root, limit, "output")
 
     # ── Identity / derived values ──
 
@@ -324,42 +294,23 @@ class MemberRuntime(Member):
         return self._spec
 
     def get_state(self) -> str:
-        """Public scheduling state; I/O and background reflection remain active."""
+        """Public scheduling state includes active program effects."""
         return "active" if self.is_busy else "waiting"
 
     def get_diagnostic_error(self) -> str | None:
         """Runtime failure is a diagnostic, never a scheduling state."""
-        maintenance_errors = [
-            f"{purpose}: {error}"
-            for purpose, error in (
-                ("distillation", self._distillation_retry.error),
-                ("reflection", self._reflection.diagnostic_error if self._reflection else None),
-                (
-                    "distillation checkpoint",
-                    self._services.memory.maintenance_error if self._services else None,
-                ),
-            )
-            if error
-        ]
-        return (
-            self._behavior_error
-            or "; ".join(maintenance_errors)
-            or ("runtime error" if self._state is MemberState.ERROR else None)
+        return self._behavior_error or (
+            "runtime error" if self._state is MemberState.ERROR else None
         )
 
     @property
     def is_busy(self) -> bool:
-        """Whether program handlers or background maintenance are running.
-
-        Draining must wait for every kind of work, including external I/O.
-        """
-        return self._active_actions > 0 or (
-            self._reflection is not None and self._reflection.is_running
-        )
+        """Whether program handlers or their external effects are running."""
+        return self._active_actions > 0
 
     @property
     def idle_seconds(self) -> float:
-        """Idle time covers program effects and background maintenance."""
+        """Idle time covers program effects."""
         if self.is_busy or self._initialized_at is None:
             return 0.0
         since = self._last_action_at or self._initialized_at
@@ -378,7 +329,6 @@ class MemberRuntime(Member):
                 self._state = MemberState.ERROR
                 raise RecoveryBlockedError(legacy_error)
         if self._services is not None:
-            await self._services.memory.load()
             self._services.task_manager.load()
         self._initialized = True
         self._initialized_at = time.monotonic()
@@ -397,13 +347,10 @@ class MemberRuntime(Member):
         self._state = MemberState.ACTIVE
 
     async def shutdown(self) -> None:
-        """Stop admission and the worker, drain background reflection, release
-        subscriptions, shut down tools (cancelling background bash tasks),
+        """Stop the worker, release subscriptions, shut down tools (cancelling background bash tasks),
         and close the Docker client (its connection pool must not leak
         across sleep→wake re-assembly)."""
         with bound_contextvars(agent_id=self._member_id):
-            if self._reflection is not None:
-                self._reflection.stop_accepting()
             if self._rescan_task is not None:
                 self._rescan_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -414,10 +361,6 @@ class MemberRuntime(Member):
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._program_task
                 self._program_task = None
-            if self._reflection is not None:
-                # Existing reflection may finish its durable response/checkpoint
-                # before the bounded drain expires. No task outlives the member.
-                await self._reflection.shutdown()
             self.unsubscribe_all()
             if self._services is not None:
                 if self._services.shell_service is not None:
@@ -488,7 +431,6 @@ class MemberRuntime(Member):
                 if await asyncio.to_thread(self._program_store.pending):
                     await asyncio.sleep(1)
                     continue
-            await self._check_program_maintenance()
             if self._deferred_boot:
                 handler = self._deferred_boot.pop(0)
                 try:
@@ -534,39 +476,6 @@ class MemberRuntime(Member):
                 if isinstance(mail, Mail):
                     self._queued_mail.discard(mail.id)
                 self._queue.task_done()
-
-    async def _check_program_maintenance(self) -> None:
-        """Maintenance consumes terminal history; it never owns entry recovery."""
-        if self._services is None or self._journal is None or not self._can_schedule():
-            return
-        if self._distillation_retry.ready():
-            active = False
-            try:
-                sources = frozenset(await self._journal.list_completed())
-                if sources != self._maintenance_sources:
-                    self._active_actions += 1
-                    active = True
-                    if self._registry is not None:
-                        await self._registry.publish_scheduling_state(self._member_id)
-                    with bind_execution(self._maintenance_execution("distill")):
-                        await self._services.memory.maybe_distill_completed_runs(self._journal)
-                    self._maintenance_sources = sources
-                self._distillation_retry.succeeded()
-            except Exception as error:
-                self._distillation_retry.failed(
-                    error, blocked=isinstance(error, (RecoveryMismatchError, UnknownOutcomeError))
-                )
-                self._logger.warning("program_distillation_failed", error=str(error))
-            finally:
-                if active:
-                    self._active_actions -= 1
-                    if self._registry is not None:
-                        await self._registry.publish_scheduling_state(self._member_id)
-        try:
-            if self._reflection is not None:
-                await self._reflection.check_trigger()
-        except Exception as error:
-            self._logger.warning("program_reflection_failed", error=str(error))
 
     async def _dispatch_event(self, event: Event) -> None:
         if self._behavior_error is not None or not self._can_schedule():

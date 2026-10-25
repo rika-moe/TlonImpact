@@ -112,9 +112,10 @@ def _existing_society(paths: TlonPaths) -> bool:
                 paths.agent_program_database_file(entry.name),
                 paths.agent_tasks_file(entry.name),
                 paths.agent_ledger_file(entry.name),
-                paths.agent_memory_dir(entry.name),
                 paths.agent_mail_dir(entry.name),
                 paths.agent_config_dir(entry.name),
+                paths.agent_workspace_dir(entry.name),
+                paths.agent_dir(entry.name) / "memory",  # Existing archive is not a fresh society.
             )
         ):
             return True

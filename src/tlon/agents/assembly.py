@@ -1,7 +1,7 @@
 """Member service assembly (split from agent_registry).
 
 ``assemble_member_services`` builds the services one member receives —
-LLM client, memory, task manager, Docker runtime, and the tool list —
+LLM client, task manager, Docker runtime, and the tool list —
 and returns it as ``MemberServices`` for ``MemberRuntime``. It is
 a pure function of its parameters: the registry injects itself (it
 satisfies the ``AgentLifecycle`` port structurally) plus the config
@@ -46,14 +46,12 @@ from tlon.evolution.list_prototypes import PrototypeCatalog
 from tlon.evolution.list_staging import StagingCatalog
 from tlon.evolution.review_prototype import PrototypeReviewer
 from tlon.evolution.write_prototype import PrototypeWriter
-from tlon.memory.manager import MemoryManager
-from tlon.memory.models import MemoryConfig
 from tlon.operations.context import member_context_operation
 from tlon.operations.evolution import make_evolution_operations
 from tlon.operations.filesystem import make_filesystem_operations
 from tlon.operations.identity import make_identity_operations
-from tlon.operations.memory import make_memory_operations
 from tlon.operations.observability import make_observability_operations
+from tlon.operations.runs import make_run_read_operations
 from tlon.operations.shell import make_shell_operations
 from tlon.operations.tasks import make_task_operations
 from tlon.operations.time import time_operation_definitions
@@ -116,7 +114,7 @@ async def assemble_member_services(
     """Assemble the capability set for a member.
 
     Unified member model (ADR 0006): every member gets the full
-    capability set — LLM client, memory, task manager, Docker runtime,
+    capability set — LLM client, task manager, Docker runtime,
     tools, and the team roster. Rules can start a run whenever their
     program requires one; capability availability does not classify a member.
     Resource loading stays on demand. A member declaring
@@ -138,22 +136,7 @@ async def assemble_member_services(
     # every chat() carrying usage appends to {agent_id}/ledger.jsonl.
     llm_client = LLMClient(llm_config, agent_id=config.id, tlon_paths=tlon_paths)
 
-    agent_home = tlon_paths.agent_dir(config.id)
-    # Single memory tuning surface: `memory/config.json` per agent
-    # (memory/models.py MemoryConfig). The agent_id is left empty here
-    # so MemoryManager.load merges the on-disk config; there is no
-    # agent.yaml memory section (the old base/config.MemoryConfig is
-    # gone — its fields were never consumed).
-    memory_config = MemoryConfig()
     write_gate = MemberWriteGate()
-    memory = MemoryManager(
-        agent_id=config.id,
-        config=memory_config,
-        write_gate=write_gate,
-        data_dir=agent_home,
-        llm_config=llm_config,
-        tlon_paths=tlon_paths,
-    )
 
     task_manager = TaskManager(
         agent_id=config.id,
@@ -207,7 +190,6 @@ async def assemble_member_services(
     context_reader = ContextBuilder(
         config,
         Mailbox(tlon_paths.mail_database_file(), config.id),
-        memory,
         task_manager,
         address_for_member(config.id),
         RunJournal(config.id, tlon_paths),
@@ -259,7 +241,7 @@ async def assemble_member_services(
             ),
         )
     )
-    operations.extend(make_memory_operations(memory, RunJournal(config.id, tlon_paths)))
+    operations.extend(make_run_read_operations(RunJournal(config.id, tlon_paths), config.id))
     operations.extend(make_task_operations(task_manager))
     operations.extend(make_identity_operations(tlon_paths, config.id))
     operations.extend(
@@ -298,7 +280,6 @@ async def assemble_member_services(
         # member_runtime.py) see the resolved context_window int.
         config=config.model_copy(update={"llm": llm_config}),
         llm_client=llm_client,
-        memory=memory,
         write_gate=write_gate,
         task_manager=task_manager,
         tool_executor=tool_executor,

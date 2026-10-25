@@ -8,7 +8,6 @@ from tlon.operations.schema import OperationError
 
 
 class ContextReader(Protocol):
-    async def build_knowledge_context(self, query: str | None = None) -> str: ...
     async def build_skills_index(self) -> str: ...
     def build_lessons(self) -> str: ...
     def build_current_task(self) -> str: ...
@@ -23,7 +22,6 @@ def member_context_operation(
         if reader is None or tools is None:
             raise OperationError("member context reader is not bound")
         return {
-            "knowledge": await reader.build_knowledge_context(args.get("query")),
             "lessons": reader.build_lessons(),
             "skills": await reader.build_skills_index(),
             "current_task": reader.build_current_task(),
@@ -34,7 +32,7 @@ def member_context_operation(
 
     text = {"type": "string"}
     properties: dict[str, Any] = dict.fromkeys(
-        ("knowledge", "lessons", "skills", "current_task", "thread_recap"), text
+        ("lessons", "skills", "current_task", "thread_recap"), text
     )
     properties.update(
         {
@@ -52,11 +50,10 @@ def member_context_operation(
     )
     return Operation(
         "member-context",
-        "读取自己的知识、教训、技能索引、当前任务、最近交互、邮件历史与可用工具名；返回普通值，不解释流程配置。",
+        "读取自己的教训、技能索引、当前任务、最近交互、邮件历史与可用工具名；返回普通值，不解释流程配置。",
         {
             "type": "object",
             "properties": {
-                "query": text,
                 "history_limit": {"type": "integer", "minimum": 0, "maximum": 100},
             },
             "required": [],

@@ -113,7 +113,7 @@ _CONTRACTS: dict[str, tuple[str, dict[str, Any]]] = {
                 },
                 "lessons": {
                     "type": "string",
-                    "description": "随包教训：退休成员蒸馏出的经验，落盘为原型的 LESSONS.md；实例化时拷贝给新成员，由 spec 的 (lessons) context section 注入对话",
+                    "description": "随包教训：成员显式整理并提交的经验，落盘为原型的 LESSONS.md；实例化时拷贝到新成员配置，由普通 Lisp 程序决定是否加入模型消息",
                 },
             },
             "required": ["behavior", "modules", "display_name"],

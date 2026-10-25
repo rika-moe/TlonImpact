@@ -15,8 +15,9 @@ Tlon 让一组成员通过邮件协作，人类也以成员身份收发邮件。
 | 原型 | 可提案、评审、实例化的行为来源；不等于成员档案 | [原型](design/prototypes.md) |
 | 行为 spec | 成员规则的权威描述，不包含模型配置、人格、记忆等全部输入 | [DSL](design/dsl.md) |
 | 邮件与邮箱 | 成员间通信及每个收件人的持久收件事实 | [邮件](design/mail.md) |
-| Session | 一次按配方推进的模型会话；journal 保存事件与生命周期元数据 | [运行时](design/runtime.md) |
-| Claim | 成员长期记忆的断言，可由蒸馏、主动记录或反思产生 | [记忆](design/memory.md) |
+| Program run / turn | run 是冻结入口的一次持久执行；turn 是普通对话函数的局部行动循环，client session 仅属于客户端连接 | [运行时](design/runtime.md) |
+| 长期笔记 | 成员通过普通文件工具按需维护的私有文件；不自动读取、提炼或注入 | [记忆](design/memory.md) |
+| 工作上下文 | Lisp 程序组装的模型消息，run 内只追加，边界摘要用于后续 run | [工作流程](design/programmable-workflows.md) |
 
 ## 系统约束
 
@@ -44,7 +45,7 @@ WebUI / Operator / Python SDK / Telegram
                  │ domain facades
               tlon.api
                  │
-   agents ── organization / memory / tools / sandbox
+   agents ── operations / organization / tools / sandbox
                  │
               tlon.base
 
@@ -59,11 +60,10 @@ WebUI / Operator / Python SDK / Telegram
 | `tlosure` | EDN、求值、校验、通用词汇；不依赖 tlon |
 | `tlon.base` | 配置、路径、事件与观测基础设施；不依赖上层领域 |
 | `tlon.organization` | 邮局、邮箱、地址解析与人类/外部适配；不依赖其他业务域 |
-| `tlon.memory` | claim 存储、蒸馏与检索；不依赖 agents/organization/tools/sandbox |
-| `tlon.sandbox` | 执行装置与资源监控；不依赖 agents/organization/memory/tools |
+| `tlon.sandbox` | 执行装置与资源监控；不依赖 agents/organization/tools |
 | `tlon.operations` | 共享操作契约、成员作用域调用与 DSL/Tool 薄入口，生产宿主操作已统一装配，不依赖 agents/server/client/launcher。见 [reference](reference/operations-reference.md) |
 | `tlon.tools` | 模型工具协议、结果与溢出文件适配；业务定义和执行位于 `tlon.operations`，不得反向依赖 agents/server/client/launcher/prototypes |
-| `tlon.agents` | 成员装配、调度、会话循环和策略接入；不依赖 server/client/launcher/prototypes |
+| `tlon.agents` | 成员装配、调度、模块程序执行和策略接入；不依赖 server/client/launcher/prototypes |
 | `tlon.prototypes` | 随包携带的原型数据，启动时播种；不是原型管理服务 |
 | `tlon.api` | 当前有 members/mail/prototypes/observability/configs/events/arena 七个 facade 与 runtime 装配；不依赖 server/client/launcher |
 | `tlon_server` | HTTP、客户端会话、通知、WebUI 托管；直接 runtime import 限于 api/base |
@@ -72,7 +72,7 @@ WebUI / Operator / Python SDK / Telegram
 
 ## 当前实现：装配与生命周期
 
-进程入口创建 `TlonPaths` 与 `Settings` 快照。[ServerApp](../src/tlon_server/serverapp.py) 初始化进程级 tracing/metrics，再调用 [build_runtime](../src/tlon/api/bootstrap.py)。runtime 装配包含播种原型与技能、基础设施、邮局、注册表、退休服务、Adam 与通道适配器，并返回 facade。首启不自动创建标准团队。
+进程入口创建 `TlonPaths` 与 `Settings` 快照。[ServerApp](../src/tlon_server/serverapp.py) 初始化进程级 tracing/metrics，再调用 [build_runtime](../src/tlon/api/bootstrap.py)。runtime 装配包含播种原型与技能、基础设施、邮局、注册表、退休服务、Adam 与通道适配器，并返回 facade。空数据目录首启按清单创建预设成员；已有社会保留原数据。
 
 Adam 作为内置策略成员，持有同一个 `AgentRegistry`，通过共享 `LifecycleService` 查询 boot 候选并发布启停请求；宿主状态查询仍由 `RegistryQueries` 提供。Adam 不进入注册表的激活表和生命周期枚举，但列入公开成员寻址目录。注册表的调度准入不要求成员配置存在；Adam 没有普通成员状态快照时不发布调度状态事件。
 
@@ -83,9 +83,9 @@ serving 侧在 facade 上装配客户端会话、通知服务、通讯录和 HTT
 1. 人类客户端、agent 工具、DSL、周期任务及外部适配器通过各自入口调用同一个邮局。
 2. 邮局校验收件人并提交邮件、收件归属和请求记录，随后发布变化通知。提交语义与外部网关尝试的结果分开。
 3. 注册表检查订阅与四态资格，成员串行工作者受理事件对应的冻结模块入口。
-4. ProgramDriver 执行普通函数，Operation 回执和终态写入 ProgramStore；交互由只读投影提供。成员主动读取和标读邮件，开启 session 本身不等于已读或完成任务。
+4. ProgramDriver 执行普通函数，Operation 回执和终态写入 ProgramStore；交互由只读投影提供。成员主动读取和标读邮件，受理 run 本身不等于已读或完成任务。
 5. 回信再次经过邮局。人类客户端通过 SSE 获得通知，通过邮箱接口读取事实；断线恢复依靠快照补齐，不能只依赖实时流。
-6. 已完成 session 可被蒸馏为私有长期记忆；记忆不是邮件，也不自动成为其他成员共享的知识。
+6. 成员自行决定是否通过文件工具查阅或更新私有笔记；完成 run 不触发记忆模型调用或强制读写。
 
 邮局事务见 [mail](design/mail.md)，唤醒、责任集、预算与 journal 见 [runtime](design/runtime.md)，客户端同步见 [server-protocol](design/server-protocol.md) 和 [webui](design/webui.md)。
 
@@ -99,9 +99,10 @@ serving 侧在 facade 上装配客户端会话、通知服务、通讯录和 HTT
 | 模型与执行配置 | 成员 `agent.yaml` | 原型实例化可投影初始配置；运行时授权不随成员自改 spec 提升 |
 | 主观身份与联系簿 | 成员配置文件 | 与客观地址、行为约束分开；各文件写权限见 identity |
 | 邮件、归属、已读、请求幂等 | 共享 `mail.sqlite3`，邮局负责写入 | Mailbox 是成员视图；SSE/EventBus 是通知，不是账本 |
-| Session 事件与生命周期 | 每成员 `sessions.sqlite3` | journal 保存模型历史与推进协议；操作提交核对 ProgramStore，旧 JSONL 仅作离线档案 |
+| 原始执行记录与运行结果 | 每成员 `program.sqlite3` | RunJournal 只读投影模型、工具和生命周期事实；agent session 已退役，旧归档不读取、不迁移 |
 | 根调用与操作回执 | 每成员 `program.sqlite3` 的 roots/invocations | DSL 与模型 Tool 共用；核对路径、参数、定义与构建指纹，state 与同次回执原子提交 |
-| 长期记忆 | 成员 `claims.jsonl` | 追加优先但允许删除/重写；向量索引可重建，主动写入的 claim 不能笼统视作 journal 的可重建副本 |
+| 长期笔记 | 成员 workspace 中的普通文件，建议 `memory/` | 成员按需使用文件工具维护；无 claims 存储、向量索引、自动提炼或提示词注入 |
+| 工作上下文 | 冻结模型请求与 run 返回值 | Lisp 选择延续历史或边界交接；有损摘要不替代原始事实，也不自动成为长期笔记 |
 | 原型与能力 | 受信库、staging 库 | 提案经准入后使用；评审和演武报告是证据，不自动批准 |
 | 社会政策 | `policy.tlon` 与内嵌默认政策 | 宿主物化事实后求值；可写身份与失败处理见 society-policy |
 | 运行状态、指标、追踪 | runtime 状态与观测设施 | 是观测或派生结果，不能替代邮件和 journal 的权威事实 |
@@ -119,14 +120,12 @@ serving 侧在 facade 上装配客户端会话、通知服务、通讯录和 HTT
 
 ## 已落地的共享操作边界
 
-邮件、文件、Shell、时间的 Operation 保存唯一输入/输出 schema，由 DSLAdapter 和 OperationTool 投影为两种入口。成员作用域服务负责领域行为；工具协议层不保存第二份邮件规则或 Shell 任务表。文件与执行等级在领域执行时检查；在本次切换的装置与时间域，L0/L1/L2 均可读时间和读写自己的 workspace 文件（无需 Docker），L2 加 Shell；workspace 外文件访问仍受装置权限约束，邮件及其他非装置操作沿各自既有约束装配。P4a 将两入口的叶子操作 intent 与回执统一到 ProgramStore；session journal 负责会话历史，结果不明保留 unknown。
+邮件、文件、Shell、时间的 Operation 保存唯一输入/输出 schema，由 DSLAdapter 和 OperationTool 投影为两种入口。成员作用域服务负责领域行为；工具协议层不保存第二份邮件规则或 Shell 任务表。文件与执行等级在领域执行时检查；在本次切换的装置与时间域，L0/L1/L2 均可读时间和读写自己的 workspace 文件（无需 Docker），L2 加 Shell；workspace 外文件访问仍受装置权限约束，邮件及其他非装置操作沿各自既有约束装配。P4a 将两入口的叶子操作 intent 与回执统一到 ProgramStore；RunJournal 从 ProgramStore 只读提供运行历史，结果不明保留 unknown。
 
 EPIC A、P5 #193 和 P6 #194 已合并。当前调用契约见 [Operation reference](reference/operations-reference.md)，阶段状态见[实施计划](design/operations-plan.md)，旧机制审计见[操作机制审计](design/operations-audit.md)。
 
 
-P3b 已将记忆/会话回读、任务、人格/联系人、只读观测及 state-get/state-put 接入相同 Operation 目录。成员身份由宿主绑定，操作输入不能改写拥有者；公开观察与私有资源保持各自边界。state-put 的两入口复用同一 ProgramStore 原子状态及 invocation 回执，TaskManager 已移至 `tlon.tasks`。P3c 已通过 #188 合并，统一生命周期、模型和提案操作并删除旧 Tool 机制。P4a 固定调用身份、契约与构建指纹，恢复拒绝漂移与旧格式；当前边界见 [调用恢复](design/invocation-recovery.md)。P4b 将两入口及其内部模型调用接入同一持久预算账本：程序 output 保留输出预留，session total 覆盖 stage、压缩及嵌套模型并按可靠实际 usage 结算，未知保留预留。取消约束当前进程任务树，deadline 与额度冻结跨重启保留；成员写 gate 按声明顺序执行写入，独立读取可并发。装配容器改名 MemberServices，旧宿主查询直接声明非 pure，详见 [执行作用域](design/execution-scope.md)。数据库格式 user_version=2，旧格式拒绝，无迁移。
-
-
+历史阶段 P3b/P4 已将领域操作接入统一契约，当前已移除专用记忆操作与 AgentSession。`run-read` 只读回查成员自己的执行记录；笔记与联系簿使用普通文件工具，任务由 `tlon.tasks` 管理。所有写入及 state-put 沿用 ProgramStore 回执与领域持久化边界。普通模型调用、压缩和显式提案/评审共用所属 run 的预算和截止；没有自动记忆维护根。历史阶段验收记录见实施计划，不作为现行接口说明。
 
 ## 定义、流程与执行实例
 

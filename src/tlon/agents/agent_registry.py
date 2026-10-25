@@ -472,8 +472,7 @@ class AgentRegistry(Component):
             self.event_bus.unsubscribe(subscription)
         self._request_subscriptions.clear()
 
-        # Drain member maintenance concurrently: one grace window for the society,
-        # rather than multiplying it by the number of active members.
+        # Stop members concurrently without serializing independent cleanup.
         async def stop_agent(agent_id: str, agent: MemberRuntime) -> None:
             try:
                 await agent.shutdown()
@@ -1154,7 +1153,7 @@ class AgentRegistry(Component):
             )
 
     def can_schedule(self, member_id: str) -> bool:
-        """One admission gate shared by delivery, scans, reflection and DSL."""
+        """One admission gate shared by delivery, scans and DSL."""
         return (
             member_id not in self._dead
             and member_id not in self._terminating

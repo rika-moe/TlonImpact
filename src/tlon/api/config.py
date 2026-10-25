@@ -46,7 +46,6 @@ class ConfigFacade:
         agent_id: str,
         *,
         model_name: str | None = None,
-        embedding_model_name: str | None = None,
     ) -> AgentConfig | None:
         """Rewrite a member's agent.yaml with updated LLM knobs.
 
@@ -67,8 +66,6 @@ class ConfigFacade:
         update: dict[str, str] = {}
         if model_name:
             update["model_name"] = model_name
-        if embedding_model_name:
-            update["embedding_model_name"] = embedding_model_name
         cfg.llm = base.model_copy(update=update)
         yaml_save(cfg, self._paths.tlon_home())
         return cfg

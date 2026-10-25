@@ -1,24 +1,19 @@
 """Module entry programs compose and replay without the legacy session engine."""
 
 import asyncio
-import contextlib
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from tests.mail_helpers import make_office
 from tlon.agents.member_runtime import MemberRuntime
-from tlon.agents.member_spec import MemberSpecValidationError, ReflectSpec
+from tlon.agents.member_spec import MemberSpecValidationError
 from tlon.agents.program_package import read_module_sources, validate_program_sources
-from tlon.agents.reflection import ReflectionEngine
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
-from tlon.base.llm_client import LLMClient
 from tlon.base.paths import TlonPaths
-from tlon.memory.manager import MemoryManager
-from tlon.memory.models import MemoryConfig
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 from tlosure.edn import loads
@@ -235,28 +230,29 @@ async def test_invalid_entry_return_is_failed_without_stage_fallback(
         await member.shutdown()
 
 
-async def test_v2_with_real_services_does_not_start_stage_scheduler(tmp_path: Path) -> None:
+async def test_member_completes_mail_without_reading_or_maintaining_memory(tmp_path: Path) -> None:
     from tlon.agents.member_runtime import MemberServices
     from tlon.agents.tool_executor import ToolExecutor
     from tlon.agents.vocabulary import make_member_builtins
     from tlon.base.config import AgentConfig, LLMConfig
     from tlon.base.execution import MemberWriteGate
-    from tlon.memory.models import MemoryConfig
 
+    paths = TlonPaths(home=tmp_path)
+    archived_memory = paths.agent_dir("member") / "memory" / "claims.jsonl"
+    archived_memory.parent.mkdir(parents=True)
+    archived_memory.write_text("invalid archived claims", encoding="utf-8")
+    note = paths.agent_workspace_dir("member") / "memory" / "notes.md"
+    note.parent.mkdir(parents=True)
+    note.write_text("private note", encoding="utf-8")
     shell = _member(tmp_path)
     llm = MagicMock()
     llm.config = LLMConfig(model_name="openai/gpt-test")
     llm.configuration_snapshot.return_value = {"model_name": "openai/gpt-test"}
     llm.chat = AsyncMock(side_effect=AssertionError("P1 requires no model"))
-    memory = MagicMock()
-    memory.config = MemoryConfig()
-    memory.load = AsyncMock()
-    memory.maybe_distill_completed_runs = AsyncMock(return_value=0)
     services = MemberServices(
         write_gate=MemberWriteGate(),
         config=AgentConfig(id="member", name="Member"),
         llm_client=llm,
-        memory=memory,
         task_manager=MagicMock(),
         tool_executor=ToolExecutor(),
         tlon_paths=TlonPaths(home=tmp_path),
@@ -274,12 +270,18 @@ async def test_v2_with_real_services_does_not_start_stage_scheduler(tmp_path: Pa
     assert not hasattr(member, "_scheduler")
     await member.initialize()
     try:
-        await member._on_event(_event())
-        await asyncio.wait_for(member._queue.join(), 2)
-        assert not hasattr(member, "_scheduler")
+        # More than the former distillation threshold of three completed runs.
+        for _ in range(4):
+            await member._on_event(_event())
+            await asyncio.wait_for(member._queue.join(), 2)
+        assert not hasattr(member, "_reflection")
+        assert not hasattr(services, "memory")
+        assert not any(name.startswith("memory-") for name in services.tool_executor.list_tools())
         llm.chat.assert_not_awaited()
         inbox = Mailbox(tmp_path / "shared/mail.sqlite3", "sender")
-        assert [mail.content for mail in await inbox.unread()] == ["reply:hello"]
+        assert [mail.content for mail in await inbox.unread()] == ["reply:hello"] * 4
+        assert archived_memory.read_text(encoding="utf-8") == "invalid archived claims"
+        assert note.read_text(encoding="utf-8") == "private note"
     finally:
         await member.shutdown()
 
@@ -300,7 +302,9 @@ async def test_missing_frozen_operation_is_quarantined_without_blocking_new_even
     monkeypatch.setattr(original._program_store, "complete_entry", crash)
     try:
         with pytest.raises(asyncio.CancelledError):
-            await original._run_handler_body(original.spec.handlers[0], event, run_id="missing-operation")
+            await original._run_handler_body(
+                original.spec.handlers[0], event, run_id="missing-operation"
+            )
     finally:
         monkeypatch.setattr(original._program_store, "complete_entry", complete)
         await original.shutdown()
@@ -455,118 +459,6 @@ async def test_failure_courtesy_lookup_error_preserves_original_program_failure(
         member._operation_executor.call.assert_not_awaited()
     finally:
         await member.shutdown()
-
-
-async def test_program_maintenance_failure_never_replays_completed_entry(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    clock = [100.0]
-    monkeypatch.setattr("tlon.base.maintenance.monotonic", lambda: clock[0])
-    member = _member(tmp_path)
-    await member.initialize()
-    assert member._program_task is not None
-    member._program_task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await member._program_task
-    member._program_task = None
-    try:
-        await member._run_handler_body(member.spec.handlers[0], _event(), run_id="finished")
-        assert member._journal is not None
-        assert "finished" in await member._journal.list_completed()
-        services = MagicMock()
-
-        async def failed_maintenance(journal: Any) -> int:
-            assert member.is_busy
-            assert "finished" in await journal.list_completed()
-            raise OSError("maintenance unavailable")
-
-        services.memory.maybe_distill_completed_runs = AsyncMock(side_effect=failed_maintenance)
-        member._services = services
-        member._reflection = MagicMock()
-        member._reflection.check_trigger = AsyncMock()
-        member._reflection.is_running = False
-        member._reflection.diagnostic_error = None
-        member._execute_entry_record = AsyncMock(
-            side_effect=AssertionError("entry already terminal")
-        )
-        await member._check_program_maintenance()
-        await member._check_program_maintenance()
-        assert services.memory.maybe_distill_completed_runs.await_count == 1
-        assert "maintenance unavailable" in (member.get_diagnostic_error() or "")
-        clock[0] += 300
-        await member._check_program_maintenance()
-        member._execute_entry_record.assert_not_awaited()
-        assert services.memory.maybe_distill_completed_runs.await_count == 2
-        inbox = Mailbox(tmp_path / "shared/mail.sqlite3", "sender")
-        assert [mail.content for mail in await inbox.unread()] == ["reply:hello"]
-    finally:
-        member._services = None
-        member._reflection = None
-        await member.shutdown()
-
-
-async def test_v2_background_reflection_prevents_idle_drain(tmp_path: Path) -> None:
-    member = _member(tmp_path)
-    await member.initialize()
-    # Isolate reflection activity from the worker's periodic maintenance.
-    assert member._program_task is not None
-    member._program_task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await member._program_task
-    member._program_task = None
-    entered = asyncio.Event()
-    release = asyncio.Event()
-    manager = MemoryManager(
-        "member", MemoryConfig(reflection_min_interactions=1), data_dir=tmp_path
-    )
-    assert member._journal is not None
-    engine = ReflectionEngine(
-        manager,
-        cast(LLMClient, MagicMock()),
-        ReflectSpec(enabled=True, interval_minutes=0),
-        member._journal,
-    )
-
-    async def digest(journal: Any) -> dict[str, Any]:
-        entered.set()
-        await release.wait()
-        return {"claim_count": 0, "claims": [], "recent_interactions": []}
-
-    manager.get_memory_digest = AsyncMock(side_effect=digest)
-    member._reflection = engine
-    try:
-        await member._run_handler_body(member.spec.handlers[0], _event(), run_id="reflection-source")
-        await engine.check_trigger()
-        await asyncio.wait_for(entered.wait(), 2)
-        assert not hasattr(member, "_scheduler")
-        assert engine.is_running
-        assert member.is_busy
-        assert member.get_state() == "active"
-        assert member.idle_seconds == 0
-        task = engine._task
-        assert task is not None
-        release.set()
-        await asyncio.wait_for(task, 2)
-        assert not member.is_busy
-        assert member.get_state() == "waiting"
-    finally:
-        release.set()
-        await member.shutdown()
-
-
-async def test_program_maintenance_source_failure_is_backed_off(tmp_path: Path) -> None:
-    member = _member(tmp_path)
-    member._services = MagicMock()
-    member._journal = MagicMock()
-    member._journal.list_completed = AsyncMock(side_effect=OSError("source unavailable"))
-    try:
-        await member._check_program_maintenance()
-        await member._check_program_maintenance()
-        member._journal.list_completed.assert_awaited_once()
-        member._services.memory.maybe_distill_completed_runs.assert_not_called()
-        assert "source unavailable" in (member.get_diagnostic_error() or "")
-    finally:
-        member._services = None
 
 
 async def test_program_prompt_never_embeds_mutable_contact_book(tmp_path: Path) -> None:

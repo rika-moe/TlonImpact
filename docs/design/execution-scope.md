@@ -1,6 +1,6 @@
 # 执行作用域、共享额度与写入边界（P4b）
 
-> P5：普通模块共享 output 根；旧 run-loop/recipe total 根的创建入口已删除，total 账本语义保留供宿主维护使用。本文涉及 stage/session 的说明属于旧阶段记录；当前路径见 [Runtime](runtime.md)。
+> P5：普通模块共享 output 根；旧 run-loop/recipe total 根的创建入口已删除，total 账本语义保留。本文涉及 stage/session 的说明属于旧阶段记录；当前路径见 [Runtime](runtime.md)。
 
 状态：EPIC A、P5 #193 与 P6 #194 已合并，P7 暂停；本文描述当前共享执行契约。总体方案与验收见 [operations-plan](operations-plan.md)，叶子结果以 [ProgramStore invocation](invocation-recovery.md) 为权威。
 
@@ -8,7 +8,7 @@
 
 ExecutionScope 由宿主创建，包含额度根、确定路径、取消信号与可选 UTC 截止时间，通过显式绑定的 ContextVar 传到内部服务。Tool/DSL 输入不能指定身份、额度或取消对象。成员 LLMClient 的调用边界读取作用域，因而 stage、压缩和操作内部的模型请求不能绕过当前额度。
 
-程序执行使用 output 根，额度来自成员 program_token_budget（默认 100000）；单次输出按冻结模型输出能力、剩余上下文和 run 剩余预算取小值。规划、行动、压缩、自评及提案内嵌模型请求共享所属根，成功后按可靠 usage 结算并释放预留差额。普通模块函数和 turn 不创建额外预算或历史权威；维护执行使用独立维护根。ProgramStore 保存根和调用回执，RunJournal 只读查询。旧 agent session 已退役，无历史读取兼容或迁移。
+程序执行使用 output 根，额度来自成员 program_token_budget（默认 100000）；单次输出按冻结模型输出能力、剩余上下文和 run 剩余预算取小值。规划、行动、压缩、显式审阅及提案内嵌模型请求共享所属根，成功后按可靠 usage 结算并释放预留差额。普通模块函数和 turn 不创建额外预算或历史权威；长期笔记读写沿用普通文件调用，无后台记忆维护根。宿主故障通知使用隔离的零模型额度根，不执行模型或重发原未知效果。ProgramStore 保存根和调用回执，RunJournal 只读查询。旧 agent session 已退役，无历史读取兼容或迁移。
 
 取消信号用于当前进程的任务树，shutdown 中断后仍允许按原记录恢复；它不是跨重启的永久撤销标记。程序和会话终态继续由各自生命周期记录决定。额度、计量口径与有效 UTC 截止时间则在根创建时持久冻结，恢复不能提高额度、重置消费或延长截止。
 
@@ -24,7 +24,7 @@ run-loop 的程序调用位置对应稳定 session ID。同进程重入和进程
 
 ## 成员写入与取消
 
-成员只装配一个写 gate，显式注入 OperationExecutor 与 MemoryManager；反思、蒸馏和直接记忆写入也使用同一把锁。读操作仍可并发；写操作在 gate 内检查当前取消、截止和实际领域授权后执行。同一 asyncio task 的嵌套 await 可以重入；同一根的不同 task 不能借相同 root_id 重入。父程序等待 run-loop 时不持有写锁。
+成员只装配一个写 gate，显式注入 OperationExecutor；笔记写入使用普通文件操作，不另建记忆维护锁或后台模型工作流。读操作仍可并发；写操作在 gate 内检查当前取消、截止和实际领域授权后执行。同一 asyncio task 的嵌套 await 可以重入；同一根的不同 task 不能借相同 root_id 重入。父程序等待 run-loop 时不持有写锁。
 
 一批 Tool 里的写操作显式按模型声明顺序排等待链，读操作不进入该链。单靠锁的等待顺序不足以兑现声明顺序，因为 SQLite 查询等 await 会改变到锁先后。任务创建与登记之间不插入 await，随后才发布分发事件；取消时能够找到并等待全部子任务，不留下游离写入。
 

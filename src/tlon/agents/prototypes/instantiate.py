@@ -149,7 +149,7 @@ def instantiate(
         target.write_text(source, encoding="utf-8")
 
     # Lessons inheritance (see docs/design/prototypes.md): a prototype's
-    # LESSONS.md — lessons distilled from a retired member — is copied
+    # LESSONS.md — explicitly authored lessons — is copied
     # next to the behavior file
     # (a persona-file neighbor); ordinary programs read it through member-context.
     # No LESSONS.md in the prototype → no file on the member either.

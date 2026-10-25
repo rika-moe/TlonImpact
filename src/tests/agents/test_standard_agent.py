@@ -98,7 +98,6 @@ def execute(
                 lambda env, options: (
                     data
                     or {
-                        "knowledge": "known fact",
                         "lessons": "lesson",
                         "skills": "skill",
                         "current_task": "task",
@@ -162,7 +161,7 @@ def test_original_tool_arguments_are_executed_without_hidden_review() -> None:
     assert len(requests) == 2
     assert [delivery["content"] for delivery in deliveries] == ["unreviewed"]
     assert "Skills:" in requests[0]["messages"][0]["content"]
-    assert "known fact" in requests[0]["messages"][1]["content"]
+    assert "Current task:\ntask" in requests[0]["messages"][1]["content"]
     assert requests[1]["messages"][: len(requests[0]["messages"])] == requests[0]["messages"]
     assert [item["name"] for item in trace["tool_calls"]] == ["mail-send", "finish-turn"]
     assert trace["marked"] == [{"mail_ids": ["mail"]}]
@@ -318,7 +317,6 @@ def test_changed_contract_starts_fresh_in_stable_then_dynamic_order() -> None:
             "skills": "stable skills",
             "lessons": "stable lesson",
             "mail_history": [{"role": "user", "content": "original mail history"}],
-            "knowledge": "fresh knowledge",
             "current_task": "task",
             "thread_recap": "recap",
             "tools": ["finish-turn"],
@@ -327,7 +325,7 @@ def test_changed_contract_starts_fresh_in_stable_then_dynamic_order() -> None:
     history = requests[0]["messages"]
     assert "stable skills" in history[0]["content"]
     assert history[1]["content"] == "original mail history"
-    assert "fresh knowledge" in history[2]["content"]
+    assert "Current task:\ntask" in history[2]["content"]
     assert all("stale-contract-prefix" not in item["content"] for item in history)
 
 

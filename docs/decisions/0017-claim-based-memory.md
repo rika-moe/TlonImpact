@@ -1,5 +1,7 @@
 # ADR 0017：记忆系统重设计——claim 模型 + 向量检索 + JIT 注入，整体替换旧 episodic 记忆
 
+> 当前长期记忆机制已由 [普通私有笔记设计](../design/memory.md) 取代：无自动 claims 蒸馏、向量注入或后台反思。本文保留历史决策。
+
 > 更新（2026-10-20，P3b）：本文保留决策时的术语；记忆、联系人等旧 Tool 已切换为共享 Operation，当前契约见 [operations-reference](../reference/operations-reference.md)。
 
 > 阅读定位：本文保留当时的选择与理由；当前设计见 [memory](../design/memory.md)、[runtime](../design/runtime.md)。当前适用范围：Claim 模型与检索；journal 物理存储由 ADR 0032 修订。完整关系见 [决策索引](README.md)。

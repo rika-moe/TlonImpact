@@ -1,15 +1,15 @@
 """Offline handover inventory after permanent member exit.
 
 AGENT_STOPPED triggers read-only inventory of unfinished tasks, unreplied
-threads and archived memory. AGENT_RETIRED publishes the inventory without
+threads and private note filenames. AGENT_RETIRED publishes the inventory without
 running the dead member's model or sending any mail. Administrative deletion
 has no archive to inspect and is skipped. Historical records remain unchanged.
 """
 
+import os
 from datetime import UTC, datetime
-from typing import Any
+from pathlib import Path
 
-from tlon.agents.run_journal import RunJournal
 from tlon.base.component import Component
 from tlon.base.config import yaml_load_file
 from tlon.base.device import Device
@@ -17,8 +17,6 @@ from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
-from tlon.memory.manager import MemoryManager
-from tlon.memory.models import MemoryConfig
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tasks.manager import TaskManager
@@ -91,7 +89,7 @@ class RetirementCeremony(Component, Device):
 
         open_tasks = self._open_tasks(agent_id)
         open_threads = await self._open_threads(agent_id)
-        digest = await self._memory_digest(agent_id)
+        memory_files = self._memory_files(agent_id)
         await self.publish(
             Event(
                 type=EventType.AGENT_RETIRED,
@@ -101,7 +99,7 @@ class RetirementCeremony(Component, Device):
                     "stopped_by": stopped_by,
                     "open_tasks": open_tasks,
                     "open_threads": open_threads,
-                    "memory_digest": digest,
+                    "memory_files": memory_files,
                 },
                 source="retirement_ceremony",
             )
@@ -159,14 +157,18 @@ class RetirementCeremony(Component, Device):
             )
         return open_threads
 
-    async def _memory_digest(self, agent_id: str) -> dict[str, Any] | None:
-        """Read existing archived memory, independent of the member's program."""
-        memory = MemoryManager(
-            agent_id,
-            MemoryConfig(),
-            data_dir=self._paths.agent_dir(agent_id),
-            tlon_paths=self._paths,
-        )
-        journal = RunJournal(agent_id, self._paths)
-        digest = await memory.get_memory_digest(journal)
-        return digest if digest["claim_count"] or digest["recent_interactions"] else None
+    def _memory_files(self, agent_id: str) -> list[str]:
+        """List existing private notes without reading them or following symlinks."""
+        workspace = self._paths.agent_workspace_dir(agent_id)
+        notes = workspace / "memory"
+        if workspace.is_symlink() or notes.is_symlink() or not notes.is_dir():
+            return []
+        files: list[str] = []
+        for directory_name, dirs, names in os.walk(notes, followlinks=False):
+            directory = Path(directory_name)
+            dirs[:] = [name for name in dirs if not (directory / name).is_symlink()]
+            for name in names:
+                path = directory / name
+                if not path.is_symlink() and path.is_file():
+                    files.append(path.relative_to(workspace).as_posix())
+        return sorted(files)

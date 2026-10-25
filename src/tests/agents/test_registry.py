@@ -672,20 +672,9 @@ class TestPendingStop:
         await registry.shutdown()
 
 
-async def test_registry_shutdown_drains_members_concurrently_with_one_bounded_window(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_registry_shutdown_stops_members_concurrently(tmp_path: Path) -> None:
     from types import SimpleNamespace
-    from unittest.mock import MagicMock
 
-    from tlon.agents.member_spec import ReflectSpec
-    from tlon.agents.reflection import ReflectionEngine
-    from tlon.agents.run_journal import RunJournal
-    from tlon.memory.manager import MemoryManager
-    from tlon.memory.models import MemoryConfig
-
-    monkeypatch.setattr(ReflectionEngine, "SHUTDOWN_GRACE_SECONDS", 0.05)
     registry = AgentRegistry(
         event_bus=EventBus(),
         agent_info_provider=_StaticProvider({}),
@@ -693,38 +682,16 @@ async def test_registry_shutdown_drains_members_concurrently_with_one_bounded_wi
     )
     all_started = asyncio.Event()
     started: list[str] = []
-    engines: list[ReflectionEngine] = []
     count = 4
     for index in range(count):
         member_id = str(index)
-        engine = ReflectionEngine(
-            MemoryManager(member_id, MemoryConfig(), data_dir=tmp_path / member_id),
-            MagicMock(),
-            ReflectSpec(enabled=True, interval_minutes=0),
-            RunJournal(member_id, TlonPaths(home=tmp_path)),
-        )
-        engine._task = asyncio.create_task(asyncio.Event().wait())
-        engine._running = True
-        engines.append(engine)
 
-        async def shutdown(member_id: str = member_id, engine: ReflectionEngine = engine) -> None:
+        async def shutdown(member_id: str = member_id) -> None:
             started.append(member_id)
             if len(started) == count:
                 all_started.set()
-            # Every member must enter shutdown before any is asked to finish;
-            # a serial registry would block here instead of sharing the window.
             await all_started.wait()
-            await engine.shutdown()
 
         registry._agents[member_id] = SimpleNamespace(shutdown=shutdown)
-    tasks = [engine._task for engine in engines]
-    try:
-        await asyncio.wait_for(registry.shutdown(), 1)
-        assert len(started) == count
-        assert all(task is not None and task.cancelled() for task in tasks)
-        assert all(engine._closing for engine in engines)
-    finally:
-        for task in tasks:
-            if task is not None and not task.done():
-                task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+    await asyncio.wait_for(registry.shutdown(), 1)
+    assert len(started) == count

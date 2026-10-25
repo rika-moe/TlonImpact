@@ -25,14 +25,10 @@ Layout:
     │   │   └── LESSONS.md
     │   ├── skills/
     │   │   └── {skill}/SKILL.md
-    │   ├── memory/
-    │   │   ├── config.json
-    │   │   ├── lessons.md
-    │   │   ├── claims.jsonl
-    │   │   └── distillation.json
     │   ├── tasks.jsonl
     │   ├── ledger.jsonl
     │   ├── workspace/
+    │   │   ├── memory/ (optional member-authored notes)
     │   │   └── .agents/skills/{skill}/SKILL.md
     │   └── mail/ (legacy offline archive; never read by the post office)
     ├── skills/
@@ -140,9 +136,6 @@ class TlonPaths:
 
     def agent_config_file(self, agent_id: str) -> Path:
         return self.agent_config_dir(agent_id) / "agent.yaml"
-
-    def agent_memory_dir(self, agent_id: str) -> Path:
-        return self._home / agent_id / "memory"
 
     def agent_workspace_dir(self, agent_id: str) -> Path:
         return self._home / agent_id / "workspace"
@@ -273,20 +266,6 @@ class TlonPaths:
     def prototypes_staging_dir(self) -> Path:
         """~/.tlon/prototypes-staging/ — LLM-authored prototypes awaiting approval."""
         return self._home / "prototypes-staging"
-
-    # ===== Memory =====
-
-    def memory_config_file(self, agent_id: str) -> Path:
-        return self.agent_memory_dir(agent_id) / "config.json"
-
-    def memory_lessons_file(self, agent_id: str) -> Path:
-        """~/.tlon/{agent_id}/memory/lessons.md — retirement distillation
-        output (docs/design/memory.md 「退休蒸馏」).
-
-        Written by ``agents/lessons.py``'s LessonsDistiller on
-        ``AGENT_STOPPED``: one LLM pass distills the member's memory
-        digest into lessons for the next generation."""
-        return self.agent_memory_dir(agent_id) / "lessons.md"
 
     # ===== Shared =====
 

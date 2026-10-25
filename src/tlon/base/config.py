@@ -87,13 +87,6 @@ class LLMConfig(BaseModel):
     # proxies / OpenAI-compatible endpoints pair ``model_name:
     # openai/<model>`` with this URL. None = litellm's registry routing.
     api_base: str | None = None
-    # Member-level embedding model (ADR 0017 stage 2): ``provider/model``
-    # form, routed via litellm with the same ``{PROVIDER}_API_KEY`` env
-    # convention as ``model_name``. None = no vector retrieval — memory
-    # injection degrades to most-recent-N (a first-class fallback: some
-    # providers expose no embedding endpoint at all).
-    embedding_model_name: str | None = None
-
     # Runtime-only fields (not persisted to YAML); code defaults only —
     # no env source (ADR 0016).
     max_retries: int = Field(default=3, exclude=True)
@@ -166,7 +159,7 @@ class AgentConfig(BaseModel):
     # None = no llm section in agent.yaml. Assembly requires a declared
     # llm.model_name (ADR 0016) — a member without one fails to assemble.
     llm: LLMConfig | None = None
-    # Shared output allowance for one program entry or maintenance execution.
+    # Shared output allowance for one program entry.
     program_token_budget: int = Field(default=100000, gt=0, strict=True)
     docker: DockerRuntimeConfig = Field(default_factory=DockerRuntimeConfig)
     tool: ToolConfig = Field(default_factory=ToolConfig)
@@ -241,7 +234,7 @@ def yaml_save(agent: AgentConfig, tlon_home: Path) -> None:
     """Save an agent to its per-agent config directory.
 
     Writes ~/.tlon/{agent.id}/config/agent.yaml and ensures
-    standard subdirectories (workspace, memory) exist.
+    the member workspace exists; optional note directories are created by explicit file writes.
     """
     p = TlonPaths(home=tlon_home)
     yaml_file = p.agent_config_file(agent.id)
@@ -252,7 +245,6 @@ def yaml_save(agent: AgentConfig, tlon_home: Path) -> None:
         encoding="utf-8",
     )
     p.agent_workspace_dir(agent.id).mkdir(parents=True, exist_ok=True)
-    p.agent_memory_dir(agent.id).mkdir(parents=True, exist_ok=True)
 
 
 def yaml_delete(agent_id: str, tlon_home: Path) -> None:
