@@ -6,9 +6,9 @@
 
 Skill 是"按需加载的技能包"：一个文件夹 + 一个 `SKILL.md`，教 agent 怎么做某一类事（工作流、领域 know-how、可执行脚本）。与相邻概念的分工：
 
-- **人格**（SOUL.md 等，`(persona)` section）：常驻 system prompt，回答"我是谁"。
-- **记忆**（claims，`(knowledge)` section）：回答"发生过什么"。
-- **技能**（`(skills)` section）：平时只有索引在上下文里，匹配到才读正文，回答"这类事该怎么做"。
+- **人格**（SOUL.md 等）：宿主组装稳定的 system prompt，回答"我是谁"。
+- **长期笔记**（workspace 中的普通文件）：成员选择性记录和按需回读，不自动注入。实际发生过什么由 `run-read` 与邮件原文查证。
+- **技能**：普通 Lisp 程序可选择包含技能索引，模型按需读正文，回答"这类事该怎么做"。
 - **工具**（`file-read` 等）：确定性的"能做什么"。skill 不是工具——它是编排工具的知识。
 
 格式采用 Agent Skills 开放标准（Claude Code / Codex / Cursor 通用），第三方技能包可以被扫描发现；正文和脚本是否可用，还取决于成员执行层级与容器可见路径。
@@ -54,7 +54,7 @@ description: 从 PDF 提取文本与表格。当任务涉及 PDF 解析时使用
 
 ## 运行机制
 
-**扫描与索引**（`agents/skills.py`）：`(skills)` section 触发时，引擎扫三层目录的直接子目录（不递归），解析各 `SKILL.md` frontmatter，渲染成 `[可用技能]` 用户消息，每条一行：
+**扫描与索引**（`agents/skills.py`）：ContextBuilder 读取三层目录的直接子目录（不递归），解析各 `SKILL.md` frontmatter，将 `[可用技能]` 索引文本作为 `member-context` 的 `skills` 普通字段返回；是否加入消息由 Lisp 程序决定。每条一行：
 
 ```
 [可用技能]
@@ -62,22 +62,23 @@ description: 从 PDF 提取文本与表格。当任务涉及 PDF 解析时使用
 - pdf-extract (project): 从 PDF 提取文本与表格。当任务涉及 PDF 解析时使用。 — /Users/x/.tlon/dev-001/workspace/.agents/skills/pdf-extract/SKILL.md
 - review-checklist (global): 代码评审清单。评审 PR 时使用。 — /Users/x/.tlon/skills/review-checklist/SKILL.md
 
-需要某个技能时，用 read_file 读取其 SKILL.md 获取完整指令。
+需要某个技能时，用 file-read 读取其 SKILL.md 获取完整指令。
 ```
 
-索引按三层技能目录存在性、子目录名及 SKILL.md 的 mtime 签名缓存（与 system prompt 的 persona mtime 缓存同手法），无变更零磁盘重读，文件一改下一 session 生效。目录不存在视为空；三层全空则该 section 不产生任何消息。
+索引按三层技能目录存在性、子目录名及 SKILL.md 的 mtime 签名缓存（与 system prompt 的 persona mtime 缓存同手法），无变更零磁盘重读，文件一改下次读取索引生效。目录不存在视为空；三层全空则返回空索引。
 
-**DSL**：`(skills)` 是 `:context :sections` 向量的一员，无参数，与 `(knowledge)` 平级，按向量顺序落位：
+**DSL**：普通模块通过共享操作读取资料，再自行组合消息：
 
 ```clojure
-:context {:sections [(persona) (protocol) (lessons) (skills) (knowledge) (current-task) (mail-history 20 10) (thread-recap)]}
+(let [data (member-context {:history_limit 20})]
+  (get data :skills))
 ```
 
-不加该 section 的成员没有任何 skill 开销；是否使用该 section 由本次会话配方决定。
+标准 agent 库将技能索引放入普通消息；没有 `:context :sections`、`(skills)` 或 `(knowledge)` 专属解释器。笔记文件不在 member-context 返回值中；需要时显式调用普通文件工具。
 
 **按需加载意图**：模型从索引选择技能，再读取正文；引擎不注入正文，也没有 `use_skill` 工具。
 
-**当前实现缺口**：`agents/skills.py` 的 `render_skills_index` 仍提示不存在的 `read_file`，并给出不能直接交给容器工具的宿主路径。L1/L2 可在知道映射关系时用 `file-read` 读取 project/agent 层；全局层（包括内置 explain-decision）没有通用正文读取通道。L0 已可用普通文件工具读取自己 workspace 内的正文（ADR 0047），但不能因此读取 workspace 外的宿主路径。脚本需要 L2 的 `shell-run`，并且文件必须位于容器可见路径。
+**当前实现缺口**：`agents/skills.py` 的 `render_skills_index` 提示使用 `file-read`，但给出的是不能直接交给容器工具的宿主路径。L1/L2 可在知道映射关系时用 `file-read` 读取 project/agent 层；全局层（包括内置 explain-decision）没有通用正文读取通道。L0 已可用普通文件工具读取自己 workspace 内的正文（ADR 0047），但不能因此读取 workspace 外的宿主路径。脚本需要 L2 的 `shell-run`，并且文件必须位于容器可见路径。
 
 因此三层发现与索引已经实现，不能把它描述为三层正文访问均已跑通。补齐路径映射、全局正文可见性和索引路径需要独立设计及实现，workspace 文件权限见 ADR 0047，不另增技能专用工具。
 

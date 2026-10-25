@@ -14,7 +14,7 @@ model-call 返回建议，tool-execute 逐叶执行并返回真实结果。每�
 
 装配目录依成员身份、信任、执行装置和领域服务确定。冻结模型请求保留目录快照；实际新效果仍校验当前目录和领域权限。固定目录不是永久授权或任意外部操作 exactly-once 的保证。
 
-模型、压缩、核验和嵌套调用共享程序 output 根，获准输出预留不退款。后台维护使用独立根；total 账本语义保留。上下文估算将完整工具 JSON 作为文本计数，支持布尔 schema 节点；估算不是 provider 用量保证。
+模型、压缩、显式核验和嵌套调用共享程序 output 根，可靠成功用量结算后释放预留差额，未知用量保留预留。长期笔记通过普通文件操作显式维护，无自动记忆模型根；total 账本语义保留。上下文估算将完整工具 JSON 作为文本计数，支持布尔 schema 节点；估算不是 provider 用量保证。
 
 ## 注册清单
 
@@ -968,7 +968,7 @@ Operation 单一契约；输入与输出字段保留 snake_case。（本区块�
 | `description` | string | 否 | 一句话描述这个原型的行为定位 |
 | `parent` | string | 否 | 父原型系统 ID（本原型从哪个原型派生而来；留空表示新的根原型）。父原型必须已存在（trusted 库或 staging 区皆可），generation 由服务端自动推导为父代 + 1 |
 | `proposal_note` | string | 否 | 本代变更说明：相对父原型改了什么、为什么 |
-| `lessons` | string | 否 | 随包教训：退休成员蒸馏出的经验，落盘为原型的 LESSONS.md；实例化时拷贝给新成员，由 spec 的 (lessons) context section 注入对话 |
+| `lessons` | string | 否 | 随包教训：成员显式整理并提交的经验，落盘为原型的 LESSONS.md；实例化时拷贝到新成员配置，由普通 Lisp 程序决定是否加入模型消息 |
 
 输出：
 

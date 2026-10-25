@@ -40,7 +40,7 @@ Tool 协议根参数必须是 JSON object 的字符串键。OperationTool 在 To
 
 五个操作 `mail-send`、`mail-forward`、`mail-check-inbox`、`mail-search`、`mail-mark-read` 共用 [权威定义](../../src/tlon/operations/mail.py)，输入与输出均为 snake_case；DSL 也使用 `:mail_id`、`:request_id` 等原拼写键。schema 与参数表见 [工具参考](tools-reference.md#mail)。所有服务绑定成员身份，不接收可伪造的 owner/from 参数。
 
-程序使用冻结 run 和调用位置，工具使用 session、轮次与 tool call ID 生成稳定 call_id。默认 request_id 来自该 ID，显式重试可以提交原 request_id。输入或输出错误不代表效果一定未发生；超时、中断和无法确认提交必须保留 unknown 及原 request_id。复用邮局回执不会重复入箱；会话恢复会先查统一调用记录：未写 intent 的 dispatch 可以新执行，已提交回执直接还原；只有不安全 intent 时报告 unknown，安全写同键对账。
+程序使用冻结 run 和调用位置，模型工具使用所属 run 的调用路径与 tool call ID 生成稳定 call_id。默认 request_id 来自该 ID，显式重试可以提交原 request_id。输入或输出错误不代表效果一定未发生；超时、中断和无法确认提交必须保留 unknown 及原 request_id。复用邮局回执不会重复入箱；会话恢复会先查统一调用记录：未写 intent 的 dispatch 可以新执行，已提交回执直接还原；只有不安全 intent 时报告 unknown，安全写同键对账。
 
 已删除旧五邮件 Tool 及旧 DSL 邮件词，不提供别名或迁移。旧 Behavior 和未完成运行若引用旧名，将不兼容；仓库示例同步切换，用户数据不自动修改。P7 动态工具视图暂停，根调用记录与共享额度已由 P4a/P4b 收敛。
 
@@ -56,11 +56,11 @@ Tool 协议根参数必须是 JSON object 的字符串键。OperationTool 在 To
 
 `retry_safe` 是宿主对中断后重新调用是否安全的最小声明。程序沿用同一 ProgramStore 数据库：非幂等 write 先写 intent，再调用 handler，再记录结果；已有结果重放，只有 intent 而无结果时返回 unknown，禁止自动重新执行。取消同样不能当作无副作用。邮件仍使用 PostOffice 的稳定 request_id 幂等重试。P4a 将这些 intent 和回执统一到 ProgramStore 的 invocations；P4b 新增共享额度根，并让新写入按成员 gate 及模型声明顺序执行。
 
-会话保留 session journal 的 dispatch/result/collect，操作提交事实只查 ProgramStore。孤立 dispatch 不等于已执行；尚无 intent 可以开始执行，非幂等写只有 intent 而无回执时才报告 unknown；工具适配器不伪造回执。Shell 后台任务只由成员 ShellService 持有，查询不复制任务表；成员关闭先取消并等待后台任务清理，再关闭装置。后台句柄不跨进程恢复，不自动重启命令。
+运行历史从 ProgramStore 只读投影，操作提交事实只查 ProgramStore。孤立 dispatch 不等于已执行；尚无 intent 可以开始执行，非幂等写只有 intent 而无回执时才报告 unknown；工具适配器不伪造回执。Shell 后台任务只由成员 ShellService 持有，查询不复制任务表；成员关闭先取消并等待后台任务清理，再关闭装置。后台句柄不跨进程恢复，不自动重启命令。
 
-## 记忆、任务、人格/联系人、观测与状态 P3b
+## 运行回读、笔记、任务、人格/联系人、观测与状态
 
-各域定义见[工具参考](tools-reference.md#memory)。记忆与运行历史读取绑定成员 MemoryManager/RunJournal，任务绑定自己的 TaskManager，人格与联系人只接触自身文件；identity/soul 可以修改，RULES 不可自改。观测为 read，保留原有公开声誉/trace 与自身邮箱统计的边界。旧 Tool 类、名称和任务 manager 的旧包路径直接删除。
+运行回读定义见[工具参考](tools-reference.md#run)，笔记和联系人使用[普通文件操作](tools-reference.md#filesystem)。`run-read` 绑定成员自己的 RunJournal，`run-previous` 读取自身同入口的先前成功结果；它们不读取或生成长期笔记。笔记读写均可选，无专用记忆操作、自动检索或隐藏模型调用。任务绑定自己的 TaskManager，人格修改只接触自身文件；identity/soul 可以修改，RULES 不可自改。观测为 read，保留公开声誉/trace 与自身邮箱统计的边界。
 
 state-get/state-put 使用一个对象参数，例如 `(state-get {:key "edition"})`、`(state-put {:key "edition" :value {:period "001"}})`，直接返回严格 JSON 值，缺失返回 null。输入根始终是闭合对象，value 和返回值用原生 boolean schema 表达动态 JSON；DSL 键不做 snake/kebab 隐式转换。
 
@@ -76,11 +76,11 @@ Operation 没有 control 分类或 sole/direct/literal 嵌套限制。`finish-tu
 
 程序直接模型调用使用持久 output 根，额度来自成员 program_token_budget（默认 100000）；单次输出默认按冻结模型输出能力、剩余上下文和 run 剩余额度取小值，显式 max_tokens 可进一步收紧；成功后按可靠 completion_tokens 结算并释放预留差额。旧 run-loop/recipe total 根入口已删除。既有 total 预算账本语义仍供相关宿主调用使用；普通程序及其压缩、提案、评审共享冻结根。output 与 total 成功均按各自口径的可靠实际 usage 结算；缺少 usage 或提交未知时保留预留，实际超额如实记账并阻止后续请求，token 估算不是硬上界。
 
-模型响应与额度结算原子提交，已提交历史只还原，不重新扣额或请求 provider；未知提交不自动重发。后台反思和蒸馏另建维护根。宿主 ContextVar 传播作用域，业务参数不能重置额度；取消只作用于当前进程任务树，冻结 deadline 和预算跨重启保留。详情见 [执行作用域](../design/execution-scope.md)。
+模型响应与额度结算原子提交，已提交历史只还原，不重新扣额或请求 provider；未知提交不自动重发。没有自动记忆蒸馏、反思或退休教训模型根；成员显式整理笔记时使用所属 run 的操作、模型额度与截止。宿主 ContextVar 传播作用域，业务参数不能重置额度；取消只作用于当前进程任务树，冻结 deadline 和预算跨重启保留。详情见 [执行作用域](../design/execution-scope.md)。
 
 ## EPIC A 审计收尾边界
 
-spawn 的配额归属取冻结 CallContext.run_id：Tool 与 DSL 使用所属冻结程序根，日志 ContextVar 不参与授权。演化和记忆的领域包装透传确定的预算/截止拒绝，provider 明确拒绝为 rejected，未知提交仍为 unknown。成员同一 write gate 显式注入 OperationExecutor 与 MemoryManager，反思/蒸馏与普通调用共享写边界。超时先返回已提交回执；未派发的新调用明确拒绝，不把旧未知 intent 覆写为失败。
+spawn 的配额归属取冻结 CallContext.run_id：Tool 与 DSL 使用所属冻结程序根，日志 ContextVar 不参与授权。演化与普通文件等领域操作透传确定的预算/截止拒绝，provider 明确拒绝为 rejected，未知提交仍为 unknown。成员同一 write gate 注入 OperationExecutor，笔记写入沿用普通文件操作的写边界。超时先返回已提交回执；未派发的新调用明确拒绝，不把旧未知 intent 覆写为失败。
 
 ## 纯计算与调用
 

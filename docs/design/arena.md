@@ -38,7 +38,7 @@ staging 通道的现状信任闸（[prototypes.md](./prototypes.md)）：加载�
 1. **准备**：建隔离家园 → 拷原型 → `instantiate` → 收紧资源 → 归档语料 → `build_runtime` → adopt 临时成员（模型见「成本界」）
 2. **语料**：内置对抗套件 + 按原型职责生成的典型场景邮件（见下节），归档为数据
 3. **喂信**：经隔离 runtime 的 `post_office.post(mail)` 逐封投递。邮件入箱与程序运行分开；同一成员串行处理 program run。每个 run 的冻结输入派生 `run/start`，其中 `responsibility` 为来源邮件 ID，报告据此关联语料，不能把其他工具读取过的邮件推断为已收编。
-4. **等待**：收工条件是 **drained**：全部语料已投递进收件箱 ∧ 无未读 ∧ RunJournal 无 pending run，并连续跨两个轮询观测成立。DONE = drained；残留未读或未决运行使其不成立，撞时间盒后保留部分证据。这个文件读侧判定不等于成员 `is_busy`：后台维护活动也计入 runtime 排空，不能冒充 run 数量。
+4. **等待**：收工条件是 **drained**：全部语料已投递进收件箱 ∧ 无未读 ∧ RunJournal 无 pending run，并连续跨两个轮询观测成立。DONE = drained；残留未读或未决运行使其不成立，撞时间盒后保留部分证据。这个文件读侧判定不等于成员 `is_busy`：程序及其已派发工具的外部 I/O 仍属于活动工作，不能用 pending run 数量替代运行时排空；没有后台记忆维护。
 5. **采集**：由 RunJournal 读取隔离成员的 ProgramStore，逐 program run 导出 `archive/runs/{run_id}.jsonl`，并归档隔离邮箱的实际投递结果；导出文件名按路径安全规则编码
 6. **报告**：生成 ARENA.md / report.json，连语料与导出的 run 事件一起归档进 **staging 原型目录**（见「报告」节）；导出物只是报告原料，不是运行时 fallback
 7. **拆除**：shutdown 隔离 runtime → 按名强删 `tlon-agent-arena-*` 容器（文件柜 + 残留 exec 单元）→ 归档完成后删隔离家园

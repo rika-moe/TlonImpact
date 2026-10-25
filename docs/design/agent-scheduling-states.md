@@ -85,7 +85,7 @@ stateDiagram-v2
 
 睡眠请求在完成当前工作后持久记录绝对 UTC 唤醒时刻，再由 runtime 管理计时。重启不会延长睡眠：未来期限继续等待；已到期则检查邮箱。睡眠闸门同时约束投递通知、启动扫描、慢速重扫、链式唤醒和所有规则程序，不能仅在某一个入口判断。
 
-runtime 只由 ProgramStore 恢复未完成 program run，不从 RunJournal 的历史投影或已完成 run 重新制造工作。睡眠在当前工作全部排空后提交，持久睡眠期间不能继续执行成员 run。`is_busy` 覆盖程序执行与后台维护；后台维护不算 program run 数量。
+runtime 只由 ProgramStore 恢复未完成 program run，不从 RunJournal 的历史投影或已完成 run 重新制造工作。睡眠在当前工作全部排空后提交，持久睡眠期间不能继续执行成员 run。`is_busy` 覆盖程序执行及其外部效果；不存在后台记忆维护，不能以 pending run 数量替代活动工作计数。
 
 状态变更写入可追踪的原因与时间；到期回调必须重新读状态，防止旧计时器唤醒已经死亡或改变了睡眠期限的成员。死亡与睡眠的改变由同一成员锁串行化。管理等待、睡眠与终止活跃成员均先阻止新工作接纳、排空当前工作，不能只改一个显示字段；不强制取消正在执行的 LLM 或工具。
 
@@ -93,7 +93,7 @@ runtime 只由 ProgramStore 恢复未完成 program run，不从 RunJournal 的�
 
 ADR 0039/0041 的四态、持久睡眠与管理排空已实现；其中旧 session 引擎、scheduler 和 stage 路径由后续模块程序设计替代，ADR 0049 正式删除 agent session 实体及旧历史读取，不保留别名、兼容层或 migration。历史决策仍保留在对应 ADR 中。
 
-- `agents/member_runtime.py` 串行运行成员程序；`is_busy` 同时覆盖程序与后台维护，排空等待全部活动结束。
+- `agents/member_runtime.py` 串行运行成员程序；`is_busy` 覆盖程序及其外部效果，排空等待全部活动结束；笔记整理仅作为普通程序的显式操作。
 - ProgramStore 保存 run 输入、预算、调用回执、完成与失败结果，拥有唯一执行恢复权威；RunJournal 只提供 run 历史读取、清单和导出。
 - 笔记可引用原始 `run_id`，历史回顾也使用原始 `run_id`；派生额度键为 `(spawner_id, run_id)`，成员配置为 `run_spawn_quota`。
 - serving 层 client session 继续承担连接、身份和 SSE 订阅，`/sessions` 客户端协议不变。

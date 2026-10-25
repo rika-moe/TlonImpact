@@ -1,5 +1,7 @@
 # 普通工作程序的退役代码清理
 
+> 历史实施与验收记录：文中 claims、自动蒸馏、反思及其维护根属于当时实现，已由 [可选私有笔记](memory.md) 取代；现行接口见 [Runtime](runtime.md) 与 [操作参考](../reference/operations-reference.md)。
+
 > 后续修订：[ADR 0049](../decisions/0049-retire-agent-session.md) 已删除 agent session 及旧历史读取；下文旧阶段验收记录保留为历史，不代表当前兼容能力。
 本次清理延续 [ADR 0046](../decisions/0046-programmable-workflows.md) 和 [P5 审计](workflow-p5-audit.md)：执行与恢复只保留普通模块程序。P5 已删除 stage 引擎；这里处理残留的写入 API、重复入口表示、独立宿主查询回执和失效观测链路。本文记录实现边界，不作为测试或冒烟结果报告。
 
