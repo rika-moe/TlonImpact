@@ -18,6 +18,7 @@ from tlon.agents.prototypes.info import (
     _validate_display_name,
     _validate_name,
 )
+from tlon.agents.prototypes.reviews import staging_lock
 from tlon.agents.prototypes.staging import _validate_behavior
 from tlon.base.identifiers import new_prototype_id
 from tlon.base.logger import get_logger
@@ -140,79 +141,82 @@ def update_prototype(
             nothing to update, or the new behavior failed validation
             (nothing is written in the last cases)
     """
-    p = tlon_paths
-    _validate_name(name)
-    root = p.prototypes_staging_dir() if staging else p.prototypes_dir()
-    proto_dir = root / name
-    if not _is_prototype_dir(proto_dir):
-        where = "staging area" if staging else "trusted library"
-        raise PrototypeError(f"no prototype named '{name}' in the {where}")
-    if (
-        display_name is None
-        and description is None
-        and behavior_edn is None
-        and parent is None
-        and proposal_note is None
-        and lessons is None
-        and modules is None
-    ):
-        raise PrototypeError(
-            "nothing to update: provide display_name, description, behavior_edn, "
-            "parent, proposal_note or lessons"
+    with staging_lock(tlon_paths):
+        p = tlon_paths
+        _validate_name(name)
+        root = p.prototypes_staging_dir() if staging else p.prototypes_dir()
+        proto_dir = root / name
+        if not _is_prototype_dir(proto_dir):
+            where = "staging area" if staging else "trusted library"
+            raise PrototypeError(f"no prototype named '{name}' in the {where}")
+        if (
+            display_name is None
+            and description is None
+            and behavior_edn is None
+            and parent is None
+            and proposal_note is None
+            and lessons is None
+            and modules is None
+        ):
+            raise PrototypeError(
+                "nothing to update: provide display_name, description, behavior_edn, "
+                "parent, proposal_note or lessons"
+            )
+
+        if display_name is not None:
+            _validate_display_name(display_name)
+
+        # Resolve everything that can fail before anything touches disk.
+        parent_generation: int | None = None
+        if parent is not None:
+            parent_generation = _resolve_parent_generation(parent, p)
+        try:
+            package_modules = (
+                read_module_sources(proto_dir / "modules") if modules is None else modules
+            )
+        except ValueError as e:
+            raise PrototypeError(str(e)) from e
+        old_behavior = (proto_dir / BEHAVIOR_FILE).read_text(encoding="utf-8")
+        _validate_behavior(
+            old_behavior if behavior_edn is None else behavior_edn,
+            tlon_paths=p,
+            modules=package_modules,
         )
+        if behavior_edn is not None or modules is not None:
+            raise PrototypeError(
+                "module program packages are immutable; create a new prototype with parent instead"
+            )
+        metadata_file = proto_dir / METADATA_FILE
+        if metadata_file.is_symlink():
+            raise PrototypeError("prototype metadata must not be a symlink")
+        parsed = loads(metadata_file.read_text(encoding="utf-8")) if metadata_file.exists() else {}
+        data: dict[Any, Any] = dict(parsed)
+        if display_name is not None:
+            data[Keyword("display-name")] = display_name
+        if description is not None:
+            data[Keyword("description")] = description
+        if parent is not None:
+            data[Keyword("parent")] = Keyword(parent)
+            data[Keyword("generation")] = parent_generation
+        if proposal_note is not None:
+            data[Keyword("proposal-note")] = proposal_note
+        data.setdefault(Keyword("name"), Keyword(name))
+        data.setdefault(Keyword("display-name"), name)
+        data.setdefault(Keyword("trusted"), not staging)
+        lessons_file = proto_dir / LESSONS_FILE
+        if lessons is not None and lessons_file.is_symlink():
+            raise PrototypeError("prototype lessons must not be a symlink")
+        if lessons is not None:
+            lessons_file.write_text(lessons, encoding="utf-8")
+        metadata_file.write_text(dumps(data) + "\n", encoding="utf-8")
 
-    if display_name is not None:
-        _validate_display_name(display_name)
-
-    # Resolve everything that can fail before anything touches disk.
-    parent_generation: int | None = None
-    if parent is not None:
-        parent_generation = _resolve_parent_generation(parent, p)
-    try:
-        package_modules = read_module_sources(proto_dir / "modules") if modules is None else modules
-    except ValueError as e:
-        raise PrototypeError(str(e)) from e
-    old_behavior = (proto_dir / BEHAVIOR_FILE).read_text(encoding="utf-8")
-    _validate_behavior(
-        old_behavior if behavior_edn is None else behavior_edn,
-        tlon_paths=p,
-        modules=package_modules,
-    )
-    if behavior_edn is not None or modules is not None:
-        raise PrototypeError(
-            "module program packages are immutable; create a new prototype with parent instead"
+        logger.info(
+            "prototype_updated",
+            name=name,
+            staging=staging,
+            behavior_rewritten=False,
         )
-    metadata_file = proto_dir / METADATA_FILE
-    if metadata_file.is_symlink():
-        raise PrototypeError("prototype metadata must not be a symlink")
-    parsed = loads(metadata_file.read_text(encoding="utf-8")) if metadata_file.exists() else {}
-    data: dict[Any, Any] = dict(parsed)
-    if display_name is not None:
-        data[Keyword("display-name")] = display_name
-    if description is not None:
-        data[Keyword("description")] = description
-    if parent is not None:
-        data[Keyword("parent")] = Keyword(parent)
-        data[Keyword("generation")] = parent_generation
-    if proposal_note is not None:
-        data[Keyword("proposal-note")] = proposal_note
-    data.setdefault(Keyword("name"), Keyword(name))
-    data.setdefault(Keyword("display-name"), name)
-    data.setdefault(Keyword("trusted"), not staging)
-    lessons_file = proto_dir / LESSONS_FILE
-    if lessons is not None and lessons_file.is_symlink():
-        raise PrototypeError("prototype lessons must not be a symlink")
-    if lessons is not None:
-        lessons_file.write_text(lessons, encoding="utf-8")
-    metadata_file.write_text(dumps(data) + "\n", encoding="utf-8")
-
-    logger.info(
-        "prototype_updated",
-        name=name,
-        staging=staging,
-        behavior_rewritten=False,
-    )
-    return _read_metadata(proto_dir)
+        return _read_metadata(proto_dir)
 
 
 def delete_prototype(name: str, tlon_paths: TlonPaths) -> None:

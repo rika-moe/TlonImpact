@@ -289,3 +289,146 @@ def test_human_decision_waits_for_review_commit(
         assert "Run: `run`" in text and "Call: `call`" in text
     else:
         assert not (paths.prototypes_staging_dir() / name).exists()
+
+
+@pytest.mark.parametrize(
+    "operation,staging", [("manifest", True), ("manifest", False), ("submit", True)]
+)
+def test_material_operations_wait_for_complete_human_update(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str, staging: bool
+) -> None:
+    from concurrent.futures import TimeoutError as FutureTimeoutError
+    from threading import Event
+
+    from tlon.agents.prototypes.management import update_prototype
+
+    paths, name = _stage(tmp_path)
+    if not staging:
+        approve_prototype(name, paths)
+    before = read_prototype(name, tlon_paths=paths)
+    lessons_written, finish_update, operation_started = Event(), Event(), Event()
+    original_write = Path.write_text
+
+    def pause_between_material_writes(path: Path, data: str, *args: Any, **kwargs: Any) -> int:
+        result = original_write(path, data, *args, **kwargs)
+        if path.name == "LESSONS.md":
+            lessons_written.set()
+            assert finish_update.wait(5)
+        return result
+
+    def observe() -> dict[str, Any]:
+        operation_started.set()
+        if operation == "manifest":
+            return read_prototype(name, tlon_paths=paths)
+        return submit_prototype_review(
+            name,
+            before["digest"],
+            "通过",
+            "审阅旧版本",
+            reviewer_id="reviewer",
+            run_id="run",
+            call_id="call",
+            tlon_paths=paths,
+        )
+
+    monkeypatch.setattr(Path, "write_text", pause_between_material_writes)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        update = pool.submit(
+            update_prototype,
+            name,
+            description="新版本描述",
+            lessons="新版本教训",
+            staging=staging,
+            tlon_paths=paths,
+        )
+        assert lessons_written.wait(5)
+        observation = pool.submit(observe)
+        try:
+            assert operation_started.wait(5)
+            # The update is paused after one file changed but before metadata.
+            # Neither a snapshot nor a stale-version rejection may escape yet.
+            with pytest.raises(FutureTimeoutError):
+                observation.result(timeout=0.1)
+        finally:
+            finish_update.set()
+        update.result(timeout=5)
+        if operation == "submit":
+            with pytest.raises(PrototypeError, match="digest changed"):
+                observation.result(timeout=5)
+        else:
+            snapshot = observation.result(timeout=5)
+            assert snapshot["metadata"]["description"] == "新版本描述"
+            assert snapshot["digest"] != before["digest"]
+            assert snapshot == read_prototype(name, tlon_paths=paths)
+            page = read_prototype(
+                name, path="LESSONS.md", digest=snapshot["digest"], tlon_paths=paths
+            )
+            assert page["content"] == "新版本教训"
+    directory = paths.prototypes_staging_dir() if staging else paths.prototypes_dir()
+    assert not (directory / name / "REVIEW.md").exists()
+
+
+def test_human_update_waits_for_review_version_check_and_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from concurrent.futures import TimeoutError as FutureTimeoutError
+    from threading import Event
+
+    from tlon.agents.prototypes import reviews
+    from tlon.agents.prototypes.management import update_prototype
+
+    paths, name = _stage(tmp_path)
+    before = read_prototype(name, tlon_paths=paths)["digest"]
+    checked, finish_review, update_started = Event(), Event(), Event()
+    original_materials = reviews._materials
+
+    def pause_after_version_check(directory: Path) -> tuple[str, dict[str, str]]:
+        snapshot = original_materials(directory)
+        checked.set()
+        assert finish_review.wait(5)
+        return snapshot
+
+    def update() -> None:
+        update_started.set()
+        update_prototype(
+            name, description="新版本描述", lessons="新版本教训", staging=True, tlon_paths=paths
+        )
+
+    monkeypatch.setattr(reviews, "_materials", pause_after_version_check)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        review = pool.submit(
+            submit_prototype_review,
+            name,
+            before,
+            "通过",
+            "审阅旧版本",
+            reviewer_id="reviewer",
+            run_id="run",
+            call_id="call",
+            tlon_paths=paths,
+        )
+        assert checked.wait(5)
+        change = pool.submit(update)
+        try:
+            assert update_started.wait(5)
+            with pytest.raises(FutureTimeoutError):
+                change.result(timeout=0.1)
+        finally:
+            finish_review.set()
+        receipt = review.result(timeout=5)
+        change.result(timeout=5)
+    assert receipt["digest"] == before
+    assert read_prototype(name, tlon_paths=paths)["digest"] != before
+    assert (
+        recover_prototype_review(
+            name,
+            before,
+            "通过",
+            "审阅旧版本",
+            reviewer_id="reviewer",
+            run_id="run",
+            call_id="call",
+            tlon_paths=paths,
+        )
+        == receipt
+    )

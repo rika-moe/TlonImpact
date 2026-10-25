@@ -28,7 +28,7 @@ _VERDICTS = {"通过", "不通过", "弃权"}
 
 @contextmanager
 def staging_lock(tlon_paths: TlonPaths) -> Iterator[None]:
-    """Serialize review writes and human approval/rejection across processes."""
+    """Serialize material reads, human updates/decisions and review writes."""
     root = tlon_paths.prototypes_staging_dir()
     root.mkdir(parents=True, exist_ok=True)
     fd = os.open(root, os.O_RDONLY)
