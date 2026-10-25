@@ -211,10 +211,26 @@ async def test_empty_issue_and_unprivileged_publish_do_not_call_model(tmp_path: 
     assert await paper.inbox("a") == []
 
 
-@pytest.mark.parametrize("body", ["", " \n\t"])
-async def test_blank_editorial_is_not_frozen_or_sent(tmp_path: Path, body: str) -> None:
+@pytest.mark.parametrize(
+    "body,finish,tool_calls",
+    [
+        ("", "stop", []),
+        (" \n\t", "stop", []),
+        ("看似完整但已截断的正文", "length", []),
+        (
+            "不能把工具建议当成报纸正文",
+            "stop",
+            [SimpleNamespace(id="unexecuted", function_name="mail-send", arguments={})],
+        ),
+    ],
+)
+async def test_invalid_editorial_is_not_frozen_or_sent(
+    tmp_path: Path, body: str, finish: str, tool_calls: list[Any]
+) -> None:
     paper = NewspaperHarness(tmp_path)
     paper.llm.chat.return_value.content = body
+    paper.llm.chat.return_value.finish_reason = finish
+    paper.llm.chat.return_value.tool_calls = tool_calls
     await paper.execute(paper.message("a@tlon.internal", "subscribe"))
     story = paper.message("reporter@tlon.internal", "submit", "消息")
     await paper.execute(story)

@@ -1,48 +1,12 @@
-"""Cron scheduler — declarative periodic task mails (docs/design/mail.md
-「周期任务：tick 即邮件」).
+"""Declared periodic mail delivery, configured exclusively by cron.yaml.
 
-"Tick is a mail", generalized: instead of a new timer event type or any
-change to the member runtime, each periodic task is one mail from the
-``postmaster`` system address to a target member, fired on a schedule.
-The mail body carries the full work instructions; the recipient's
-ordinary ``:on :mail-delivered`` rule fires. A system sender
-has no local mailbox; PostOffice stores the accepted message and
-recipient inbox copies in SQLite.
-
-Entries come from two sources, merged and managed uniformly:
-
-1. **Built-in entries** (registered in code, content may be generated
-   dynamically at tick time). The daily digest is the instance: its
-   content factory computes the human recipient list from
-   ``known_human_ids()`` at each tick — behavior unchanged from the
-   ``DigestScheduler``, which this module replaces.
-2. **Declared entries** (``~/.tlon/cron.yaml``, read once at initialize —
-   edits take effect on restart). Each entry is
-   ``{name, schedule, to, subject, content}`` with a static body and a
-   schedule of either ``interval_seconds: N`` (every N seconds, first
-   tick after N seconds too) or ``cron: "分 时 日 月 周"`` (standard
-   5-field cron, local timezone, resolved via ``croniter``). An absent
-   file means no declared entries — the normal state.
-
-Skip semantics (logged, never raised): the target member does not exist
-(agent via ``get_all_ids()``, human via ``known_human_ids()``), or the
-content factory returns None (e.g. the digest has no known humans — no
-readers, no digest). An invalid declared entry (missing fields, both or
-neither schedule, unparseable cron) is rejected at initialize with a
-warning and does not affect other entries.
-
-Mechanism/policy split (same 分工 as PublicHealthMonitor): the scheduler
-only delivers the tick; what the recipient does with it is the member's
-spec, not this component's job.
-
-Owned by ``AgentRegistry`` (like ``IdleReaper`` / ``PublicHealthMonitor``):
-constructed with the event bus, the agent info provider and the paths
-resolver, and its lifecycle runs from the registry's own
-initialize/shutdown.
+Each static entry sends a postmaster mail on an interval or cron schedule.
+The recipient's ordinary Lisp program decides what the task means. Missing
+configuration creates no tasks; invalid entries and failed ticks are isolated.
+AgentRegistry owns the scheduler's initialize/shutdown lifecycle.
 """
 
 import asyncio
-from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
@@ -63,71 +27,25 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-DIGEST_SUBJECT = "社会文摘周期任务"
-
-#: Tick-time content factory. Returns the mail body, or None to skip this
-#: tick (e.g. the digest has no known humans to send to). Only built-in
-#: entries generate content dynamically; declared entries wrap a static str.
-ContentFactory = Callable[[], "str | None"]
-
 
 @dataclass(frozen=True)
 class CronEntry:
     """One periodic task: at each scheduled tick, mail ``to`` from postmaster.
 
     Exactly one of ``interval_seconds`` / ``cron`` is set (validated by
-    the cron.yaml loader; built-in entries are constructed valid).
+    the cron.yaml loader).
     """
 
     name: str
     to: str
     subject: str
-    content: ContentFactory
+    content: str
     interval_seconds: float | None = None
     cron: str | None = None
 
 
-def _digest_task_content(scribe_id: str, human_addresses: list[str]) -> str:
-    """The scribe's self-contained work instructions for one digest tick."""
-    recipients = "\n".join(f"- {address}" for address in human_addresses)
-    return f"""这是系统发出的周期性任务邮件（digest scheduler）。你（{scribe_id}，书记员）本期任务：把全社会的近期活动蒸馏成一份文摘，发给全体人类成员——人类从「读全部邮件」退为「读摘要 + 处置例外」，你的文摘就是他们的主要入口。
-
-可用工具（全部只读，按需要调用，不必全用）：
-- metrics-read：社会指标快照（LLM 调用量、邮件量等计数）。
-- traces-list / trace-read：近期各成员的会话与工具调用轨迹、token 消耗——看谁做了什么、代价多大。
-- reputation-read：各成员的声誉与邮件行为（收发量、回复率、致谢）。
-- mail-stats：你自己的通信统计。
-- social-health：孤儿邮件清单——发出多天无回复、可能需要人类介入推动的邮件。
-- prototype-staging-list：待人类批准的原型提案（agent 写好、:trusted false，等人类决策）。
-
-文效应覆盖三块内容：
-1. 谁做了什么：本期各成员的主要活动与值得一提的进展（简洁，一事一句）。
-2. 待人类决策事项：待批准的原型提案、等人类拍板的问题——逐条列出，附必要的上下文。
-3. 孤儿邮件与异常：无回复的旧邮件、噪声或其他需要人类留意的异常。
-
-本期人类收件人地址（全发）：
-{recipients}
-
-发信方式：一封 mail-send，to 填以上全部人类地址，检查投信结果后单独调用 finish-turn。不要回复本邮件（postmaster 是系统地址，没有邮箱）。"""
-
-
 class CronScheduler:
-    """Fires periodic task mails ("tick is a mail") for built-in + declared entries.
-
-    Each entry gets its own loop task: per-entry isolation means one
-    broken entry never starves the others, and a failed tick never kills
-    its own loop (logged and the schedule continues).
-
-    Dependencies (constructor injected):
-        - event_bus: EventBus to publish the task mail
-        - agent_info_provider: member enumeration (target existence)
-        - tlon_paths: cron.yaml resolution + known-human enumeration
-
-    ``interval_seconds`` / ``scribe_id`` configure the built-in digest
-    entry (same knobs as 's DigestScheduler): society-wide mechanism
-    settings, not per-member config. ``builtin_entries`` replaces the
-    digest entirely when given (tests and future built-ins).
-    """
+    """Deliver declared periodic mails, with one isolated loop per entry."""
 
     def __init__(
         self,
@@ -136,50 +54,19 @@ class CronScheduler:
         tlon_paths: TlonPaths,
         *,
         post_office: PostOffice | None = None,
-        interval_seconds: float = 86400.0,
-        scribe_id: str = "ji-shuheng",
-        builtin_entries: list[CronEntry] | None = None,
     ) -> None:
         self._event_bus = event_bus
         self._agent_info = agent_info_provider
         self._paths = tlon_paths
         self._post_office = post_office
-        if builtin_entries is not None:
-            self._builtin_entries = builtin_entries
-        else:
-            self._builtin_entries = [
-                CronEntry(
-                    name="digest",
-                    to=scribe_id,
-                    subject=DIGEST_SUBJECT,
-                    content=self._digest_content(scribe_id),
-                    interval_seconds=interval_seconds,
-                )
-            ]
-
         self._entries: list[CronEntry] = []
         self._tasks: list[asyncio.Task[None]] = []
 
-    def _digest_content(self, scribe_id: str) -> ContentFactory:
-        """Digest factory: recompute the human recipient list at each tick.
-
-        Returns None (skip) when no human is known — no readers, no digest.
-        """
-
-        def factory() -> str | None:
-            human_ids = MailStore(self._paths.mail_database_file()).known_human_ids()
-            if not human_ids:
-                return None
-            addresses = [address_for_member(human_id) for human_id in human_ids]
-            return _digest_task_content(scribe_id, addresses)
-
-        return factory
-
     async def initialize(self) -> None:
-        """Load entries (built-in + declared, read once) and start the loops."""
+        """Load declared entries once and start their loops."""
         if self._tasks:
             return
-        self._entries = [*self._builtin_entries, *self._load_declared()]
+        self._entries = self._load_declared()
         self._tasks = [asyncio.create_task(self._run_entry(entry)) for entry in self._entries]
         logger.info(
             "cron_scheduler_initialized",
@@ -280,7 +167,7 @@ class CronScheduler:
             name=name,
             to=to,
             subject=subject,
-            content=lambda: content,
+            content=content,
             interval_seconds=interval_seconds,
             cron=cron_expression,
         )
@@ -310,23 +197,18 @@ class CronScheduler:
         """Send one task mail for an entry.
 
         Returns the published Mail, or None when the tick was skipped
-        (target member unknown / content factory declined).
+        (target member unknown).
         """
         if not await asyncio.to_thread(self._member_exists, entry.to):
             logger.info(
                 "cron_tick_skipped", entry=entry.name, reason="member_not_found", to=entry.to
             )
             return None
-        content = await asyncio.to_thread(entry.content)
-        if content is None:
-            logger.info("cron_tick_skipped", entry=entry.name, reason="content_unavailable")
-            return None
-
         mail = Mail.create(
             from_address=POSTMASTER_ADDRESS,
             to=[address_for_member(entry.to)],
             subject=entry.subject,
-            content=content,
+            content=entry.content,
         )
         if self._post_office is None:
             raise RuntimeError("Cron scheduler has no post office")

@@ -1,7 +1,33 @@
-(ns newspaper.main (:export handle))
-(defn accept-submission [mail] (let [id (mail-field mail :id) submissions (or (state-get {:key "submissions"}) {})] (when (= (get submissions id) nil) (state-put {:key "submissions" :value (assoc submissions id {:source-id id :from (mail-field mail :from) :content (mail-field mail :content)})}) (state-put {:key "pending" :value (conj (or (state-get {:key "pending"}) []) id)}))))
-(defn freeze-edition [period subscribers] (let [key (str "edition:" period) frozen (state-get {:key key})] (if frozen frozen (let [ids (or (state-get {:key "pending"}) []) submissions (or (state-get {:key "submissions"}) {}) stories (map id (get submissions id) ids)] (if (= (count ids) 0) (state-put {:key key :value {:period period :content "" :source-ids [] :subscribers subscribers :delivered {}}}) (let [result (model-call {:messages [{:role "user" :content (str "请用中文编辑以下投稿为一份简报。区分投稿人的陈述和已核实事实，" "不要补写投稿未提供的事实。仅返回非空正文，不生成来源编号。投稿：" stories)}]}) body (get result :content)] (when (and body (content-matches? body "\\S")) (let [snapshot {:period period :content (str body "\n\n投稿来源（原始邮件 ID）：\n" (join "\n" ids)) :source-ids ids :subscribers subscribers :delivered {}}] (state-put {:key key :value snapshot}) (state-put {:key "pending" :value []}) snapshot))))))))
-(defn deliver-edition [period edition] (when (and edition (> (count (get edition :source-ids)) 0)) (let [key (str "edition:" period)] (map address (let [current (state-get {:key key})] (when (= (get (get current :delivered) address) nil) (let [receipt (mail-send {:to [address] :subject (str "报纸：" period) :content (get edition :content) :request_id (str "edition:" period ":" address)})] (when (get receipt :mail_id) (state-put {:key key :value (assoc current :delivered (assoc (get current :delivered) address receipt))}))))) (get edition :subscribers)))))
+(ns newspaper.main
+  (:require [tlon.newspaper :as paper])
+  (:export handle))
+
+(defn accept-submission [mail]
+  (let [id (mail-field mail :id)
+        submissions (or (state-get {:key "submissions"}) {})]
+    (when (= (get submissions id) nil)
+      (state-put {:key "submissions" :value (assoc submissions id
+        {:source-id id :from (mail-field mail :from) :content (mail-field mail :content)})})
+      (state-put {:key "pending" :value (conj (or (state-get {:key "pending"}) []) id)}))))
+
+(defn collect [period]
+  (let [ids (or (state-get {:key "pending"}) [])
+        submissions (or (state-get {:key "submissions"}) {})]
+    {:materials (map id (get submissions id) ids) :source-ids ids
+     :footer (str "投稿来源（原始邮件 ID）：\n" (join "\n" ids))}))
+
 (defn handle [event]
   (let [msg (get event :mail) self (get event :self)]
-    (if (contains? (or (mail-field msg :to) []) (get self :address)) (let [result0 (let [sender (mail-field msg :from) subject (mail-field msg :subject) subscribers (or (state-get {:key "subscribers"}) [])] (when (= subject "subscribe") (when (not (contains? subscribers sender)) (state-put {:key "subscribers" :value (conj subscribers sender)}))) (when (= subject "unsubscribe") (state-put {:key "subscribers" :value (filter address (not (= address sender)) subscribers)})) (when (= subject "submit") (accept-submission msg)) (when (and (from? msg "operator@tlon.internal") (content-matches? subject "^publish:.+$")) (let [period (substring subject 8) edition (freeze-edition period subscribers)] (deliver-edition period edition)))) result1 (mail-mark-read {:mail_ids [(mail-field msg :id)]})] {:result nil}) {:result nil})))
+    (when (contains? (or (mail-field msg :to) []) (get self :address))
+      (paper/subscriptions msg)
+      (when (= (mail-field msg :subject) "submit") (accept-submission msg))
+      (let [period (paper/publication-period msg ["operator@tlon.internal" "postmaster@tlon.internal"])]
+        (when period
+          (let [edition (paper/freeze period (or (state-get {:key "subscribers"}) []) collect)]
+            (when edition
+              (state-put {:key "pending" :value
+                (filter id (not (contains? (get edition :source-ids) id))
+                  (or (state-get {:key "pending"}) []))})
+              (paper/deliver period edition)))))
+      (mail-mark-read {:mail_ids [(mail-field msg :id)]}))
+    {:result nil}))

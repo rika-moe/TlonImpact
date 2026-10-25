@@ -23,9 +23,8 @@ policy/mechanism split):
 - Cron scheduling ("tick is a mail", docs/design/mail.md 「周期任务：tick
   即邮件」): the scheduler
   (``agents/cron.py`` ``CronScheduler``) periodically mails members a
-  task from postmaster — built-in entries (the daily digest) plus
-  entries declared in ``~/.tlon/cron.yaml``; the mail itself carries the
-  work instructions
+  task from postmaster — entries declared in ``~/.tlon/cron.yaml``;
+  the mail itself carries the work instructions
 
 Policy — which agents should run — lives in Adam (tlon.agents.adam), the
 built-in init member: boot set and idle drain are its two decision lines.
@@ -211,7 +210,7 @@ class AgentRegistry(Component):
         )
         # Cron scheduler (docs/design/mail.md 「周期任务：tick 即邮件」):
         # "tick is a mail" — periodic task mails
-        # from postmaster (built-in digest + declared cron.yaml entries).
+        # from postmaster (declared cron.yaml entries only).
         # Same ownership.
         self._cron = CronScheduler(
             post_office=post_office,

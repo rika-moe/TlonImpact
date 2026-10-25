@@ -140,3 +140,13 @@ v2 运行的责任邮件、原错误与模型草稿保留。终止或不安全 u
 当前历史边界以 [ADR 0049](../decisions/0049-retire-agent-session.md) 为准：agent session 已退役，run-read/run_id/source_run_ids 为唯一程序历史协议；不提供旧历史兼容或迁移，client session 保留。
 
 `run-previous {}` 返回当前 run_id、冻结模型输入 contract 和 previous（同入口、在本 run 开始前最近成功完成 run 的 run_id/contract/result；不存在为 nil）。标准 agent 由 Lisp 比较契约并延续 messages 或显式 continuation；模型/系统/工具契约变更建立新起点。动态检索、当前任务及资料更新追加到末尾，原始响应和真实工具回执不被改写。相同入口的失败或未知运行不继承为成功，读取回执仍由原 ProgramStore 提供恢复权威。
+
+
+## 周期任务作为普通来信
+
+通用 cron 只按 `cron.yaml` 把静态任务投递给指定成员。它不内置文摘角色、采编 prompt 或人类收件人名单；没有配置时不产生周期邮件。成员在普通 mail-delivered 入口中核对出版发件人，以触发邮件的时间确定刊期，并使用普通状态、模型和邮件操作完成业务。
+
+可参考 [来信报](../../src/tlon/resources/examples/newspaper/README.md) 与 [社会文摘报](../../src/tlon/resources/examples/social-newspaper/README.md)。两者使用 Lisp 共享刊期冻结与投递恢复；后者显式查询观测工具收集材料。创建报社和订阅均需明确操作，不在首启或升级时自动创建或订阅。
+
+
+共享模块 `tlon.newspaper` 提供普通函数 `subscriptions`、`publication-period`、`freeze`、`deliver`、`publish`。采集器是接收刊期的 Lisp 函数，返回 `{:materials ... :source-ids [...] :footer "..."}`；没有第二套 Python 流程配置。`freeze` 先复用已有刊期，仅在有订阅者且有来源材料时编辑；来信报在冻结后、分发前消费投稿 ID，社会文摘报通过 `publish` 组合冻结与分发。资料来源、正文、订阅名单和逐地址 accepted 回执由普通持久状态保存。
