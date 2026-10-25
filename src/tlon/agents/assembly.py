@@ -18,15 +18,15 @@ from tlon.agents.mail_stats import mail_stats_provider
 from tlon.agents.member_runtime import MemberServices
 from tlon.agents.policy import policy_solvency_provider, policy_trust_provider
 from tlon.agents.program_package import check_program_sources
-from tlon.agents.prototypes.catalog import (
-    get_prototype_detail,
-    get_prototype_modules,
-    list_prototypes,
-)
+from tlon.agents.prototypes.catalog import list_prototypes
 from tlon.agents.prototypes.lineage import get_prototype_lineage
 from tlon.agents.prototypes.near_kin import find_near_kin
+from tlon.agents.prototypes.reviews import (
+    read_prototype,
+    recover_prototype_review,
+    submit_prototype_review,
+)
 from tlon.agents.prototypes.staging import (
-    append_staging_review,
     list_staging_prototypes,
     write_staging_prototype,
 )
@@ -44,7 +44,6 @@ from tlon.base.tracing.trace_store import TraceStore
 from tlon.evolution.get_lineage import PrototypeLineage
 from tlon.evolution.list_prototypes import PrototypeCatalog
 from tlon.evolution.list_staging import StagingCatalog
-from tlon.evolution.review_prototype import PrototypeReviewer
 from tlon.evolution.write_prototype import PrototypeWriter
 from tlon.operations.context import member_context_operation
 from tlon.operations.evolution import make_evolution_operations
@@ -74,7 +73,7 @@ logger = get_logger(__name__)
 #: assembly time (trust ladder, docs/design/unified-member-model.md). The
 #: trust *level* is policy (the ``full-member?``
 #: hook, ``agents/policy.py``, ADR 0022); this tool subset is the
-#: execution-side mechanism the level drives. ``prototype-review`` is
+#: execution-side mechanism the level drives. ``prototype-review-submit`` is
 #: deliberately absent: reviewing a staging proposal is advisory (approve
 #: stays human).
 REPRODUCTION_TOOLS: frozenset[str] = frozenset({"member-spawn", "prototype-write"})
@@ -172,9 +171,9 @@ async def assemble_member_services(
     # (natural in a scale-to-zero world). The level is the society
     # policy's ``full-member?`` hook (ADR 0022); fail-open reads as full
     # trust (availability first). A probationary member (spawned, not yet
-    # endorsed, per the default policy) is assembled without the four
-    # reproduction/evolution tools (REPRODUCTION_TOOLS; prototype-review
-    # stays — advisory only) and gets its mentor (the spawner) cc'd on
+    # endorsed, per the default policy) is assembled without the
+    # reproduction tools (REPRODUCTION_TOOLS; prototype-read and
+    # prototype-review-submit stay available) and gets its mentor cc'd on
     # composed outbound mail.
     is_full = await policy_trust_provider(tlon_paths)(config.id)
     mentor_cc = (
@@ -224,14 +223,9 @@ async def assemble_member_services(
             catalog=PrototypeCatalog(lister=partial(list_prototypes, tlon_paths=tlon_paths)),
             staging=StagingCatalog(lister=partial(list_staging_prototypes, tlon_paths=tlon_paths)),
             lineage=PrototypeLineage(lineage=partial(get_prototype_lineage, tlon_paths=tlon_paths)),
-            reviewer=PrototypeReviewer(
-                reviewer_id=config.id,
-                llm_client=llm_client,
-                detail=partial(get_prototype_detail, staging=True, tlon_paths=tlon_paths),
-                modules=partial(get_prototype_modules, staging=True, tlon_paths=tlon_paths),
-                lineage=partial(get_prototype_lineage, tlon_paths=tlon_paths),
-                append_review=partial(append_staging_review, tlon_paths=tlon_paths),
-            ),
+            prototype_reader=partial(read_prototype, tlon_paths=tlon_paths),
+            review_submitter=partial(submit_prototype_review, tlon_paths=tlon_paths),
+            review_recoverer=partial(recover_prototype_review, tlon_paths=tlon_paths),
             writer=PrototypeWriter(
                 author_id=config.id,
                 writer=partial(write_staging_prototype, tlon_paths=tlon_paths),

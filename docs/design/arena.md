@@ -4,7 +4,7 @@
 
 ## 问题：静态可读 ≠ 行为可测
 
-staging 通道的现状信任闸（[prototypes.md](./prototypes.md)）：加载期静态校验 + 人类读 spec 审批 + 异质评审（prototype-review 工具，advisory）。spec 是受限 DSL、全文可读，但成员行为是 **spec × 模型 × 输入语料**的联合产物——一份读起来无害的 spec，喂进真实邮件后可能调错工具、回错信、陷入错误循环。静态审查覆盖不了这一维。
+staging 通道的现状信任闸（[prototypes.md](./prototypes.md)）：加载期静态校验 + 人类读 spec 审批 + 显式同行意见（prototype-read / prototype-review-submit，advisory）。spec 是受限 DSL、全文可读，但成员行为是 **spec × 模型 × 输入语料**的联合产物——一份读起来无害的 spec，喂进真实邮件后可能调错工具、回错信、陷入错误循环。静态审查覆盖不了这一维。
 
 当前机制：把 staging 原型实例化成**临时成员**，放进隔离宇宙，喂一批合成邮件跑真实会话循环，把完整 journal 轨迹蒸馏成评审报告。信任闸因此从「读基因型」扩展到「看表型」。Capability 起草与准入机制已删除，见 [ADR 0045](../decisions/0045-remove-capabilities.md)。
 
@@ -66,7 +66,7 @@ staging 通道的现状信任闸（[prototypes.md](./prototypes.md)）：加载�
 
 **可观测性边界**：ProgramStore 是程序执行、恢复与调用回执的唯一权威，RunJournal 只派生读取事件；Arena 不再维护或读取 agent session 日志。成员派生额度以 `(spawner_id, run_id)` 为键，演武成员额度只写隔离家园。报告不拥有执行恢复能力。
 
-**定位**：报告是证据不是判决。评估结论永远是人下的——与 prototype-review 的 advisory 定位一致，报告进 staging detail payload 供评审界面呈现，不进 approve 的任何逻辑。
+**定位**：报告是证据不是判决。评估结论永远是人下的——与 prototype-review-submit 的 advisory 定位一致，报告进 staging detail payload 供评审界面呈现，不进 approve 的任何逻辑。
 
 ## 成本界
 

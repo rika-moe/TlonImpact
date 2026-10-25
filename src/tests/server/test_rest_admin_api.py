@@ -20,8 +20,8 @@ from tlon.agents.prototypes.catalog import (
     get_prototype_info,
     seed_prototypes,
 )
+from tlon.agents.prototypes.reviews import read_prototype, submit_prototype_review
 from tlon.agents.prototypes.staging import (
-    append_staging_review,
     write_staging_prototype,
 )
 from tlon.api.config import ConfigFacade
@@ -748,7 +748,7 @@ class TestAdminPrototypeReviews:
     """REVIEW.md peer-review records on the prototype detail endpoints
     (docs/design/prototypes.md): the payload carries the review text so
     the human
-    approver sees the heterogeneous reviews; absent file = no field."""
+    approver sees the submitted opinions; absent file = no field."""
 
     _BEHAVIOR = "{:version 2 :handlers {:boot work/handle}}"
 
@@ -767,7 +767,16 @@ class TestAdminPrototypeReviews:
             display_name="staged",
             modules=MINIMAL_MODULES,
         ).name
-        append_staging_review(staged_id, "## t — r-1（fake/model）：通过\n\n理由\n", tlon_paths=p)
+        submit_prototype_review(
+            staged_id,
+            read_prototype(staged_id, tlon_paths=p)["digest"],
+            "通过",
+            "理由",
+            reviewer_id="r-1",
+            run_id="run",
+            call_id="call",
+            tlon_paths=p,
+        )
 
         resp = await handler.handle_get_staging_prototype(StubRequest(name=staged_id))
 

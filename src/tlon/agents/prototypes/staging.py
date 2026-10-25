@@ -16,7 +16,6 @@ from tlon.agents.prototypes.info import (
     BEHAVIOR_FILE,
     LESSONS_FILE,
     METADATA_FILE,
-    REVIEWS_FILE,
     PrototypeInfo,
     _is_prototype_dir,
     _read_metadata,
@@ -24,6 +23,7 @@ from tlon.agents.prototypes.info import (
     _validate_display_name,
     _validate_name,
 )
+from tlon.agents.prototypes.reviews import staging_lock
 from tlon.base.identifiers import new_prototype_id
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
@@ -167,6 +167,12 @@ def list_staging_prototypes(tlon_paths: TlonPaths) -> list[PrototypeInfo]:
 
 
 def approve_prototype(name: str, tlon_paths: TlonPaths) -> PrototypeInfo:
+    """Approve a package without racing concurrent review submissions."""
+    with staging_lock(tlon_paths):
+        return _approve_prototype_locked(name, tlon_paths)
+
+
+def _approve_prototype_locked(name: str, tlon_paths: TlonPaths) -> PrototypeInfo:
     """Promote a staged prototype to the trusted library (human approval).
 
     Moves the directory to ``~/.tlon/prototypes/`` and rewrites its
@@ -222,6 +228,12 @@ def approve_prototype(name: str, tlon_paths: TlonPaths) -> PrototypeInfo:
 
 
 def reject_prototype(name: str, tlon_paths: TlonPaths) -> None:
+    """Reject a package without racing concurrent review submissions."""
+    with staging_lock(tlon_paths):
+        _reject_prototype_locked(name, tlon_paths)
+
+
+def _reject_prototype_locked(name: str, tlon_paths: TlonPaths) -> None:
     """Delete a staged prototype (human rejection).
 
     Path-injection guard: the name must pass the charset check and resolve
@@ -233,6 +245,8 @@ def reject_prototype(name: str, tlon_paths: TlonPaths) -> None:
     p = tlon_paths
     _validate_name(name)
     staging_root = p.prototypes_staging_dir().resolve()
+    if (staging_root / name).is_symlink():
+        raise PrototypeError("staged prototype must not be a symlink")
     target = (staging_root / name).resolve()
     if target.parent != staging_root:
         raise PrototypeError(f"prototype name '{name}' resolves outside the staging area")
@@ -240,37 +254,3 @@ def reject_prototype(name: str, tlon_paths: TlonPaths) -> None:
         raise PrototypeError(f"no staged prototype named '{name}'")
     shutil.rmtree(target)
     logger.info("prototype_rejected", name=name)
-
-
-def append_staging_review(name: str, entry_text: str, tlon_paths: TlonPaths) -> None:
-    """Append one peer-review entry to a staged prototype's ``REVIEW.md``.
-
-    The review record is advisory (see docs/design/prototypes.md): it
-    never gates approval — it rides along with the directory when
-    ``approve_prototype`` moves the
-    prototype into the trusted library, so the review trail survives
-    promotion. Multiple reviews accumulate; nothing overwrites.
-
-    Args:
-        name: staged prototype directory name
-        entry_text: one formatted review entry (timestamp, reviewer id,
-            reviewer model, verdict, rationale — assembled by the caller);
-            normalized to end with a newline
-        tlon_paths: path resolver for the target layout
-
-    Raises:
-        PrototypeError: invalid name or nothing staged under that name
-    """
-    p = tlon_paths
-    _validate_name(name)
-    staging_dir = p.prototypes_staging_dir() / name
-    if not _is_prototype_dir(staging_dir):
-        raise PrototypeError(f"no staged prototype named '{name}'")
-    entry = entry_text if entry_text.endswith("\n") else entry_text + "\n"
-    review_file = staging_dir / REVIEWS_FILE
-    if review_file.exists():
-        with review_file.open("a", encoding="utf-8") as f:
-            f.write("\n" + entry)
-    else:
-        review_file.write_text("# 评审记录\n\n" + entry, encoding="utf-8")
-    logger.info("staging_review_appended", name=name)

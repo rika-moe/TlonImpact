@@ -1,13 +1,16 @@
 """Shared operation contracts for the member evolution channel."""
 
+import asyncio
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from tlon.base.execution import (
     BudgetExceededError,
     ExecutionDeadlineError,
-    ModelRequestRejectedError,
 )
+from tlon.evolution.ports import PrototypeError
 from tlon.operations.core import AsyncHandler, CallContext, Operation
+from tlon.operations.invocation import InvocationOutcome
 from tlon.operations.program import ProgramChecker, program_check_operation
 from tlon.operations.schema import InputError, OperationError, RejectedError, UnknownOutcomeError
 
@@ -71,12 +74,31 @@ _OUTPUTS = {
     "prototype-list": {"type": "array", "items": _SUMMARY},
     "prototype-staging-list": {"type": "array", "items": _STAGING},
     "prototype-lineage": _object({"lineage": {"type": "array", "items": _LINEAGE}}),
-    "prototype-review": _object(
+    "prototype-read": _object(
         {
             "name": _STRING,
+            "digest": _STRING,
+            "metadata": _object(
+                {
+                    **_STAGING["properties"],
+                    "trusted": {"type": "boolean"},
+                    "proposal_note": _NULLABLE,
+                }
+            ),
+            "files": {"type": "array", "items": _STRING},
+            "path": _NULLABLE,
+            "content": _NULLABLE,
+            "offset": {"type": "integer"},
+            "next_offset": {"type": ["integer", "null"]},
+        }
+    ),
+    "prototype-review-submit": _object(
+        {
+            **dict.fromkeys(
+                ("name", "digest", "reason", "reviewer", "run_id", "call_id", "created_at"),
+                _STRING,
+            ),
             "verdict": {"type": "string", "enum": ["通过", "不通过", "弃权"]},
-            "reviewer": _STRING,
-            "model": _STRING,
         }
     ),
 }
@@ -140,18 +162,38 @@ _CONTRACTS: dict[str, tuple[str, dict[str, Any]]] = {
             "required": ["name"],
         },
     ),
-    "prototype-review": (
-        "评审一个 staging 区的原型提案（异质评审）。只点名提案——结论不由你当场给：工具内部用你自己的模型做一次专项评审调用，读取提案的 behavior 全文、随包教训与谱系链（含每代 diff）后产出 verdict（通过/不通过/弃权）与理由，追加记入提案目录的 REVIEW.md（含时间、你的 id 与你的模型）。评审是咨询性的：不自动晋级，人类审批时参考这些记录做决定。提案不存在或不在 staging 时失败。",
-        {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "staging 区提案名称（trusted 库原型不可评审）",
-                }
+    "prototype-read": (
+        "显式读取原型材料；先返回元数据、文件清单与材料 digest，再按 path 分页读取。后续读取可携带 digest 校验版本；不调用模型，不自动注入谱系或全部文件。",
+        _object(
+            {
+                "name": _STRING,
+                "path": {**_STRING, "description": "清单中的相对文件路径；省略则只返回清单"},
+                "offset": {"type": "integer", "minimum": 0, "description": "字符偏移，默认 0"},
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 12000,
+                    "description": "每页字符数，默认 12000；按 next_offset 继续读取",
+                },
+                "digest": {
+                    **_STRING,
+                    "description": "首次读取返回的材料版本；传入后拒绝混读新版本",
+                },
             },
-            "required": ["name"],
-        },
+            ["name"],
+        ),
+    ),
+    "prototype-review-submit": (
+        "提交自己对 staging 原型的咨询性评审；必须携带实际读取材料的 digest、结论和理由。宿主校验版本并绑定成员、run 和调用身份；不调用模型，不自动批准原型。",
+        _object(
+            {
+                "name": _STRING,
+                "digest": _STRING,
+                "verdict": {"type": "string", "enum": ["通过", "不通过", "弃权"]},
+                "reason": {"type": "string", "minLength": 1},
+            },
+            ["name", "digest", "verdict", "reason"],
+        ),
     ),
 }
 
@@ -165,7 +207,9 @@ def make_evolution_operations(
     catalog: EvolutionService | None = None,
     staging: EvolutionService | None = None,
     lineage: EvolutionService | None = None,
-    reviewer: EvolutionService | None = None,
+    prototype_reader: Callable[..., dict[str, Any]] | None = None,
+    review_submitter: Callable[..., dict[str, Any]] | None = None,
+    review_recoverer: Callable[..., dict[str, Any] | None] | None = None,
 ) -> tuple[Operation, ...]:
     """Bind member identity and authority independently of tool exposure."""
     services = {
@@ -173,9 +217,8 @@ def make_evolution_operations(
         "prototype-list": catalog,
         "prototype-staging-list": staging,
         "prototype-lineage": lineage,
-        "prototype-review": reviewer,
     }
-    writes = {"prototype-write", "prototype-review"}
+    writes = {"prototype-write", "prototype-review-submit"}
 
     def handler(name: str) -> AsyncHandler:
         async def execute(context: CallContext, args: dict[str, Any]) -> Any:
@@ -185,17 +228,25 @@ def make_evolution_operations(
                 "prototype-write",
             }:
                 raise RejectedError("evolution operations require a full member", {})
-            service = services[name]
-            if service is None:
-                raise OperationError("evolution service is not bound")
             try:
+                if name == "prototype-read":
+                    if prototype_reader is None:
+                        raise OperationError("prototype reader is not bound")
+                    return await asyncio.to_thread(prototype_reader, **args)
+                if name == "prototype-review-submit":
+                    if review_submitter is None:
+                        raise OperationError("prototype review submitter is not bound")
+                    return await asyncio.to_thread(review_submitter, **review_args(context, args))
+                service = services[name]
+                if service is None:
+                    raise OperationError("evolution service is not bound")
                 return await service.execute(**args)
-            except (OperationError, BudgetExceededError, ExecutionDeadlineError):
-                raise
-            except ModelRequestRejectedError as error:
+            except PrototypeError as error:
                 raise RejectedError(
                     str(error), {"call_id": context.call_id, "outcome": "rejected"}
                 ) from error
+            except (OperationError, BudgetExceededError, ExecutionDeadlineError):
+                raise
             except Exception as error:
                 if name not in writes:
                     raise
@@ -205,6 +256,30 @@ def make_evolution_operations(
                 ) from error
 
         return execute
+
+    def review_args(context: CallContext, args: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **args,
+            "reviewer_id": context.member_id,
+            "run_id": context.run_id,
+            "call_id": context.call_id,
+        }
+
+    async def recover_review(
+        context: CallContext, args: dict[str, Any]
+    ) -> InvocationOutcome | None:
+        if context.member_id != member_id:
+            raise InputError("evolution service belongs to another member")
+        if review_recoverer is None:
+            return None
+        try:
+            receipt = await asyncio.to_thread(review_recoverer, **review_args(context, args))
+        except (PrototypeError, OSError) as error:
+            raise UnknownOutcomeError(
+                str(error),
+                {"call_id": context.call_id, "outcome": "unknown", "retry_safe": False},
+            ) from error
+        return InvocationOutcome(True, value=receipt) if receipt is not None else None
 
     operations = [program_check_operation(program_checker)]
     for name, (description, schema) in _CONTRACTS.items():
@@ -217,6 +292,7 @@ def make_evolution_operations(
                 _OUTPUTS[name],
                 handler(name),
                 effects=frozenset({"write" if name in writes else "read"}),
+                recover=recover_review if name == "prototype-review-submit" else None,
             )
         )
     return tuple(operations)

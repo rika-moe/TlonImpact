@@ -51,10 +51,10 @@ from tlon.operations.filesystem import filesystem_operation_definitions
 from tlon.operations.identity import identity_operation_definitions
 from tlon.operations.lifecycle import lifecycle_operation_definitions
 from tlon.operations.mail import mail_operation_definitions
-from tlon.operations.runs import run_operation_definitions, run_read_operation_definitions
 from tlon.operations.model import model_operation_definitions
 from tlon.operations.observability import observability_operation_definitions
 from tlon.operations.registry import make_registry_query_operations
+from tlon.operations.runs import run_operation_definitions, run_read_operation_definitions
 from tlon.operations.shell import shell_operation_definitions
 from tlon.operations.state import state_operation_definitions
 from tlon.operations.tasks import task_operation_definitions
@@ -556,10 +556,11 @@ def render_tool_registry() -> str:
     """Registration table for docs/reference/tools-reference.md."""
     rows: list[str] = []
     for domain, definitions in operation_domains().items():
+        module = "runs" if domain == "run" else domain
         for operation in definitions:
             rows.append(
                 f"| {len(rows) + 1} | `{operation.name}` | "
-                f"[operations/{domain}.py](../../src/tlon/operations/{domain}.py) "
+                f"[operations/{module}.py](../../src/tlon/operations/{module}.py) "
                 f"的 `OperationTool` 投影 | {domain} |"
             )
     count = len(rows)

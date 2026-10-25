@@ -32,6 +32,7 @@ Skill 是"按需加载的技能包"：一个文件夹 + 一个 `SKILL.md`，教 
 当前内置：
 
 - **explain-decision**：可问责性接口。被问「你为什么这么决定」时，教 agent 用 `traces-list`/`trace-read`、`file-search`/`file-read`/`run-read`、`mail-search` 三条证据源取证，并按「论断必附出处、无据明说不编造、区分事实与推断」的纪律组织回答。
+- **review-prototype**：按需读取原型清单与源码，以材料 digest 显式提交咨询意见；不增加隐式模型请求、不自动批准。全局正文读取仍受下述实现缺口影响，需要使用时可将该 skill 放入成员 workspace 的 `.agents/skills/`，通过普通文件工具读取。
 
 ## SKILL.md 格式
 
@@ -78,7 +79,7 @@ description: 从 PDF 提取文本与表格。当任务涉及 PDF 解析时使用
 
 **按需加载意图**：模型从索引选择技能，再读取正文；引擎不注入正文，也没有 `use_skill` 工具。
 
-**当前实现缺口**：`agents/skills.py` 的 `render_skills_index` 提示使用 `file-read`，但给出的是不能直接交给容器工具的宿主路径。L1/L2 可在知道映射关系时用 `file-read` 读取 project/agent 层；全局层（包括内置 explain-decision）没有通用正文读取通道。L0 已可用普通文件工具读取自己 workspace 内的正文（ADR 0047），但不能因此读取 workspace 外的宿主路径。脚本需要 L2 的 `shell-run`，并且文件必须位于容器可见路径。
+**当前实现缺口**：`agents/skills.py` 的 `render_skills_index` 提示使用 `file-read`，但给出的是不能直接交给容器工具的宿主路径。L1/L2 可在知道映射关系时用 `file-read` 读取 project/agent 层；全局层（包括内置 explain-decision 和 review-prototype）没有通用正文读取通道。L0 已可用普通文件工具读取自己 workspace 内的正文（ADR 0047），但不能因此读取 workspace 外的宿主路径。脚本需要 L2 的 `shell-run`，并且文件必须位于容器可见路径。
 
 因此三层发现与索引已经实现，不能把它描述为三层正文访问均已跑通。补齐路径映射、全局正文可见性和索引路径需要独立设计及实现，workspace 文件权限见 ADR 0047，不另增技能专用工具。
 
