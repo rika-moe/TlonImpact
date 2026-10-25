@@ -14,9 +14,11 @@ genome):
   explicitly authored and packaged with the prototype
   and copied to the member's ``config/`` at instantiation; the DSL
   ``member-context`` read makes it available to ordinary programs
-- ``REVIEW.md`` — optional (heterogeneous review, see
+- ``REVIEW.md`` — optional (explicit advisory review, see
   docs/design/prototypes.md): peer-review
-  records appended by ``prototype-review`` while the prototype is staged.
+  records submitted by ``prototype-review-submit`` while the prototype is staged.
+  Host identity, run and material digest establish provenance; no hidden model call.
+  ``prototype-read`` exposes a manifest and bounded file pages.
   Metadata reading never touches it, so listing stays free; approval's
   whole-directory move carries it into the trusted library.
 

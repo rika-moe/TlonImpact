@@ -195,26 +195,22 @@ def test_concurrent_same_name_publication_never_overwrites(tmp_path: Path) -> No
     assert list(tmp_path.glob(".proposal-*")) == []
 
 
-async def test_probation_can_read_catalogs_lineage_and_review(tmp_path: Path) -> None:
+async def test_probation_explicit_review_uses_shared_contract_without_model(tmp_path: Path) -> None:
     from functools import partial
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock
 
-    from tlon.agents.prototypes.catalog import get_prototype_detail, list_prototypes
+    from tlon.agents.prototypes.catalog import list_prototypes
     from tlon.agents.prototypes.lineage import get_prototype_lineage
-    from tlon.agents.prototypes.staging import append_staging_review
-    from tlon.base.llm_client import LLMResponse
+    from tlon.agents.prototypes.reviews import (
+        read_prototype,
+        recover_prototype_review,
+        submit_prototype_review,
+    )
     from tlon.evolution.get_lineage import PrototypeLineage
     from tlon.evolution.list_prototypes import PrototypeCatalog
-    from tlon.evolution.review_prototype import PrototypeReviewer
 
     paths = TlonPaths(home=tmp_path)
     proposal = write_staging_prototype(
         _SPEC, modules=_MODULES, display_name="x", author_id="author", tlon_paths=paths
-    )
-    llm = SimpleNamespace(
-        config=SimpleNamespace(model_name="test/reviewer"),
-        chat=AsyncMock(return_value=LLMResponse(content="通过\n材料完整")),
     )
     operations = make_evolution_operations(
         "probation",
@@ -222,14 +218,9 @@ async def test_probation_can_read_catalogs_lineage_and_review(tmp_path: Path) ->
         catalog=PrototypeCatalog(partial(list_prototypes, tlon_paths=paths)),
         staging=StagingCatalog(partial(list_staging_prototypes, tlon_paths=paths)),
         lineage=PrototypeLineage(partial(get_prototype_lineage, tlon_paths=paths)),
-        reviewer=PrototypeReviewer(
-            "probation",
-            llm,
-            partial(get_prototype_detail, staging=True, tlon_paths=paths),
-            lambda _name: {},
-            partial(get_prototype_lineage, tlon_paths=paths),
-            partial(append_staging_review, tlon_paths=paths),
-        ),
+        prototype_reader=partial(read_prototype, tlon_paths=paths),
+        review_submitter=partial(submit_prototype_review, tlon_paths=paths),
+        review_recoverer=partial(recover_prototype_review, tlon_paths=paths),
     )
     executor = OperationExecutor(
         OperationRegistry(operations), CallContext("probation", "run", "call")
@@ -239,11 +230,11 @@ async def test_probation_can_read_catalogs_lineage_and_review(tmp_path: Path) ->
         ("prototype-list", {}),
         ("prototype-staging-list", {}),
         ("prototype-lineage", {"name": proposal.name}),
-        ("prototype-review", {"name": proposal.name}),
+        ("prototype-read", {"name": proposal.name}),
     ):
         result = await OperationTool(executor, name).execute_context(args)
         assert result.success, result.error
-        await adapter.handle(
+        actual = await adapter.handle(
             BuiltinCall(
                 name,
                 adapter.builtins()[name],
@@ -251,7 +242,37 @@ async def test_probation_can_read_catalogs_lineage_and_review(tmp_path: Path) ->
                 {},
             )
         )
-    reviews = (paths.prototypes_staging_dir() / proposal.name / "REVIEW.md").read_text()
-    assert "probation（test/reviewer）：通过" in reviews
-    assert llm.chat.await_count == 2
+        assert json_value(actual, edn_keys=True) == result.data
+    material = await executor.call(
+        "prototype-read", {"name": proposal.name, "path": "behavior.tlon"}
+    )
+    assert material["content"] == _SPEC + "\n"
+    args = {
+        "name": proposal.name,
+        "digest": material["digest"],
+        "verdict": "通过",
+        "reason": "材料完整",
+    }
+    with patch(
+        "tlon.base.llm_client.LLMClient.chat", side_effect=AssertionError("hidden model call")
+    ):
+        result = await OperationTool(executor, "prototype-review-submit").execute_context(args)
+        assert result.success, result.error
+        repeated = await adapter.handle(
+            BuiltinCall(
+                "prototype-review-submit",
+                adapter.builtins()["prototype-review-submit"],
+                [{Keyword(key): value for key, value in args.items()}],
+                {},
+            )
+        )
+    assert json_value(repeated, edn_keys=True) == result.data
+    assert result.data["reviewer"] == "probation"
+    assert result.data["run_id"] == "run" and result.data["call_id"] == "call"
     assert list_staging_prototypes(paths)[0].trusted is False
+    with pytest.raises(OperationError, match="unknown operation"):
+        executor.registry.get("prototype-review")
+    forged = await OperationTool(executor, "prototype-review-submit").execute_context(
+        {**args, "reviewer_id": "author"}
+    )
+    assert not forged.success and "InputError" in forged.error

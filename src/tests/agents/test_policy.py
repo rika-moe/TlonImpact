@@ -290,9 +290,10 @@ class TestReproductionTools:
     def test_reproduction_tools_inventory(self) -> None:
         expected = frozenset({"member-spawn", "prototype-write"})
         assert expected == REPRODUCTION_TOOLS
-        # prototype-review stays available to probationary members
+        # prototype-read / prototype-review-submit stay available to probationary members
         # (advisory only — approve remains a human decision).
-        assert "prototype-review" not in REPRODUCTION_TOOLS
+        assert "prototype-read" not in REPRODUCTION_TOOLS
+        assert "prototype-review-submit" not in REPRODUCTION_TOOLS
 
 
 class _FakeAgentInfo:
@@ -345,7 +346,9 @@ class TestAssemblyToolSubset:
 
         names = set(caps.tool_executor.list_tools())
         assert names.isdisjoint(REPRODUCTION_TOOLS)
-        assert "prototype-review" in names
+        assert "prototype-read" in names
+        assert "prototype-review-submit" in names
+        assert "prototype-review" not in names
         assert "member-list" in names
         # The probation mentor cc rides along for the send paths.
         assert caps.mentor_cc == "mentor@tlon.internal"

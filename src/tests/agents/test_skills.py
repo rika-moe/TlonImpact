@@ -252,8 +252,9 @@ class TestSeedSkills:
 
     def test_seed_never_overwrites_user_files(self, tmp_path: Path) -> None:
         p = TlonPaths(home=tmp_path)
+        # Existing user files must survive re-seeding all bundled skills.
+        seed_skills(p)
         user_file = p.skills_dir() / BUILTIN_SKILL / "SKILL.md"
-        user_file.parent.mkdir(parents=True)
         user_file.write_text("用户改过的版本\n", encoding="utf-8")
         # 用户自建的 skill 也必须存活。
         user_skill = _write_skill(p.skills_dir(), "mine", _skill("mine", "自建技能"))

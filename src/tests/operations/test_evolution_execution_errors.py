@@ -1,141 +1,184 @@
-"""Real evolution model calls preserve known rejection and unknown outcomes."""
+"""Explicit review writes recover their own committed receipt without model calls."""
 
 from functools import partial
 from pathlib import Path
-from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import Mock, patch
 
 import pytest
-from litellm import BadRequestError
 
 from tlon.agents.program_store import ProgramStore
-from tlon.agents.prototypes.catalog import get_prototype_detail
-from tlon.agents.prototypes.staging import append_staging_review, write_staging_prototype
-from tlon.base.config import LLMConfig
-from tlon.base.execution import (
-    BudgetExceededError,
-    ExecutionDeadlineError,
-    ExecutionScope,
-    bind_execution,
+from tlon.agents.prototypes.reviews import (
+    read_prototype,
+    recover_prototype_review,
+    submit_prototype_review,
 )
-from tlon.base.llm_client import LLMClient
+from tlon.agents.prototypes.staging import approve_prototype, write_staging_prototype
+from tlon.base.execution import ExecutionDeadlineError, ExecutionScope, bind_execution
 from tlon.base.paths import TlonPaths
-from tlon.evolution.review_prototype import PrototypeReviewer
-from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
-from tlon.operations.dsl import DSLAdapter
 from tlon.operations.evolution import make_evolution_operations
-from tlon.operations.schema import RejectedError, UnknownOutcomeError, edn_value
-from tlosure.builtins import BuiltinCall
+from tlon.operations.invocation import InvocationOutcome
+from tlon.operations.schema import RejectedError, UnknownOutcomeError
 
 _SPEC = "{:version 2 :handlers {:boot work/handle}}"
 _MODULES = {"work.tlon": "(ns work (:export handle)) (defn handle [event] {})"}
 
 
-def staging_snapshot(paths: TlonPaths) -> dict[str, bytes]:
-    return {
-        str(p.relative_to(paths.tlon_home())): p.read_bytes()
-        for root in (paths.prototypes_staging_dir(),)
-        if root.exists()
-        for p in root.rglob("*")
-        if p.is_file()
-    }
-
-
-def executor(
-    paths: TlonPaths, store: ProgramStore, client: LLMClient
-) -> tuple[OperationExecutor, dict[str, dict[str, str]]]:
-    behavior = paths.agent_behavior_file("alice")
-    behavior.parent.mkdir(parents=True, exist_ok=True)
-    behavior.write_text(_SPEC)
-    info = write_staging_prototype(
-        _SPEC, modules=_MODULES, display_name="existing", tlon_paths=paths
-    )
-    services = make_evolution_operations(
-        "alice",
-        True,
-        reviewer=PrototypeReviewer(
+def _registry(paths: TlonPaths) -> OperationRegistry:
+    return OperationRegistry(
+        make_evolution_operations(
             "alice",
-            client,
-            partial(get_prototype_detail, staging=True, tlon_paths=paths),
-            lambda _name: {},
-            lambda _name: [],
-            partial(append_staging_review, tlon_paths=paths),
-        ),
+            False,
+            prototype_reader=partial(read_prototype, tlon_paths=paths),
+            review_submitter=partial(submit_prototype_review, tlon_paths=paths),
+            review_recoverer=partial(recover_prototype_review, tlon_paths=paths),
+        )
     )
-    return OperationExecutor(
-        OperationRegistry(services), CallContext("alice", "root", "call"), store
-    ), {
-        "prototype-review": {"name": info.name},
+
+
+def _proposal(paths: TlonPaths) -> dict[str, str]:
+    info = write_staging_prototype(
+        _SPEC, modules=_MODULES, display_name="candidate", tlon_paths=paths
+    )
+    return {
+        "name": info.name,
+        "digest": read_prototype(info.name, tlon_paths=paths)["digest"],
+        "verdict": "通过",
+        "reason": "入口与模块齐全",
     }
 
 
-@pytest.mark.parametrize("name", ["prototype-review"])
-@pytest.mark.parametrize("fault", ["budget", "rejected", "context-rejected", "unknown"])
-async def test_real_evolution_model_failure_is_identical_in_dsl_tool_and_replay(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, fault: str
+@pytest.mark.parametrize("approved", [False, True])
+async def test_review_recovers_committed_write_after_receipt_failure(
+    tmp_path: Path, approved: bool
 ) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "test")
-    provider = AsyncMock(
-        side_effect=BadRequestError(
-            "maximum context length exceeded"
-            if fault == "context-rejected"
-            else "explicit refusal",
-            model="gpt-4o",
-            llm_provider="openai",
-        )
-        if fault in {"rejected", "context-rejected"}
-        else TimeoutError("provider response lost")
-    )
-    monkeypatch.setattr("litellm.acompletion", provider)
     paths = TlonPaths(home=tmp_path)
+    args = _proposal(paths)
     store = ProgramStore(tmp_path / "calls.sqlite", build_id="test")
-    client = LLMClient(
-        LLMConfig(
-            model_name="openai/gpt-4o", max_output_tokens=10, context_window=10000, max_retries=3
+    context = CallContext("alice", "root", "review-call")
+    first = OperationExecutor(_registry(paths), context, store)
+    with (
+        bind_execution(ExecutionScope(store, "root", 100, "output")),
+        patch.object(store, "commit_invocation", side_effect=OSError("receipt disk unavailable")),
+        pytest.raises(UnknownOutcomeError),
+    ):
+        await first.call("prototype-review-submit", args)
+    review_file = paths.prototypes_staging_dir() / args["name"] / "REVIEW.md"
+    before = review_file.read_text()
+    assert before.count("<!-- tlon-review-receipt ") == 1
+    if approved:
+        approve_prototype(args["name"], paths)
+        review_file = paths.prototypes_dir() / args["name"] / "REVIEW.md"
+    # A fresh executor must reconcile the domain receipt without submitting again.
+    operations = make_evolution_operations(
+        "alice",
+        False,
+        review_submitter=Mock(side_effect=AssertionError("must recover, not resubmit")),
+        review_recoverer=partial(recover_prototype_review, tlon_paths=paths),
+    )
+    fresh = OperationExecutor(OperationRegistry(operations), context, store)
+    with bind_execution(ExecutionScope(store, "root", 100, "output")):
+        result = await fresh.call("prototype-review-submit", args)
+        replay = await fresh.call("prototype-review-submit", args)
+    assert result == replay
+    assert result["reviewer"] == "alice" and result["call_id"] == "review-call"
+    assert review_file.read_text() == before
+
+
+async def test_stale_material_and_trusted_submission_are_known_rejections(tmp_path: Path) -> None:
+    paths = TlonPaths(home=tmp_path)
+    args = _proposal(paths)
+    executor = OperationExecutor(_registry(paths), CallContext("alice", "root", "call"))
+    material = paths.prototypes_staging_dir() / args["name"] / "LESSONS.md"
+    material.write_text("new lessons")
+    with pytest.raises(RejectedError, match="digest changed"):
+        await executor.call("prototype-review-submit", args)
+    args["digest"] = read_prototype(args["name"], tlon_paths=paths)["digest"]
+    approve_prototype(args["name"], paths)
+    with pytest.raises(RejectedError, match="staged"):
+        await executor.call("prototype-review-submit", args)
+    assert not (paths.prototypes_dir() / args["name"] / "REVIEW.md").exists()
+
+
+async def test_review_write_io_failure_is_unknown_and_does_not_retry(tmp_path: Path) -> None:
+    paths = TlonPaths(home=tmp_path)
+    args = _proposal(paths)
+    executor = OperationExecutor(_registry(paths), CallContext("alice", "root", "call"))
+    with (
+        patch("tlon.agents.prototypes.reviews.os.replace", side_effect=OSError("disk failure")),
+        pytest.raises(UnknownOutcomeError) as failure,
+    ):
+        await executor.call("prototype-review-submit", args)
+    assert failure.value.data == {"outcome": "unknown", "call_id": "call", "retry_safe": False}
+    assert not (paths.prototypes_staging_dir() / args["name"] / "REVIEW.md").exists()
+
+
+async def test_evolution_wrapper_preserves_known_deadline() -> None:
+    reader = Mock(side_effect=ExecutionDeadlineError("known deadline"))
+    registry = OperationRegistry(make_evolution_operations("alice", False, prototype_reader=reader))
+    executor = OperationExecutor(registry, CallContext("alice", "root", "call"))
+    with pytest.raises(ExecutionDeadlineError, match="known deadline"):
+        await executor.call("prototype-read", {"name": "proposal"})
+
+
+@pytest.mark.parametrize("fault", ["corrupt-receipt", "read-unavailable"])
+@pytest.mark.parametrize("receipt_state", ["pending", "unknown"])
+async def test_review_recovery_cannot_turn_unverifiable_receipt_into_rejection(
+    tmp_path: Path, fault: str, receipt_state: str
+) -> None:
+    paths = TlonPaths(home=tmp_path)
+    args = _proposal(paths)
+    store = ProgramStore(tmp_path / "calls.sqlite", build_id="test")
+    context = CallContext("alice", "root", "review-call")
+    first = OperationExecutor(_registry(paths), context, store)
+    with (
+        bind_execution(ExecutionScope(store, "root", 100, "output")),
+        patch.object(store, "commit_invocation", side_effect=OSError("receipt unavailable")),
+        pytest.raises(UnknownOutcomeError),
+    ):
+        await first.call("prototype-review-submit", args)
+    review_file = paths.prototypes_staging_dir() / args["name"] / "REVIEW.md"
+    text = review_file.read_text()
+    assert text.count("<!-- tlon-review-receipt ") == 1
+    if fault == "corrupt-receipt":
+        review_file.write_text(
+            text.replace("<!-- tlon-review-receipt {", "<!-- tlon-review-receipt INVALID{")
+        )
+        recoverer = partial(recover_prototype_review, tlon_paths=paths)
+    else:
+        recoverer = Mock(side_effect=OSError("receipt read unavailable"))
+    submitter = Mock(side_effect=AssertionError("must not resubmit"))
+    registry = OperationRegistry(
+        make_evolution_operations(
+            "alice",
+            False,
+            review_submitter=submitter,
+            review_recoverer=recoverer,
         )
     )
-    scope = ExecutionScope(store, "root", 0 if fault == "budget" else 10, "output")
-    bound, arguments = executor(paths, store, client)
-    adapter = DSLAdapter(bound)
-    before = staging_snapshot(paths)
-    expected = {
-        "budget": BudgetExceededError,
-        "rejected": RejectedError,
-        "context-rejected": RejectedError,
-        "unknown": UnknownOutcomeError,
-    }[fault]
-    with bind_execution(scope), pytest.raises(expected):
-        await adapter.handle(
-            BuiltinCall(name, adapter.builtins()[name], [edn_value(arguments[name])], {})
+    fresh = OperationExecutor(registry, context, store)
+    invocation = first._invocation(first.registry.get("prototype-review-submit"), args, context)
+    assert store.lookup_invocation(invocation) is None
+    if receipt_state == "unknown":
+        store.commit_invocation(
+            invocation,
+            InvocationOutcome(
+                False,
+                error_type="UnknownOutcomeError",
+                error_message="receipt commit failed",
+                error_data={"outcome": "unknown", "call_id": "review-call", "retry_safe": False},
+            ),
         )
-    # Recovery uses a fresh scope and the same frozen root/call, not a new allowance.
-    with bind_execution(ExecutionScope(store, "root", scope.token_limit, "output")):
-        if fault in {"rejected", "context-rejected"}:
-            result = await OperationTool(bound, name).execute_context(arguments[name])
-            assert not result.success and expected.__name__ in result.error
-            assert not result.data or result.data.get("outcome") != "unknown"
-        else:
-            with pytest.raises(expected) as failure:
-                await OperationTool(bound, name).execute_context(arguments[name])
-            if fault == "unknown":
-                assert failure.value.data["outcome"] == "unknown"
-    assert provider.await_count == (0 if fault == "budget" else 1)
-    assert staging_snapshot(paths) == before
-
-
-@pytest.mark.parametrize(
-    "name,slot,args",
-    [
-        ("prototype-review", "reviewer", {"name": "proposal"}),
-    ],
-)
-async def test_evolution_wrapper_preserves_known_deadline(
-    name: str, slot: str, args: dict[str, Any]
-) -> None:
-    service = AsyncMock()
-    service.execute.side_effect = ExecutionDeadlineError("known deadline")
-    operations = make_evolution_operations("alice", True, **{slot: service})
-    bound = OperationExecutor(OperationRegistry(operations), CallContext("alice", "run", "call"))
-    with pytest.raises(ExecutionDeadlineError):
-        await bound.call(name, args)
+    before = store.lookup_invocation(invocation)
+    with bind_execution(ExecutionScope(store, "root", 100, "output")):
+        for _ in range(2):
+            with pytest.raises(UnknownOutcomeError) as failure:
+                await fresh.call("prototype-review-submit", args)
+            assert failure.value.data == {
+                "call_id": "review-call",
+                "outcome": "unknown",
+                "retry_safe": False,
+            }
+    assert store.lookup_invocation(invocation) == before
+    submitter.assert_not_called()
+    assert review_file.read_text().count("<!-- tlon-review-receipt ") == 1

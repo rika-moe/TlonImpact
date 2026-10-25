@@ -1,215 +1,291 @@
-"""prototype-review — heterogeneous peer review of staging proposals ().
+"""Bounded material snapshots and durable explicit review receipts."""
 
-The caller only names the proposal; the verdict comes from one dedicated
-review call with the reviewer's own ``llm_client`` (purpose="review"),
-so the record format is uniform and the heterogeneity is the reviewer's
-model bloodline. Records append to the staging directory's ``REVIEW.md``
-and ride along with approval's whole-directory move into the trusted
-library. An unparseable verdict is ``success=False`` with nothing
-written — the outer ReAct loop is the retry mechanism.
-"""
-
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from tests.evolution_helpers import make_review_tool
-from tlon.agents.prototypes.catalog import get_prototype_detail, get_prototype_modules
-from tlon.agents.prototypes.lineage import get_prototype_lineage
-from tlon.agents.prototypes.management import write_trusted_prototype
+from tlon.agents.prototypes.reviews import (
+    read_prototype,
+    recover_prototype_review,
+    submit_prototype_review,
+)
 from tlon.agents.prototypes.staging import (
-    append_staging_review,
     approve_prototype,
+    reject_prototype,
     write_staging_prototype,
 )
-from tlon.base.config import LLMConfig
-from tlon.base.llm_client import LLMResponse
 from tlon.base.paths import TlonPaths
-from tlon.operations.adapters import OperationTool
+from tlon.evolution.ports import PrototypeError
 
-_BASE_SPEC = "{:version 2 :handlers {:mail-delivered work.reply/handle}}"
-_CHILD_SPEC = _BASE_SPEC
-_BASE_MODULES = {
-    "work/reply.tlon": '(ns work.reply (:export handle)) (defn handle [event] {:result "x@tlon.internal"})'
+_SPEC = "{:version 2 :handlers {:mail-delivered work.reply/handle}}"
+_MODULES = {
+    "work/reply.tlon": '(ns work.reply (:export handle)) (defn handle [event] {:result "ok"})'
 }
-_CHILD_MODULES = {path: text.replace("x@", "y@") for path, text in _BASE_MODULES.items()}
 
 
-class _FakeLLM:
-    """Duck-typed LLMClient returning one canned review response."""
-
-    def __init__(self, content: str, model: str = "fake/reviewer-model") -> None:
-        self._content = content
-        self.config = LLMConfig(model_name=model)
-        self.calls: list[dict[str, Any]] = []
-
-    async def chat(self, **kwargs: Any) -> LLMResponse:
-        self.calls.append(kwargs)
-        return LLMResponse(content=self._content)
-
-
-def _make_tool(p: TlonPaths, reviewer_id: str, llm: _FakeLLM) -> OperationTool:
-    return make_review_tool(
-        reviewer_id=reviewer_id,
-        llm_client=llm,
-        detail=lambda name: get_prototype_detail(name, staging=True, tlon_paths=p),
-        modules=lambda name: get_prototype_modules(name, staging=True, tlon_paths=p),
-        lineage=lambda name: get_prototype_lineage(name, tlon_paths=p),
-        append_review=lambda name, entry: append_staging_review(name, entry, tlon_paths=p),
+def _stage(tmp_path: Path) -> tuple[TlonPaths, str]:
+    paths = TlonPaths(home=tmp_path)
+    info = write_staging_prototype(
+        _SPEC,
+        modules=_MODULES,
+        display_name="测试",
+        lessons="测试经验\n",
+        tlon_paths=paths,
     )
+    return paths, info.name
 
 
-def _stage_child(p: TlonPaths) -> tuple[str, str]:
-    created_1 = write_trusted_prototype(
-        _BASE_SPEC, modules=_BASE_MODULES, tlon_paths=p, display_name="定址转发"
-    )
-    child = write_staging_prototype(
-        _CHILD_SPEC,
-        modules=_CHILD_MODULES,
-        display_name="变更目标转发",
-        author_id="c-base-00000001",
-        parent=created_1.name,
-        proposal_note="把转发目标换成 y",
-        lessons="- 别在深夜回信\n",
-        tlon_paths=p,
-    )
-    return created_1.name, child.name
-
-
-class TestReviewPrototype:
-    async def test_main_path(self, tmp_path: Path) -> None:
-        """评审调用 → REVIEW.md 落盘：字段齐（评审者/模型/verdict/理由），
-        回执正确；prompt 携带 behavior 全文、lessons、谱系 diff、变更说明。"""
-        p = TlonPaths(home=tmp_path)
-        parent_id, child_id = _stage_child(p)
-        llm = _FakeLLM("通过\n变更与 proposal_note 一致，spec 完整自足。")
-        tool = _make_tool(p, "c-scribe-00000002", llm)
-        result = await tool.execute_context({"name": child_id})
-        assert result.success, result.error
-        assert result.data == {
-            "name": child_id,
-            "verdict": "通过",
-            "reviewer": "c-scribe-00000002",
-            "model": "fake/reviewer-model",
-        }
-        review_file = p.prototypes_staging_dir() / child_id / "REVIEW.md"
-        text = review_file.read_text(encoding="utf-8")
-        assert text.startswith("# 评审记录\n")
-        assert "c-scribe-00000002" in text
-        assert "fake/reviewer-model" in text
-        assert "：通过" in text
-        assert "变更与 proposal_note 一致" in text
-        assert len(llm.calls) == 1
-        call = llm.calls[0]
-        assert call["purpose"] == "review"
-        assert "显示名与描述是否对应 spec" in call["system_prompt"]
-        assert "行为显示名：变更目标转发" in call["messages"][0]["content"]
-        assert "temperature" not in call
-        assert call["timeout"] == 60.0
-        prompt = call["messages"][0]["content"]
-        assert _CHILD_SPEC in prompt
-        assert "- 别在深夜回信" in prompt
-        assert "把转发目标换成 y" in prompt
-        assert "x@tlon.internal" in prompt and "y@tlon.internal" in prompt
-        assert f"第 1 代：{parent_id}" in prompt and f"第 2 代：{child_id}" in prompt
-
-    async def test_reviews_accumulate(self, tmp_path: Path) -> None:
-        """三次评审追加不覆盖：REVIEW.md 依序含三条记录，表头只出现一次。"""
-        p = TlonPaths(home=tmp_path)
-        parent_id, child_id = _stage_child(p)
-        llm = _FakeLLM("不通过\n理由甲。")
-        tool = _make_tool(p, "r-1", llm)
-        for _ in range(3):
-            result = await tool.execute_context({"name": child_id})
-            assert result.success, result.error
-        text = (p.prototypes_staging_dir() / child_id / "REVIEW.md").read_text(encoding="utf-8")
-        assert text.count("# 评审记录") == 1
-        assert text.count("r-1（fake/reviewer-model）：不通过") == 3
-        assert text.count("理由甲。") == 3
-
-    async def test_approve_carries_review_file(self, tmp_path: Path) -> None:
-        """approve 的整目录 move 白拿 REVIEW.md：评审记录随提案晋级 trusted。"""
-        p = TlonPaths(home=tmp_path)
-        parent_id, child_id = _stage_child(p)
-        tool = _make_tool(p, "r-1", _FakeLLM("通过\n可以晋级。"))
-        await tool.execute_context({"name": child_id})
-        approve_prototype(child_id, tlon_paths=p)
-        trusted_review = p.prototypes_dir() / child_id / "REVIEW.md"
-        assert trusted_review.exists()
-        assert "r-1" in trusted_review.read_text(encoding="utf-8")
-        assert not (p.prototypes_staging_dir() / child_id).exists()
-        _info, _behavior, _lessons, reviews = get_prototype_detail(child_id, tlon_paths=p)
-        assert reviews is not None and "可以晋级。" in reviews
-
-    @pytest.mark.parametrize("verdict", ["通过", "不通过", "弃权"])
-    async def test_verdict_values(self, tmp_path: Path, verdict: str) -> None:
-        """三个合法 verdict 标记都解析成功并落盘。"""
-        p = TlonPaths(home=tmp_path)
-        created_1 = write_staging_prototype(
-            _BASE_SPEC, modules=_BASE_MODULES, author_id="a", tlon_paths=p, display_name="定址转发"
-        )
-        tool = _make_tool(p, "r-1", _FakeLLM(f"{verdict}\n理由。"))
-        result = await tool.execute_context({"name": created_1.name})
-        assert result.success, result.error
-        assert result.data["verdict"] == verdict
-
-    async def test_illegal_verdict_line_rejected(self, tmp_path: Path) -> None:
-        """首行不是三值之一 → success=False，不写 REVIEW.md。"""
-        p = TlonPaths(home=tmp_path)
-        created_1 = write_staging_prototype(
-            _BASE_SPEC, modules=_BASE_MODULES, author_id="a", tlon_paths=p, display_name="定址转发"
-        )
-        tool = _make_tool(p, "r-1", _FakeLLM("我觉得可以\n因为……"))
-        result = await tool.execute_context({"name": created_1.name})
-        assert not result.success
-        assert "verdict" in result.error
-        assert not (p.prototypes_staging_dir() / created_1.name / "REVIEW.md").exists()
-
-    async def test_missing_proposal_fails_before_llm(self, tmp_path: Path) -> None:
-        """提案不存在 → success=False，评审调用一次都不发生。"""
-        p = TlonPaths(home=tmp_path)
-        llm = _FakeLLM("通过\n理由。")
-        tool = _make_tool(p, "r-1", llm)
-        result = await tool.execute_context({"name": "ghost"})
-        assert not result.success
-        assert "no prototype named 'ghost'" in result.error
-        assert llm.calls == []
-
-    async def test_trusted_prototype_not_reviewable(self, tmp_path: Path) -> None:
-        """trusted 库原型不可评审（只评 staging 提案）。"""
-        p = TlonPaths(home=tmp_path)
-        created_1 = write_trusted_prototype(
-            _BASE_SPEC, modules=_BASE_MODULES, tlon_paths=p, display_name="定址转发"
-        )
-        llm = _FakeLLM("通过\n理由。")
-        tool = _make_tool(p, "r-1", llm)
-        result = await tool.execute_context({"name": created_1.name})
-        assert not result.success
-        assert llm.calls == []
-
-
-async def test_peer_review_contains_all_module_sources_and_dependency_diff(tmp_path: Path) -> None:
-    p = TlonPaths(home=tmp_path)
-    behavior = "{:version 2 :handlers {:mail-delivered work.reply/handle} :fuel 1000}"
-    modules = {
-        "work/reply.tlon": '(ns work.reply (:export handle)) (defn handle [event] {:result "old"})'
+def _submit(paths: TlonPaths, name: str, **kwargs: Any) -> dict[str, str]:
+    args = {
+        "digest": read_prototype(name, tlon_paths=paths)["digest"],
+        "verdict": "通过",
+        "reason": "已检查行为与模块。",
+        "reviewer_id": "reviewer",
+        "run_id": "run",
+        "call_id": "call",
     }
-    parent = write_trusted_prototype(behavior, modules=modules, display_name="父代", tlon_paths=p)
-    child_modules = {
-        "work/reply.tlon": "(ns work.reply (:require [work.check :as c]) (:export handle)) (defn handle [event] (c/result))",
-        "work/check.tlon": '(ns work.check (:export result)) (defn result [] {:result "checked"})',
+    args.update(kwargs)
+    return submit_prototype_review(name, tlon_paths=paths, **args)
+
+
+def test_material_manifest_and_pagination(tmp_path: Path) -> None:
+    paths, name = _stage(tmp_path)
+    manifest = read_prototype(name, tlon_paths=paths)
+    assert manifest["files"] == [
+        "LESSONS.md",
+        "behavior.tlon",
+        "modules/work/reply.tlon",
+        "prototype.tlon",
+    ]
+    assert manifest["metadata"]["display_name"] == "测试"
+    assert manifest["content"] is None and manifest["path"] is None
+    content = ""
+    offset = 0
+    while True:
+        page = read_prototype(
+            name,
+            tlon_paths=paths,
+            path="LESSONS.md",
+            offset=offset,
+            limit=2,
+            digest=manifest["digest"],
+        )
+        content += page["content"]
+        if page["next_offset"] is None:
+            break
+        offset = page["next_offset"]
+    assert content == "测试经验\n"
+
+
+@pytest.mark.parametrize(
+    "path", ["behavior.tlon", "modules/work/reply.tlon", "LESSONS.md", "prototype.tlon"]
+)
+def test_digest_covers_each_material(tmp_path: Path, path: str) -> None:
+    paths, name = _stage(tmp_path)
+    before = read_prototype(name, tlon_paths=paths)["digest"]
+    material = paths.prototypes_staging_dir() / name / path
+    material.write_text(material.read_text() + "\n", encoding="utf-8")
+    assert read_prototype(name, tlon_paths=paths)["digest"] != before
+    with pytest.raises(PrototypeError, match="digest changed"):
+        read_prototype(name, tlon_paths=paths, path=path, digest=before)
+    with pytest.raises(PrototypeError, match="digest changed"):
+        _submit(paths, name, digest=before)
+
+
+def test_review_excluded_from_digest_and_idempotent(tmp_path: Path) -> None:
+    paths, name = _stage(tmp_path)
+    before = read_prototype(name, tlon_paths=paths)["digest"]
+    first = _submit(paths, name)
+    assert _submit(paths, name) == first
+    assert read_prototype(name, tlon_paths=paths)["digest"] == before
+    text = (paths.prototypes_staging_dir() / name / "REVIEW.md").read_text()
+    assert text.count("<!-- tlon-review-receipt ") == 1
+    with pytest.raises(PrototypeError, match="different arguments"):
+        _submit(paths, name, reason="不同意见")
+
+
+def test_recover_after_approval(tmp_path: Path) -> None:
+    paths, name = _stage(tmp_path)
+    first = _submit(paths, name)
+    approve_prototype(name, paths)
+    args = {
+        "digest": first["digest"],
+        "verdict": first["verdict"],
+        "reason": first["reason"],
+        "reviewer_id": first["reviewer"],
+        "run_id": first["run_id"],
+        "call_id": first["call_id"],
     }
-    child = write_staging_prototype(
-        behavior, modules=child_modules, parent=parent.name, display_name="核验", tlon_paths=p
+    assert recover_prototype_review(name, tlon_paths=paths, **args) == first
+    assert submit_prototype_review(name, tlon_paths=paths, **args) == first
+    with pytest.raises(PrototypeError, match="no staged"):
+        _submit(paths, name, call_id="new")
+    assert (paths.prototypes_dir() / name / "REVIEW.md").exists()
+
+
+@pytest.mark.parametrize(
+    "path", ["../behavior.tlon", "/etc/passwd", "REVIEW.md", "modules/../behavior.tlon"]
+)
+def test_invalid_read_path(tmp_path: Path, path: str) -> None:
+    paths, name = _stage(tmp_path)
+    with pytest.raises(PrototypeError, match="invalid prototype material path"):
+        read_prototype(name, tlon_paths=paths, path=path)
+
+
+@pytest.mark.parametrize(
+    "path", ["behavior.tlon", "prototype.tlon", "LESSONS.md", "modules/work/reply.tlon", "modules"]
+)
+def test_symlink_material_rejected(tmp_path: Path, path: str) -> None:
+    paths, name = _stage(tmp_path)
+    material = paths.prototypes_staging_dir() / name / path
+    if material.is_dir():
+        import shutil
+
+        shutil.rmtree(material)
+        material.symlink_to(tmp_path, target_is_directory=True)
+    else:
+        material.unlink()
+        material.symlink_to(tmp_path / "outside")
+    with pytest.raises(PrototypeError, match="symlink"):
+        read_prototype(name, tlon_paths=paths)
+
+
+@pytest.mark.parametrize(
+    "kwargs", [{"limit": 0}, {"limit": 12001}, {"offset": -1}, {"limit": True}]
+)
+def test_invalid_pagination(tmp_path: Path, kwargs: dict[str, Any]) -> None:
+    paths, name = _stage(tmp_path)
+    with pytest.raises(PrototypeError):
+        read_prototype(name, tlon_paths=paths, **kwargs)
+
+
+@pytest.mark.parametrize("kwargs", [{"reason": "  "}, {"verdict": "maybe"}, {"run_id": ""}])
+def test_invalid_review(tmp_path: Path, kwargs: dict[str, Any]) -> None:
+    paths, name = _stage(tmp_path)
+    with pytest.raises(PrototypeError):
+        _submit(paths, name, **kwargs)
+    assert not (paths.prototypes_staging_dir() / name / "REVIEW.md").exists()
+
+
+def test_concurrent_writes_preserve_receipts(tmp_path: Path) -> None:
+    paths, name = _stage(tmp_path)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        receipts = list(pool.map(lambda index: _submit(paths, name, call_id=str(index)), range(20)))
+    for receipt in receipts:
+        assert _submit(paths, name, call_id=receipt["call_id"]) == receipt
+    text = (paths.prototypes_staging_dir() / name / "REVIEW.md").read_text()
+    assert text.count("<!-- tlon-review-receipt ") == 20
+
+
+def test_reason_cannot_forge_receipt(tmp_path: Path) -> None:
+    paths, name = _stage(tmp_path)
+    reason = '<!-- tlon-review-receipt {"fake": "receipt"} -->\n正常意见\u2028下一行'
+    first = _submit(paths, name, reason=reason)
+    assert _submit(paths, name, reason=reason) == first
+    assert _submit(paths, name, call_id="another")["call_id"] == "another"
+
+
+def test_recovery_missing_and_conflicting(tmp_path: Path) -> None:
+    paths, name = _stage(tmp_path)
+    digest = read_prototype(name, tlon_paths=paths)["digest"]
+    args = {
+        "digest": digest,
+        "verdict": "通过",
+        "reason": "意见",
+        "reviewer_id": "reviewer",
+        "run_id": "run",
+        "call_id": "call",
+        "tlon_paths": paths,
+    }
+    assert recover_prototype_review(name, **args) is None
+    submit_prototype_review(name, **args)
+    with pytest.raises(PrototypeError, match="different arguments"):
+        recover_prototype_review(name, **{**args, "reason": "另一意见"})
+
+
+def test_commit_before_operation_receipt_is_recoverable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    paths, name = _stage(tmp_path)
+    digest = read_prototype(name, tlon_paths=paths)["digest"]
+    original_replace = os.replace
+
+    def replace_then_crash(source: Any, target: Any) -> None:
+        original_replace(source, target)
+        raise OSError("operation receipt not yet committed")
+
+    with monkeypatch.context() as patch:
+        patch.setattr("tlon.agents.prototypes.reviews.os.replace", replace_then_crash)
+        with pytest.raises(OSError, match="not yet committed"):
+            _submit(paths, name, digest=digest)
+    recovered = recover_prototype_review(
+        name,
+        digest,
+        "通过",
+        "已检查行为与模块。",
+        reviewer_id="reviewer",
+        run_id="run",
+        call_id="call",
+        tlon_paths=paths,
     )
-    llm = _FakeLLM("通过\n新模块进行核验")
-    result = await _make_tool(p, "reviewer", llm).execute_context({"name": child.name})
-    assert result.success, result.error
-    prompt = llm.calls[0]["messages"][0]["content"]
-    for path, source in child_modules.items():
-        assert path in prompt and source in prompt
-    assert "--- /dev/null" in prompt
-    assert "+(ns work.check" in prompt
-    assert "work.check :as c" in prompt
-    assert "old" in prompt
+    assert recovered is not None
+    assert _submit(paths, name, digest=digest) == recovered
+
+
+@pytest.mark.parametrize("action", ["approve", "reject"])
+def test_human_decision_waits_for_review_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+) -> None:
+    from threading import Event
+
+    from tlon.agents.prototypes import reviews
+
+    paths, name = _stage(tmp_path)
+    digest = read_prototype(name, tlon_paths=paths)["digest"]
+    writer_entered, allow_commit, decision_started = Event(), Event(), Event()
+    original_materials = reviews._materials
+
+    def paused_materials(directory: Path) -> tuple[str, dict[str, str]]:
+        writer_entered.set()
+        assert allow_commit.wait(5)
+        return original_materials(directory)
+
+    def decide() -> None:
+        decision_started.set()
+        if action == "approve":
+            approve_prototype(name, paths)
+        else:
+            reject_prototype(name, paths)
+
+    monkeypatch.setattr(reviews, "_materials", paused_materials)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        write = pool.submit(
+            submit_prototype_review,
+            name,
+            digest,
+            "通过",
+            "已检查行为与模块。",
+            reviewer_id="reviewer",
+            run_id="run",
+            call_id="call",
+            tlon_paths=paths,
+        )
+        assert writer_entered.wait(5)
+        decision = pool.submit(decide)
+        assert decision_started.wait(5)
+        assert not decision.done()
+        allow_commit.set()
+        receipt = write.result(timeout=5)
+        decision.result(timeout=5)
+    if action == "approve":
+        text = (paths.prototypes_dir() / name / "REVIEW.md").read_text()
+        assert receipt["digest"] in text
+        assert "Run: `run`" in text and "Call: `call`" in text
+    else:
+        assert not (paths.prototypes_staging_dir() / name).exists()

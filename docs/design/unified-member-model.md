@@ -57,7 +57,7 @@ finish-turn 结束自己的本次工作；sleep-until 定时睡眠；exit-agent 
 
 见习成员有三项收紧：
 
-1. 不注册 `member-spawn` / `prototype-write` 两个工具；`prototype-review` 保留为咨询工具。
+1. 不注册 `member-spawn` / `prototype-write` 两个工具；`prototype-read` / `prototype-review-submit` 保留为咨询工具，不隐式请求模型。
 2. DSL spawn 仍经 SpawnManager，按 spawner id 判定见习，最终每会话配额收紧到最多 1；完整预算定义见 [prototypes.md](prototypes.md#spawn-预算落盘账本)。
 3. 撰写发信抄送 mentor（`spawned_by` 对应地址）；已在收件人或抄送中时不重复加入。MemberRuntime 与 EffectExecutor 两条发信路径均应用，转发不抄送。
 

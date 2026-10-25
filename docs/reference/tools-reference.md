@@ -19,7 +19,7 @@ model-call 返回建议，tool-execute 逐叶执行并返回真实结果。每�
 ## 注册清单
 
 <!-- BEGIN GENERATED: tool-registry -->
-满配成员注册 51 个工具（由共享 Operation 按域列出；L0/L1/L2 均注册 5 个文件操作，自己的 workspace 无需装置；L2 再增加 2 个 Shell 操作；时间不依赖装置）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+满配成员注册 52 个工具（由共享 Operation 按域列出；L0/L1/L2 均注册 5 个文件操作，自己的 workspace 无需装置；L2 再增加 2 个 Shell 操作；时间不依赖装置）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | # | 工具名 | 实现 | 域 |
 |---|---|---|---|
@@ -37,8 +37,8 @@ model-call 返回建议，tool-execute 逐叶执行并返回真实结果。每�
 | 12 | `shell-run` | [operations/shell.py](../../src/tlon/operations/shell.py) 的 `OperationTool` 投影 | shell |
 | 13 | `shell-check` | [operations/shell.py](../../src/tlon/operations/shell.py) 的 `OperationTool` 投影 | shell |
 | 14 | `time-now` | [operations/time.py](../../src/tlon/operations/time.py) 的 `OperationTool` 投影 | time |
-| 15 | `run-read` | [operations/run.py](../../src/tlon/operations/run.py) 的 `OperationTool` 投影 | run |
-| 16 | `run-previous` | [operations/run.py](../../src/tlon/operations/run.py) 的 `OperationTool` 投影 | run |
+| 15 | `run-read` | [operations/runs.py](../../src/tlon/operations/runs.py) 的 `OperationTool` 投影 | run |
+| 16 | `run-previous` | [operations/runs.py](../../src/tlon/operations/runs.py) 的 `OperationTool` 投影 | run |
 | 17 | `task-create` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
 | 18 | `task-list` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
 | 19 | `task-start` | [operations/tasks.py](../../src/tlon/operations/tasks.py) 的 `OperationTool` 投影 | tasks |
@@ -71,9 +71,10 @@ model-call 返回建议，tool-execute 逐叶执行并返回真实结果。每�
 | 46 | `prototype-list` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
 | 47 | `prototype-staging-list` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
 | 48 | `prototype-lineage` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 49 | `prototype-review` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
-| 50 | `model-call` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
-| 51 | `model-context` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
+| 49 | `prototype-read` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 50 | `prototype-review-submit` | [operations/evolution.py](../../src/tlon/operations/evolution.py) 的 `OperationTool` 投影 | evolution |
+| 51 | `model-call` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
+| 52 | `model-context` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
 <!-- END GENERATED: tool-registry -->
 
 上表是正式成员的满配。见习成员不注册 member-spawn、prototype-write 两个生殖/演化工具；所有成员均可使用绑定自身的四个调度工具。L0/L1/L2 均注册五个文件操作，自己的 workspace 无需 Docker，内置作者资料只读；L0/L1 不注册两个 Shell 工具。
@@ -1104,24 +1105,58 @@ Operation 单一契约；输入与输出字段保留 snake_case。（本区块�
 |---|---|---|---|
 | `lineage` | array[object] | 是 | — |
 
-### prototype-review
+### prototype-read
 
-评审一个 staging 区的原型提案（异质评审）。只点名提案——结论不由你当场给：工具内部用你自己的模型做一次专项评审调用，读取提案的 behavior 全文、随包教训与谱系链（含每代 diff）后产出 verdict（通过/不通过/弃权）与理由，追加记入提案目录的 REVIEW.md（含时间、你的 id 与你的模型）。评审是咨询性的：不自动晋级，人类审批时参考这些记录做决定。提案不存在或不在 staging 时失败。
+显式读取原型材料；先返回元数据、文件清单与材料 digest，再按 path 分页读取。后续读取可携带 digest 校验版本；不调用模型，不自动注入谱系或全部文件。
 
 输入：
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `name` | string | 是 | staging 区提案名称（trusted 库原型不可评审） |
+| `name` | string | 是 | — |
+| `path` | string | 否 | 清单中的相对文件路径；省略则只返回清单 |
+| `offset` | integer | 否 | 字符偏移，默认 0; minimum=0 |
+| `limit` | integer | 否 | 每页字符数，默认 12000；按 next_offset 继续读取; minimum=1; maximum=12000 |
+| `digest` | string | 否 | 首次读取返回的材料版本；传入后拒绝混读新版本 |
 
 输出：
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `name` | string | 是 | — |
+| `digest` | string | 是 | — |
+| `metadata` | object | 是 | — |
+| `files` | array[string] | 是 | — |
+| `path` | string / null | 是 | — |
+| `content` | string / null | 是 | — |
+| `offset` | integer | 是 | — |
+| `next_offset` | integer / null | 是 | — |
+
+### prototype-review-submit
+
+提交自己对 staging 原型的咨询性评审；必须携带实际读取材料的 digest、结论和理由。宿主校验版本并绑定成员、run 和调用身份；不调用模型，不自动批准原型。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | string | 是 | — |
+| `digest` | string | 是 | — |
 | `verdict` | string | 是 | enum=['通过', '不通过', '弃权'] |
+| `reason` | string | 是 | minLength=1 |
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | string | 是 | — |
+| `digest` | string | 是 | — |
+| `reason` | string | 是 | — |
 | `reviewer` | string | 是 | — |
-| `model` | string | 是 | — |
+| `run_id` | string | 是 | — |
+| `call_id` | string | 是 | — |
+| `created_at` | string | 是 | — |
+| `verdict` | string | 是 | enum=['通过', '不通过', '弃权'] |
 <!-- END GENERATED: evolution-operations -->
 
 ## model

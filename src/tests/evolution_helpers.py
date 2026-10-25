@@ -5,7 +5,6 @@ from typing import Any
 from tlon.evolution.get_lineage import PrototypeLineage
 from tlon.evolution.list_prototypes import PrototypeCatalog
 from tlon.evolution.list_staging import StagingCatalog
-from tlon.evolution.review_prototype import PrototypeReviewer
 from tlon.evolution.write_prototype import PrototypeWriter
 from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
@@ -36,9 +35,3 @@ def make_staging_tool(**kwargs: Any) -> OperationTool:
 
 def make_catalog_tool(**kwargs: Any) -> OperationTool:
     return project("prototype-list", PrototypeCatalog(**kwargs), "catalog")
-
-
-def make_review_tool(**kwargs: Any) -> OperationTool:
-    return project(
-        "prototype-review", PrototypeReviewer(**kwargs), "reviewer", kwargs["reviewer_id"]
-    )

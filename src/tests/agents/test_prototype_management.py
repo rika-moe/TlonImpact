@@ -19,8 +19,8 @@ from tlon.agents.prototypes.management import (
     update_prototype,
     write_trusted_prototype,
 )
+from tlon.agents.prototypes.reviews import read_prototype, submit_prototype_review
 from tlon.agents.prototypes.staging import (
-    append_staging_review,
     approve_prototype,
     write_staging_prototype,
 )
@@ -201,12 +201,30 @@ class TestStagingReviewFile:
             display_name="定址转发",
             modules=_FIXTURE_MODULES.get(VALID_BEHAVIOR),
         )
-        append_staging_review(created_1.name, "## t1 — r-1（m-1）：通过\n\n理由甲\n", tlon_paths=p)
-        append_staging_review(created_1.name, "## t2 — r-2（m-2）：弃权\n\n理由乙\n", tlon_paths=p)
+        submit_prototype_review(
+            created_1.name,
+            read_prototype(created_1.name, tlon_paths=p)["digest"],
+            "通过",
+            "理由甲",
+            reviewer_id="r-1",
+            run_id="run",
+            call_id="call-1",
+            tlon_paths=p,
+        )
+        submit_prototype_review(
+            created_1.name,
+            read_prototype(created_1.name, tlon_paths=p)["digest"],
+            "弃权",
+            "理由乙",
+            reviewer_id="r-2",
+            run_id="run",
+            call_id="call-2",
+            tlon_paths=p,
+        )
         text = (p.prototypes_staging_dir() / created_1.name / "REVIEW.md").read_text(
             encoding="utf-8"
         )
-        assert text.count("理由甲") == 1 and text.count("理由乙") == 1
+        assert "理由甲" in text and "理由乙" in text
         assert text.index("理由甲") < text.index("理由乙")
         _info, _behavior, _lessons, reviews = get_prototype_detail(
             created_1.name, staging=True, tlon_paths=p
@@ -215,8 +233,17 @@ class TestStagingReviewFile:
 
     def test_append_missing_staging_raises(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        with pytest.raises(PrototypeError, match="no staged prototype named 'nope'"):
-            append_staging_review("nope", "entry\n", tlon_paths=p)
+        with pytest.raises(PrototypeError, match="no prototype named 'nope'"):
+            submit_prototype_review(
+                "nope",
+                "digest",
+                "通过",
+                "理由",
+                reviewer_id="r",
+                run_id="run",
+                call_id="call",
+                tlon_paths=p,
+            )
 
 
 class TestUpdatePrototype:

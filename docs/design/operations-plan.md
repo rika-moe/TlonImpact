@@ -250,6 +250,8 @@ P3b 持久化复核：任务与 ClaimStore 均先原子保存私有快照，再�
 
 ## P3c 实施细化（2026-10-20）
 
+> 以下为当时实施记录。当前 `prototype-review` 已退役，显式读取与提交契约见 [prototypes.md](prototypes.md)；旧起草、能力提案和记忆操作也已由后续设计取代。
+
 P3b #187 已合入 main。剩余宿主能力继续沿用 Operation 的唯一 schema、宿主身份绑定与双入口：member-spawn/list/start/stop/start-all/self-state；prototype-list、prototype-staging-list、prototype-lineage、prototype-review、prototype-write、behavior-propose、capability-propose；model-call。实际名称以本阶段生成 reference 为准，原有 camelCase 工具和旧位置参数 DSL 入口删除，无兼容别名。原型/能力 artifact 格式仍留待 EPIC B，不在本阶段重建。
 
 finish-turn/sleep-until/exit-agent 是控制请求，使用共享契约但保留控制标记；模型混批和 DSL 深层封装均拒绝，只有合法独占请求在排空后由 runtime 提交四态转换。run-loop 只保留 Behavior 编排请求，不注册为模型工具或可封装宿主操作。生命周期权限、见习限制、偿付门槛、近亲检查、作者归属、人工批准由宿主服务实际执行边界保证，不依赖工具是否展示。模型调用复用成员 LLMClient 与系统提示词，费用归原成员；不允许输入覆盖模型身份或预算归属。
