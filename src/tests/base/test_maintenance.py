@@ -31,10 +31,15 @@ def test_transient_retries_back_off_and_reset(monkeypatch: pytest.MonkeyPatch) -
     assert retry.ready()
 
 
-@pytest.mark.parametrize("error", [
-    BudgetExceededError("spent"), ModelRequestRejectedError("rejected"),
-    UnknownModelOutcomeError("unknown"), MaintenanceCheckpointError(Path("checkpoint.json"), "bad JSON"),
-])
+@pytest.mark.parametrize(
+    "error",
+    [
+        BudgetExceededError("spent"),
+        ModelRequestRejectedError("rejected"),
+        UnknownModelOutcomeError("unknown"),
+        MaintenanceCheckpointError(Path("checkpoint.json"), "bad JSON"),
+    ],
+)
 def test_terminal_receipts_do_not_retry(error: Exception, monkeypatch: pytest.MonkeyPatch) -> None:
     clock = 0.0
     monkeypatch.setattr("tlon.base.maintenance.monotonic", lambda: clock)
@@ -43,3 +48,11 @@ def test_terminal_receipts_do_not_retry(error: Exception, monkeypatch: pytest.Mo
     clock += 10_000
     assert retry.blocked and not retry.ready()
     assert "blocked" in str(retry.error)
+
+
+def test_unknown_diagnostic_requires_manual_reconciliation_without_refund() -> None:
+    retry = MaintenanceRetry()
+    retry.failed(UnknownModelOutcomeError("root/request"))
+    assert retry.blocked and not retry.ready()
+    assert "manual reconciliation required" in (retry.error or "")
+    assert "keep reservation and do not resend" in (retry.error or "")

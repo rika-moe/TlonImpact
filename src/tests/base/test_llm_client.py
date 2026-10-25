@@ -226,3 +226,38 @@ class TestCacheBreakpoints:
 
         assert sent[0]["content"] == "sys"
         assert [m["content"] for m in sent[1:]] == ["m1", "m2", "m3"]
+
+
+async def test_structured_json_mode_reaches_litellm(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "fake")
+    provider = AsyncMock(return_value=_fake_litellm_response())
+    monkeypatch.setattr("litellm.acompletion", provider)
+    await _client("deepseek/deepseek-chat").chat(
+        "Return JSON", [], response_format={"type": "json_object"}
+    )
+    assert provider.await_args.kwargs["response_format"] == {"type": "json_object"}
+
+
+async def test_response_schema_is_part_of_durable_model_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tlon.agents.program_store import ProgramStore
+    from tlon.base.execution import ExecutionScope, bind_execution
+    from tlon.operations.schema import RecoveryMismatchError
+
+    monkeypatch.setenv("OPENAI_API_KEY", "fake")
+    provider = AsyncMock(return_value=_fake_litellm_response())
+    monkeypatch.setattr("litellm.acompletion", provider)
+    store = ProgramStore(None, build_id="schema")
+    client = _client("openai/test")
+    original = {"type": "json_object"}
+    for _ in range(2):
+        with bind_execution(ExecutionScope(store, "root", 10000, "output")):
+            await client.chat("Return JSON", [], response_format=original)
+    with (
+        bind_execution(ExecutionScope(store, "root", 10000, "output")),
+        pytest.raises(RecoveryMismatchError),
+    ):
+        await client.chat("Return JSON", [], response_format={"type": "text"})
+    assert provider.await_count == 1
+    assert store.budget_usage("root")["used"] == 1

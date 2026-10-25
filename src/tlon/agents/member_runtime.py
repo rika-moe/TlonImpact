@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import json
 import time
 import uuid
 from dataclasses import asdict, dataclass, is_dataclass
@@ -54,6 +55,7 @@ from tlon.operations.lifecycle import make_lifecycle_operations
 from tlon.operations.mail import make_mail_operations
 from tlon.operations.model import make_model_operations
 from tlon.operations.registry import make_registry_query_operations
+from tlon.operations.runs import make_run_operations
 from tlon.operations.schema import RecoveryMismatchError, UnknownOutcomeError, json_value
 from tlon.operations.state import make_state_operations
 from tlon.operations.time import time_operation_definitions
@@ -191,6 +193,7 @@ class MemberRuntime(Member):
         if self._registry is not None:
             operations.extend(make_registry_query_operations(RegistryQueries(self._registry)))
         operations.extend(make_state_operations(self._program_store))
+        operations.extend(make_run_operations(self._program_store, self._member_id))
         if services is not None:
             operations.extend(
                 make_model_operations(
@@ -266,6 +269,8 @@ class MemberRuntime(Member):
         self._deferred_boot: list[MemberHandler] = []
         self._maintenance_sources: frozenset[str] | None = None
         self._distillation_retry = MaintenanceRetry()
+        self._failure_notification_done: set[str] = set()
+        self._failure_notification_retry: dict[str, MaintenanceRetry] = {}
         self._journal = (
             RunJournal(
                 member_id,
@@ -392,12 +397,13 @@ class MemberRuntime(Member):
         self._state = MemberState.ACTIVE
 
     async def shutdown(self) -> None:
-        """Shutdown the member: cancel the background tasks (rescan,
-        in-flight reflection), stop the program worker, release
+        """Stop admission and the worker, drain background reflection, release
         subscriptions, shut down tools (cancelling background bash tasks),
         and close the Docker client (its connection pool must not leak
         across sleep→wake re-assembly)."""
         with bound_contextvars(agent_id=self._member_id):
+            if self._reflection is not None:
+                self._reflection.stop_accepting()
             if self._rescan_task is not None:
                 self._rescan_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -409,9 +415,8 @@ class MemberRuntime(Member):
                     await self._program_task
                 self._program_task = None
             if self._reflection is not None:
-                # The program worker is stopped, so no new reflection can
-                # trigger; cancel one already in flight — no
-                # free-floating task survives the member.
+                # Existing reflection may finish its durable response/checkpoint
+                # before the bounded drain expires. No task outlives the member.
                 await self._reflection.shutdown()
             self.unsubscribe_all()
             if self._services is not None:
@@ -791,6 +796,11 @@ class MemberRuntime(Member):
         """
         if self._paths is None or self._mailbox is None or self._post_office is None:
             return
+        if record.run_id in self._failure_notification_done:
+            return
+        retry = self._failure_notification_retry.setdefault(record.run_id, MaintenanceRetry())
+        if not retry.ready():
+            return
         try:
             snapshot = loads(record.input_edn)
             payload = snapshot.get("payload")
@@ -804,23 +814,74 @@ class MemberRuntime(Member):
             if mail["from_address"] not in {address_for_member(human) for human in humans}:
                 return
             root = f"{record.run_id}:failure-notification"
-            scope = ExecutionScope(self._program_store, root, 0, "output")
-            context = CallContext(
-                self._member_id, root, "failure-mail", call_path=("failure-mail",), execution=scope
+            arguments = {
+                "to": [mail["from_address"]],
+                "content": "处理未能完成，工作程序已停止。原始来信与执行记录已保留，请检查后重试。",
+                "subject": "运行时通知：工作程序停止",
+                "in_reply_to": mail["id"],
+                "request_id": root,
+            }
+            fact = await asyncio.to_thread(
+                self._program_store.read_invocation_fact, root, ("failure-mail",)
             )
-            with bind_execution(scope):
-                await self._operation_executor.call(
-                    "mail-send",
-                    {
-                        "to": [mail["from_address"]],
-                        "content": "处理未能完成，工作程序已停止。原始来信与执行记录已保留，请检查后重试。",
-                        "subject": "运行时通知：工作程序停止",
-                        "in_reply_to": mail["id"],
-                        "request_id": root,
-                    },
-                    context,
+            outcome = None
+            if fact is not None:
+                identity, outcome = fact
+                if (
+                    identity.root_id != root
+                    or identity.path != ("failure-mail",)
+                    or identity.name != "mail-send"
+                    or json.loads(identity.arguments_json) != arguments
+                ):
+                    raise RecoveryMismatchError(
+                        "Failure notification invocation does not match request"
+                    )
+                if outcome is None:
+                    raise UnknownOutcomeError(
+                        "Failure notification intent has no outcome", {"outcome": "unknown"}
+                    )
+            if outcome is not None and outcome.error_type == "UnknownOutcomeError":
+                raise UnknownOutcomeError(outcome.error_message, outcome.error_data)
+            if outcome is not None and outcome.success:
+                receipt = outcome.value
+                if (
+                    not isinstance(receipt, dict)
+                    or receipt.get("status") != "accepted"
+                    or receipt.get("request_id") != root
+                    or not isinstance(receipt.get("mail_id"), str)
+                ):
+                    raise RecoveryMismatchError("Failure notification receipt is invalid")
+                sent = await asyncio.to_thread(
+                    MailStore(self._paths.mail_database_file()).find,
+                    self._member_id,
+                    receipt["mail_id"],
                 )
+                if (
+                    sent is None
+                    or sent.from_address != address_for_member(self._member_id)
+                    or sent.to != arguments["to"]
+                    or sent.in_reply_to != mail["id"]
+                    or sent.content != arguments["content"]
+                    or sent.subject != arguments["subject"]
+                ):
+                    raise RecoveryMismatchError("Failure notification mail does not match receipt")
+            else:
+                scope = ExecutionScope(self._program_store, root, 0, "output")
+                context = CallContext(
+                    self._member_id,
+                    root,
+                    "failure-mail",
+                    call_path=("failure-mail",),
+                    execution=scope,
+                )
+                with bind_execution(scope):
+                    await self._operation_executor.call("mail-send", arguments, context)
+            self._failure_notification_done.add(record.run_id)
+            retry.succeeded()
         except Exception as error:
+            retry.failed(
+                error, blocked=isinstance(error, (RecoveryMismatchError, UnknownOutcomeError))
+            )
             self._logger.warning(
                 "member_entry_failure_notification_failed", run_id=record.run_id, error=str(error)
             )

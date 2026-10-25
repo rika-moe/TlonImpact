@@ -451,7 +451,7 @@ async def test_failure_courtesy_lookup_error_preserves_original_program_failure(
         assert "hello" in record.input_edn
         await member._restore_entry_failures()
         assert member._program_store.get_run("lookup-failed") == record
-        assert lookup.call_count >= 2
+        assert lookup.call_count == 1  # Transient lookup failures wait for retry backoff.
         member._operation_executor.call.assert_not_awaited()
     finally:
         await member.shutdown()

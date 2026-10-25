@@ -2,36 +2,19 @@
   (:require [tlon.messages :as messages] [tlon.context :as context])
   (:export respond))
 
-;; Delivery review is a normal function over data, before any delivery effect.
-(defn review-text [request text]
-  (let [review (context/complete
-          {:messages (conj (get request :messages)
-                       (messages/user (str "Review and revise this proposed delivery BEFORE it is sent. "
-                         (get request :review_instructions "Check claims against committed evidence; preserve uncertainty.")
-                         " Return only the complete revised delivery text. Proposal: " text)))
-           :tools [] :max_tokens (get request :max_tokens)})
-        revised (get review :content)]
-    (assert (and (= revised (str revised)) (not (= revised ""))) "review requires a textual delivery")
-    revised))
-
-(defn prepare-calls [request calls]
-  (map call
-    (if (and (not (= (get request :method) "short-turn")) (= (get call :name) "mail-send"))
-      (assoc call :arguments (assoc (get call :arguments) :content
-        (review-text request (get (get call :arguments) :content)))) call) calls))
-
 (defn work [request]
   (let [planned (if (= (get request :method) "plan-then-act")
-                  (let [plan (context/complete {:messages (conj (get request :messages)
+                  (let [history (conj (get request :messages)
                                      (messages/user "Plan at most five steps. A plan is not execution."))
-                              :tools [] :max_tokens (get request :max_tokens)})]
-                    (assoc request :messages (conj (conj (get request :messages) (messages/response plan))
+                        plan (context/invoke (context/resource-policy
+                                (assoc request :messages history :tools [])))]
+                    (assoc request :messages (conj (conj history (messages/response plan))
                         (messages/user "Execute the plan using tools. Distinguish evidence from assumptions.")))) request)]
     (while [history (get planned :messages) round 0 exchanges []]
       true
       (if (>= round (get request :max_rounds))
         (assert false "agent work round-limit reached before completion")
-        (let [prepared (context/fit (assoc planned :messages history))
+        (let [prepared (context/resource-policy (assoc planned :messages history))
               response (context/invoke prepared)
               calls (get response :tool_calls [])
               ends (filter call (= (get call :name) "finish-turn") calls)
@@ -39,32 +22,44 @@
                         (assert (and (= (count calls) 1) (= (get (reduce previous call call nil calls) :arguments) {}))
                                 "finish-turn must be an empty standalone call") true)]
           (assert (> (count calls) 0) "action loop requires tool calls")
-          (let [reviewed (prepare-calls (assoc request :messages history) calls)
-                response (assoc response :tool_calls reviewed)
-                results (tool-execute {:tools (get planned :tools) :tool_calls reviewed})]
+          (let [results (tool-execute {:tools (get planned :tools) :tool_calls calls})]
             (if (> (count ends) 0)
               (let [finished (assert (and (= (count results) 1)
                                          (get (reduce previous result result nil results) :success))
                                     "finish-turn execution failed")]
                 {:content nil :messages (messages/exchange (get prepared :messages) response results)
-                 :exchanges (conj exchanges {:calls reviewed :results results}) :reason "finish-turn"})
+                 :exchanges (conj exchanges {:calls calls :results results}) :reason "finish-turn"})
               (recur (messages/exchange (get prepared :messages) response results) (+ round 1)
-                     (conj exchanges {:calls reviewed :results results})))))))))
+                     (conj exchanges {:calls calls :results results})))))))))
 
 (defn respond [event options]
   (let [mail (get event :mail) self (get event :self)
         addressed (or (contains? (get mail :to []) (get self :address))
                       (contains? (get mail :cc []) (get self :address)))]
     (if (not addressed) {:result nil}
-      (let [data (member-context {:query (get mail :content) :history_limit (get options :history_limit 20)})
-            context (str "Knowledge:\n" (get data :knowledge) "\nLessons:\n" (get data :lessons)
-                         "\nSkills:\n" (get data :skills) "\nCurrent task:\n" (get data :current_task)
-                         "\nThread recap:\n" (get data :thread_recap))
-            prefix [(messages/user context)]
-            history (reduce result message (conj result message) prefix (get data :mail_history []))
-            task (messages/user (str "Incoming mail from " (get event :sender) ":\n" (get mail :content)
+      (let [source (run-previous {})
+            data (member-context {:query (get mail :content) :history_limit (get options :history_limit 20)})
+            previous (get source :previous)
+            prior (get previous :result)
+            continued (and (not (= previous nil))
+                           (= (get source :contract) (get previous :contract))
+                           (= (get source :contract) (get prior :contract))
+                           (not (= (get prior :messages) nil)))
+            stable (messages/user (str "Skills:\n" (get data :skills) "\nLessons:\n" (get data :lessons)))
+            prefix (if continued
+                     (get (get prior :continuation) :messages (get prior :messages))
+                     (reduce result message (conj result message) [stable] (get data :mail_history [])))
+            dynamic (messages/user (str "Source run: " (get source :run_id)
+                         "\nKnowledge:\n" (get data :knowledge) "\nCurrent task:\n" (get data :current_task)
+                         "\nThread recap:\n" (get data :thread_recap)
+                         (if continued (str "\nCurrent Skills:\n" (get data :skills)
+                                              "\nCurrent Lessons:\n" (get data :lessons)) "")))
+            task (messages/user (str "Incoming mail from " (get event :sender) " (source run " (get source :run_id) "):\n" (get mail :content)
                      "\nUse mail-send or mail-forward to send mail. End the turn with an empty standalone finish-turn tool call after all actions. Text alone never sends mail or ends the turn."))
-            request (assoc options :messages (conj history task) :tools (get data :tools []))
+            request (assoc options :messages (conj (conj prefix dynamic) task) :tools (get data :tools []))
             answer (work request)
+            boundary (context/handoff (assoc request :messages (get answer :messages)) (get source :run_id))
             read (mail-mark-read {:mail_ids [(get mail :id)]})]
-        {:result answer}))))
+        {:result (assoc answer :messages (get boundary :messages)
+                               :continuation (get boundary :continuation)
+                               :contract (get source :contract) :source_run_id (get source :run_id))}))))

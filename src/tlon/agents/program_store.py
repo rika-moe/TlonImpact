@@ -167,7 +167,9 @@ class ProgramStore:
         with self._lock:
             if self.database is None:
                 return [r for r in self._runs.values() if r.package_edn is not None and r.error]
-            with self._connection() as connection:
+            if not self.database.exists():
+                return []
+            with self._history_connection() as connection:
                 ids = connection.execute(
                     "SELECT r.run_id FROM runs r JOIN entry_programs e ON e.run_id=r.run_id "
                     "WHERE r.error IS NOT NULL ORDER BY r.rowid"
@@ -350,6 +352,37 @@ class ProgramStore:
                 "Invocation identity, path, arguments or definition changed"
             )
         return row
+
+    def read_invocation_fact(
+        self, root_id: str, path: tuple[str, ...]
+    ) -> tuple[Invocation, InvocationOutcome | None] | None:
+        """Read one leaf's identity and outcome, without authorizing execution.
+
+        No row means no recorded intent; a row with no outcome is unresolved.
+        Callers must validate the identity before treating a success as evidence.
+        """
+        with self._lock:
+            if self.database is None:
+                rows = (
+                    (self._identity(invocation), outcome)
+                    for invocation, outcome in self._invocations.values()
+                    if invocation.root_id == root_id and invocation.path == path
+                )
+                row = next(rows, None)
+            else:
+                if not self.database.exists():
+                    return None
+                with self._history_connection() as connection:
+                    row = connection.execute(
+                        "SELECT identity_json,outcome_json FROM invocations "
+                        "WHERE root_id=? AND path_json=?",
+                        (root_id, json.dumps(path)),
+                    ).fetchone()
+            if row is None:
+                return None
+            identity = json.loads(row[0])
+            identity["path"] = tuple(identity["path"])
+            return Invocation(**identity), self._decode(row[1])
 
     def lookup_invocation(self, invocation: Invocation) -> InvocationOutcome | None:
         with self._lock:
@@ -848,6 +881,88 @@ class ProgramStore:
             if exists
             else ("NULL,NULL", "")
         )
+
+    @staticmethod
+    def _entry_reading(run_id: str, package_edn: str, result_edn: str | None) -> dict[str, Any]:
+        package = json_value(loads(package_edn), edn_keys=True)
+        contract = hashlib.sha256(
+            json.dumps(
+                {slot: package.get("model_contexts", {}).get(slot) for slot in ("host", "config")},
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode()
+        ).hexdigest()
+        return {
+            "run_id": run_id,
+            "entry": package.get("entry"),
+            "contract": contract,
+            "result": json_value(loads(result_edn), edn_keys=True) if result_edn else None,
+        }
+
+    def previous_entry(self, run_id: str) -> dict[str, Any]:
+        """Read the latest successful same-entry result preceding this run's start.
+
+        Packages are decoded one at a time; no invocation history is loaded.
+        Module source identity is deliberately absent from the model contract.
+        """
+        with self._lock:
+            if self.database is None:
+                current = self._runs.get(run_id)
+                if current is None or current.package_edn is None:
+                    raise ValueError("current run is not a recorded program entry")
+                start = self._history_times.get(run_id, (None, None))[0]
+                owner = self._entry_reading(run_id, current.package_edn, None)
+                candidates = sorted(
+                    (
+                        (self._history_times.get(key, (None, None))[1], key)
+                        for key, run in self._runs.items()
+                        if key != run_id
+                        and run.completed
+                        and run.error is None
+                        and run.package_edn is not None
+                    ),
+                    key=lambda item: (item[0] or "", item[1]),
+                    reverse=True,
+                )
+                previous = None
+                for ended, key in candidates:
+                    if start is None or ended is None or ended > start:
+                        continue
+                    run = self._runs[key]
+                    assert run.package_edn is not None
+                    candidate = self._entry_reading(key, run.package_edn, run.result_edn)
+                    if candidate["entry"] == owner["entry"]:
+                        previous = candidate
+                        break
+            else:
+                with self._history_connection() as connection:
+                    row = connection.execute(
+                        "SELECT e.package_edn,m.started_at FROM entry_programs e "
+                        "JOIN entry_history_metadata m USING(run_id) WHERE e.run_id=?",
+                        (run_id,),
+                    ).fetchone()
+                    if row is None:
+                        raise ValueError("current run is not a recorded program entry")
+                    owner = self._entry_reading(run_id, row[0], None)
+                    previous = None
+                    rows = connection.execute(
+                        "SELECT e.run_id,e.package_edn,e.result_edn FROM entry_programs e "
+                        "JOIN runs r USING(run_id) JOIN entry_history_metadata m USING(run_id) "
+                        "WHERE r.completed=1 AND r.error IS NULL AND e.run_id<>? "
+                        "AND m.ended_at IS NOT NULL AND m.ended_at<=? "
+                        "ORDER BY m.ended_at DESC,e.run_id DESC",
+                        (run_id, row[1]),
+                    )
+                    for key, package, result in rows:
+                        candidate = self._entry_reading(key, package, result)
+                        if candidate["entry"] == owner["entry"]:
+                            previous = candidate
+                            break
+            if previous is not None:
+                del previous["entry"]
+            return {"run_id": run_id, "contract": owner["contract"], "previous": previous}
 
     def entry_metadata(self) -> list[dict[str, Any]]:
         """Read terminal clocks without reading source packages or invocations."""

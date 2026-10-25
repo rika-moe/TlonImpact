@@ -7,7 +7,9 @@ progress never depends on source start-time ordering.
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
+from unittest.mock import AsyncMock
 
 from tests.history_helpers import append_history
 from tlon.agents.program_store import ProgramStore
@@ -30,12 +32,23 @@ def _journal(tmp_path: Path) -> RunJournal:
 
 
 def _manager(tmp_path: Path, distillation_window: int = 3) -> MemoryManager:
-    # No llm_config: the fallback (mechanical) claim path is exercised.
-    return MemoryManager(
+    manager = MemoryManager(
         "agent1",
         MemoryConfig(distillation_window=distillation_window),
         data_dir=tmp_path / "agent1",
     )
+    manager.distiller = cast(
+        Any,
+        SimpleNamespace(
+            distill=AsyncMock(
+                side_effect=lambda runs: [
+                    {"text": f"模型提取事实：{run.trigger_content}", "importance": 0.7}
+                    for run in runs
+                ]
+            )
+        ),
+    )
+    return manager
 
 
 def _consumed_ids(tmp_path: Path) -> list[str] | None:
@@ -151,9 +164,8 @@ class TestBatchTrigger:
             assert claim["valid_from"]
         assert _consumed_ids(tmp_path) is not None
 
-    async def test_fallback_claims_quote_real_triggers(self, tmp_path: Path) -> None:
-        """The fallback (no LLM) claims carry the runs' real trigger
-        content, never the agent's reply."""
+    async def test_distilled_claims_retain_source_provenance(self, tmp_path: Path) -> None:
+        """Claims use the frozen source projections supplied to the model."""
         journal = _journal(tmp_path)
         manager = _manager(tmp_path, distillation_window=3)
         await _completed_run(journal, "agent1-s0", "把部署文档整理好", reply="好的")
@@ -315,7 +327,7 @@ class TestLLMPath:
         assert claim.importance == 0.7
         assert claim.source_run_ids == ["agent1-s0", "agent1-s1", "agent1-s2"]
 
-    async def test_llm_failure_falls_back_to_mechanical_claims(self, tmp_path: Path) -> None:
+    async def test_valid_empty_result_consumes_without_claims(self, tmp_path: Path) -> None:
         journal = _journal(tmp_path)
         manager = _manager(tmp_path, distillation_window=3)
 
@@ -329,12 +341,11 @@ class TestLLMPath:
 
         claim_count = await manager.maybe_distill_completed_runs(journal)
 
-        assert claim_count is not None and claim_count > 0
-        texts = [c["text"] for c in await manager.claims.get_all_claims()]
-        assert any("触发0" in t for t in texts)  # fallback quotes real triggers
+        assert claim_count == 0
+        assert await manager.claims.get_all_claims() == []
         assert _consumed_ids(tmp_path) is not None
 
-    async def test_llm_empty_result_falls_back_to_mechanical_claims(self, tmp_path: Path) -> None:
+    async def test_empty_result_remains_successful_after_restart(self, tmp_path: Path) -> None:
         journal = _journal(tmp_path)
         manager = _manager(tmp_path, distillation_window=3)
 
@@ -348,19 +359,13 @@ class TestLLMPath:
 
         claim_count = await manager.maybe_distill_completed_runs(journal)
 
-        assert claim_count is not None and claim_count > 0
-        texts = [c["text"] for c in await manager.claims.get_all_claims()]
-        assert any("触发0" in t for t in texts)  # fallback quotes real triggers
-        assert _consumed_ids(tmp_path) is not None
-
-    def test_fallback_claims_use_trigger_content(self) -> None:
-        runs = [
-            RunProjection(run_id="s1", trigger_content="首个请求内容"),
-            RunProjection(run_id="s2", trigger_content="最后请求内容", llm_responses=["已处理"]),
-        ]
-        claims = Distiller.fallback_claims(runs)
-        assert any("首个请求内容" in c["text"] for c in claims)
-        assert any("最后请求内容" in c["text"] and "已处理" in c["text"] for c in claims)
+        assert claim_count == 0
+        assert await manager.claims.get_all_claims() == []
+        assert _consumed_ids(tmp_path) == ["agent1-s0", "agent1-s1", "agent1-s2"]
+        restarted = _manager(tmp_path, distillation_window=3)
+        assert await restarted.maybe_distill_completed_runs(journal) is None
+        assert restarted.distiller is not None
+        cast(AsyncMock, restarted.distiller.distill).assert_not_awaited()
 
 
 # ── Digest ───────────────────────────────────────────────────────────────
@@ -461,6 +466,7 @@ async def test_empty_source_is_consumed_without_endless_retries(tmp_path: Path) 
     await append_history(journal, "empty", "run/end", reason="complete")
     manager = _manager(tmp_path, distillation_window=1)
     await manager.load()
+    manager.distiller = cast(Any, SimpleNamespace(distill=AsyncMock(return_value=[])))
     assert await manager._distill_runs([RunProjection("empty", "")]) == 0
     assert await manager.maybe_distill_completed_runs(journal) is None
 

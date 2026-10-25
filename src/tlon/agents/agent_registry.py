@@ -472,13 +472,18 @@ class AgentRegistry(Component):
             self.event_bus.unsubscribe(subscription)
         self._request_subscriptions.clear()
 
-        # Shutdown all active agents
-        for agent_id, agent in list(self._agents.items()):
+        # Drain member maintenance concurrently: one grace window for the society,
+        # rather than multiplying it by the number of active members.
+        async def stop_agent(agent_id: str, agent: MemberRuntime) -> None:
             try:
                 await agent.shutdown()
                 logger.info("agent_shutdown", agent_id=agent_id)
             except Exception as e:
                 logger.error("agent_shutdown_failed", agent_id=agent_id, error=str(e))
+
+        await asyncio.gather(
+            *(stop_agent(agent_id, agent) for agent_id, agent in self._agents.items())
+        )
 
         self._agents.clear()
         self._registered_ids.clear()

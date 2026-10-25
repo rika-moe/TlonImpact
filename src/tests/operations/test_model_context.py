@@ -52,6 +52,9 @@ async def test_context_inspection_counts_frozen_system_and_tools_and_replays(
         "output_tokens": expected_output,
         "context_window": 100,
         "fits": expected_output > 0,
+        "token_budget_remaining": 100,
+        "token_budget_limit": 100,
+        "token_budget_measure": "output",
     }
     assert counter.call_count == 2
     assert counter.call_args_list[0].kwargs == {
@@ -112,6 +115,9 @@ async def test_context_inspection_clips_output_to_shared_run_resources(
         "context_window": 100,
         "output_tokens": expected,
         "fits": True,
+        "token_budget_remaining": budget,
+        "token_budget_limit": budget,
+        "token_budget_measure": measure,
     }
     assert store.budget_usage("r")["used"] == 0
 

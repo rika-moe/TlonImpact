@@ -449,6 +449,16 @@ def builtin_sub(env: dict[str, Any], a: Any, b: Any | None = None) -> int | floa
     return -_num(a) if b is None else _num(a) - _num(b)
 
 
+def builtin_quot(env: dict[str, Any], a: Any, b: Any) -> int:
+    """Integer quotient truncated toward zero, without float precision loss."""
+    if type(a) is not int or type(b) is not int:
+        raise EvalError("quot expects integers")
+    if b == 0:
+        raise EvalError("division by zero")
+    quotient = abs(a) // abs(b)
+    return -quotient if (a < 0) != (b < 0) else quotient
+
+
 def builtin_inc(env: dict[str, Any], a: Any) -> int | float:
     return _num(a) + 1
 
@@ -480,6 +490,7 @@ ARITHMETIC_BUILTINS: dict[str, Builtin] = {
     "-": Builtin(builtin_sub, pure=True),
     "*": Builtin(builtin_mul, pure=True),
     "/": Builtin(builtin_div, pure=True),
+    "quot": Builtin(builtin_quot, pure=True),
     "inc": Builtin(builtin_inc, pure=True),
     "dec": Builtin(builtin_dec, pure=True),
     "<": Builtin(builtin_lt, pure=True),

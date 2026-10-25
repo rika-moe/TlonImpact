@@ -292,6 +292,7 @@ class LLMClient:
         run_id: str | None = None,
         cache_prefix_len: int | None = None,
         max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMResponse:
         scope = current_execution()
         if scope is None:
@@ -314,6 +315,7 @@ class LLMClient:
                 run_id,
                 cache_prefix_len,
                 output,
+                **({"response_format": response_format} if response_format is not None else {}),
             )
         # The execution authority owns attribution, including internal model calls.
         run_id = scope.root_id
@@ -366,6 +368,7 @@ class LLMClient:
             "cache_prefix_len": cache_prefix_len,
             "max_tokens": max_tokens,
             "max_output_tokens": client.config.max_output_tokens,
+            "response_format": response_format,
         }
 
         async def execute(allowance: int) -> dict[str, Any]:
@@ -378,6 +381,7 @@ class LLMClient:
                 run_id,
                 cache_prefix_len,
                 allowance,
+                **({"response_format": response_format} if response_format is not None else {}),
             )
             return response.to_dict()
 
@@ -401,6 +405,7 @@ class LLMClient:
         run_id: str | None = None,
         cache_prefix_len: int | None = None,
         max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMResponse:
         """Send a chat completion request with retry logic.
 
@@ -451,7 +456,12 @@ class LLMClient:
             start_cpu = time.process_time()
             try:
                 response = await self._chat_with_retries(
-                    all_messages, tools, timeout, cache_prefix_len, max_tokens
+                    all_messages,
+                    tools,
+                    timeout,
+                    cache_prefix_len,
+                    max_tokens,
+                    **({"response_format": response_format} if response_format is not None else {}),
                 )
             except Exception as e:
                 # _chat_with_retries already logged the failure (llm_error);
@@ -540,6 +550,7 @@ class LLMClient:
         timeout: float | None,
         cache_prefix_len: int | None,
         max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMResponse:
         """Send the chat completion request with exponential backoff retry.
 
@@ -600,6 +611,8 @@ class LLMClient:
             "max_tokens": max_tokens,
         }
 
+        if response_format is not None:
+            params["response_format"] = response_format
         if tools:
             params["tools"] = tools
             params["tool_choice"] = "auto"

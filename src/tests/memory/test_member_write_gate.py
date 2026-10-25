@@ -31,6 +31,10 @@ async def test_maintenance_waits_for_operation_writer_but_read_can_pass(
     tmp_path: Path, mutation: str
 ) -> None:
     engine, manager = _engine(tmp_path)
+    manager.distiller = MagicMock()
+    manager.distiller.distill = AsyncMock(
+        return_value=[{"text": "distilled fact", "importance": 0.7}]
+    )
     await manager.load()
     seed = await manager.remember_fact("seed fact")
     gate = manager.write_gate
@@ -105,6 +109,10 @@ async def test_operation_and_manager_reenter_same_task_and_conflict_merge_stays_
 ) -> None:
     gate = MemberWriteGate()
     manager = MemoryManager("agent1", MemoryConfig(), tmp_path, write_gate=gate)
+    manager.distiller = MagicMock()
+    manager.distiller.distill = AsyncMock(
+        return_value=[{"text": "distilled fact", "importance": 0.7}]
+    )
     await manager.load()
     store = ProgramStore(None, build_id="reentry")
     executor = OperationExecutor(

@@ -49,8 +49,15 @@ from tlon.base.paths import TlonPaths
 from tlon.operations.schema import RecoveryMismatchError
 
 from .claim_store import ClaimStore
-from .distiller import Distiller
-from .models import Claim, ContextBlock, MemoryConfig, RunProjection, build_run_projection
+from .distiller import DistillationResponseError, Distiller
+from .models import (
+    Claim,
+    ContextBlock,
+    MemoryConfig,
+    RunProjection,
+    build_run_projection,
+    is_empty_boot_run,
+)
 from .vector_index import VectorIndex
 
 logger = get_logger(__name__)
@@ -524,6 +531,16 @@ class MemoryManager:
                 projections = [RunProjection(**item) for item in self._pending_batch["projections"]]
                 return await self._distill_runs(projections)
             pending = await self._collect_pending(logs)
+            skipped = {source for source, events in pending if is_empty_boot_run(events, source)}
+            if skipped:
+                before = self._consumed.copy()
+                self._consumed.update(skipped)
+                try:
+                    await self._save_distillation()
+                except BaseException:
+                    self._consumed = before
+                    raise
+                pending = [(source, events) for source, events in pending if source not in skipped]
             if len(pending) < self.config.distillation_window:
                 return None
             return await self._distill_runs(
@@ -564,11 +581,17 @@ class MemoryManager:
                 scope.check()
             if "claims" not in batch:
                 with bind_execution(scope.child("distill") if scope else None):
-                    claim_dicts = (
-                        await self.distiller.distill(projections) if self.distiller else []
-                    )
-                if not claim_dicts:
-                    claim_dicts = Distiller.fallback_claims(projections)
+                    if self.distiller is None:
+                        raise MaintenanceCheckpointError(
+                            self.distillation_file, "distillation model is not configured"
+                        )
+                    try:
+                        claim_dicts = await self.distiller.distill(projections)
+                    except DistillationResponseError as error:
+                        self.maintenance_error = str(error)
+                        raise MaintenanceCheckpointError(
+                            self.distillation_file, str(error)
+                        ) from error
                 now = datetime.now(UTC).isoformat()
                 batch["claims"] = [
                     Claim(
@@ -627,9 +650,8 @@ class MemoryManager:
         (``status``/``superseded_by``/``valid_to`` — never deleted); the
         new claims themselves are appended by the caller.
 
-        Ordinary failures — no distiller (mechanical fallback claims
-        imply the LLM is down anyway), no index/embedder, embedding or
-        search failure, judgment failure — degrades to pure append:
+        Missing conflict services, index/embedder, embedding/search failure,
+        or judgment failure degrades to pure append of already valid claims:
         conflict judgment is an enhancement. Execution control and recovery
         identity errors propagate so a rejected or unknown model call cannot
         silently become a successful memory write.
@@ -1093,10 +1115,11 @@ class MemoryManager:
         claims = await self.claims.get_recent_claims(50)
         completed = await logs.list_completed()
         pending_count = len(set(completed) - self._consumed)
-        recent_interactions = [
-            asdict(build_run_projection(await logs.read_events(sid), sid))
-            for sid in completed[-10:]
-        ]
+        recent_interactions = []
+        for sid in completed[-10:]:
+            events = await logs.read_events(sid)
+            if not is_empty_boot_run(events, sid):
+                recent_interactions.append(asdict(build_run_projection(events, sid)))
 
         for item in recent_interactions:
             item["trigger_content"] = item["trigger_content"][:300]

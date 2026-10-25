@@ -1,6 +1,6 @@
 (ns tlon.context
   (:require [tlon.messages :as messages])
-  (:export assemble groups compact fit complete request invoke))
+  (:export assemble groups fit complete request invoke resource-policy handoff))
 
 (defn request [options]
   (let [base {:messages (get options :messages) :tools (get options :tools [])
@@ -14,13 +14,6 @@
          {:index (+ (get state :index) 1)
           :value (if (= (get state :index) index) item (get state :value))}
          {:index 0 :value nil} items) :value))
-(defn slice [items start end]
-  (get (reduce state item
-         {:index (+ (get state :index) 1)
-          :items (if (and (>= (get state :index) start) (< (get state :index) end))
-                   (conj (get state :items) item) (get state :items))}
-         {:index 0 :items []} items) :items))
-
 ;; Consume each message once, and emit only complete assistant/tool groups.
 (defn groups [history]
   (let [state (reduce state message
@@ -49,54 +42,61 @@
     (assert (= (count (get state :pending)) 0) "incomplete tool exchange")
     (get state :groups)))
 
-(defn flatten [items] (reduce result group (append-all result group) [] items))
 (defn assemble [options]
   (append-all (get options :prefix [])
     (append-all (get options :history []) [(messages/user (get options :task))])))
 
-(defn compact [options]
-  (let [history (get options :messages)
-        all (groups history)
-        prefix-count (get options :prefix_count (get options :cache_prefix_len 0))
-        recent (get options :recent_groups 1)
-        valid (assert (and (integer? prefix-count) (>= prefix-count 0)
-                           (integer? recent) (>= recent 1)) "invalid compaction bounds")]
-    (let [prefix-index (reduce state group
-                         (if (< (get state :size) prefix-count)
-                           {:index (+ (get state :index) 1) :size (+ (get state :size) (count group))}
-                           state)
-                         {:index 0 :size 0} all)
-          start (get prefix-index :index)
-          tail-start (- (count all) recent)]
-      (assert (and (integer? prefix-count) (>= prefix-count 0)
-                   (integer? recent) (>= recent 1)) "invalid compaction bounds")
-      (assert (>= prefix-count (get options :cache_prefix_len 0)) "compaction must retain cached prefix")
-      (assert (= (get prefix-index :size) prefix-count) "prefix splits a tool exchange")
-      (if (<= tail-start start) options
-        (let [text (reduce previous group
-                     (let [request (request {:messages [(messages/user
-                              (str "Summarize this history as evidence with source attribution. Assistant drafts and tool-call suggestions are UNEXECUTED proposals. Only tool results record committed execution; preserve failures and uncertainty. Previous historical summary (not a receipt): " previous
-                                   " Next complete exchange: " (json-encode group)))]
-                                    :tools [] :max_tokens (get options :summary_tokens (get options :max_tokens))})
-                           pressure (model-context request)]
-                       (assert (get pressure :fits) "single exchange cannot fit compaction window")
-                       (let [result (model-call request) text (get result :content)]
-                         (assert (not (= (get result :finish_reason) "length")) "model output truncated")
-                         (assert (and (= text (str text)) (not (= text ""))) "compaction requires textual summary")
-                         text)) "" (slice all start tail-start))]
-          (assert (and (= text (str text)) (not (= text ""))) "compaction requires textual summary")
-          (assoc options :messages
-            (append-all (flatten (slice all 0 start))
-              (append-all [(messages/user (str "Historical summary (not a new execution receipt): " text))]
-                          (flatten (slice all tail-start (count all)))))))))))
+(defn smaller [left right] (if (< left right) left right))
+(defn larger [left right] (if (> left right) left right))
 
+;; A run never rewrites its input prefix to make space.
 (defn fit [options]
   (let [pressure (model-context (request options))]
-    (if (get pressure :fits) options
-      (let [smaller (compact options)
-            checked (model-context (request smaller))]
-        (assert (get checked :fits) "context remains over window after compaction")
-        smaller))))
+    (assert (get pressure :fits) "context window exhausted; run history cannot be rewritten")
+    options))
+
+;; Leave room for a boundary handoff, including re-reading the prefix under total billing.
+(defn resource-policy [options]
+  (let [pressure (model-context (request (assoc options :max_tokens nil)))
+        window (get pressure :context_window)
+        input (get pressure :input_tokens)
+        window-reserve (larger 1 (quot window 10))
+        budget-reserve (larger 1 (quot (get pressure :token_budget_limit) 10))
+        remaining (get pressure :token_budget_remaining)
+        budget-output (if (= (get pressure :token_budget_measure) "total")
+                        (quot (- (- (- remaining (* 2 input)) window-reserve) budget-reserve) 2)
+                        (- remaining budget-reserve))
+        window-output (- (- window input) window-reserve)
+        available (smaller (get pressure :output_tokens) (smaller window-output budget-output))
+        cap (if (= (get options :max_tokens) nil) available
+              (smaller available (get options :max_tokens))) ]
+    (assert (and (get pressure :fits) (> cap 0)) "insufficient resources while preserving boundary handoff reserve")
+    (assoc options :max_tokens cap)))
+
+;; Only callers that have completed their task may invoke this boundary function.
+;; The original history is retained, and the summary is a separate next-run starting point.
+(defn handoff [options source]
+  (let [pressure (model-context (request (assoc options :max_tokens nil)))
+        window-reserve (larger 1 (quot (get pressure :context_window) 10))
+        budget-reserve (larger 1 (quot (get pressure :token_budget_limit) 10))]
+    (if (< (get pressure :input_tokens) (- (get pressure :context_window) (* 2 window-reserve)))
+      {:messages (get options :messages) :continuation nil}
+      (let [history (conj (get options :messages)
+                      (messages/user (str "Prepare the handoff for the NEXT run. Source run: " source
+                        ". Summarize the task, verified tool results, unresolved matters and source attribution. "
+                        "Tool suggestions and drafts are not execution receipts. This run's task has already finished. Return only the handoff text.")))
+            prepared {:messages history :tools []}
+            room (model-context (request prepared))
+            cap (smaller (get room :output_tokens) (smaller window-reserve budget-reserve))
+            checked (assert (and (get room :fits) (> cap 0)) "insufficient boundary handoff resources")
+            response (invoke (assoc prepared :max_tokens cap))
+            text (get response :content)]
+        (assert (and (= text (str text)) (not (= text ""))
+                     (= (count (get response :tool_calls [])) 0)) "handoff requires textual summary without tool calls")
+        {:messages (conj history (messages/response response))
+         :continuation {:source_run_id source
+                        :messages [(messages/user (str "Handoff from source run " source
+                              " (historical evidence, not a new execution receipt):\n" text))]}}))))
 
 (defn invoke [prepared]
   (let [result (model-call (request prepared))]

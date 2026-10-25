@@ -1,4 +1,4 @@
-"""Source-defined compaction reuses the root's committed model receipt and budget."""
+"""Source-defined boundary handoff reuses the root's committed model receipt and budget."""
 
 import asyncio
 from pathlib import Path
@@ -21,7 +21,7 @@ from tlosure.edn import Keyword
 from tlosure.modules import ModulePackage
 
 
-async def test_compaction_recovers_inner_commit_without_new_budget(
+async def test_handoff_recovers_inner_commit_without_rewriting_history_or_new_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = ProgramStore(tmp_path / "run.sqlite", build_id="test")
@@ -45,18 +45,18 @@ async def test_compaction_recovers_inner_commit_without_new_budget(
     builtins = {**program_builtins(), **adapter.builtins()}
     # Token estimation is deterministic; the real model-context operation still
     # records and replays its result through the same invocation authority.
-    monkeypatch.setattr("tlon.base.model_limits.litellm.token_counter", lambda **kwargs: 2)
+    monkeypatch.setattr("tlon.base.model_limits.litellm.token_counter", lambda **kwargs: 80)
     store.freeze_model_context(
         "root",
         "config",
-        {"model_name": "openai/test", "context_window": 4096, "max_output_tokens": 16},
+        {"model_name": "openai/test", "context_window": 100, "max_output_tokens": 16},
     )
     sources = {
         "work.tlon": """(ns work (:require [tlon.context :as context]) (:export handle))
       (defn handle [event]
-        (context/compact {:messages [{:role "user" :content "old fact"}
+        (context/handoff {:messages [{:role "user" :content "old fact"}
                                     {:role "user" :content "recent"}]
-                          :max_tokens 16 :recent_groups 1}))"""
+                          :max_tokens 16} "root"))"""
     }
     package = ModulePackage.from_sources(program_module_sources(sources), builtins)
     commit = executor._commit
@@ -80,7 +80,12 @@ async def test_compaction_recovers_inner_commit_without_new_budget(
         store, "root", builtins, operations=adapter, member_id="a", token_budget=64
     )
     result = await resumed.run_entry(package.entry("work/handle"), {}, fuel=10000)
-    assert "preserved fact" in result[Keyword("messages")][0][Keyword("content")]
+    messages = result[Keyword("messages")]
+    assert [message[Keyword("content")] for message in messages[:2]] == ["old fact", "recent"]
+    assert messages[-1][Keyword("content")] == "preserved fact"
+    continuation = result[Keyword("continuation")]
+    assert continuation[Keyword("source_run_id")] == "root"
+    assert "preserved fact" in continuation[Keyword("messages")][0][Keyword("content")]
     assert store.budget_usage("root") == used
     assert used["used"] == 2
     provider.assert_awaited_once()

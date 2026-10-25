@@ -17,7 +17,6 @@ LABELS = (
     "标准文件迭代",
     "定址转发",
     "标准无执行迭代",
-    "证据核验",
     "条件路由",
 )
 
@@ -46,7 +45,7 @@ def test_complete_builtin_module_package(tmp_path: Path, label: str) -> None:
     }
     assert spec.execution_level == (
         "L2"
-        if label in {"计划后执行", "标准工具迭代", "证据核验"}
+        if label in {"计划后执行", "标准工具迭代"}
         else "L1"
         if label == "标准文件迭代"
         else "L0"
@@ -61,7 +60,7 @@ def test_complete_builtin_module_package(tmp_path: Path, label: str) -> None:
 
 def test_seed_preserves_existing_package_sources(tmp_path: Path) -> None:
     paths = TlonPaths(tmp_path)
-    assert seed_prototypes(paths) == 24
+    assert seed_prototypes(paths) == 21
     source = paths.prototypes_dir() / builtin_id("标准工具迭代") / "modules/work/main.tlon"
     source.write_text("user-owned source")
     assert seed_prototypes(paths) == 0
@@ -135,3 +134,22 @@ def test_seed_does_not_mix_new_modules_into_existing_package(tmp_path: Path) -> 
     assert (existing / "behavior.tlon").read_text() == "user-owned behavior"
     assert not (existing / "modules").exists()
     assert not (existing / "prototype.tlon").exists()
+
+
+def test_builtin_agents_have_no_automatic_delivery_review() -> None:
+    from importlib.resources import files
+
+    root = files("tlon.prototypes")
+    labels: list[str] = []
+    for entry in root.iterdir():
+        metadata = entry.joinpath("prototype.tlon")
+        if not entry.is_dir() or not metadata.is_file():
+            continue
+        text = metadata.read_text()
+        labels.append(text)
+        source = entry.joinpath("modules/work/main.tlon").read_text()
+        assert "review_instructions" not in source
+        assert '"reviewed"' not in source
+        assert "自评" not in text
+    assert len(labels) == 7
+    assert not any("证据核验" in label for label in labels)

@@ -96,7 +96,7 @@ v2 受理时原子冻结宿主系统提示词、模型配置及工具定义；�
                      :tools ["time-now" "finish-turn"] :max_rounds 4}))
 ```
 
-对话函数返回局部结果，调用方可继续核验、修订或发送邮件。它不创建隐式 session，也不重置根预算、取消信号或语言 fuel。`max_rounds` 是程序的轮数上限；行动循环必须成功执行独立且空参数的 `finish-turn` 才返回，而不是终止整个事件入口。纯文本、无工具调用、截断或达到轮数上限明确失败，不自动发信。发信必须使用 `mail-send` / `mail-forward`，成功投信不结束循环；规划、自评和压缩可以经 `context/complete` 返回文本。
+对话函数返回局部结果，调用方可继续核验、修订或发送邮件。它不创建隐式 session，也不重置根预算、取消信号或语言 fuel。`max_rounds` 是程序的轮数上限；行动循环必须成功执行独立且空参数的 `finish-turn` 才返回，而不是终止整个事件入口。纯文本、无工具调用、截断或达到轮数上限明确失败，不自动发信。发信必须使用 `mail-send` / `mail-forward`，成功投信不结束循环；规划和显式边界交接可以返回文本，标准循环没有自动自评。
 
 需要自定义控制顺序时，可直接组合 model-call 与编排端口：
 
@@ -121,13 +121,13 @@ program-check 是只读 Operation，复用发布时的完整包校验。返回 v
 
 人工审批仍是必要步骤：在 WebUI 或原型详情读取全部源码、谱系每个文件的新增/删除/修改与依赖变更，再批准并创建成员。同伴 prototype-review 也读取完整作者包，评审不代替人类批准。审批 digest 绑定完整作者内容，改源码创建新包；已有实例与旧运行使用各自复制/冻结的源码。宿主标准库随运行冻结，不夹进作者审批内容。
 
-## 标准方法、上下文与压缩（P4a）
+## 标准方法、连续上下文与交接（P4a）
 
-`tlon.workflows` 导出 short-turn、plan-then-act、evidence-check、reviewed、route、forward。前四项接收普通 conversation options；route 的 method 选择短回合、计划执行、独立证据核验或评审修订，方法本身仍是可嵌套调用的函数。forward 接收目标地址和原 mail_id，经 mail-forward 转发原信。完整两模块示例见 [standard-work](../../src/tlon/resources/examples/standard-work/README.md)。
+`tlon.workflows` 导出 short-turn、plan-then-act、evidence-check、route、forward。前三项接收普通 conversation options；route 的 method 选择短回合、计划执行或显式证据核验，方法本身仍是可嵌套调用的函数。forward 接收目标地址和原 mail_id，经 mail-forward 转发原信。完整两模块示例见 [standard-work](../../src/tlon/resources/examples/standard-work/README.md)。
 
-`tlon.context/assemble` 组合 prefix/history/task；`fit` 根据宿主 model-context 的完整请求估算决定是否压缩，`complete` 组合 fit 与 model-call。估算包括冻结系统提示与选定工具，返回 input_tokens、context_window、output_tokens、fits，不调用 provider、不消费模型额度；估算不能保证 provider 的最终 token 计数。
+`tlon.context/assemble` 组合 prefix/history/task；`fit` 根据宿主 model-context 的完整请求估算核查窗口，超限明确拒绝，`complete` 组合 fit 与 model-call。估算包括冻结系统提示与选定工具，返回 input_tokens、context_window、output_tokens、fits 及 token_budget_limit/token_budget_remaining/token_budget_measure，不调用 provider、不消费模型额度；估算不能保证 provider 的最终 token 计数。
 
-`compact` 保留 cache_prefix_len（也作为默认 prefix_count）和最近 recent_groups 个完整交换，逐组累积摘要。每次摘要请求先核查窗口；单个交换无法容纳时明确拒绝，不拆坏工具协议。摘要区分未执行草稿/建议、真实工具结果、失败与不确定性，不冒充新执行回执。所有摘要、计划、核验、修订共享原根预算与持久模型回执；前缀不得切断 assistant/tool 交换或缩短缓存区。
+`fit` 只核查资源并为交接留出空间，不在 run 内压缩或替换消息。`handoff` 在成功完成任务后沿原消息流追加摘要请求和响应，返回完整原文与供下一 run 使用的带来源摘要；摘要不是新的执行回执。标准策略预留窗口与 run 总预算各十分之一，模型能力仍是上界，total 计量还计入重读完整输入的成本；估算不能保证任意工具结果均可容纳，超限明确失败并保留原文。
 
 v2 运行的责任邮件、原错误与模型草稿保留。终止或不安全 unknown 隔离时，宿主向已核实的原人类发件人投递稳定、幂等失败通知；通知使用独立零模型额度维护根，不赠送原程序额度，不向其他 Agent 发送自动失败信。通知故障不覆盖原错误，可恢复的安全 unknown 仍按原调用键对账，取消仍传播。新交互历史已接入统一只读视图；stage 引擎与 v1 执行路径已删除。
 
@@ -138,3 +138,5 @@ v2 运行的责任邮件、原错误与模型草稿保留。终止或不安全 u
 内置 `tlon.agent/respond` 的 `max_rounds` 是工具循环上界，同时受入口共享 fuel 和模型额度约束。达到上限会明确失败，保留未读原邮件与执行回执，按宿主失败通知规则处理；不把用尽轮数当作成功完成。
 
 当前历史边界以 [ADR 0049](../decisions/0049-retire-agent-session.md) 为准：agent session 已退役，run-read/run_id/source_run_ids 为唯一程序历史协议；不提供旧历史兼容或迁移，client session 保留。
+
+`run-previous {}` 返回当前 run_id、冻结模型输入 contract 和 previous（同入口、在本 run 开始前最近成功完成 run 的 run_id/contract/result；不存在为 nil）。标准 agent 由 Lisp 比较契约并延续 messages 或显式 continuation；模型/系统/工具契约变更建立新起点。动态检索、当前任务及资料更新追加到末尾，原始响应和真实工具回执不被改写。相同入口的失败或未知运行不继承为成功，读取回执仍由原 ProgramStore 提供恢复权威。

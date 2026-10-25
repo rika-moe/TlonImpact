@@ -68,7 +68,7 @@ check "tlon/resources/docs/reference/operations-reference.md" "wheel 含实际 O
 check "tlon/resources/stdlib/messages.tlon" "wheel 含纯消息标准模块"
 check "tlon/resources/stdlib/authoring.tlon" "wheel 含普通起草标准模块"
 check "tlon/resources/stdlib/conversation.tlon" "wheel 含普通对话标准模块"
-check "tlon/resources/stdlib/context.tlon" "wheel 含普通上下文与压缩模块"
+check "tlon/resources/stdlib/context.tlon" "wheel 含连续上下文与边界交接模块"
 check "tlon/resources/stdlib/agent.tlon" "wheel 含普通成员通信程序"
 check "tlon/resources/stdlib/workflows.tlon" "wheel 含标准工作方式模块"
 check "tlon/resources/examples/standard-work/modules/work/methods.tlon" "wheel 含可组合标准工作示例"
@@ -83,7 +83,7 @@ from zipfile import ZipFile
 with ZipFile(sys.argv[1]) as archive:
     prototype_roots = {name.rsplit("/", 1)[0] for name in archive.namelist()
                        if name.startswith("tlon/prototypes/p-") and name.endswith("/behavior.tlon")}
-    assert len(prototype_roots) == 8, "all eight builtin prototypes must be packaged"
+    assert len(prototype_roots) == 7, "all seven builtin prototypes must be packaged"
     for prototype in prototype_roots:
         assert prototype + "/modules/work/main.tlon" in archive.namelist(), prototype
         assert b":version 2" in archive.read(prototype + "/behavior.tlon"), prototype

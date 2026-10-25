@@ -1,1 +1,1 @@
-{:name :p-dfb3a5ccdcf84d749c9d075182f12888 :display-name "标准工具迭代" :description "L2 执行能力；最多 10 次迭代，完整上下文与交卷前自评审，后台维护按成员配置反思。" :trusted true :program-digest "e044fe843abc5fd6938a1c9a4a28749d6e034857479774084dc150eaf603e9db"}
+{:name :p-dfb3a5ccdcf84d749c9d075182f12888 :display-name "标准工具迭代" :description "L2 执行能力；最多 10 次迭代，连续追加完整消息与工具回执，后台维护按成员配置反思。" :trusted true :program-digest "035e1ed75d279e546ff894f8796e7dc5669a9f238b9caf3e32cffbd7af27f0d1"}
