@@ -90,7 +90,11 @@ async def test_real_evolution_model_failure_is_identical_in_dsl_tool_and_replay(
     monkeypatch.setattr("litellm.acompletion", provider)
     paths = TlonPaths(home=tmp_path)
     store = ProgramStore(tmp_path / "calls.sqlite", build_id="test")
-    client = LLMClient(LLMConfig(model_name="openai/gpt-4o", max_tokens=10, max_retries=3))
+    client = LLMClient(
+        LLMConfig(
+            model_name="openai/gpt-4o", max_output_tokens=10, context_window=10000, max_retries=3
+        )
+    )
     scope = ExecutionScope(store, "root", 0 if fault == "budget" else 10, "output")
     bound, arguments = executor(paths, store, client)
     adapter = DSLAdapter(bound)

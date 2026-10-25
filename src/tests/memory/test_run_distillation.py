@@ -505,7 +505,9 @@ async def test_distillation_receipt_replays_after_model_output_checkpoint_failur
     journal = _journal(tmp_path)
     await _completed_run(journal, "source", "a useful trigger")
     manager = _manager(tmp_path, distillation_window=1)
-    manager.distiller = Distiller(LLMConfig(model_name="openai/test", max_tokens=100))
+    manager.distiller = Distiller(
+        LLMConfig(model_name="openai/test", max_output_tokens=100, context_window=10000)
+    )
     original_save = manager._save_distillation
 
     async def fail_claim_checkpoint() -> None:
@@ -521,7 +523,9 @@ async def test_distillation_receipt_replays_after_model_output_checkpoint_failur
     ):
         await manager.maybe_distill_completed_runs(journal)
     restarted = _manager(tmp_path, distillation_window=1)
-    restarted.distiller = Distiller(LLMConfig(model_name="openai/test", max_tokens=100))
+    restarted.distiller = Distiller(
+        LLMConfig(model_name="openai/test", max_output_tokens=100, context_window=10000)
+    )
     with bind_execution(ExecutionScope(store, "random-maintenance-2", 1000, "output")):
         assert await restarted.maybe_distill_completed_runs(journal) == 1
     assert provider_calls == 1
@@ -562,7 +566,9 @@ async def test_unknown_model_outcome_blocks_repeated_distillation(
     store = ProgramStore(tmp_path / "program.sqlite", build_id="test")
     for index in range(2):
         manager = _manager(tmp_path, distillation_window=1)
-        manager.distiller = Distiller(LLMConfig(model_name="openai/test", max_tokens=100))
+        manager.distiller = Distiller(
+            LLMConfig(model_name="openai/test", max_output_tokens=100, context_window=10000)
+        )
         with (
             bind_execution(ExecutionScope(store, f"outer:{index}", 1000, "output")),
             pytest.raises(UnknownModelOutcomeError),

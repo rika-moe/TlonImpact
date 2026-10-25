@@ -26,7 +26,9 @@ async def test_compaction_recovers_inner_commit_without_new_budget(
 ) -> None:
     store = ProgramStore(tmp_path / "run.sqlite", build_id="test")
     client = LLMClient(
-        LLMConfig(model_name="openai/test"), agent_id="a", tlon_paths=TlonPaths(home=tmp_path)
+        LLMConfig(model_name="openai/test", max_output_tokens=8192, context_window=128000),
+        agent_id="a",
+        tlon_paths=TlonPaths(home=tmp_path),
     )
     provider = AsyncMock(
         return_value=LLMResponse(
@@ -43,9 +45,11 @@ async def test_compaction_recovers_inner_commit_without_new_budget(
     builtins = {**program_builtins(), **adapter.builtins()}
     # Token estimation is deterministic; the real model-context operation still
     # records and replays its result through the same invocation authority.
-    monkeypatch.setattr("tlon.operations.model_context.litellm.token_counter", lambda **kwargs: 2)
+    monkeypatch.setattr("tlon.base.model_limits.litellm.token_counter", lambda **kwargs: 2)
     store.freeze_model_context(
-        "root", "config", {"model_name": "openai/test", "context_window": 4096, "max_tokens": 16}
+        "root",
+        "config",
+        {"model_name": "openai/test", "context_window": 4096, "max_output_tokens": 16},
     )
     sources = {
         "work.tlon": """(ns work (:require [tlon.context :as context]) (:export handle))
@@ -78,5 +82,5 @@ async def test_compaction_recovers_inner_commit_without_new_budget(
     result = await resumed.run_entry(package.entry("work/handle"), {}, fuel=10000)
     assert "preserved fact" in result[Keyword("messages")][0][Keyword("content")]
     assert store.budget_usage("root") == used
-    assert used["used"] == 16
+    assert used["used"] == 2
     provider.assert_awaited_once()

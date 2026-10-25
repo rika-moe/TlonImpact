@@ -755,10 +755,7 @@ class ProgramStore:
             if committed != outcome:
                 raise RecoveryMismatchError("Model settlement changed")
             return committed.value if committed.success else {}
-        budget = self._budget(root_id, connection)
-        charge = (
-            allocation["reserved"] if actual is None or budget["measure"] == "output" else actual
-        )
+        charge = allocation["reserved"] if actual is None else actual
         if response is None:
             charge = 0
         if connection is None:

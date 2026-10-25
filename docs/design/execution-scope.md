@@ -8,7 +8,7 @@
 
 ExecutionScope 由宿主创建，包含额度根、确定路径、取消信号与可选 UTC 截止时间，通过显式绑定的 ContextVar 传到内部服务。Tool/DSL 输入不能指定身份、额度或取消对象。成员 LLMClient 的调用边界读取作用域，因而 stage、压缩和操作内部的模型请求不能绕过当前额度。
 
-程序执行使用 output 根，额度来自成员 program_token_budget（默认 100000）；llm.max_tokens 仅为单次输出上限（默认 4096）。规划、行动、压缩、自评及提案内嵌模型请求共享所属根，保留获准输出预留成功不退款的规则。普通模块函数和 turn 不创建额外预算或历史权威；维护执行使用独立维护根。ProgramStore 保存根和调用回执，RunJournal 只读查询。旧 agent session 已退役，无历史读取兼容或迁移。
+程序执行使用 output 根，额度来自成员 program_token_budget（默认 100000）；单次输出按冻结模型输出能力、剩余上下文和 run 剩余预算取小值。规划、行动、压缩、自评及提案内嵌模型请求共享所属根，成功后按可靠 usage 结算并释放预留差额。普通模块函数和 turn 不创建额外预算或历史权威；维护执行使用独立维护根。ProgramStore 保存根和调用回执，RunJournal 只读查询。旧 agent session 已退役，无历史读取兼容或迁移。
 
 取消信号用于当前进程的任务树，shutdown 中断后仍允许按原记录恢复；它不是跨重启的永久撤销标记。程序和会话终态继续由各自生命周期记录决定。额度、计量口径与有效 UTC 截止时间则在根创建时持久冻结，恢复不能提高额度、重置消费或延长截止。
 
@@ -16,7 +16,7 @@ ExecutionScope 由宿主创建，包含额度根、确定路径、取消信号�
 
 每个底层模型请求使用作用域路径和本位置序号标识。ProgramStore 在事务中检查剩余额度、创建 allocation 和模型 invocation intent。allocation 只表示额度占用，完整响应只在原 invocations 中保存，不建立第三份结果权威。并发请求不能共同预留超过剩余额度；请求输出上限按剩余额度裁剪。
 
-output 根成功后仍占用原输出预留。total 根的预留为输入估算加输出上限，成功后按实际 usage.total_tokens 结算；完整的 prompt/completion 用量也可相加。缺少可靠 usage、取消或提交未知时不退预留。实际 total 超过估算时如实记录超额并拒绝后续新请求，不能宣称 token 估算保证 provider 实际用量永不越界。
+output 根预留获准输出额度，成功后按可靠 usage.completion_tokens 结算。total 根的预留为输入估算加输出上限，成功后按实际 usage.total_tokens 结算；完整的 prompt/completion 用量也可相加。缺少可靠 usage、取消或提交未知时不退预留。实际消耗超过预留时如实记录超额并拒绝后续新请求，不能宣称 token 估算保证 provider 实际用量永不越界。
 
 成功模型响应与预算结算在同一 SQLite 事务提交。若响应已提交而 journal 尚未更新，重放返回原 LLMResponse，不再请求 provider，也不重复扣额度。只有 intent 的模型请求保留 unknown，禁止自动发第二次。明确的 provider 拒绝可以释放预留，并保存拒绝事实。当前作用域内关闭“超时/连接错误后自动再次请求”的路径；恢复不能把未知费用当成零。
 
@@ -42,6 +42,6 @@ pure 仅表示确定性计算；外部查询直接声明非 pure 并正常挂起
 
 普通程序与 v1 stage 通过同一 ModelService 调用成员模型。v2 入口受理时将宿主系统提示、工具定义和非秘密模型配置随源码包原子冻结；后续调用使用冻结值。新请求还校验当前工具定义，已提交的历史结果则按冻结契约重放。纯消息模块 `tlon.messages` 随运行源码冻结，不新增模型结果日志。
 
-`model-call` 外层 Operation 与内部模型调用各有稳定路径。模型成功响应与额度结算已提交、外层回执缺失时，executor 在预算、取消和截止检查之前校验原请求并补回外层结果；明确拒绝已记录时补回 RejectedError，保留已退款事实。恢复只读取原模型记录，不派发 provider 请求。内部只有未知 intent 时仍拒绝自动重发，保留预留。output 成功保留输出上限费用，total 按可信实际用量结算，核验函数不会另建预算根。
+`model-call` 外层 Operation 与内部模型调用各有稳定路径。模型成功响应与额度结算已提交、外层回执缺失时，executor 在预算、取消和截止检查之前校验原请求并补回外层结果；明确拒绝已记录时补回 RejectedError，保留已退款事实。恢复只读取原模型记录，不派发 provider 请求。内部只有未知 intent 时仍拒绝自动重发，保留预留。output 和 total 均按各自口径的可信实际用量结算，核验函数不会另建预算根。
 
 模型与普通工具的独立超时策略见 [ADR 0050](../decisions/0050-model-operation-timeouts.md)。provider 实际请求同样受执行域剩余时间约束；内部模型不能逃逸父工具期限。派发前超时不执行，派发后结果未落盘保留 unknown，已提交回执优先恢复。

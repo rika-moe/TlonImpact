@@ -96,7 +96,9 @@ async def test_llm_effect_keeps_system_prompt_and_disables_tools() -> None:
 
 
 @pytest.mark.parametrize("requested,expected", [(None, 64), (16, 16), (100, 64)])
-async def test_provider_receives_real_output_cap(monkeypatch, requested, expected) -> None:
+async def test_provider_receives_model_capability_or_smaller_request(
+    monkeypatch: pytest.MonkeyPatch, requested: int | None, expected: int
+) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "fake")
     raw = SimpleNamespace(
         choices=[
@@ -109,7 +111,9 @@ async def test_provider_receives_real_output_cap(monkeypatch, requested, expecte
     )
     completion = AsyncMock(return_value=raw)
     monkeypatch.setattr("litellm.acompletion", completion)
-    client = LLMClient(LLMConfig(model_name="openai/example", max_tokens=64))
+    client = LLMClient(
+        LLMConfig(model_name="openai/example", max_output_tokens=64, context_window=10000)
+    )
     await client.chat("system", [], max_tokens=requested)
     assert completion.await_args.kwargs["max_tokens"] == expected
 

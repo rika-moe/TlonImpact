@@ -52,7 +52,14 @@ def provider(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
 def executor_at(
     timeout: float, deadline: float | None = None
 ) -> tuple[OperationExecutor, LLMClient]:
-    client = LLMClient(LLMConfig(model_name="openai/test", request_timeout=timeout))
+    client = LLMClient(
+        LLMConfig(
+            model_name="openai/test",
+            max_output_tokens=4096,
+            context_window=128000,
+            request_timeout=timeout,
+        )
+    )
     store = ProgramStore(None, build_id="test")
     scope = ExecutionScope(store, "run", 100000, "output", deadline=deadline)
     executor = OperationExecutor(
@@ -77,7 +84,14 @@ async def test_runtime_model_exceeds_tool_cap_but_ordinary_tool_still_times_out(
         return raw_response()
 
     provider.side_effect = slow_provider
-    client = LLMClient(LLMConfig(model_name="openai/test", request_timeout=3.0))
+    client = LLMClient(
+        LLMConfig(
+            model_name="openai/test",
+            max_output_tokens=4096,
+            context_window=128000,
+            request_timeout=3.0,
+        )
+    )
     memory = MagicMock(storage_path=tmp_path / "memory", config=MemoryConfig())
 
     async def slow_tool(context: CallContext, arguments: dict[str, Any]) -> None:

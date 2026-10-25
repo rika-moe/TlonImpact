@@ -423,3 +423,5 @@ P6 当时直接向 main 交付，现已通过 #194 合并并可勾选。之后�
 P8a 本地验证：主会话复核源码、文档差异与保留例外，完整质量门及隔离 dream/SDK 投递通过，连续三次会话请求的序列化 tools 一致；未测 provider 缓存命中率。Python 源码无差异，过时源码注释单独登记，避免仅注释改动也改变恢复构建身份。详细数量、过程与 PR 见任务 [#195](https://github.com/rika-moe/TlonImpact/issues/195)。合并前 P8a 保持未勾选，P7 暂停，P8b 未实施。
 
 2026-10-24 修订：上述 P4a 的成员 llm.max_tokens 作为 output 根额度已由 [ADR 0048](../decisions/0048-action-loop-and-model-budgets.md) 废止；当前使用独立 program_token_budget，llm.max_tokens 仅为单次输出上限。
+
+2026-10-25 修订：[ADR 0051](../decisions/0051-model-output-capability.md) 删除成员 llm.max_tokens，单次输出按模型能力、剩余上下文和 run 预算决定；output 成功按可靠实际用量结算。

@@ -11,7 +11,7 @@ from typing import Any
 import aiohttp
 import pytest
 
-from .conftest import WEBUI_HEADERS, _read_inbox, _send_mail
+from .conftest import TEST_MODEL_OUTPUT_TOKENS, WEBUI_HEADERS, _read_inbox, _send_mail
 
 
 async def test_nested_tool_conversation_reviews_and_sends_after_local_return(
@@ -138,8 +138,8 @@ async def test_nested_tool_conversation_reviews_and_sends_after_local_return(
             "SELECT identity_json FROM invocations WHERE json_extract(identity_json, '$.name')='time-now'"
         ).fetchall()
     assert len(budgets) == 1
-    assert budgets[0][1:] == (4096 * 7, 7)
-    assert all(call["max_tokens"] == 4096 for call in calls)
+    assert budgets[0][1:] == (3 * 7, 7)
+    assert all(call["max_tokens"] == TEST_MODEL_OUTPUT_TOKENS for call in calls)
     assert len(leaves) == 2
     identities = [json.loads(row[0]) for row in leaves]
     assert identities[0]["call_id"] != identities[1]["call_id"]

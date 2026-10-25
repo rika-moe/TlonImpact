@@ -44,7 +44,13 @@ async def test_admin_termination_waits_for_work_then_preserves_history(
     registry = AgentRegistry(
         event_bus=bus,
         agent_info_provider=Configs(
-            AgentConfig(id="worker", name="成员", llm=LLMConfig(model_name="test/model"))
+            AgentConfig(
+                id="worker",
+                name="成员",
+                llm=LLMConfig(
+                    model_name="test/model", max_output_tokens=8192, context_window=128000
+                ),
+            )
         ),
         tlon_paths=paths,
     )
@@ -52,9 +58,7 @@ async def test_admin_termination_waits_for_work_then_preserves_history(
     try:
         await registry._start_agent_guarded("worker")
         work = {"count": 1}
-        monkeypatch.setattr(
-            MemberRuntime, "is_busy", property(lambda self: work["count"])
-        )
+        monkeypatch.setattr(MemberRuntime, "is_busy", property(lambda self: work["count"]))
         monkeypatch.setattr(AgentRegistry, "_PENDING_STOP_POLL_SECONDS", 0.01)
         handler = RESTAPIHandler(
             None,

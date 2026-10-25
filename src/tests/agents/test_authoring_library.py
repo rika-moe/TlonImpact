@@ -127,7 +127,9 @@ async def test_draft_recovers_model_receipt_and_keeps_repair_budget(
 
     store = ProgramStore(tmp_path / "authoring.sqlite", build_id="test")
     client = LLMClient(
-        LLMConfig(model_name="openai/test"), agent_id="a", tlon_paths=TlonPaths(home=tmp_path)
+        LLMConfig(model_name="openai/test", max_output_tokens=8192, context_window=128000),
+        agent_id="a",
+        tlon_paths=TlonPaths(home=tmp_path),
     )
     behavior = "{:version 2 :handlers {:mail-delivered work/handle} :fuel 1000}"
     candidate = {
@@ -169,9 +171,11 @@ async def test_draft_recovers_model_receipt_and_keeps_repair_budget(
     catalog.append(OperationTool(executor, "program-check").to_openai_definition())
     adapter = DSLAdapter(executor, ToolDispatch(executor, lambda: catalog))
     builtins = {**program_builtins(), **adapter.builtins()}
-    monkeypatch.setattr("tlon.operations.model_context.litellm.token_counter", lambda **kwargs: 2)
+    monkeypatch.setattr("tlon.base.model_limits.litellm.token_counter", lambda **kwargs: 2)
     store.freeze_model_context(
-        "root", "config", {"model_name": "openai/test", "context_window": 4096, "max_tokens": 16}
+        "root",
+        "config",
+        {"model_name": "openai/test", "context_window": 4096, "max_output_tokens": 16},
     )
     package = ModulePackage.from_sources(
         program_module_sources(

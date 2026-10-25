@@ -33,6 +33,7 @@ from tlon.base.execution import (
 )
 from tlon.base.ledger import LedgerWriter
 from tlon.base.logger import get_logger
+from tlon.base.model_limits import estimate_model_input, model_output_limit, resolve_model_limits
 from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_context import start_span
 
@@ -278,7 +279,8 @@ class LLMClient:
 
     def configuration_snapshot(self) -> dict[str, Any]:
         """Effective non-secret configuration, including runtime-only retry settings."""
-        return {name: getattr(self.config, name) for name in LLMConfig.model_fields}
+        config = resolve_model_limits(self.config)
+        return {name: getattr(config, name) for name in LLMConfig.model_fields}
 
     async def chat(
         self,
@@ -293,7 +295,17 @@ class LLMClient:
     ) -> LLMResponse:
         scope = current_execution()
         if scope is None:
-            return await self._chat_accounted(
+            client = copy.copy(self)
+            client.config = resolve_model_limits(self.config)
+            tokens = estimate_model_input(
+                client.config.model_name or "",
+                [{"role": "system", "content": system_prompt}, *messages],
+                tools,
+            )
+            output = model_output_limit(client.config, tokens, max_tokens)
+            if output <= 0:
+                raise ContextWindowExceededError("No output space remains in model context window")
+            return await client._chat_accounted(
                 system_prompt,
                 messages,
                 tools,
@@ -301,25 +313,49 @@ class LLMClient:
                 purpose,
                 run_id,
                 cache_prefix_len,
-                max_tokens,
+                output,
             )
         # The execution authority owns attribution, including internal model calls.
         run_id = scope.root_id
-        frozen = await asyncio.to_thread(
-            scope.store.freeze_model_context,
-            scope.root_id,
-            "config",
-            self.configuration_snapshot(),
-        )
+        frozen = await asyncio.to_thread(scope.store.load_model_context, scope.root_id, "config")
+        if frozen is None:
+            frozen = await asyncio.to_thread(
+                scope.store.freeze_model_context,
+                scope.root_id,
+                "config",
+                self.configuration_snapshot(),
+            )
         client = copy.copy(self)
         client.config = LLMConfig.model_validate(frozen)
         client.max_retries = client.config.max_retries
         client.base_delay = client.config.base_delay
-        requested = (
-            min(client.config.max_tokens, max_tokens)
-            if max_tokens is not None
-            else client.config.max_tokens
+        history = await asyncio.to_thread(
+            scope.store.lookup_model_path, scope.root_id, scope.next_model_path()
         )
+        if history is not None:
+            # Estimates and remaining resources can change after a committed call.
+            # Reuse its original cap; model_call still verifies the complete request identity.
+            requested = json.loads(history["request_json"])["output_limit"]
+            estimated_input = 0
+        else:
+            estimated_input = estimate_model_input(
+                client.config.model_name or "",
+                [{"role": "system", "content": system_prompt}, *messages],
+                tools,
+            )
+            requested = model_output_limit(client.config, estimated_input, max_tokens)
+            if requested <= 0:
+                # Budget exhaustion must not send callers into a context-compaction loop.
+                await scope.initialize()
+                budget = await asyncio.to_thread(scope.store.budget_usage, scope.root_id)
+                model_output_limit(
+                    client.config,
+                    estimated_input,
+                    max_tokens,
+                    remaining=budget["remaining"],
+                    measure=scope.measure,
+                )
+                raise ContextWindowExceededError("No output space remains in model context window")
         request = {
             "model": client.config.model_name,
             "api_base": client.config.api_base,
@@ -329,7 +365,7 @@ class LLMClient:
             "purpose": purpose,
             "cache_prefix_len": cache_prefix_len,
             "max_tokens": max_tokens,
-            "member_max_tokens": client.config.max_tokens,
+            "max_output_tokens": client.config.max_output_tokens,
         }
 
         async def execute(allowance: int) -> dict[str, Any]:
@@ -346,22 +382,6 @@ class LLMClient:
             return response.to_dict()
 
         try:
-            estimated_input = (
-                litellm.token_counter(
-                    model=client.config.model_name or "",
-                    messages=request["messages"],
-                )
-                + (
-                    litellm.token_counter(
-                        model=client.config.model_name or "",
-                        text=json.dumps(tools, ensure_ascii=False, separators=(",", ":")),
-                    )
-                    if tools
-                    else 0
-                )
-                if scope.measure == "total"
-                else 0
-            )
             response = await scope.model_call(
                 request, requested, execute, estimated_input=estimated_input
             )
@@ -577,9 +597,7 @@ class LLMClient:
             "timeout": timeout if timeout is not None else self.config.request_timeout,
             "api_base": self.config.api_base or None,
             "num_retries": 0,
-            "max_tokens": min(self.config.max_tokens, max_tokens)
-            if max_tokens is not None
-            else self.config.max_tokens,
+            "max_tokens": max_tokens,
         }
 
         if tools:

@@ -39,7 +39,7 @@ async def test_mail_to_agent_lands_in_inbox(tlon_server: tuple[str, Path]) -> No
             json={
                 "prototype": builtin_id("计划后执行"),
                 "name": "林知遥",
-                "model": "openai/gpt-test",
+                "model": "openai/gpt-4o",
             },
         ) as resp,
     ):

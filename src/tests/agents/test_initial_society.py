@@ -22,7 +22,8 @@ def test_members_have_model_persona_and_local_contacts(tmp_path: Path) -> None:
     assert len(agents) == 30
     for agent_id, config in agents.items():
         assert config.llm.model_name == "deepseek/deepseek-flash"
-        assert config.llm.max_tokens == 4096
+        assert "max_tokens" not in config.llm.model_dump()
+        assert "max_output_tokens" not in config.llm.model_dump()
         assert config.llm.top_p == 0.9
         assert config.docker.level == "L2"
         source = paths.agent_config_dir(agent_id) / "modules/work/main.tlon"

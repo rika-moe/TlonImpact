@@ -94,3 +94,5 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 [ADR 0049：退役 Agent Session，统一 Program Run](0049-retire-agent-session.md)：删除旧历史兼容，历史、记忆溯源与额度统一 run，保留 client session。
 
 [ADR 0050：模型请求与普通工具分别采用超时策略](0050-model-operation-timeouts.md)：模型使用模型期限，普通工具使用工具期限，均服从当前执行域截止时间，保留未知结果与恢复语义。
+
+[ADR 0051：按模型能力与执行资源决定单次输出](0051-model-output-capability.md)：删除统一单次输出配置，按模型能力、剩余上下文和 run 预算决定输出；成功按可靠实际用量结算。

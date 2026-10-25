@@ -21,7 +21,11 @@ from tlosure.eval import Evaluator
 async def test_model_entries_charge_only_the_bound_member(tmp_path: Path) -> None:
     paths = TlonPaths(home=tmp_path)
     for member in ("a", "b"):
-        client = LLMClient(LLMConfig(model_name="openai/test"), agent_id=member, tlon_paths=paths)
+        client = LLMClient(
+            LLMConfig(model_name="openai/test", max_output_tokens=4096, context_window=128000),
+            agent_id=member,
+            tlon_paths=paths,
+        )
         client._chat_with_retries = AsyncMock(
             return_value=LLMResponse(
                 content=member,
@@ -155,7 +159,9 @@ async def test_committed_model_restores_missing_outer_receipt_before_cancel_or_d
 
     store = ProgramStore(tmp_path / "run.sqlite", build_id="test")
     client = LLMClient(
-        LLMConfig(model_name="openai/test"), agent_id="a", tlon_paths=TlonPaths(home=tmp_path)
+        LLMConfig(model_name="openai/test", max_output_tokens=4096, context_window=128000),
+        agent_id="a",
+        tlon_paths=TlonPaths(home=tmp_path),
     )
     client._chat_with_retries = AsyncMock(
         return_value=LLMResponse(
@@ -197,7 +203,9 @@ async def test_unknown_provider_outcome_is_not_resubmitted(tmp_path: Path) -> No
 
     store = ProgramStore(tmp_path / "run.sqlite", build_id="test")
     client = LLMClient(
-        LLMConfig(model_name="openai/test"), agent_id="a", tlon_paths=TlonPaths(home=tmp_path)
+        LLMConfig(model_name="openai/test", max_output_tokens=4096, context_window=128000),
+        agent_id="a",
+        tlon_paths=TlonPaths(home=tmp_path),
     )
     client._chat_with_retries = AsyncMock(side_effect=OSError("lost"))
     executor = OperationExecutor(
@@ -239,7 +247,9 @@ async def test_frozen_system_and_catalog_replay_before_current_providers(tmp_pat
 
     store = ProgramStore(None, build_id="test")
     client = LLMClient(
-        LLMConfig(model_name="openai/test"), agent_id="a", tlon_paths=TlonPaths(home=tmp_path)
+        LLMConfig(model_name="openai/test", max_output_tokens=4096, context_window=128000),
+        agent_id="a",
+        tlon_paths=TlonPaths(home=tmp_path),
     )
     client._chat_with_retries = AsyncMock(return_value=LLMResponse(content="answer"))
     system = AsyncMock(return_value="original persona")
@@ -274,7 +284,9 @@ async def test_same_scope_next_request_checks_revoked_tools(tmp_path: Path) -> N
 
     store = ProgramStore(None, build_id="test")
     client = LLMClient(
-        LLMConfig(model_name="openai/test"), agent_id="a", tlon_paths=TlonPaths(home=tmp_path)
+        LLMConfig(model_name="openai/test", max_output_tokens=4096, context_window=128000),
+        agent_id="a",
+        tlon_paths=TlonPaths(home=tmp_path),
     )
     client._chat_with_retries = AsyncMock(return_value=LLMResponse(content="answer"))
     tools = Mock(
@@ -306,7 +318,9 @@ async def test_recorded_rejection_restores_missing_outer_receipt_without_dispatc
 
     store = ProgramStore(tmp_path / "rejected.sqlite", build_id="test")
     client = LLMClient(
-        LLMConfig(model_name="openai/test"), agent_id="a", tlon_paths=TlonPaths(home=tmp_path)
+        LLMConfig(model_name="openai/test", max_output_tokens=4096, context_window=128000),
+        agent_id="a",
+        tlon_paths=TlonPaths(home=tmp_path),
     )
     client._chat_with_retries = AsyncMock(
         side_effect=ContextWindowExceededError("context too long")
@@ -352,7 +366,7 @@ async def test_optional_output_cap_uses_frozen_member_limit_and_shared_program_b
 
     store = ProgramStore(tmp_path / "budget.sqlite", build_id="test")
     client = LLMClient(
-        LLMConfig(model_name="openai/test", max_tokens=12),
+        LLMConfig(model_name="openai/test", max_output_tokens=12, context_window=128000),
         agent_id="a",
         tlon_paths=TlonPaths(home=tmp_path),
     )
@@ -369,11 +383,11 @@ async def test_optional_output_cap_uses_frozen_member_limit_and_shared_program_b
         arguments["max_tokens"] = output_cap
     await executor.call("model-call", arguments)
     assert provider.await_args.args[4] == expected
-    client.config.max_tokens = 1
+    client.config.max_output_tokens = 1
     # A different invocation consumes the same program allowance but keeps
     # the model configuration frozen when the entry first sampled.
     await executor.call("model-call", arguments, CallContext("a", "r", "next", execution=scope))
     assert provider.await_args.args[4] == expected
     assert provider.await_count == 2
-    # Output accounting conservatively charges each reserved allowance.
-    assert store.budget_usage("r")["used"] == expected * 2
+    # Output accounting settles the reliable completion usage.
+    assert store.budget_usage("r")["used"] == 4
