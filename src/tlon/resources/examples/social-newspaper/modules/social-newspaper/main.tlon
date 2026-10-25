@@ -1,0 +1,48 @@
+(ns social-newspaper.main
+  (:require [tlon.newspaper :as paper])
+  (:export handle))
+
+;; Read public aggregate facts explicitly. No member mailbox or full trace scan.
+(defn total [metrics name]
+  (reduce value point (+ value (get point :value 0)) 0
+    (get (get metrics name {}) :points [])))
+
+(defn short-description [text]
+  (if (> (count text) 200) (substring text 0 200) text))
+
+(defn collect [period trigger-id]
+  (let [metrics (get (metrics-read {}) :metrics {})
+        health (social-health {})
+        proposals (prototype-staging-list {})
+        summaries (get (reduce result proposal
+                    (let [items (get result :items)]
+                      (if (< (count items) 10)
+                        {:items (conj items {:name (get proposal :name)
+                          :display-name (get proposal :display_name)
+                          :description (short-description (get proposal :description ""))})}
+                        result)) {:items []} proposals) :items)
+        ids [(str "observation:" period ":metrics-read")
+             (str "observation:" period ":social-health")
+             (str "observation:" period ":prototype-staging-list")]]
+    {:materials {:period period :trigger-mail-id trigger-id
+                 :process-counters {:accepted-mails (total metrics "tlon.mail.sent")
+                                    :recipient-inbox-successes (total metrics "tlon.mail.delivered")}
+                 :health {:scanned-count (get health :scanned_count)
+                          :failed-count (count (get health :failed_members []))
+                          :unreplied-candidates (get health :orphan_count)}
+                 :pending-proposals {:total (count proposals) :first-ten summaries}
+                 :limits "有限公开观测，非社会活动全量盘点。进程计数重启清零，并非本日增量；入箱不代表已读或执行；未回复不代表未送达或失职。"}
+     :source-ids (if (or (> (count metrics) 0)
+                         (> (get health :scanned_count 0) 0)
+                         (> (count (get health :failed_members [])) 0)
+                         (> (count proposals) 0)) ids [])
+     :footer (str "观测来源（本期冻结的工具结果，非投稿邮件 ID）：\n" (join "\n" ids) "\n出版触发邮件 ID：" trigger-id "\n观测回执见该邮件对应的 program run 执行记录。")}))
+
+(defn handle [event]
+  (let [msg (get event :mail) self (get event :self)]
+    (when (contains? (or (mail-field msg :to) []) (get self :address))
+      (paper/subscriptions msg)
+      (let [period (paper/publication-period msg ["operator@tlon.internal" "postmaster@tlon.internal"])]
+        (when period (paper/publish period (fn [issue] (collect issue (mail-field msg :id))))))
+      (mail-mark-read {:mail_ids [(mail-field msg :id)]}))
+    {:result nil}))

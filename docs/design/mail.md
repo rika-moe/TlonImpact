@@ -145,30 +145,40 @@ stage 继续声明数据，外部效果由引擎执行；区别在于工具回�
 
 系统需要周期性触发的工作不引入新的 timer 事件类型，也不改成员运行时——周期触发本身就是一封邮件。[agents/cron.py](../../src/tlon/agents/cron.py) 的 `CronScheduler`（归 `AgentRegistry` 拥有，与 `IdleReaper` / `PublicHealthMonitor` 同族）把「tick 即邮件」泛化为通用机制（早期的单用途 `DigestScheduler` 已被它取代）：每个周期任务是一个条目 `{name, schedule, to, subject, content}`，到点以 `postmaster@tlon.internal` 名义给目标成员发一封任务邮件；收件人的普通 `:on :mail-delivered` 规则被触发，做什么由收件人自己的 spec 决定。
 
-条目来自两个来源，合并管理：
-
-- **内置条目**（代码注册，内容可在 tick 时现算）。目前的实例是「社会文摘」：每隔一个间隔（默认一天）给书记员（`ji-shuheng`，scribe 原型）发一封「社会文摘周期任务」邮件，正文自带完整工作指令与人类收件人清单（tick 时从 `known_human_ids()` 现算）；书记员的 LLM 调观测工具（metrics-read / traces-list+trace-read / reputation-read / social-health / prototype-staging-list）汇总，再一封 mail-send 发给全体已知人类。书记员未注册或尚无已知人类时 tick 记日志跳过——没有读者就没有文摘。
-- **声明式条目**（`~/.tlon/cron.yaml`，启动时读一次，改动需重启生效；文件不存在 = 无声明条目）。每条目声明静态正文和两种 schedule 之一：`interval_seconds: N`（每 N 秒，首轮也等 N 秒后）或 `cron: "分 时 日 月 周"`（标准 5 字段 cron 表达式，本地时区，用 croniter 计算下次触发）。`to` 是成员 id（agent id 或 `human:<username>`）。配置非法的条目（缺字段、两种 schedule 都写或都不写、cron 表达式解析失败）在启动时记 warning 拒绝，不影响其他条目；目标成员不存在时 tick 记日志跳过。示例：
+条目仅来自 `~/.tlon/cron.yaml`：启动时读一次，修改后重启生效；文件不存在或为空时没有周期任务。每个条目包含静态正文与两种 schedule 之一：`interval_seconds: N`（首轮也等待 N 秒）或 `cron: "分 时 日 月 周"`（本地时区、croniter 计算）。`to` 是成员 ID（agent ID 或 `human:<username>`）。非法条目在启动时拒绝，不影响其他条目；目标不存在时本次触发跳过。
 
 ```yaml
-- name: weekly-report
-  to: human:alice
-  subject: 周报
-  content: 这是本周社会动态占位，等书记员机制接管后可改成给 agent 的任务。
-  cron: "0 9 * * 1"
+- name: social-newspaper-daily
+  to: m-replace-with-created-newspaper-id
+  subject: publish
+  content: 按本报规则执行本期出版。
+  cron: "0 9 * * *"
 
 - name: staging-check
-  to: ji-shuheng
+  to: m-replace-with-reviewer-id
   subject: 定期检查 staging 提案
-  content: 用 prototype-staging-list 查一下原型暂存区，有待批准的提案就汇总发给人类。
+  content: 查阅待审批提案，按你的工作程序处理。
   interval_seconds: 21600
 ```
 
-声明条目只支持静态 content；需要动态内容（如按当前人类清单现算）的周期任务走代码注册的内置条目。
+调度器不生成动态业务正文，不识别报社、文摘或订阅者；动态内容由收件成员显式查询工具并处理。社会文摘作为普通 Lisp 报社示例随包提供，启用和契约见下文“通用 cron 与普通报社的职责边界”及 [社会文摘报示例](../../src/tlon/resources/examples/social-newspaper/README.md)。
 
 周期任务同样调用统一邮局：周期信号不需要专用通道，tick 与正常通信同构——它先落盘（有投递幂等和未读语义保底）、可唤醒睡眠中的收件人、在 trace 树上可见。postmaster 没有自己的邮箱，系统发件不留 sent 副本，通道干净。
 
 配套的两个只读工具把「待人类处置」可查询化：`social-health`（[operations/observability.py](../../src/tlon/operations/observability.py)）按需实时返回孤儿邮件清单（与 `PublicHealthMonitor` 的 MAIL_ORPHAN_SCAN 共用同一个采集器，派生不存储）；`prototype-staging-list`（[evolution/list_staging.py](../../src/tlon/evolution/list_staging.py)）列出原型暂存区里待人类信任批准的提案。人类由此从「读全部邮件」退为「读摘要 + 处置例外」。
+
+### 通用 cron 与普通报社的职责边界
+
+cron 仅加载 `cron.yaml` 声明的静态任务，按 interval 或 cron 表达式向指定成员投递邮件。没有配置时不创建周期任务；删除内置 digest、书记员 ID、人类收件人枚举和动态正文回调，不保留兼容入口或迁移。
+
+社会文摘由随包的普通 Lisp 报社示例实现，通过正常原型/成员创建流程启用，不在启动或升级时自动创建。调度邮件仅触发出版；采集观测材料、选择模型请求、维护订阅名单、冻结刊期版本与分发回执都由 Lisp 编排。普通报社共用刊期冻结与投递函数，来信报使用投稿材料，社会文摘报显式查询观测工具。
+
+出版授权与刊期属于报社自身的行为：静态 `publish` 邮件的刊期取任务来信时间的 UTC 日期，不取恢复时钟；同一天重复触发复用冻结版本，下一天可生成新版本。明确 `publish:<期号>` 用于人工指定刊期和恢复分发。示例只接受配置中的编辑地址及 `postmaster@tlon.internal` 的出版触发，其他发件人不能通过主题伪造授权。订阅只使用来信真实发件人，不自动订阅人类，也不枚举全部人类收件人。
+
+无订阅者或没有可出版材料时不调用模型；同刊期已经冻结时不重新采集或编辑，已投递地址不再重发。模型截断、空正文或非法工具响应不能冻结为成功版本或投递。模型和工具效果使用所属 program run 的预算、身份与持久回执；邮局稳定 request_id 和报社分发记录覆盖中断恢复，不把未知投递标为成功。来源是对应来信或观测记录，不将模型编辑当作事实审核。
+
+cron 的触发时间计算沿用本地时区，报社默认按 UTC 日期划分刊期，两者是独立选择；示例明确这一约定，不引入调度补发、动态模板或专用 timer 事件。
+
 
 ## 死亡归档清点
 

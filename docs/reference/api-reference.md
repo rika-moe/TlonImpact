@@ -482,7 +482,7 @@ Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相
 | `mail.new` | `PostOffice`（source 为发件人成员 id 或外部地址） | Mail 对象（本地事务已提交，仅通知，不驱动投递） |
 | `mail.delivered` | `PostOffice`（source `post_office`，本地入箱及网关信箱成功尝试后通知；不表示已读或外部平台收到） | `mail`（Mail）、`recipient`（成员 id） |
 | `agent.started` / `agent.stopped` | `AgentRegistry` | `agent_id`、`name`、`runtime`、`spec_hash` / `agent_id`、`stopped_by` |
-| `agent.retired` | `RetirementCeremony`（source `retirement_ceremony`） | `agent_id`、`name`、`stopped_by`、`open_tasks`（标题数组）、`open_threads`（thread_id/subject/from 对象数组）、`memory_digest` |
+| `agent.retired` | `RetirementCeremony`（source `retirement_ceremony`） | `agent_id`、`name`、`stopped_by`、`open_tasks`（标题数组）、`open_threads`（thread_id/subject/from 对象数组）、`memory_files`（workspace 相对笔记路径，不读取正文） |
 | `agent.waking` / `agent.woken` / `agent.wake_failed` / `agent.sleeping` | `AgentRegistry` | `agent_id` 等（woken 带 `wake_duration_seconds`） |
 | `agent.start_request` / `agent.stop_request` / `agent.idle` | Adam / `AgentRegistry` | `agent_id`、`reason` / `agent_id`、`idle_seconds` |
 | `agent.state_changed` | `AgentRegistry.publish_scheduling_state` | `get_agent_status` 返回的权威成员快照（含 id/state/wake_at 等） |

@@ -44,6 +44,7 @@ def program_module_sources(sources: dict[str, str]) -> dict[str, str]:
                     "tlon.workflows",
                     "tlon.authoring",
                     "tlon.agent",
+                    "tlon.newspaper",
                 }:
                     name = namespace[5:]
                     if name not in names:

@@ -1,0 +1,1 @@
+{:version 2 :execution {:level :L0} :handlers {:mail-delivered social-newspaper.main/handle} :fuel 10000}
