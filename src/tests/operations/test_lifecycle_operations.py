@@ -80,16 +80,6 @@ async def test_spawn_binds_owner_session_params_and_preserves_budget_rejection()
     assert rejection.value.data == {"reason": "run_quota"}
 
 
-async def test_probationary_spawn_rejected_even_if_definition_is_present() -> None:
-    registry = MagicMock()
-    registry.spawn_member = AsyncMock()
-    executor = _executor(LifecycleService("worker", registry=registry, apprentice=True))
-    with pytest.raises(RejectedError) as rejection:
-        await executor.call("member-spawn", {"prototype": "source", "name": "Child"})
-    assert rejection.value.data == {"reason": "probationary"}
-    registry.spawn_member.assert_not_awaited()
-
-
 async def test_caller_cannot_override_bound_owner() -> None:
     executor = _executor(LifecycleService("worker"))
     with pytest.raises(InputError):

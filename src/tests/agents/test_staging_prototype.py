@@ -240,77 +240,31 @@ class TestWritePrototypeToolLessons:
         assert not (p.prototypes_staging_dir() / result.data["name"] / "LESSONS.md").exists()
 
 
-class TestWritePrototypeSolvency:
-    """Proposal solvency gate (docs/design/prototypes.md, agent side): an
-    insolvent bloodline
-    loses proposal eligibility; the check fails open."""
-
-    async def test_insolvent_bloodline_rejected_nothing_on_disk(self, tmp_path):
-        p = TlonPaths(home=tmp_path)
-
-        async def _insolvent(prototype: str) -> bool:
-            return False
-
-        tool = make_write_tool(
-            author_id="adam",
-            writer=lambda *a, **kw: write_staging_prototype(
-                *a,
-                tlon_paths=p,
-                **kw,
-            ),
-            prototype="broke",
-            solvency=_insolvent,
-        )
-        result = await tool.execute_context(
-            {"behavior": BUNDLE_BEHAVIOR, "modules": BUNDLE_MODULES, "display_name": "定址转发"}
-        )
-        assert not result.success
-        assert "insolvent" in result.error
-        assert not p.prototypes_staging_dir().exists()
-
-    async def test_solvency_failure_is_fail_open(self, tmp_path):
-        p = TlonPaths(home=tmp_path)
-
-        async def _boom(prototype: str) -> bool:
-            raise OSError("fitness derivation broke")
-
-        tool = make_write_tool(
-            author_id="adam",
-            writer=lambda *a, **kw: write_staging_prototype(
-                *a,
-                tlon_paths=p,
-                **kw,
-            ),
-            prototype="broke",
-            solvency=_boom,
-        )
-        result = await tool.execute_context(
-            {"behavior": BUNDLE_BEHAVIOR, "modules": BUNDLE_MODULES, "display_name": "定址转发"}
-        )
-        assert result.success, result.error
-
-    async def test_manual_member_never_gated(self, tmp_path):
-        """An author without a prototype (manual member) has no bloodline
-        to judge — the gate does not apply."""
-        p = TlonPaths(home=tmp_path)
-
-        async def _insolvent(prototype: str) -> bool:
-            return False
-
-        tool = make_write_tool(
-            author_id="adam",
-            writer=lambda *a, **kw: write_staging_prototype(
-                *a,
-                tlon_paths=p,
-                **kw,
-            ),
-            prototype=None,
-            solvency=_insolvent,
-        )
-        result = await tool.execute_context(
-            {"behavior": BUNDLE_BEHAVIOR, "modules": BUNDLE_MODULES, "display_name": "定址转发"}
-        )
-        assert result.success, result.error
+@pytest.mark.parametrize("changed", [False, True])
+async def test_similar_proposals_are_independent(tmp_path: Path, changed: bool) -> None:
+    paths = TlonPaths(home=tmp_path)
+    tool = make_write_tool(
+        author_id="born",
+        writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=paths, **kw),
+    )
+    first = await tool.execute_context(
+        {
+            "behavior": BUNDLE_BEHAVIOR,
+            "modules": BUNDLE_MODULES,
+            "display_name": "first",
+        }
+    )
+    second = await tool.execute_context(
+        {
+            "behavior": BUNDLE_BEHAVIOR + (" " if changed else ""),
+            "modules": BUNDLE_MODULES,
+            "display_name": "second",
+        }
+    )
+    assert first.success and second.success
+    assert first.data["name"] != second.data["name"]
+    assert len(list_staging_prototypes(paths)) == 2
+    assert first.data["trusted"] is False and second.data["trusted"] is False
 
 
 async def test_write_tool_rejects_old_name_and_requires_behavior_label(tmp_path: Path) -> None:

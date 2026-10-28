@@ -64,11 +64,6 @@ from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.agents.loader import has_frozen_work, load_member_spec, read_member_spec
 from tlon.agents.member_runtime import MemberRuntime
 from tlon.agents.member_spec import MemberSpec
-from tlon.agents.policy import (
-    policy_probation_provider,
-    policy_solvency_provider,
-    policy_tilt_provider,
-)
 from tlon.agents.reaper import IdleReaper
 from tlon.agents.scheduling_store import SchedulingStore
 from tlon.agents.spawn import SpawnManager
@@ -186,19 +181,11 @@ class AgentRegistry(Component):
         # Spawn budget + idle reaper (stage 6b / scale-to-zero). The
         # per-run quota ledger is persisted (program runs survive a
         # restart via journal replay, so the anti-runaway cap must too).
-        # The quota is tilted per spawn by the target bloodline's fitness
-        # (ADR 0014), gated by its solvency (ADR 0014), and capped at 1
-        # when the spawner itself is on probation (trust ladder,
-        # docs/design/unified-member-model.md); all
-        # providers recompute from raw files on every spawn.
         self._spawn = SpawnManager(
             self,
             max_activations,
             max_spawn_depth,
             run_spawn_quota,
-            tilt_provider=policy_tilt_provider(self._paths),
-            solvency=policy_solvency_provider(self._paths),
-            probation=policy_probation_provider(self._paths),
         )
         self._reaper = IdleReaper(self)
         # Social public-health monitor: noise detection + orphan-mail

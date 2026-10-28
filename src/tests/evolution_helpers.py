@@ -14,7 +14,7 @@ from tlon.operations.evolution import EvolutionService, make_evolution_operation
 def project(
     name: str, service: EvolutionService, slot: str, member_id: str = "adam"
 ) -> OperationTool:
-    operations = make_evolution_operations(member_id, True, **{slot: service})
+    operations = make_evolution_operations(member_id, **{slot: service})
     executor = OperationExecutor(
         OperationRegistry(operations), CallContext(member_id, "run", "call")
     )

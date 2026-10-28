@@ -98,10 +98,6 @@ class MemberServices:
     write_gate: MemberWriteGate
     per_tool_timeout: float = 30.0
     registry: "AgentRegistry | None" = None
-    # Trust ladder (docs/design/unified-member-model.md): a probationary
-    # member's mentor address (its spawner), cc'd on composed outbound
-    # mail; None for full members.
-    mentor_cc: str | None = None
     # The member's execution device (docs/design/execution-device.md):
     # assembly owns it and
     # shutdown closes it — a wake re-assembly must not leak the previous
@@ -114,7 +110,6 @@ class MemberServices:
     docker_runtime: "ExecutionDevice | None" = None
     operations: tuple[Operation, ...] = ()
     shell_service: MemberShellService | None = None
-    is_full: bool = True
 
 
 class MemberRuntime(Member):
@@ -182,7 +177,6 @@ class MemberRuntime(Member):
                     start_all_candidates=self._registry.boot_candidates
                     if self._registry is not None
                     else None,
-                    apprentice=not services.is_full if services is not None else False,
                 )
             )
         )
@@ -205,9 +199,7 @@ class MemberRuntime(Member):
         if not any(operation.name == "time-now" for operation in operations):
             operations.extend(time_operation_definitions())
         if mailbox is not None and post_office is not None:
-            mail_service = MemberMailService(
-                member_id, mailbox, post_office, services.mentor_cc if services else None
-            )
+            mail_service = MemberMailService(member_id, mailbox, post_office)
             operations.extend(make_mail_operations(mail_service))
         host_names = {operation.name for operation in host_operation_definitions()}
         self._host_builtins = {
@@ -239,11 +231,7 @@ class MemberRuntime(Member):
             self._behavior_error = message
             logger.error("member_recovery_only", member_id=member_id, error=message)
         if services is not None:
-            from tlon.agents.assembly import REPRODUCTION_TOOLS
-
             for operation in operation_executor.registry.definitions():
-                if not services.is_full and operation.name in REPRODUCTION_TOOLS:
-                    continue
                 services.tool_executor.register_tool(
                     OperationTool(operation_executor, operation.name)
                 )

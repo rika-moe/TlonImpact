@@ -102,45 +102,6 @@
 | `content-matches?` | 是 | Regex-search a mail's content or a plain string (e.g. ``result``). |
 <!-- END GENERATED: dsl-builtins-pure -->
 
-### 社会策略的只读词汇
-
-策略仍是独立纯函数式计算，不驱动 Agent 工作流程。
-
-<!-- BEGIN GENERATED: dsl-builtins-policy -->
-`POLICY_BUILTINS`（28 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
-
-| 名称 | pure | 说明 |
-|---|---|---|
-| `assert` | 是 | Reject invalid data without introducing a host effect. |
-| `integer?` | 是 | Test for an integer value, excluding booleans. |
-| `json-encode` | 是 | Encode strict JSON data, accepting EDN keywords only as object keys. |
-| `assoc` | 是 | Return a map/vector copy with key-value pairs applied in order. |
-| `dissoc` | 是 | Return a map copy without the supplied keys; missing keys are harmless. |
-| `conj` | 是 | Append to a vector, or add two-element entry vectors to a map copy. |
-| `keys` | 是 | Return map keys in insertion order. |
-| `vals` | 是 | Return map values in insertion order, matching ``keys``. |
-| `=` | 是 |  |
-| `not` | 是 |  |
-| `contains?` | 是 |  |
-| `get` | 是 | Read ``key`` from a dict payload; missing keys yield ``default``. |
-| `str` | 是 | Concatenate arguments into one string. |
-| `split` | 是 | Split a string on a separator into a vector of strings. |
-| `join` | 是 | Join a vector of strings with a separator into one string. |
-| `substring` | 是 | ``s[start:end]`` — Python slice semantics, total by construction. |
-| `count` | 是 | Item count of a vector / map / string; ``nil`` counts as 0. |
-| `+` | 是 |  |
-| `-` | 是 |  |
-| `*` | 是 |  |
-| `/` | 是 | Left-fold float division: ``(/ a b c)`` = ``a / b / c``. |
-| `quot` | 是 | Integer quotient truncated toward zero, without float precision loss. |
-| `inc` | 是 |  |
-| `dec` | 是 |  |
-| `<` | 是 |  |
-| `>` | 是 |  |
-| `<=` | 是 |  |
-| `>=` | 是 |  |
-<!-- END GENERATED: dsl-builtins-policy -->
-
 <!-- BEGIN GENERATED: bridge-query-ports -->
 注册表读取使用普通只读 Operation：`member-sleeping`、`member-running`、`member-lazy` 接受 `{:agent_id "…"}`，`member-roster` 接受 `{}`。调用结果经统一 invocation 回执采样与重放；不再注入独立宿主谓词或写入 effects 表。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 <!-- END GENERATED: bridge-query-ports -->

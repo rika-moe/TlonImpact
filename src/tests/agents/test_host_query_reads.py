@@ -9,7 +9,7 @@ import pytest
 from tlon.agents.program_driver import ProgramDriver
 from tlon.agents.program_store import ProgramStore
 from tlon.agents.vocabulary import (
-    POLICY_BUILTINS,
+    SCRIPT_BUILTINS,
     make_member_builtins,
 )
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
@@ -54,11 +54,11 @@ class Host:
         "(member-roster {})",
     ],
 )
-def test_host_reads_are_not_pure_policy_vocabulary(expression: str) -> None:
+def test_host_reads_are_not_pure_member_vocabulary(expression: str) -> None:
     builtins = make_member_builtins()
     assert not builtins[str(loads(expression)[0])].pure
     with pytest.raises(EvalError):
-        validate_form(loads(expression), POLICY_BUILTINS, scope=set())
+        validate_form(loads(expression), SCRIPT_BUILTINS, scope=set())
 
 
 @pytest.mark.parametrize("disk", [False, True])

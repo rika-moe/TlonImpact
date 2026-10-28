@@ -91,7 +91,6 @@ class ReviewHarness:
                     (
                         *make_evolution_operations(
                             REVIEWER,
-                            False,
                             prototype_reader=self.read,
                             review_submitter=self.submit,
                             review_recoverer=self.recover,

@@ -77,7 +77,7 @@ model-call 返回建议，tool-execute 逐叶执行并返回真实结果。每�
 | 52 | `model-context` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
 <!-- END GENERATED: tool-registry -->
 
-上表是正式成员的满配。见习成员不注册 member-spawn、prototype-write 两个生殖/演化工具；所有成员均可使用绑定自身的四个调度工具。L0/L1/L2 均注册五个文件操作，自己的 workspace 无需 Docker，内置作者资料只读；L0/L1 不注册两个 Shell 工具。
+上表列出完整工具目录；所有成员均注册 member-spawn、prototype-write，实际调用仍受资源硬限制和原型审批约束。所有成员均可使用绑定自身的四个调度工具。L0/L1/L2 均注册五个文件操作，自己的 workspace 无需 Docker，内置作者资料只读；L0/L1 不注册两个 Shell 工具。
 
 依赖倒置：`tlon.tools` 不许反向依赖 `tlon.agents`/`tlon.prototypes`，agents 域与 prototypes 域工具的端口（`AgentLifecycle` Protocol、`SpawnRejectedError`、`StopRejectedError`）声明在 [lifecycle/ports.py](../../src/tlon/lifecycle/ports.py)，原型端口（`PrototypeError`、`PrototypeSummary`）声明在 [evolution/ports.py](../../src/tlon/evolution/ports.py)；装配时由 `AgentRegistry` 注入成员作用域领域服务，OperationTool 只投影相应操作。
 
@@ -90,7 +90,7 @@ workspace 的五个文件操作直接访问成员自己的持久目录，无需 
 - 所有邮箱读取、标读、回复与转发引用都限定为调用成员自己的邮箱；发件身份由宿主绑定。
 - 回复显式传 `in_reply_to`，线程从本成员邮箱中的引用推导；不从触发邮件隐式补收件人。
 - 转发显式传 `mail_id`；自动生成 Fwd 主题、归因头与原文，外部邮件附不可信提醒；另起线程。不接受主题覆盖。
-- `endorsing` 验证本成员邮箱引用并禁止自我致谢；mentor cc 在共享邮件服务处理。
+- `endorsing` 验证本成员邮箱引用并禁止自我致谢；发信仅使用显式 to/cc，不自动抄送创建者。
 - 接受证明本地入箱；gateway 回执不保证外部最终送达。拒收返回 `RejectedError`，结果未知返回 `UnknownOutcomeError`；两者保留结构化 data，unknown 携带 request_id。结果未知必须用同一 request_id 重试，同键不同内容拒绝。
 - 发信、转发和标读均不结束工作；完成后下一轮单独调用 finish-turn、sleep-until 或 exit-agent。
 
@@ -765,7 +765,7 @@ Operation 单一契约；输入与输出字段保留 snake_case。（本区块�
 
 ### member-spawn
 
-从可信原型创建并启动成员；见习成员不可调用，受注册表预算限制。
+从可信原型创建并启动成员；受注册表预算限制。
 
 输入：
 

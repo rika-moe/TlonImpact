@@ -35,7 +35,7 @@ architecture 区分规范与当前实现；design 负责当前领域模型和机
 | 行为与执行 | [执行装置](design/execution-device.md) | L0/L1/L2、容器、文件和代码执行边界 |
 | 通信与知识 | [邮件](design/mail.md) | 地址、邮局事务、邮箱、线程与已读语义 |
 | 通信与知识 | [记忆](design/memory.md) | 原始执行记录、可选私有笔记与工作上下文的边界 |
-| 治理与扩展 | [社会政策](design/society-policy.md) | 社会事实物化、政策 hook 与失败处理 |
+| 治理与扩展 | [社会政策](design/society-policy.md) | 资格政策退役说明与现行边界 |
 | 治理与扩展 | [演武场](design/arena.md) | 隔离评估、语料、报告与审批边界 |
 | 治理与扩展 | [Skills](design/skills.md) | SKILL.md 发现、索引、正文读取与信任边界 |
 | 人类接入 | [服务端协议](design/server-protocol.md) | REST/SSE、客户端会话、通知与同步契约 |

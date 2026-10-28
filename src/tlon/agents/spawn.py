@@ -5,34 +5,6 @@ spawn depth, per-run quota) and executes the two member-derivation
 flows: ``spawn_member`` (prototype instantiation under the budget) and
 ``adopt_agent`` (hot adoption of an out-of-process creation).
 
-The per-run quota is tilted by the target bloodline's fitness
-(ADR 0014): an optional ``tilt_provider`` maps the spawn target's
-prototype to a multiplier (clamped to [0.5, 2.0] by the society policy's
-``tilt`` hook, ``agents/policy.py`` — ADR 0022), and the effective quota
-is ``ceil(run_spawn_quota * tilt)``. The global activation cap stays
-untouched — splitting it per bloodline would punish incumbent members of
-temporarily-inefficient lineages. Tilt 1.0 (the cold-start default, and
-every failure fallback) reproduces the untilted behavior exactly.
-
-The tilt is continuous; the solvency gate (ADR 0014) is binary: an optional
-``solvency`` provider maps the spawn target's prototype to a bool, and
-an insolvent bloodline (long-term token spend not covered by endorsed
-output, judged by the policy's ``solvent?`` hook) is rejected outright,
-right after the trust gate. Both fail open — fitness bookkeeping must
-never block a spawn.
-
-The probation gate (trust ladder, docs/design/unified-member-model.md)
-tightens budget 3 from the
-*spawner* side: an optional ``probation`` provider maps the spawner's
-member id to a bool, and a probationary spawner (spawned, not yet
-endorsed) gets its effective per-run quota capped at 1. Note the
-keying difference from tilt/solvency: those two judge the spawn
-*target's* bloodline (prototype name); probation judges the *spawner*
-(member id) — one spawn can therefore be tilted by one bloodline's
-fitness while capped by its spawner's trust level. Same fail-open
-discipline: a missing provider or a derivation error reads as *not*
-probation.
-
 Of the three budgets, only the per-(spawner, run) quota is a ledger,
 and it is persisted (``TlonPaths.spawn_quota_ledger_file``, atomic
 replace): program runs survive a restart via journal replay
@@ -49,9 +21,7 @@ annotation only).
 """
 
 import json
-import math
 import os
-from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
@@ -84,25 +54,11 @@ class SpawnManager:
         max_activations: int,
         max_spawn_depth: int,
         run_spawn_quota: int,
-        tilt_provider: Callable[[str], Awaitable[float]] | None = None,
-        solvency: Callable[[str], Awaitable[bool]] | None = None,
-        probation: Callable[[str], Awaitable[bool]] | None = None,
     ) -> None:
         self._registry = registry
         self._max_activations = max_activations
         self._max_spawn_depth = max_spawn_depth
         self._run_spawn_quota = run_spawn_quota
-        # Bloodline-fitness tilt (ADR 0014): prototype name -> quota
-        # multiplier. None = always neutral 1.0 (untilted behavior).
-        self._tilt_provider = tilt_provider
-        # Solvency gate (ADR 0014): prototype name -> solvent? None =
-        # always solvent (gate disabled).
-        self._solvency = solvency
-        # Probation gate (trust ladder, docs/design/unified-member-model.md):
-        # spawner member id -> on probation? None = never probation (gate
-        # disabled). Keyed by the spawner, not the target prototype —
-        # different dimension from tilt/solvency above.
-        self._probation = probation
         # (spawner_id, run_id) -> successful spawn count, persisted to
         # disk so the anti-runaway quota survives restarts (program runs do,
         # via journal replay).
@@ -170,51 +126,6 @@ class SpawnManager:
             logger.error(
                 "spawn_quota_ledger_save_failed", file_path=str(self._ledger_path), error=str(e)
             )
-
-    async def _tilt(self, prototype: str) -> float:
-        """Quota tilt for the spawn target's bloodline (fail-open).
-
-        A missing provider or any provider failure yields the neutral
-        1.0 — fitness bookkeeping must never block a spawn.
-        """
-        if self._tilt_provider is None:
-            return 1.0
-        try:
-            return float(await self._tilt_provider(prototype))
-        except Exception as e:
-            logger.warning("spawn_tilt_failed", prototype=prototype, error=str(e))
-            return 1.0
-
-    async def _solvent(self, prototype: str) -> bool:
-        """Solvency of the spawn target's bloodline (fail-open, ADR 0014).
-
-        A missing provider or any provider failure yields True — same
-        discipline as ``_tilt``.
-        """
-        if self._solvency is None:
-            return True
-        try:
-            return bool(await self._solvency(prototype))
-        except Exception as e:
-            logger.warning("spawn_solvency_failed", prototype=prototype, error=str(e))
-            return True
-
-    async def _probationary(self, spawner_id: str) -> bool:
-        """Whether the *spawner* is on probation (fail-open,
-        docs/design/unified-member-model.md).
-
-        Keyed by spawner member id, unlike ``_tilt``/``_solvent`` which
-        are keyed by the spawn target's prototype. A missing provider or
-        any provider failure yields False — trust bookkeeping must never
-        tighten a quota.
-        """
-        if self._probation is None:
-            return False
-        try:
-            return bool(await self._probation(spawner_id))
-        except Exception as e:
-            logger.warning("spawn_probation_failed", spawner_id=spawner_id, error=str(e))
-            return False
 
     async def spawn_member(
         self,
@@ -285,22 +196,6 @@ class SpawnManager:
                 detail=f"prototype '{prototype}' is untrusted (staged, awaiting approval)",
             )
 
-        # Solvency gate (ADR 0014): an insolvent bloodline (long-term token
-        # spend not covered by endorsed output) cannot spawn until it
-        # earns endorsements back — the binary counterpart of the tilt.
-        if not await self._solvent(prototype):
-            self._reject_spawn(
-                "insolvent_lineage",
-                spawner_id=spawner_id,
-                run_id=run_id,
-                prototype=prototype,
-                detail=(
-                    f"bloodline '{prototype}' is insolvent (token spend not"
-                    " covered by endorsed output); proposal/spawn eligibility"
-                    " suspended until the bloodline earns endorsements"
-                ),
-            )
-
         # Budget 1: global activation cap (boot members included)
         if len(registry._agents) >= self._max_activations:
             self._reject_spawn(
@@ -324,33 +219,16 @@ class SpawnManager:
                 detail=f"depth {depth} > cap {self._max_spawn_depth}",
             )
 
-        # Budget 3: per-(spawner, run) quota, tilted by the target
-        # bloodline's efficiency (ADR 0014): effective quota =
-        # ceil(base * tilt), tilt clamped to [0.5, 2.0] upstream. Tilt
-        # 1.0 (cold start / failure fallback) is the untilted behavior.
-        # Probation cap (trust ladder, docs/design/unified-member-model.md):
-        # a probationary *spawner* (spawned, not yet endorsed) is capped
-        # at 1 spawn per run regardless of the tilt — tilt judges the
-        # target bloodline, probation judges the spawner.
-        tilt = await self._tilt(prototype)
-        effective_quota = math.ceil(self._run_spawn_quota * tilt)
-        probationary = await self._probationary(spawner_id)
-        if probationary:
-            effective_quota = min(effective_quota, 1)
+        # Budget 3: fixed per-(spawner, run) quota, persisted across restarts.
         quota_key = (spawner_id, run_id)
         used = self._quota.get(quota_key, 0)
-        if used >= effective_quota:
-            probation_note = "; spawner on probation, capped at 1" if probationary else ""
+        if used >= self._run_spawn_quota:
             self._reject_spawn(
                 "run_quota",
                 spawner_id=spawner_id,
                 run_id=run_id,
                 prototype=prototype,
-                detail=(
-                    f"quota {effective_quota} per run exhausted"
-                    f" (base {self._run_spawn_quota} × tilt {tilt:.2f})"
-                    f"{probation_note}"
-                ),
+                detail=f"quota {self._run_spawn_quota} per run exhausted",
             )
 
         occupied = {
