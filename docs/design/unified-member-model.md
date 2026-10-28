@@ -49,19 +49,11 @@ finish-turn 结束自己的本次工作；sleep-until 定时睡眠；exit-agent 
 
 永久退休只触发 `RetirementCeremony` 清点未完成任务、待回复邮件与已有笔记文件路径，不读取笔记正文或以退休成员身份调用模型。成员可在普通程序中显式整理教训，经原型审核后作为 `LESSONS.md` 随包传递，实例化后落入新成员 `config/LESSONS.md`。这不是任意跨成员私有笔记读取，也不是原型携带完整知识库。
 
-## 成员信任阶梯
+## 成员工具与通信边界
 
-原型 staging 闸控制「什么行为可以出生」，成员信任阶梯控制「成员此刻可做哪些动作」。判定由 [society-policy.md](society-policy.md) 的 `full-member?` hook 提供，不另外存一份 trust_level。
+所有成员均可调用 `member-spawn` 和 `prototype-write`，不按出生来源或背书划分正式／见习资格。普通程序和模型工具共享宿主检查：派生仍限于 trusted 原型并受固定资源配额约束，提案仍需完整校验与人类审批。详见 [原型与预算](prototypes.md) 和 [ADR 0052](../decisions/0052-remove-reproduction-social-gates.md)。
 
-默认政策：人类创建的成员（`spawned_by=None`）或收到至少一次 endorse 的成员为正式成员；其他 spawn 成员为见习成员。装配时派生的工具集与 mentor 在下次唤醒重新装配后更新。政策 provider 异常按正式放行；这不绕过可信原型、执行装置与基础配额等其他检查。
-
-见习成员有三项收紧：
-
-1. 不注册 `member-spawn` / `prototype-write` 两个工具；`prototype-read` / `prototype-review-submit` 保留为咨询工具，不隐式请求模型。
-2. DSL spawn 仍经 SpawnManager，按 spawner id 判定见习，最终每会话配额收紧到最多 1；完整预算定义见 [prototypes.md](prototypes.md#spawn-预算落盘账本)。
-3. 撰写发信抄送 mentor（`spawned_by` 对应地址）；已在收件人或抄送中时不重复加入。MemberRuntime 与 EffectExecutor 两条发信路径均应用，转发不抄送。
-
-普通成员的状态工具只绑定自身；管理他人的终止仅在人类管理端提供。DSL 生命周期请求必须验证发起主体，不能通过 DSL 规则绕过工具权限。
+发信仅使用显式 `to` / `cc`，不因 `spawned_by` 自动抄送创建者。来源与背书是审计事实，不构成工具资格或通信访问权。普通成员的状态工具只绑定自身；管理他人的终止仅在人类管理端提供。DSL 生命周期请求仍验证发起主体。
 
 ## 当前默认生命周期政策：Adam
 
@@ -75,7 +67,7 @@ Adam 是内置 `MemberRuntime`，使用同一种规则程序与注册表查询�
 | agent-spawned | 给新成员发欢迎信，介绍联系簿、寻址黄页和通信惯例 |
 | 寄给 Adam 的邮件 | 固定确认收讫，排除 postmaster 系统邮件避免回信循环 |
 
-wake-on-mail 由注册表根据 spec 机械派生，不经过 Adam。`MAIL_ORPHAN_SCAN` 没有自动消费者：对周期事实做无状态回应会产生周期噪声，需要滞回状态或人类摘要通道才能另行设计。Adam 的生命周期规则与 `policy.tlon` 的 fitness/trust 公式是不同政策入口。
+wake-on-mail 由注册表根据 spec 机械派生，不经过 Adam。`MAIL_ORPHAN_SCAN` 没有自动消费者：对周期事实做无状态回应会产生周期噪声，需要滞回状态或人类摘要通道才能另行设计。Adam 的生命周期 Lisp 规则保留；原社会资格政策入口已由 ADR 0052 删除。
 
 ## 代码锚点
 
@@ -83,10 +75,9 @@ wake-on-mail 由注册表根据 spec 机械派生，不经过 Adam。`MAIL_ORPHA
 |---|---|
 | spec 加载与校验 | [member_spec.py](../../src/tlon/agents/member_spec.py) |
 | 统一规则解释与动作执行 | [member_runtime.py](../../src/tlon/agents/member_runtime.py) |
-| 装配、工具子集与 mentor | [assembly.py](../../src/tlon/agents/assembly.py) |
+| 装配与工具子集 | [assembly.py](../../src/tlon/agents/assembly.py) |
 | 生命周期、退休、待停与唤醒 | [agent_registry.py](../../src/tlon/agents/agent_registry.py) |
 | 默认生命周期政策 | [adam.py](../../src/tlon/agents/adam.py) |
-| 信任政策 provider | [policy.py](../../src/tlon/agents/policy.py) |
 | 退休交接清点 | [retirement.py](../../src/tlon/agents/retirement.py) |
 
 ## 未实施方向
@@ -94,6 +85,6 @@ wake-on-mail 由注册表根据 spec 机械派生，不经过 Adam。`MAIL_ORPHA
 - 审批社会化：已有咨询性同行评审，自动晋级尚不存在。
 - 通用知识共享：当前只有教训随包继承，不提供跨成员私有记忆读取。
 - 磁盘增长治理：历史保留有持续存储成本，自动归档清理政策尚未建立。
-- 停止请求的更细社会政策与见习闸：不能将当前工具隐藏等同于完整授权模型。
+- 停止请求的更细社会政策：工具展示不能替代宿主身份与领域检查。
 
 原型与成员的技术 ID 由系统生成（[ADR 0035](../decisions/0035-generated-ids-and-behavior-prototypes.md)）；原型显示名描述行为，不认证派生者职业，地址不携带原型名。

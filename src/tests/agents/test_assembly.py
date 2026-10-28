@@ -232,7 +232,6 @@ async def test_real_assembly_evolution_writes_use_injected_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Exercise the assembled writer bindings, not hand-built test partials."""
-    from unittest.mock import AsyncMock
 
     from tlon.agents.prototypes.staging import list_staging_prototypes
     from tlon.operations.adapters import OperationTool
@@ -251,13 +250,6 @@ async def test_real_assembly_evolution_writes_use_injected_paths(
         llm=LLMConfig(model_name="test/model", max_output_tokens=8192, context_window=64000),
         docker=DockerRuntimeConfig(level="L0"),
     )
-    monkeypatch.setattr(
-        "tlon.agents.assembly.policy_trust_provider", lambda _paths: AsyncMock(return_value=True)
-    )
-    monkeypatch.setattr(
-        "tlon.agents.assembly.policy_solvency_provider", lambda _paths: AsyncMock(return_value=True)
-    )
-    monkeypatch.setattr("tlon.agents.assembly.find_near_kin", lambda *_args, **_kwargs: None)
     caps = await assemble_member_services(
         config,
         registry=None,
@@ -311,3 +303,68 @@ async def test_workspace_operations_survive_unavailable_docker(
     assert (await executor.call("file-search", {"pattern": "current"}))["count"] == 1
     if level == "L0":
         constructor.assert_not_called()
+
+
+async def test_born_member_runtime_exposes_and_executes_reproduction_tools(tmp_path: Path) -> None:
+    from unittest.mock import AsyncMock
+
+    from tests.program_helpers import make_program
+    from tlon.agents.member_runtime import MemberRuntime
+    from tlon.agents.vocabulary import make_member_builtins
+    from tlon.base.events.event_bus import EventBus
+    from tlon.operations.core import CallContext
+
+    paths = TlonPaths(home=tmp_path)
+    config = AgentConfig(
+        id="born",
+        name="Born",
+        spawned_by="creator",
+        prototype="source",
+        spawn_depth=1,
+        llm=LLMConfig(model_name="test/model", max_output_tokens=8192, context_window=64000),
+        docker=DockerRuntimeConfig(level="L0"),
+    )
+    registry = MagicMock()
+    registry.spawn_member = AsyncMock(
+        return_value=AgentConfig(
+            id="child",
+            name="Child",
+            prototype="source",
+            spawned_by="born",
+            spawn_depth=2,
+        )
+    )
+    services = await assemble_member_services(
+        config,
+        registry=registry,
+        agent_info=_FakeAgentInfo({config.id: config}),
+        tlon_paths=paths,
+    )
+    member = MemberRuntime(
+        member_id=config.id,
+        name=config.name,
+        event_bus=EventBus(),
+        spec=make_program(),
+        builtins=make_member_builtins(),
+        services=services,
+    )
+    assert {"member-spawn", "prototype-write"} <= set(services.tool_executor.list_tools())
+    spawned = await services.tool_executor.execute(
+        "member-spawn",
+        {"prototype": "source", "name": "Child"},
+        CallContext("born", "run", "spawn"),
+    )
+    assert spawned.success, spawned.error
+    registry.spawn_member.assert_awaited_once()
+    written = await services.tool_executor.execute(
+        "prototype-write",
+        {
+            "behavior": "{:version 2 :handlers {:boot work/handle}}",
+            "modules": {"work.tlon": "(ns work (:export handle)) (defn handle [event] {})"},
+            "display_name": "born proposal",
+        },
+        CallContext("born", "run", "proposal"),
+    )
+    assert written.success, written.error
+    assert written.data["trusted"] is False
+    await member.shutdown()

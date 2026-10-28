@@ -1,4 +1,4 @@
-"""Ordinary member vocabulary, materialized events, and society policy data."""
+"""Ordinary member vocabulary and materialized events."""
 
 import re
 from typing import Any, TypedDict
@@ -120,58 +120,6 @@ SCRIPT_BUILTINS: dict[str, Builtin] = {
     "from?": Builtin(_builtin_from, pure=True),
     "content-matches?": Builtin(_builtin_content_matches, pure=True),
 }
-
-
-# ── Policy context: society policy hooks (ADR 0022) ──
-# The fifth evaluation context, the first pull-typed one: the host calls
-# the policy file's hooks (``tilt`` / ``solvent?`` / ``full-member?``) at
-# fixed evaluation points (spawn / staging proposal / assembly) instead
-# of reacting to an event. Environment contract: no symbols at all —
-# hooks are functions the host *applies* with positional arguments whose
-# shapes are the TypedDicts below, materialized by the host before
-# evaluation (social data collection is async IO, impossible inside a
-# pure builtin). Mechanism collects raw facts, policy judges.
-
-
-class LineageMemberStats(TypedDict):
-    """One member's contribution to its bloodline's raw stats."""
-
-    id: str
-    endorsements_received: int
-
-
-class LineageStats(TypedDict):
-    """One bloodline's raw social facts (the ``tilt`` / ``solvent?`` input).
-
-    ``total_tokens`` and the per-member endorsement counts are raw
-    aggregates; the value / efficiency formulas derived from them live in
-    the policy file. The bloodline key is the prototype name
-    (``base/ledger.py`` ``collect_lineage_ledgers``).
-    """
-
-    name: str
-    total_tokens: int
-    members: list[LineageMemberStats]
-
-
-class PolicyMemberInfo(TypedDict):
-    """One member's social facts (the ``full-member?`` input)."""
-
-    id: str
-    spawned_by: str | None
-    endorsements_received: int
-
-
-#: Society-policy vocabulary (ADR 0022): the pure language subset — core
-#: accessors and arithmetic, plus the evaluator's special forms. No
-#: action words, no host query callbacks: policy hooks receive
-#: materialized data and return a verdict, so evaluation against this
-#: registry is side-effect free by construction.
-POLICY_BUILTINS: dict[str, Builtin] = {**CORE_BUILTINS, **ARITHMETIC_BUILTINS}
-
-#: The hook names the host looks up in a policy file's evaluated env.
-#: Versioning discipline (ADR 0020): this set only grows.
-POLICY_HOOK_NAMES = frozenset({"tilt", "solvent?", "full-member?"})
 
 
 # ── Static operation vocabulary ──

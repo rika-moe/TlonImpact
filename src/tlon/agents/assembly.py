@@ -16,11 +16,9 @@ from tlon.agents.context_builder import ContextBuilder
 from tlon.agents.health import orphan_mail_provider
 from tlon.agents.mail_stats import mail_stats_provider
 from tlon.agents.member_runtime import MemberServices
-from tlon.agents.policy import policy_solvency_provider, policy_trust_provider
 from tlon.agents.program_package import check_program_sources
 from tlon.agents.prototypes.catalog import list_prototypes
 from tlon.agents.prototypes.lineage import get_prototype_lineage
-from tlon.agents.prototypes.near_kin import find_near_kin
 from tlon.agents.prototypes.reviews import (
     read_prototype,
     recover_prototype_review,
@@ -68,15 +66,6 @@ if TYPE_CHECKING:
     from tlon.base.config import AgentInfoProvider
 
 logger = get_logger(__name__)
-
-#: The reproduction/evolution tools withheld from probationary members at
-#: assembly time (trust ladder, docs/design/unified-member-model.md). The
-#: trust *level* is policy (the ``full-member?``
-#: hook, ``agents/policy.py``, ADR 0022); this tool subset is the
-#: execution-side mechanism the level drives. ``prototype-review-submit`` is
-#: deliberately absent: reviewing a staging proposal is advisory (approve
-#: stays human).
-REPRODUCTION_TOOLS: frozenset[str] = frozenset({"member-spawn", "prototype-write"})
 
 
 def _build_llm_config(file_config: LLMConfig | None, agent_id: str) -> LLMConfig:
@@ -165,23 +154,6 @@ async def assemble_member_services(
     # are never force-removed — a sleeping member keeps its container
     # (zero-cost wake); a re-assembly reuses it by name.
 
-    # Trust ladder (docs/design/unified-member-model.md): one derivation
-    # per assembly — a member's wake
-    # re-assembles, so promotion to full takes effect on the next wake
-    # (natural in a scale-to-zero world). The level is the society
-    # policy's ``full-member?`` hook (ADR 0022); fail-open reads as full
-    # trust (availability first). A probationary member (spawned, not yet
-    # endorsed, per the default policy) is assembled without the
-    # reproduction tools (REPRODUCTION_TOOLS; prototype-read and
-    # prototype-review-submit stay available) and gets its mentor cc'd on
-    # composed outbound mail.
-    is_full = await policy_trust_provider(tlon_paths)(config.id)
-    mentor_cc = (
-        address_for_member(config.spawned_by)
-        if not is_full and config.spawned_by is not None
-        else None
-    )
-
     # Create ToolExecutor (direct execution, no EventBus)
     tool_executor = ToolExecutor()
 
@@ -213,12 +185,9 @@ async def assemble_member_services(
     if config.docker.level == "L2":
         shell_service = MemberShellService(config.docker, docker_runtime)
         operations.extend(make_shell_operations(shell_service))
-    proposal_solvency = policy_solvency_provider(tlon_paths)
-    near_kin_check = partial(find_near_kin, tlon_paths=tlon_paths)
     operations.extend(
         make_evolution_operations(
             config.id,
-            is_full,
             program_checker=check_program_sources,
             catalog=PrototypeCatalog(lister=partial(list_prototypes, tlon_paths=tlon_paths)),
             staging=StagingCatalog(lister=partial(list_staging_prototypes, tlon_paths=tlon_paths)),
@@ -229,9 +198,6 @@ async def assemble_member_services(
             writer=PrototypeWriter(
                 author_id=config.id,
                 writer=partial(write_staging_prototype, tlon_paths=tlon_paths),
-                prototype=config.prototype,
-                solvency=proposal_solvency,
-                near_kin=near_kin_check,
             ),
         )
     )
@@ -254,12 +220,6 @@ async def assemble_member_services(
             trace_store=trace_store,
         )
     )
-    if not is_full:
-        logger.info(
-            "probation_tools_withheld",
-            agent_name=config.name,
-            tools=sorted(REPRODUCTION_TOOLS),
-        )
     logger.debug(
         "operations_assembled",
         agent_name=config.name,
@@ -280,9 +240,7 @@ async def assemble_member_services(
         tlon_paths=tlon_paths,
         per_tool_timeout=per_tool_timeout,
         registry=registry,
-        mentor_cc=mentor_cc,
         docker_runtime=docker_runtime,
         operations=tuple(operations),
         shell_service=shell_service,
-        is_full=is_full,
     )

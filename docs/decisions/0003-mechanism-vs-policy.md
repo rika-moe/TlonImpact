@@ -4,7 +4,7 @@
 
 > 更新（2026-10-20，P3b）：本文保留决策时的术语；记忆、联系人等旧 Tool 已切换为共享 Operation，当前契约见 [operations-reference](../reference/operations-reference.md)。
 
-> 阅读定位：本文保留当时的选择与理由；当前设计见 [infrastructure](../design/infrastructure.md)、[society-policy](../design/society-policy.md)。当前适用范围：机制/策略分离保留；政策求值面由 ADR 0022 扩展。完整关系见 [决策索引](README.md)。
+> 阅读定位：本文保留历史决策与施工记录。[ADR 0052](0052-remove-reproduction-social-gates.md) 已删除近亲拒绝、生育经济门槛、见习资格与自动导师抄送，并完全删除 ADR 0022 的政策 hook；机制与策略分离、用量审计及 Adam 生命周期程序保留。当前设计见 [prototypes](../design/prototypes.md)、[unified-member-model](../design/unified-member-model.md)。
 
 状态：已接受（回溯记录，2026-08-15）
 

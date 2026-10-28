@@ -168,7 +168,6 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 ├── initial-society-lock.sqlite3       # 初始社会创建互斥锁，不存业务邮件
 ├── .initial-society-staging/          # 初始化暂存，完成后清理
 ├── cron.yaml                         # 声明式周期任务邮件（可选；启动时读一次，改动需重启）
-├── policy.tlon                       # 社会政策文件（可选；ADR 0022，tilt/solvent?/full-member? hook；缺失即内嵌默认政策）
 ├── shared/
 │   ├── mail.sqlite3                  # 邮件、邮箱归属、已读状态、幂等与退休记录
 │   ├── spawn-quota.json              # 每 spawner/调用根的 spawn 配额账本
@@ -201,7 +200,6 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 - SQLite 已注册人类即 known；离线不影响本地入箱。旧 JSONL 邮箱仅保留为离线档案，不读取、不导入、不双写、不删除。
 - `prototypes/` 与 `prototypes-staging/` 不存在即空（`exists()` 检查无副作用——整个 `TlonPaths` 都是纯解析）；`prototypes/` 是受信任源，`prototypes-staging/` 是信任闸（人工批准后才能被 spawn）。
 - `cron.yaml` 是声明式周期任务（`{name, to, subject, content}` + `interval_seconds` 或 5 字段 `cron` 表达式），由 [agents/cron.py](../../src/tlon/agents/cron.py) 的 `CronScheduler` 在启动时读一次——改动需重启生效；不存在或为空即无周期任务，没有内置社会文摘。报社等业务由普通 Lisp 成员处理，调度器只投递静态任务。格式与示例见 [design/mail.md](../design/mail.md)「周期任务：tick 即邮件」。
-- `policy.tlon` 是社会政策文件（ADR 0022）：`:policy` form 序列定义的 `tilt` / `solvent?` / `full-member?` hook 在 spawn / 提案 / 装配求值点被宿主调用，宿主每次求值重新读文件——改动即时生效；**人类专写**（不进任何成员的 `allowed_paths`，不走 staging 通道）；缺失或失败即回退 [agents/policy.py](../../src/tlon/agents/policy.py) 的内嵌默认政策（精确复刻迁移前的 Python 公式）。格式与词汇见 [dsl-reference.md](dsl-reference.md) §10。
 
 ## 6. 配置相关的常用操作
 

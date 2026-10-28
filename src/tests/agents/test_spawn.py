@@ -13,6 +13,7 @@ spawner without a declared model fails the spawn at instantiation.
 """
 
 import json
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -197,180 +198,67 @@ class TestQuotaPersistence:
         await manager.spawn_member("worker", "甲", "boss-2", "run-1")
 
 
-def _const_tilt(value: float):
-    async def provider(prototype: str) -> float:
-        return value
-
-    return provider
-
-
-class TestSpawnTilt:
-    """Budget-3 quota tilt by bloodline fitness (): the effective
-    per-run quota is ceil(base * tilt); tilt 1.0 is the neutral
-    cold-start/failure fallback."""
-
-    async def test_tilt_two_widens_quota(self, tmp_path):
-        """tilt 2.0 over base quota 2 gives an effective quota of 4."""
+class TestResourceLimits:
+    @pytest.mark.parametrize("spawned_by", [None, "creator"])
+    async def test_origin_without_endorsements_uses_fixed_quota(
+        self, tmp_path: Path, spawned_by: str | None
+    ) -> None:
         p = TlonPaths(home=tmp_path)
         _write_prototype(p, "worker")
-        manager = SpawnManager(  # type: ignore[arg-type]
-            _FakeRegistry(p), 8, 3, 2, tilt_provider=_const_tilt(2.0)
-        )
-        for name in "甲乙丙丁":
-            await manager.spawn_member("worker", name, "boss-1", "run-1")
-        with pytest.raises(SpawnRejectedError) as exc:
-            await manager.spawn_member("worker", "戊", "boss-1", "run-1")
-        assert exc.value.reason == "run_quota"
-        assert "tilt 2.00" in str(exc.value)
 
-    async def test_tilt_half_narrows_quota(self, tmp_path):
-        """tilt 0.5 over base quota 2 gives an effective quota of 1."""
+        class Provider(_FakeProvider):
+            def get_config(self, agent_id: str) -> AgentConfig:
+                return AgentConfig(
+                    id=agent_id,
+                    name=agent_id,
+                    spawned_by=spawned_by,
+                    spawn_depth=1 if spawned_by else 0,
+                    llm=LLMConfig(model_name=_SPAWNER_MODEL),
+                )
+
+        # No mail or endorsement records exist in this society.
+        manager = SpawnManager(_FakeRegistry(p, Provider()), 8, 3, 2)  # type: ignore[arg-type]
+        for name in ["first", "second"]:
+            child = await manager.spawn_member("worker", name, "boss-1", "run-1")
+            assert child.spawned_by == "boss-1"
+            assert child.spawn_depth == (2 if spawned_by else 1)
+        with pytest.raises(SpawnRejectedError) as failure:
+            await manager.spawn_member("worker", "third", "boss-1", "run-1")
+        assert failure.value.reason == "run_quota"
+
+    async def test_untrusted_prototype_rejected(self, tmp_path: Path) -> None:
         p = TlonPaths(home=tmp_path)
         _write_prototype(p, "worker")
-        manager = SpawnManager(  # type: ignore[arg-type]
-            _FakeRegistry(p), 8, 3, 2, tilt_provider=_const_tilt(0.5)
+        metadata = p.prototypes_dir() / "worker" / "prototype.tlon"
+        metadata.write_text(
+            metadata.read_text(encoding="utf-8").replace(":trusted true", ":trusted false"),
+            encoding="utf-8",
         )
-        await manager.spawn_member("worker", "甲", "boss-1", "run-1")
-        with pytest.raises(SpawnRejectedError) as exc:
-            await manager.spawn_member("worker", "乙", "boss-1", "run-1")
-        assert exc.value.reason == "run_quota"
-        assert "tilt 0.50" in str(exc.value)
+        manager = SpawnManager(_FakeRegistry(p), 8, 3, 2)  # type: ignore[arg-type]
+        with pytest.raises(SpawnRejectedError) as failure:
+            await manager.spawn_member("worker", "child", "boss-1", "run-1")
+        assert failure.value.reason == "untrusted_prototype"
+        assert not p.spawn_quota_ledger_file().exists()
 
-    async def test_provider_failure_falls_back_to_neutral(self, tmp_path):
-        """A raising tilt provider is fail-open: the untilted quota (2)
-        still binds, so fitness bookkeeping never blocks a spawn."""
-
-        async def _boom(prototype: str) -> float:
-            raise OSError("fitness derivation broke")
-
+    async def test_global_activation_limit(self, tmp_path: Path) -> None:
         p = TlonPaths(home=tmp_path)
         _write_prototype(p, "worker")
-        manager = SpawnManager(  # type: ignore[arg-type]
-            _FakeRegistry(p), 8, 3, 2, tilt_provider=_boom
-        )
-        await manager.spawn_member("worker", "甲", "boss-1", "run-1")
-        await manager.spawn_member("worker", "乙", "boss-1", "run-1")
-        with pytest.raises(SpawnRejectedError) as exc:
-            await manager.spawn_member("worker", "丙", "boss-1", "run-1")
-        assert exc.value.reason == "run_quota"
-        assert "tilt 1.00" in str(exc.value)
+        registry = _FakeRegistry(p)
+        registry._agents["active"] = object()
+        manager = SpawnManager(registry, 1, 3, 2)  # type: ignore[arg-type]
+        with pytest.raises(SpawnRejectedError) as failure:
+            await manager.spawn_member("worker", "child", "boss-1", "run-1")
+        assert failure.value.reason == "max_activations"
+        assert not p.spawn_quota_ledger_file().exists()
 
-
-def _const_solvency(value: bool):
-    async def provider(prototype: str) -> bool:
-        return value
-
-    return provider
-
-
-class TestSpawnSolvency:
-    """Solvency gate (): an insolvent bloodline cannot spawn; the
-    check sits after the trust gate and fails open."""
-
-    async def test_insolvent_lineage_rejected(self, tmp_path):
+    async def test_depth_limit(self, tmp_path: Path) -> None:
         p = TlonPaths(home=tmp_path)
         _write_prototype(p, "worker")
-        manager = SpawnManager(  # type: ignore[arg-type]
-            _FakeRegistry(p), 8, 3, 2, solvency=_const_solvency(False)
-        )
-        with pytest.raises(SpawnRejectedError) as exc:
-            await manager.spawn_member("worker", "甲", "boss-1", "run-1")
-        assert exc.value.reason == "insolvent_lineage"
-
-    async def test_solvent_lineage_spawns(self, tmp_path):
-        p = TlonPaths(home=tmp_path)
-        _write_prototype(p, "worker")
-        manager = SpawnManager(  # type: ignore[arg-type]
-            _FakeRegistry(p), 8, 3, 2, solvency=_const_solvency(True)
-        )
-        await manager.spawn_member("worker", "甲", "boss-1", "run-1")
-
-    async def test_provider_failure_fails_open(self, tmp_path):
-        """A raising solvency provider never blocks a spawn."""
-
-        async def _boom(prototype: str) -> bool:
-            raise OSError("fitness derivation broke")
-
-        p = TlonPaths(home=tmp_path)
-        _write_prototype(p, "worker")
-        manager = SpawnManager(  # type: ignore[arg-type]
-            _FakeRegistry(p), 8, 3, 2, solvency=_boom
-        )
-        await manager.spawn_member("worker", "甲", "boss-1", "run-1")
-
-
-def _const_probation(value: bool):
-    async def provider(spawner_id: str) -> bool:
-        return value
-
-    return provider
-
-
-class TestSpawnProbation:
-    """Probation quota cap (trust ladder,
-    docs/design/unified-member-model.md): keyed by *spawner id*
-    (unlike tilt/solvency, which key on the target prototype) — a
-    probationary spawner's effective per-run quota is capped at 1,
-    whatever the tilt says. Fail-open like the other two providers."""
-
-    async def test_probation_spawner_capped_at_one(self, tmp_path):
-        p = TlonPaths(home=tmp_path)
-        _write_prototype(p, "worker")
-        manager = SpawnManager(  # type: ignore[arg-type]
-            _FakeRegistry(p), 8, 3, 2, probation=_const_probation(True)
-        )
-        await manager.spawn_member("worker", "甲", "boss-1", "run-1")
-        with pytest.raises(SpawnRejectedError) as exc:
-            await manager.spawn_member("worker", "乙", "boss-1", "run-1")
-        assert exc.value.reason == "run_quota"
-        assert "probation" in str(exc.value)
-
-    async def test_probation_cap_wins_over_tilt(self, tmp_path):
-        """tilt 2.0 would widen the quota to 4; probation caps it at 1 —
-        the tilt judges the target bloodline, probation judges the spawner."""
-        p = TlonPaths(home=tmp_path)
-        _write_prototype(p, "worker")
-        manager = SpawnManager(  # type: ignore[arg-type]
-            _FakeRegistry(p),
-            8,
-            3,
-            2,
-            tilt_provider=_const_tilt(2.0),
-            probation=_const_probation(True),
-        )
-        await manager.spawn_member("worker", "甲", "boss-1", "run-1")
-        with pytest.raises(SpawnRejectedError) as exc:
-            await manager.spawn_member("worker", "乙", "boss-1", "run-1")
-        assert exc.value.reason == "run_quota"
-        assert "probation" in str(exc.value)
-
-    async def test_full_spawner_uncapped(self, tmp_path):
-        p = TlonPaths(home=tmp_path)
-        _write_prototype(p, "worker")
-        manager = SpawnManager(  # type: ignore[arg-type]
-            _FakeRegistry(p), 8, 3, 2, probation=_const_probation(False)
-        )
-        await manager.spawn_member("worker", "甲", "boss-1", "run-1")
-        await manager.spawn_member("worker", "乙", "boss-1", "run-1")
-        with pytest.raises(SpawnRejectedError) as exc:
-            await manager.spawn_member("worker", "丙", "boss-1", "run-1")
-        assert exc.value.reason == "run_quota"
-        assert "probation" not in str(exc.value)
-
-    async def test_provider_failure_fails_open(self, tmp_path):
-        """A raising probation provider reads as *not* probation — trust
-        bookkeeping must never tighten a quota."""
-
-        async def _boom(spawner_id: str) -> bool:
-            raise OSError("trust derivation broke")
-
-        p = TlonPaths(home=tmp_path)
-        _write_prototype(p, "worker")
-        manager = SpawnManager(  # type: ignore[arg-type]
-            _FakeRegistry(p), 8, 3, 2, probation=_boom
-        )
-        await manager.spawn_member("worker", "甲", "boss-1", "run-1")
-        await manager.spawn_member("worker", "乙", "boss-1", "run-1")
+        manager = SpawnManager(_FakeRegistry(p), 8, 0, 2)  # type: ignore[arg-type]
+        with pytest.raises(SpawnRejectedError) as failure:
+            await manager.spawn_member("worker", "child", "boss-1", "run-1")
+        assert failure.value.reason == "max_spawn_depth"
+        assert not p.spawn_quota_ledger_file().exists()
 
 
 class TestModelInheritance:

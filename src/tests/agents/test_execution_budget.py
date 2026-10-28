@@ -378,9 +378,6 @@ async def test_real_assembled_tool_schemas_with_boolean_values_are_counted_as_te
         docker=DockerRuntimeConfig(level="L0"),
     )
     paths = TlonPaths(home=tmp_path / "member")
-    monkeypatch.setattr(
-        "tlon.agents.assembly.policy_trust_provider", lambda _paths: AsyncMock(return_value=True)
-    )
     services = await assemble_member_services(
         config,
         registry=None,

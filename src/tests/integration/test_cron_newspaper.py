@@ -121,7 +121,7 @@ class SocialNewspaper:
             metrics_snapshot=self.metrics,
         )
         evolution = make_evolution_operations(
-            "newspaper", True, staging=StagingCatalog(self.staging)
+            "newspaper", staging=StagingCatalog(self.staging)
         )
         adapter = DSLAdapter(
             OperationExecutor(

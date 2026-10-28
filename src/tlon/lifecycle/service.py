@@ -29,7 +29,6 @@ class LifecycleService:
         state_reader: SelfStateReader | None = None,
         publish_request: RequestPublisher | None = None,
         start_all_candidates: Callable[[], list[str]] | None = None,
-        apprentice: bool = False,
     ) -> None:
         self.member_id = member_id
         self.registry = registry
@@ -37,7 +36,6 @@ class LifecycleService:
         self.state_reader = state_reader
         self.publish_request = publish_request
         self.start_all_candidates = start_all_candidates
-        self.apprentice = apprentice
 
     def check_context(self, context: CallContext) -> None:
         if context.member_id != self.member_id:
@@ -45,8 +43,6 @@ class LifecycleService:
 
     async def spawn(self, args: dict[str, Any], context: CallContext) -> dict[str, Any]:
         self.check_context(context)
-        if self.apprentice:
-            raise RejectedError("probationary members cannot spawn", {"reason": "probationary"})
         if self.registry is None:
             raise OperationError("member lifecycle registry is not bound")
         try:

@@ -86,7 +86,7 @@ def make_lifecycle_operations(service: LifecycleService | None) -> tuple[Operati
     return (
         Operation(
             "member-spawn",
-            "从可信原型创建并启动成员；见习成员不可调用，受注册表预算限制。",
+            "从可信原型创建并启动成员；受注册表预算限制。",
             _object(
                 {
                     "prototype": {"type": "string", "minLength": 1},

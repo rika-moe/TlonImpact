@@ -18,18 +18,18 @@ from tlon.organization.mail.member_mail import MailDraft, MemberMailService
 from tlosure.edn import Keyword
 
 
-def bound(tmp_path: Path, member: str = "a", mentor: str | None = None):
+def bound(tmp_path: Path, member: str = "a"):
     office = office_at(tmp_path)
     box = Mailbox(office._paths.mail_database_file(), member)
-    service = MemberMailService(member, box, office, mentor)
+    service = MemberMailService(member, box, office)
     executor = OperationExecutor(
         OperationRegistry(make_mail_operations(service)), CallContext(member, "run", "call-1")
     )
     return office, box, service, executor
 
 
-async def test_reply_endorsement_and_mentor_are_shared_submission_policy(tmp_path: Path) -> None:
-    office, box, service, executor = bound(tmp_path, mentor="b@tlon.internal")
+async def test_reply_endorsement_does_not_add_recipients(tmp_path: Path) -> None:
+    office, box, service, executor = bound(tmp_path)
     original = await office.send(from_address="b@tlon.internal", to=["a"], content="evidence")
     result = await OperationTool(executor, "mail-send").execute_context(
         {
@@ -43,7 +43,12 @@ async def test_reply_endorsement_and_mentor_are_shared_submission_policy(tmp_pat
     sent = (await box.sent())[0]
     assert sent.thread_id == original.mail.thread_id
     assert sent.endorsing == original.mail.id
-    assert sent.cc == ["b@tlon.internal"]
+    assert sent.cc == []
+    assert await Mailbox(office._paths.mail_database_file(), "b").inbox() == []
+    explicit = await service.send({"to": ["a"], "cc": ["b"], "content": "shared"}, "explicit")
+    assert (
+        await Mailbox(office._paths.mail_database_file(), "b").find(explicit["mail_id"]) is not None
+    )
     with pytest.raises(RejectedError, match="不能致谢"):
         await service.send({"to": ["b"], "content": "self", "endorsing": sent.id}, "self")
     with pytest.raises(RejectedError, match="不在你的邮箱"):

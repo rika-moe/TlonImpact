@@ -13,7 +13,7 @@ handwritten; only the drift-prone inventories are generated:
   in docs/reference/tlosure-reference.md — the language-level whitelists
   (special forms from tlosure/eval.py, the general ``CORE_BUILTINS`` and
   ``ARITHMETIC_BUILTINS`` vocabularies from tlosure/builtins.py).
-- ``dsl-on-events`` / ``dsl-builtins-{pure,policy}`` /
+- ``dsl-on-events`` / ``dsl-builtins-pure`` /
   ``dsl-fuel-defaults`` / ``bridge-query-ports`` in dsl-reference.md —
   event names, ordinary vocabularies, resource bounds and explicit query ports.
 - ``rest-endpoints`` / ``mode-patterns`` in docs/reference/api-reference.md —
@@ -214,7 +214,7 @@ def builtin_registry(name: str, path: Path) -> list[BuiltinEntry]:
     entries: list[BuiltinEntry] = []
     for key, val in zip(value.keys, value.values, strict=True):
         if key is None:
-            # ``**OTHER_REGISTRY`` unpacking (e.g. POLICY_BUILTINS =
+            # ``**OTHER_REGISTRY`` unpacking (e.g. DERIVED_BUILTINS =
             # {**CORE_BUILTINS, **ARITHMETIC_BUILTINS}): expand the named
             # registry's entries inline, resolved in ``path`` first, then
             # in tlosure/builtins.py.
@@ -820,7 +820,6 @@ def _render_sections() -> dict[tuple[Path, str], str]:
         ),
         (DSL_REF, "dsl-on-events"): render_dsl_on_events(),
         (DSL_REF, "dsl-builtins-pure"): render_builtin_table("SCRIPT_BUILTINS", VOCABULARY_FILE),
-        (DSL_REF, "dsl-builtins-policy"): render_builtin_table("POLICY_BUILTINS", VOCABULARY_FILE),
         (DSL_REF, "dsl-fuel-defaults"): render_dsl_fuel_defaults(),
         (DSL_REF, "bridge-query-ports"): render_bridge_query_ports(),
         (API_REF, "rest-endpoints"): render_rest_endpoints(),

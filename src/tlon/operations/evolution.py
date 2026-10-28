@@ -200,7 +200,6 @@ _CONTRACTS: dict[str, tuple[str, dict[str, Any]]] = {
 
 def make_evolution_operations(
     member_id: str,
-    is_full: bool,
     *,
     writer: EvolutionService | None = None,
     program_checker: ProgramChecker | None = None,
@@ -224,10 +223,6 @@ def make_evolution_operations(
         async def execute(context: CallContext, args: dict[str, Any]) -> Any:
             if context.member_id != member_id:
                 raise InputError("evolution service belongs to another member")
-            if not is_full and name in {
-                "prototype-write",
-            }:
-                raise RejectedError("evolution operations require a full member", {})
             try:
                 if name == "prototype-read":
                     if prototype_reader is None:
@@ -300,4 +295,4 @@ def make_evolution_operations(
 
 def evolution_operation_definitions() -> tuple[Operation, ...]:
     """Inspect contracts without constructing services or accessing member files."""
-    return make_evolution_operations("", False)
+    return make_evolution_operations("")

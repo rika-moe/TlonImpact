@@ -41,7 +41,6 @@ class MemberMailService:
         member_id: str,
         mailbox: Mailbox,
         post_office: PostOffice,
-        mentor_cc: str | None = None,
     ) -> None:
         if mailbox.member_id != member_id:
             raise ValueError("mailbox does not belong to member")
@@ -49,17 +48,6 @@ class MemberMailService:
         self.address = address_for_member(member_id)
         self._mailbox = mailbox
         self._post_office = post_office
-        self._mentor_cc = mentor_cc
-
-    def _cc_with_mentor(self, effect: MailDraft) -> list[str]:
-        cc = [*(effect.cc or [])]
-        if (
-            self._mentor_cc is not None
-            and self._mentor_cc not in effect.to
-            and self._mentor_cc not in cc
-        ):
-            cc.append(self._mentor_cc)
-        return cc
 
     async def submit(self, effect: MailDraft, request_id: str | None = None) -> StoredPost:
         request_id = request_id or uuid.uuid4().hex
@@ -83,7 +71,7 @@ class MemberMailService:
                 return await self._post_office.send(
                     from_address=self.address,
                     to=effect.to,
-                    cc=self._cc_with_mentor(effect),
+                    cc=effect.cc or [],
                     subject=subject,
                     content=content,
                     in_reply_to=in_reply_to,

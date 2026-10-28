@@ -16,7 +16,7 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 |---|---|---|
 | [ADR 0001：用 Lisp 风格 EDN 作为行为 DSL 的语法](0001-edn-as-dsl.md) | [dsl](../design/dsl.md) | 语法选择保留；「无 fn/def」由 ADR 0021 修订，语言核心路径由 ADR 0018 调整 |
 | [ADR 0002：邮件是唯一通信通道](0002-mail-as-only-channel.md) | [mail](../design/mail.md) | 邮件通信选择保留；当前投信契约由 ADR 0030 明确 |
-| [ADR 0003：机制与策略分离——注册表纯机制，策略集中于 Adam](0003-mechanism-vs-policy.md) | [infrastructure](../design/infrastructure.md)、[society-policy](../design/society-policy.md) | 机制/策略分离保留；政策求值面由 ADR 0022 扩展 |
+| [ADR 0003：机制与策略分离——注册表纯机制，策略集中于 Adam](0003-mechanism-vs-policy.md) | [infrastructure](../design/infrastructure.md)、[society-policy](../design/society-policy.md) | 机制/策略分离保留；ADR 0022 的资格政策求值面由 ADR 0052 删除 |
 | [ADR 0004：stage 纯度——状态变更一律声明为 StageOutcome 数据](0004-stage-purity.md) | [runtime](../design/runtime.md) | Stage 纯度与效果数据化 |
 | [ADR 0005：SSE 而非 WebSocket](0005-sse-over-websocket.md) | [server-protocol](../design/server-protocol.md) | REST + SSE 通信选择 |
 | [ADR 0018：DSL 抽取为独立包 tlosure](0018-dsl-extraction-tlosure.md) | [dsl](../design/dsl.md)、[bridge-api](../design/bridge-api.md) | tlosure 语言核心独立于宿主 |
@@ -27,12 +27,13 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 | 决策 | 当前设计 | 有效范围与修订关系 |
 |---|---|---|
 | [ADR 0006：统一成员模型——一类成员 + 世代更替](0006-unified-member-model.md) | [unified-member-model](../design/unified-member-model.md)、[prototypes](../design/prototypes.md) | 统一成员与世代模型；人格边界由 ADR 0024 澄清，档案保留不排除人类显式治理删除 |
-| [ADR 0014：环境-Agent 协同演化——代谢经济学与演化分层](0014-environment-agent-coevolution.md) | [prototypes](../design/prototypes.md)、[society-policy](../design/society-policy.md) | 共演化方向含未实施部分；已落地政策形态由 ADR 0022 具体化 |
-| [ADR 0022：社会政策语境——policy.tlon 与 pull 型求值点](0022-society-policy-context.md) | [society-policy](../design/society-policy.md) | 社会政策语境与 pull 型求值点 |
+| [ADR 0014：环境-Agent 协同演化——代谢经济学与演化分层](0014-environment-agent-coevolution.md) | [prototypes](../design/prototypes.md)、[society-policy](../design/society-policy.md) | 保留用量审计与谱系；近亲拒绝和生育经济门槛由 ADR 0052 删除，其余含未实施方向 |
+| [ADR 0022：社会政策语境——policy.tlon 与 pull 型求值点](0022-society-policy-context.md) | [society-policy](../design/society-policy.md) | 全部政策 hook 已由 ADR 0052 删除，正文为历史记录 |
 | [ADR 0024：主观身份与自组织社会——人格自主权、联系簿与 all@ 退役](0024-subjective-identity.md) | [identity](../design/identity.md)、[unified-member-model](../design/unified-member-model.md) | 主观身份、联系簿、人格自主权与 all@ 退役 |
 | [ADR 0034：统一成员寻址黄页与信息边界](0034-member-address-directory.md) | [identity](../design/identity.md)、[mail](../design/mail.md) | 修订 ADR 0024 黄页范围：覆盖所有已登记且可投递成员，黄页公开，私有材料边界保留 |
 | [ADR 0035：系统生成标识与行为化原型库](0035-generated-ids-and-behavior-prototypes.md) | [prototypes](../design/prototypes.md)、[identity](../design/identity.md) | 原型／新成员系统 ID、行为显示名，合并相同行为，移除职业暗示与旧参数 |
 | [ADR 0036：首启初始社会](0036-initial-society.md) | [initial-society](../design/initial-society.md)、[identity](../design/identity.md) | 修订 ADR 0016 的空社会首启：30 位中文人物、稀疏联系与初始叙事组织；已有实例不补种 |
+| [ADR 0052：删除生育社会门槛与自动导师抄送](0052-remove-reproduction-social-gates.md) | [prototypes](../design/prototypes.md)、[unified-member-model](../design/unified-member-model.md) | 删除近亲、经济与资格门槛，保留资源硬限制和人工审批 |
 
 ## 运行时与上下文
 

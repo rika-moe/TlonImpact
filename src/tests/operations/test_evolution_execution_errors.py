@@ -28,7 +28,6 @@ def _registry(paths: TlonPaths) -> OperationRegistry:
     return OperationRegistry(
         make_evolution_operations(
             "alice",
-            False,
             prototype_reader=partial(read_prototype, tlon_paths=paths),
             review_submitter=partial(submit_prototype_review, tlon_paths=paths),
             review_recoverer=partial(recover_prototype_review, tlon_paths=paths),
@@ -72,7 +71,6 @@ async def test_review_recovers_committed_write_after_receipt_failure(
     # A fresh executor must reconcile the domain receipt without submitting again.
     operations = make_evolution_operations(
         "alice",
-        False,
         review_submitter=Mock(side_effect=AssertionError("must recover, not resubmit")),
         review_recoverer=partial(recover_prototype_review, tlon_paths=paths),
     )
@@ -115,7 +113,7 @@ async def test_review_write_io_failure_is_unknown_and_does_not_retry(tmp_path: P
 
 async def test_evolution_wrapper_preserves_known_deadline() -> None:
     reader = Mock(side_effect=ExecutionDeadlineError("known deadline"))
-    registry = OperationRegistry(make_evolution_operations("alice", False, prototype_reader=reader))
+    registry = OperationRegistry(make_evolution_operations("alice", prototype_reader=reader))
     executor = OperationExecutor(registry, CallContext("alice", "root", "call"))
     with pytest.raises(ExecutionDeadlineError, match="known deadline"):
         await executor.call("prototype-read", {"name": "proposal"})
@@ -151,7 +149,6 @@ async def test_review_recovery_cannot_turn_unverifiable_receipt_into_rejection(
     registry = OperationRegistry(
         make_evolution_operations(
             "alice",
-            False,
             review_submitter=submitter,
             review_recoverer=recoverer,
         )

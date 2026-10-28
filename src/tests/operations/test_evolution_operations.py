@@ -1,7 +1,7 @@
 """Evolution authority, shared projections and publication failure boundaries."""
 
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -14,7 +14,7 @@ from tlon.operations.adapters import OperationTool
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
 from tlon.operations.dsl import DSLAdapter
 from tlon.operations.evolution import make_evolution_operations
-from tlon.operations.schema import OperationError, RejectedError, UnknownOutcomeError, json_value
+from tlon.operations.schema import OperationError, UnknownOutcomeError, json_value
 from tlosure.builtins import BuiltinCall
 from tlosure.edn import Keyword
 
@@ -28,12 +28,11 @@ _SPEC = "{:version 2 :handlers {:boot work/handle}}"
 _MODULES = {"work.tlon": "(ns work (:export handle)) (defn handle [event] {})"}
 
 
-def _bound(paths: TlonPaths, *, full: bool = True) -> OperationExecutor:
+def _bound(paths: TlonPaths) -> OperationExecutor:
     return OperationExecutor(
         OperationRegistry(
             make_evolution_operations(
                 "alice",
-                full,
                 writer=PrototypeWriter(
                     "alice", lambda *a, **kw: write_staging_prototype(*a, tlon_paths=paths, **kw)
                 ),
@@ -72,37 +71,35 @@ async def test_two_entrances_host_author_and_human_trust(tmp_path: Path) -> None
     assert len(list_staging_prototypes(paths)) == 1
 
 
-@pytest.mark.parametrize(
-    ("name", "slot", "args"),
-    [
-        (
-            "prototype-write",
-            "writer",
-            {"behavior": BUNDLE_BEHAVIOR, "modules": BUNDLE_MODULES, "display_name": "x"},
-        ),
-    ],
-)
-async def test_apprentice_denied_in_tool_and_dsl_before_service_call(
-    name: str, slot: str, args: dict[str, object]
-) -> None:
+async def test_member_can_propose_through_tool_and_dsl() -> None:
     service = Mock()
-    executor = OperationExecutor(
-        OperationRegistry(make_evolution_operations("apprentice", False, **{slot: service})),
-        CallContext("apprentice", "run", "call"),
+    service.execute = AsyncMock(
+        return_value={
+            "name": "proposal",
+            "display_name": "x",
+            "parent": None,
+            "generation": 0,
+            "trusted": False,
+            "status": "pending_approval",
+        }
     )
-    result = await OperationTool(executor, name).execute_context(args)
-    assert not result.success and "RejectedError" in result.error
+    executor = OperationExecutor(
+        OperationRegistry(make_evolution_operations("born", writer=service)),
+        CallContext("born", "run", "call"),
+    )
+    args = {"behavior": BUNDLE_BEHAVIOR, "modules": BUNDLE_MODULES, "display_name": "x"}
+    result = await OperationTool(executor, "prototype-write").execute_context(args)
+    assert result.success
     adapter = DSLAdapter(executor)
-    with pytest.raises(RejectedError):
-        await adapter.handle(
-            BuiltinCall(
-                name,
-                adapter.builtins()[name],
-                [{Keyword(k): v for k, v in args.items()}],
-                {},
-            )
+    await adapter.handle(
+        BuiltinCall(
+            "prototype-write",
+            adapter.builtins()["prototype-write"],
+            [{Keyword(k): v for k, v in args.items()}],
+            {},
         )
-    service.execute.assert_not_called()
+    )
+    assert service.execute.await_count == 2
 
 
 def test_staging_fsync_failure_leaves_no_partial_package(tmp_path: Path) -> None:
@@ -195,7 +192,7 @@ def test_concurrent_same_name_publication_never_overwrites(tmp_path: Path) -> No
     assert list(tmp_path.glob(".proposal-*")) == []
 
 
-async def test_probation_explicit_review_uses_shared_contract_without_model(tmp_path: Path) -> None:
+async def test_member_explicit_review_uses_shared_contract_without_model(tmp_path: Path) -> None:
     from functools import partial
 
     from tlon.agents.prototypes.catalog import list_prototypes
@@ -213,8 +210,7 @@ async def test_probation_explicit_review_uses_shared_contract_without_model(tmp_
         _SPEC, modules=_MODULES, display_name="x", author_id="author", tlon_paths=paths
     )
     operations = make_evolution_operations(
-        "probation",
-        False,
+        "reviewer",
         catalog=PrototypeCatalog(partial(list_prototypes, tlon_paths=paths)),
         staging=StagingCatalog(partial(list_staging_prototypes, tlon_paths=paths)),
         lineage=PrototypeLineage(partial(get_prototype_lineage, tlon_paths=paths)),
@@ -223,7 +219,7 @@ async def test_probation_explicit_review_uses_shared_contract_without_model(tmp_
         review_recoverer=partial(recover_prototype_review, tlon_paths=paths),
     )
     executor = OperationExecutor(
-        OperationRegistry(operations), CallContext("probation", "run", "call")
+        OperationRegistry(operations), CallContext("reviewer", "run", "call")
     )
     adapter = DSLAdapter(executor)
     for name, args in (
@@ -267,7 +263,7 @@ async def test_probation_explicit_review_uses_shared_contract_without_model(tmp_
             )
         )
     assert json_value(repeated, edn_keys=True) == result.data
-    assert result.data["reviewer"] == "probation"
+    assert result.data["reviewer"] == "reviewer"
     assert result.data["run_id"] == "run" and result.data["call_id"] == "call"
     assert list_staging_prototypes(paths)[0].trusted is False
     with pytest.raises(OperationError, match="unknown operation"):

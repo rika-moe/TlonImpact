@@ -1,6 +1,6 @@
 # ADR 0022：社会政策语境——policy.tlon 与 pull 型求值点
 
-> 阅读定位：本文保留当时的选择与理由；当前设计见 [society-policy](../design/society-policy.md)。当前适用范围：社会政策语境与 pull 型求值点。完整关系见 [决策索引](README.md)。
+> 阅读定位：本文保留历史决策与施工记录。[ADR 0052](0052-remove-reproduction-social-gates.md) 已删除近亲拒绝、生育经济门槛、见习资格与自动导师抄送，并完全删除 ADR 0022 的政策 hook；机制与策略分离、用量审计及 Adam 生命周期程序保留。当前设计见 [prototypes](../design/prototypes.md)、[unified-member-model](../design/unified-member-model.md)。
 
 状态：已接受（2026-09-28 拍板）
 

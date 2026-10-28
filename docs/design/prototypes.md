@@ -2,7 +2,7 @@
 
 > 当前实现采用 [普通模块工作程序](programmable-workflows.md)：只接收完整 v2 behavior/modules 包；stage 引擎与 v1 运行路径已删除。
 
-> 本文定义原型目录、实例化、提案审批、spawn 预算和谱系。成员模型、信任阶梯与默认生命周期政策见 [unified-member-model.md](unified-member-model.md)。当前 stop 为永久退休，idle drain 为可唤醒休眠；二者均不隐式删除历史。历史来源：[ADR 0006](../decisions/0006-unified-member-model.md)、[ADR 0030](../decisions/0030-sqlite-post-office.md)。
+> 本文定义原型目录、实例化、提案审批、spawn 预算和谱系。成员模型、工具边界与默认生命周期政策见 [unified-member-model.md](unified-member-model.md)。当前 stop 为永久退休，idle drain 为可唤醒休眠；二者均不隐式删除历史。历史来源：[ADR 0006](../decisions/0006-unified-member-model.md)、[ADR 0030](../decisions/0030-sqlite-post-office.md)。
 
 Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型是一份纯数据的行为模板，spawn 是把它拷贝成一个真实 agent 的动作。这套体系是「新成员由社会内部产生」的当前形态。本文解释它为什么长现在这样，以当前实现为准（原型库在 [src/tlon/agents/prototypes/](../../src/tlon/agents/prototypes) 包，内置原型在 [src/tlon/prototypes/](../../src/tlon/prototypes)，spawn 工具在 [src/tlon/lifecycle/](../../src/tlon/lifecycle)）。
 
@@ -104,14 +104,9 @@ agent 侧入口是 `LifecycleService`（[lifecycle/service.py](../../src/tlon/li
 
 三道防失控闸门（注册表构造参数，硬编码默认值）：全局同时运行上限 `max_activations = 8`、spawn 链深度 `max_spawn_depth = 3`、每 (spawner, run) 配额 `run_spawn_quota = 2`。三者只有 (spawner, run) 配额是账本，落盘 `~/.tlon/shared/spawn-quota.json`（原子替换写入，损坏时告警并从头开始，绝不阻碍启动），跨重启存活——执行根及回执通过 ProgramStore 跨重启存活，纯内存账本会让 spawner 靠重启刷满配额，防失控闸失效。三个维度分别防三种失控：总量防资源耗尽，深度防无限递归 spawn，运行配额防单个任务循环里刷成员。`max_activations` 从当前运行表计数，重启后重新形成；`max_spawn_depth` 从成员持久化的 `spawn_depth` 递增派生，两者不另建账本。
 
-每次 spawn 在基础配额上应用两个独立维度：
+所有成员使用相同的固定配额，不按出生来源、背书或血脉用量调整，也不检查偿付资格。账本损坏时从头开始是当前可用性取舍，不等于配额在磁盘损坏后仍有严格保障。
 
-- **目标血脉的 tilt**：有效配额先算 `ceil(run_spawn_quota × tilt)`；冷启动和 provider 异常回到中性 `1.0`。
-- **发起者的见习状态**：按 **spawner_id** 判断，而不是目标 prototype；见习成员的有效配额再取 `min(effective, 1)`，派生异常不收紧。
-
-目标血脉还必须通过偿付检查，失败返回 `insolvent_lineage`，异常则放行。这些判断的公式和默认阈值统一在 [society-policy.md](society-policy.md) 定义，SpawnManager 负责执行结果。全局激活上限不按血脉拆分，避免因血脉暂时低效影响其现役成员。账本损坏时从头开始是当前可用性取舍，不等于配额在磁盘损坏后仍有严格保障。
-
-拒绝经 `SpawnRejectedError` 带回机器可读的 `reason`（`max_activations` / `max_spawn_depth` / `session_quota` / `untrusted_prototype` / `insolvent_lineage` / `config_reload_failed`），工具层把它翻译成 LLM 能理解的错误文案——`untrusted_prototype` 会明确告知「需人类在 ops 中批准」，其余归为 `budget_exceeded`。机器可读的 reason 与面向 LLM 的文案分离，让程序与模型各取所需。
+拒绝经 `SpawnRejectedError` 带回机器可读的 `reason`（`invalid_run` / `max_activations` / `max_spawn_depth` / `run_quota` / `untrusted_prototype` / `config_reload_failed`），生命周期工具保留该 reason 与拒绝原文；程序与模型据此区分资源限制、执行根错误和原型尚未批准。
 
 ### 出生行为与能力边界
 
@@ -142,11 +137,9 @@ agent 侧入口是 `LifecycleService`（[lifecycle/service.py](../../src/tlon/li
 
 `prototype-write` 的机器创作入口只接受完整 v2 behavior/modules，不写人格文件；普通 `tlon.authoring/draft` 根据传入任务/经验，用现有文件工具读取文档与标准源码，以 program-check 校验并修订候选；不再有专用一次性起草操作。发布复用完整包验证与 digest。人工和机器提案采用同一完整包验证；v1 原型与旧 rules 起草、执行路径均已删除。
 
-提案资格还有第二道闸——血脉偿付门槛（agent 侧）：`prototype-write` 在执行开头检查作者血脉的偿付能力（`agents/policy.py` 的 `solvent?` 政策 hook，ADR 0022——默认公式与阈值见 [society-policy.md](society-policy.md)，可由人类在 `~/.tlon/policy.tlon` 调整），失去偿付能力的血脉提案被直接拒绝（staging 无残留），指引是「先用手上成员做出被 endorse 的产出再提案」。这道闸不进 `write_staging_prototype` 域函数：admin REST 的人类直写不受闸——信任闸按影响半径分级，人类不受影响半径约束。闸本身 fail-open：偿付派生任何异常都放行。
+提案不检查作者的偿付资格或与既有原型的相似度；相似程序允许独立提交，其价值由人类审批判断。见 [ADR 0052](../decisions/0052-remove-reproduction-social-gates.md)。
 
-第三道闸是近亲拒绝（ADR 0014 的非收敛选择压，agent 侧）：提案完整作者源码与 trusted + staging 两区所有既有原型的作者包（behavior 和全部 modules） 做纯文本相似度比较（`find_near_kin`，`difflib.SequenceMatcher.ratio`，比较前规范化——去掉 `;` 注释行、折叠空白；不解析 EDN，模板原型的 `${var}` 占位符按原文比），最相似的一档 ≥ 阈值 0.9 就直接打回（staging 无残留），指引是「做出实质差异或改为提案改进既有原型」。阈值刻意定高、只拦换皮级雷同与**跨血脉**趋同：提案的声明父本在比较中豁免（NEAT 式物种形成保护——创新在自己血脉内被保护几代；prototype-write 的豁免名取显式 `parent`、缺省回退作者自身的 prototype），于是沿血脉的代际微改可放行，而跨血脉的近似复制仍被拦。与偿付闸同款边界：不进 `write_staging_prototype`、不闸 admin REST 人类直写，fail-open——相似度扫描任何异常都放行。
-
-三道闸之外是**显式同行评审**。旧 `prototype-review` 及其 Python 专项模型调用退役，不保留别名。普通 Lisp 程序或成员的行动循环决定是否读取材料、怎样分析以及是否提交；可以完全不调用模型，也可以复用当前行动循环，不强制增加一次模型请求。
+提案还支持**显式同行评审**。旧 `prototype-review` 及其 Python 专项模型调用退役，不保留别名。普通 Lisp 程序或成员的行动循环决定是否读取材料、怎样分析以及是否提交；可以完全不调用模型，也可以复用当前行动循环，不强制增加一次模型请求。
 
 - `prototype-read` 默认返回提案元数据、文件清单和材料 digest；指定相对文件路径后，分页读取 `prototype.tlon`、`behavior.tlon`、`modules/*.tlon` 或 `LESSONS.md`。路径限制在原型包内，拒绝符号链接与路径穿越。后续读取可带 digest，材料变化时拒绝，避免混读多个版本。谱系与 diff 仍由独立的 `prototype-lineage` 按需读取，不自动注入模型上下文。
 - 材料 digest 覆盖上述实际源码、教训和元数据的精确内容及路径，不包含 `REVIEW.md`。它与只覆盖 behavior/modules 的 `program-digest` 各负其责；其他人的评审不使已读材料失效。
@@ -155,7 +148,7 @@ agent 侧入口是 `LifecycleService`（[lifecycle/service.py](../../src/tlon/li
 
 评审仍是咨询性的，不自动批准。人类详情接口展示记录，批准时随包保留。可选的评审 skill 提供阅读与分析步骤；执行能力声明（例如 `:L2` 是否必要）、显示名、实际行为、模块依赖与教训均应按任务审阅。详情 payload 的 `execution_level`、`red_flags` 和 WebUI 警示保留。
 
-信任门与预算检查的顺序也是设计：`spawn_member` 里 `untrusted_prototype` 的拒绝排在一切预算检查**之前**，紧随其后是同一偿付门槛的 spawn 侧（`insolvent_lineage`：失去偿付能力的血脉连 spawn 资格也没有）。不可信原型连预算都消耗不到——否则 LLM 可以用不存在的权限反复试探配额边界，把拒绝回执当成预算状态的探针。
+信任门与预算检查的顺序也是设计：`spawn_member` 里 `untrusted_prototype` 的拒绝排在一切预算检查**之前**。不可信原型连预算都消耗不到——否则 LLM 可以用不存在的权限反复试探配额边界，把拒绝回执当成预算状态的探针。
 
 ## 谱系：原型谱系作为一等数据
 
