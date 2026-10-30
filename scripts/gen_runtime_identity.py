@@ -23,7 +23,7 @@ def main() -> None:
     if args.check:
         if not TARGET.exists() or TARGET.read_text(encoding="utf-8") != expected:
             raise SystemExit("Runtime dependency fingerprint is stale; run scripts/gen_runtime_identity.py")
-        print("✅ runtime dependency fingerprint is fresh")
+        print("Runtime dependency fingerprint is fresh")
     else:
         TARGET.write_text(expected, encoding="utf-8", newline="\n")
 
