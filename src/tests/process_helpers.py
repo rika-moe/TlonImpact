@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 from typing import Any
+from uuid import uuid4
 
 # Joining the Windows job must precede execution of code that can spawn children.
 _GATE = "import sys; sys.stdin.buffer.read(1) == b'1' or sys.exit(1); exec(sys.argv[1])"
@@ -28,7 +29,7 @@ class ProcessTree:
             if sys.platform == "win32":
                 import win32job
 
-                job = win32job.CreateJobObject(None, None)
+                job = win32job.CreateJobObject(None, f"tlon-test-{uuid4().hex}")
                 limits = win32job.QueryInformationJobObject(
                     job, win32job.JobObjectExtendedLimitInformation
                 )
