@@ -40,4 +40,6 @@ Windows 特殊组件校验共享给 author 逻辑路径映射，必须在转换�
 
 验证须包含 Windows 原生无 Docker 文件工具、分页枚举、链接/junction/硬链接、ADS/设备路径、目标替换和父目录移动竞争。托管 Windows Server CI 不等同于 Windows 10 实机验证；验证结果另行记录。
 
-原生实现依据 [Microsoft NtCreateFile](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile) 的 RootDirectory 相对打开语义、[FILE_RENAME_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_rename_info) 的父句柄重命名语义，以及 [Go Windows openat 实现](https://go.dev/src/internal/syscall/windows/at_windows.go)。常规读写、目录枚举和句柄操作使用 pywin32，仅相对打开所需 NT ABI 使用 ctypes。Windows 原生 CI 在 Python 3.11 / 3.13 上调用 `scripts/check_all.sh --windows-workspace`，包含 Windows 平台类型检查、共享文件工具、路径/链接/竞态测试和显式 WebUI 标头的 SDK 邮件冒烟。
+原生实现依据 [Microsoft NtCreateFile](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile) 的 RootDirectory 相对打开语义、[FILE_RENAME_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_rename_info) 的父句柄重命名语义，以及 [Go Windows openat 实现](https://go.dev/src/internal/syscall/windows/at_windows.go)。常规读写、目录枚举和句柄操作使用 pywin32，仅相对打开与重命名所需 NT ABI 使用 ctypes。Windows 原生 CI 在 Python 3.11 / 3.13 上调用 `scripts/check_all.sh --windows-workspace`，包含 Windows 平台类型检查、共享文件工具、路径/链接/竞态测试和显式 WebUI 标头的 SDK 邮件冒烟。
+
+第三阶段 Windows CI 首次暴露 Win32 `SetFileInformationByHandle(FileRenameInfo)` 在该平台对非空 RootDirectory 返回错误 87，写入未成功。实现改用 `NtSetInformationFile(FileRenameInformation)`，直接传递临时源句柄与目标父句柄；保留目录共享限制，不退回绝对路径。该调用模式参考 [Go Windows Renameat](https://go.dev/src/internal/syscall/windows/at_windows.go)。修正后的原生验证结果以 CI 为准。

@@ -7,7 +7,6 @@ import shutil
 import subprocess
 import sys
 import tarfile
-from contextlib import suppress
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -39,7 +38,11 @@ def _invoke(files: Any, operation: str, path: str) -> Any:
     return files.read(path)
 
 
-@pytest.mark.parametrize("data", [b"", "你好，世界 🐙".encode(), bytes(range(256)) * 32769])
+@pytest.mark.parametrize(
+    "data",
+    [b"", "你好，世界 🐙".encode(), bytes(range(256)) * 32769],
+    ids=["empty", "unicode", "8mb"],
+)
 def test_roundtrip_unicode_nested_and_overwrite(
     backend: ModuleType, tmp_path: Path, data: bytes
 ) -> None:
@@ -221,28 +224,40 @@ def test_target_substitution_cannot_modify_external_inode(
     target, outside = root / "note", tmp_path / "secret"
     target.write_bytes(b"old")
     outside.write_bytes(b"private")
+    # Prepare the attack before workspace handles deny concurrent mutations.
+    # A creation failure here is a test setup error, never a security success.
+    prepared = tmp_path / "prepared-link"
+    if kind == "symlink":
+        prepared.symlink_to(outside)
+    else:
+        os.link(outside, prepared)
+    assert prepared.samefile(outside)
     original = backend._replace
-    swapped = False
+    outcome: str | None = None
 
     def swap_target(handle: Any, parent: Any, name: str) -> None:
-        nonlocal swapped
+        nonlocal outcome
         try:
-            target.unlink()
-            if kind == "symlink":
-                target.symlink_to(outside)
-            else:
-                os.link(outside, target)
-        except (ValueError, OSError) as exc:
-            raise AssertionError("race setup must install the external link") from exc
-        swapped = True
+            os.replace(prepared, target)
+        except OSError as exc:
+            if getattr(exc, "winerror", None) != 32:
+                raise AssertionError("unexpected error arranging target substitution") from exc
+            outcome = "prevented-by-sharing"
+        else:
+            outcome = "swapped"
         original(handle, parent, name)
 
     monkeypatch.setattr(backend, "_replace", swap_target)
-    # Only the backend's refusal after installing the raced link is acceptable;
-    # errors while arranging the race above are assertions and cannot be hidden.
-    with suppress(ValueError, OSError):
+    try:
         backend.WorkspaceFiles(root).write("note", b"new")
-    assert swapped
+    except (ValueError, OSError):
+        # A refusal is acceptable only after the malicious entry was installed.
+        # If Windows blocked the attacker, the ordinary write must still work.
+        assert outcome == "swapped"
+    assert outcome in {"swapped", "prevented-by-sharing"}
+    if outcome == "prevented-by-sharing":
+        assert prepared.samefile(outside)
+        assert (root / "note").read_bytes() == b"new"
     assert outside.read_bytes() == b"private"
     assert not list(root.glob(".tlon-write-*"))
     shutil.rmtree(root)

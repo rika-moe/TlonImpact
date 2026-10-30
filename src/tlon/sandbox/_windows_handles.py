@@ -1,4 +1,4 @@
-"""The NT relative-open primitive absent from pywin32's Win32 wrappers."""
+"""NT primitives for directory-handle-relative open and replacement."""
 
 from __future__ import annotations
 
@@ -55,6 +55,15 @@ class _IoStatus(ctypes.Structure):
     _fields_ = [("Status", _Status), ("Information", ctypes.c_size_t)]
 
 
+class _RenameInformation(ctypes.Structure):
+    _fields_ = [
+        ("ReplaceIfExists", wintypes.BYTE),
+        ("RootDirectory", wintypes.HANDLE),
+        ("FileNameLength", wintypes.ULONG),
+        ("FileName", wintypes.WCHAR * 1),
+    ]
+
+
 _ntdll = ctypes.WinDLL("ntdll")
 _create = _ntdll.NtCreateFile
 _create.argtypes = [
@@ -71,6 +80,15 @@ _create.argtypes = [
     wintypes.ULONG,
 ]
 _create.restype = wintypes.LONG
+_set_information = _ntdll.NtSetInformationFile
+_set_information.argtypes = [
+    wintypes.HANDLE,
+    ctypes.POINTER(_IoStatus),
+    ctypes.c_void_p,
+    wintypes.ULONG,
+    wintypes.ULONG,
+]
+_set_information.restype = wintypes.LONG
 _error = _ntdll.RtlNtStatusToDosError
 _error.argtypes = [wintypes.LONG]
 _error.restype = wintypes.ULONG
@@ -131,3 +149,34 @@ def open_relative(
         raise ctypes.WinError(_error(result))
     assert handle.value is not None
     return handle.value
+
+
+def replace_relative(handle: int, parent: int, name: str) -> None:
+    """Replace a single directory entry using native FILE_RENAME_INFORMATION.
+
+    Win32 SetFileInformationByHandle rejects a non-null RootDirectory on the
+    tested Windows runner. NtSetInformationFile accepts the directory handle
+    directly, without rebuilding or reparsing an absolute destination path.
+    """
+    validate_windows_component(name)
+    encoded = name.encode("utf-16-le")
+    if len(encoded) > 65532:
+        raise ValueError("Windows path component is too long")
+    buffer = ctypes.create_string_buffer(ctypes.sizeof(_RenameInformation) + len(encoded))
+    information = _RenameInformation.from_buffer(buffer)
+    information.ReplaceIfExists = 1
+    information.RootDirectory = parent
+    information.FileNameLength = len(encoded)
+    ctypes.memmove(
+        ctypes.addressof(buffer) + _RenameInformation.FileName.offset, encoded, len(encoded)
+    )
+    status = _IoStatus()
+    result = _set_information(
+        handle,
+        ctypes.byref(status),
+        buffer,
+        len(buffer),
+        10,  # FileRenameInformation
+    )
+    if result < 0:
+        raise ctypes.WinError(_error(result))

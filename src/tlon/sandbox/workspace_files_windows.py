@@ -18,7 +18,7 @@ import win32file
 from tlon.sandbox.windows_paths import validate_windows_component
 
 if sys.platform == "win32":
-    from tlon.sandbox._windows_handles import open_relative
+    from tlon.sandbox._windows_handles import open_relative, replace_relative
 
 assert sys.platform == "win32", "Windows native module"
 
@@ -63,11 +63,7 @@ def _read(handle: int) -> bytes:
 
 
 def _replace(handle: int, parent: int, name: str) -> None:
-    win32file.SetFileInformationByHandle(
-        handle,
-        win32file.FileRenameInfo,
-        {"ReplaceIfExists": True, "RootDirectory": parent, "FileName": name},
-    )
+    replace_relative(handle, parent, name)
 
 
 def _parts(relative: str) -> list[str]:
