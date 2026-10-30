@@ -10,8 +10,8 @@ jobs:
   catalogs:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
           python-version: '3.13'
@@ -28,8 +28,8 @@ jobs:
       matrix:
         python: ['3.11', '3.13']
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
           python-version: ${{ matrix.python }}
@@ -43,14 +43,14 @@ jobs:
   portable:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
           python-version: '3.13'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
           cache-dependency-path: apps/webui/package-lock.json
       - name: Build WebUI
@@ -61,7 +61,7 @@ jobs:
         shell: bash
         run: bash scripts/check_all.sh --windows-portable
       - name: Upload portable ZIP
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Tlon-windows-x64
           path: dist/windows-portable/Tlon-windows-x64.zip
