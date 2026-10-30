@@ -65,10 +65,13 @@
 `member-context` 是固定结构的只读操作，返回知识、教训、技能索引、当前任务、最近交互摘要、邮件历史与可用工具名。程序决定如何组织这些值；宿主不解释 section 配置。文档和标准库源码可通过 workspace 的只读映射及现有读取工具查询。
 
 <!-- BEGIN GENERATED: dsl-builtins-pure -->
-`SCRIPT_BUILTINS`（31 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`SCRIPT_BUILTINS`（34 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 名称 | pure | 说明 |
 |---|---|---|
+| `map` | 是 | Apply a function to each vector element, returning a vector. |
+| `filter` | 是 | Return vector elements whose predicate result is truthy. |
+| `reduce` | 是 | Fold a vector left with a function and an explicit initial value. |
 | `assert` | 是 | Reject invalid data without introducing a host effect. |
 | `integer?` | 是 | Test for an integer value, excluding booleans. |
 | `json-encode` | 是 | Encode strict JSON data, accepting EDN keywords only as object keys. |

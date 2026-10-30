@@ -73,7 +73,7 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 | [ADR 0010：Skill 能力——开放标准 SKILL.md，三层目录，DSL `(skills)` section，模型自读正文](0010-skills.md) | [skills](../design/skills.md) | Skill 发现与渐进加载选择；当前正文访问限制见 design |
 | [ADR 0011：DSL 语义演进锚定 SCI 兼容子集（为 JVM 迁移铺路）](0011-sci-compatible-subset.md) | [dsl](../design/dsl.md) | SCI 语义锚定方向；函数能力按 ADR 0021 扩展，不表示已迁移 JVM |
 | [ADR 0054：EDN 解析与 JSON 编码的有限规模契约](0054-tlosure-resource-limits.md) | [dsl](../design/dsl.md) | 保留整数键与共享引用，独立于 fuel 的规模硬上限 |
-| [ADR 0021：tlosure 完整函数能力——defn / 闭包 / 变长参数 / 递归 / 一等函数](0021-tlosure-full-functions.md) | [dsl](../design/dsl.md)、[bridge-api](../design/bridge-api.md) | 完整函数能力；替代旧的无定义能力及动作位置可枚举保证 |
+| [ADR 0021：tlosure 完整函数能力——defn / 闭包 / 变长参数 / 递归 / 一等函数](0021-tlosure-full-functions.md) | [dsl](../design/dsl.md)、[bridge-api](../design/bridge-api.md) | 完整函数能力；2026-10-30 修订集合函数与注册表函数的一等值语义；替代旧的无定义能力及动作位置可枚举保证 |
 
 ## 接入与模型
 

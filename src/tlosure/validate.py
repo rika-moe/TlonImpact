@@ -3,7 +3,7 @@
 :func:`validate_form` walks a parsed EDN form without executing it:
 every form head must be a whitelisted special form, a registered
 :class:`Builtin`, or a name in ``scope`` (a user function defined by
-``defn`` — ADR 0021); every symbol must resolve in ``scope`` (extended
+``defn`` — ADR 0021); every symbol must resolve in the registry or ``scope`` (extended
 by ``let`` / loop bindings and ``defn`` / ``fn`` parameters), and
 special-form shapes must be well-formed — raising :class:`EvalError` on
 the first violation. The ``while`` / ``recur`` tail-position rules are
@@ -34,6 +34,21 @@ from typing import Any
 
 from tlosure.builtins import Builtin, EvalError
 from tlosure.edn import Form, Symbol, dumps
+
+SPECIAL_FORMS = frozenset(
+    {
+        "quote",
+        "if",
+        "when",
+        "let",
+        "and",
+        "or",
+        "while",
+        "recur",
+        "defn",
+        "fn",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -177,12 +192,6 @@ def _validate(
         if name == "fn":
             _validate_fn(value, builtins, scope, loop)
             return
-        if name in ("map", "filter"):
-            _validate_map_like(value, builtins, scope, loop)
-            return
-        if name == "reduce":
-            _validate_reduce(value, builtins, scope, loop)
-            return
         if name == "if":
             if len(value) < 3 or len(value) > 4:
                 raise EvalError(f"if expects 2 or 3 arguments, got {len(value) - 1}")
@@ -217,7 +226,7 @@ def _validate(
             _validate(arg, builtins, scope, _non_tail(loop))
         return
     if isinstance(value, Symbol):
-        if str(value) not in scope:
+        if str(value) not in scope and (str(value) not in builtins or str(value) in SPECIAL_FORMS):
             raise EvalError(f"undefined symbol: {value}")
         return
     if isinstance(value, list):
@@ -321,36 +330,3 @@ def _validate_recur(
         raise EvalError(f"recur expects {loop.arity} arguments, got {len(form) - 1}")
     for arg in form[1:]:
         _validate(arg, builtins, scope, _non_tail(loop))
-
-
-def _validate_map_like(
-    form: Form, builtins: dict[str, Builtin], scope: set[str], loop: _WhileCtx | None
-) -> None:
-    name = str(form[0])
-    args = form[1:]
-    if len(args) != 3:
-        raise EvalError(f"{name} expects a binding, a body, and a collection")
-    binder = args[0]
-    if not isinstance(binder, Symbol):
-        raise EvalError(f"{name} binding must be a symbol, got {dumps(binder)}")
-    local = set(scope)
-    local.add(str(binder))
-    _validate(args[1], builtins, local, _non_tail(loop))
-    _validate(args[2], builtins, scope, _non_tail(loop))
-
-
-def _validate_reduce(
-    form: Form, builtins: dict[str, Builtin], scope: set[str], loop: _WhileCtx | None
-) -> None:
-    args = form[1:]
-    if len(args) != 5:
-        raise EvalError("reduce expects accumulator, element, body, init, and collection")
-    acc, x = args[0], args[1]
-    if not isinstance(acc, Symbol) or not isinstance(x, Symbol):
-        raise EvalError("reduce bindings must be symbols")
-    local = set(scope)
-    local.add(str(acc))
-    local.add(str(x))
-    _validate(args[2], builtins, local, _non_tail(loop))
-    _validate(args[3], builtins, scope, _non_tail(loop))
-    _validate(args[4], builtins, scope, _non_tail(loop))

@@ -13,7 +13,7 @@
 (defn collect [period]
   (let [ids (or (state-get {:key "pending"}) [])
         submissions (or (state-get {:key "submissions"}) {})]
-    {:materials (map id (get submissions id) ids) :source-ids ids
+    {:materials (map (fn [id] (get submissions id)) ids) :source-ids ids
      :footer (str "投稿来源（原始邮件 ID）：\n" (join "\n" ids))}))
 
 (defn handle [event]
@@ -26,7 +26,7 @@
           (let [edition (paper/freeze period (or (state-get {:key "subscribers"}) []) collect)]
             (when edition
               (state-put {:key "pending" :value
-                (filter id (not (contains? (get edition :source-ids) id))
+                (filter (fn [id] (not (contains? (get edition :source-ids) id)))
                   (or (state-get {:key "pending"}) []))})
               (paper/deliver period edition)))))
       (mail-mark-read {:mail_ids [(mail-field msg :id)]}))

@@ -17,15 +17,15 @@
         (let [prepared (context/resource-policy (assoc planned :messages history))
               response (context/invoke prepared)
               calls (get response :tool_calls [])
-              ends (filter call (= (get call :name) "finish-turn") calls)
+              ends (filter (fn [call] (= (get call :name) "finish-turn")) calls)
               checked (if (> (count ends) 0)
-                        (assert (and (= (count calls) 1) (= (get (reduce previous call call nil calls) :arguments) {}))
+                        (assert (and (= (count calls) 1) (= (get (reduce (fn [previous call] call) nil calls) :arguments) {}))
                                 "finish-turn must be an empty standalone call") true)]
           (assert (> (count calls) 0) "action loop requires tool calls")
           (let [results (tool-execute {:tools (get planned :tools) :tool_calls calls})]
             (if (> (count ends) 0)
               (let [finished (assert (and (= (count results) 1)
-                                         (get (reduce previous result result nil results) :success))
+                                         (get (reduce (fn [previous result] result) nil results) :success))
                                     "finish-turn execution failed")]
                 {:content nil :messages (messages/exchange (get prepared :messages) response results)
                  :exchanges (conj exchanges {:calls calls :results results}) :reason "finish-turn"})
@@ -48,7 +48,7 @@
             stable (messages/user (str "Skills:\n" (get data :skills) "\nLessons:\n" (get data :lessons)))
             prefix (if continued
                      (get (get prior :continuation) :messages (get prior :messages))
-                     (reduce result message (conj result message) [stable] (get data :mail_history [])))
+                     (reduce conj [stable] (get data :mail_history [])))
             dynamic (messages/user (str "Source run: " (get source :run_id)
                          "\nCurrent task:\n" (get data :current_task)
                          "\nThread recap:\n" (get data :thread_recap)

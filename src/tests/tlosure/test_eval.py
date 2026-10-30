@@ -256,54 +256,55 @@ class TestWhileRecur:
 
 
 class TestMapFilterReduce:
-    """Phase D: data transformation with explicitly bound element variables."""
+    """Data transformation through first-class callback functions."""
 
-    def test_map(self):
-        assert eval_form(loads("(map x (+ x 1) [1 2 3])"), {}, _BUILTINS) == [2, 3, 4]
-        assert eval_form(loads("(map x (* x x) [2 3])"), {}, _BUILTINS) == [4, 9]
+    def test_map(self) -> None:
+        assert eval_form(loads("(map (fn [x] (+ x 1)) [1 2 3])"), {}, _BUILTINS) == [2, 3, 4]
+        assert eval_form(loads("(map (fn [x] (* x x)) [2 3])"), {}, _BUILTINS) == [4, 9]
 
-    def test_filter(self):
-        assert eval_form(loads("(filter x (> x 2) [1 2 3 4])"), {}, _BUILTINS) == [3, 4]
+    def test_filter(self) -> None:
+        assert eval_form(loads("(filter (fn [x] (> x 2)) [1 2 3 4])"), {}, _BUILTINS) == [3, 4]
 
-    def test_reduce(self):
-        assert eval_form(loads("(reduce acc x (+ acc x) 0 [1 2 3])"), {}, _BUILTINS) == 6
-        assert eval_form(loads("(reduce acc x (if (> x acc) x acc) 0 [3 1 2])"), {}, _BUILTINS) == 3
+    def test_reduce(self) -> None:
+        assert eval_form(loads("(reduce (fn [acc x] (+ acc x)) 0 [1 2 3])"), {}, _BUILTINS) == 6
+        assert (
+            eval_form(loads("(reduce (fn [acc x] (if (> x acc) x acc)) 0 [3 1 2])"), {}, _BUILTINS)
+            == 3
+        )
 
-    def test_empty_collections(self):
-        assert eval_form(loads("(map x (+ x 1) [])"), {}, _BUILTINS) == []
-        assert eval_form(loads("(filter x (> x 2) [])"), {}, _BUILTINS) == []
-        assert eval_form(loads("(reduce acc x (+ acc x) 0 [])"), {}, _BUILTINS) == 0
+    def test_empty_collections(self) -> None:
+        assert eval_form(loads("(map (fn [x] (+ x 1)) [])"), {}, _BUILTINS) == []
+        assert eval_form(loads("(filter (fn [x] (> x 2)) [])"), {}, _BUILTINS) == []
+        assert eval_form(loads("(reduce (fn [acc x] (+ acc x)) 0 [])"), {}, _BUILTINS) == 0
 
-    def test_fuel_exhausted(self):
+    def test_fuel_exhausted(self) -> None:
         with pytest.raises(FuelExhaustedError, match="fuel exhausted"):
             eval_form(
-                loads("(map x (+ x 1) [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15])"),
+                loads("(map (fn [x] (+ x 1)) [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15])"),
                 {},
                 _BUILTINS,
                 fuel=10,
             )
 
-    def test_map_wrong_arity_rejected(self):
-        with pytest.raises(EvalError, match="map expects a binding, a body, and a collection"):
-            validate_form(loads("(map x (+ x 1))"), _BUILTINS, scope=set())
+    def test_map_wrong_arity_rejected(self) -> None:
+        with pytest.raises(EvalError, match="map failed: .* missing"):
+            eval_form(loads("(map (fn [x] (+ x 1)))"), {}, _BUILTINS)
 
-    def test_map_binder_must_be_symbol(self):
-        with pytest.raises(EvalError, match="map binding must be a symbol"):
-            validate_form(loads("(map 1 (+ 1 1) [1 2 3])"), _BUILTINS, scope=set())
+    def test_map_callback_parameter_must_be_symbol(self) -> None:
+        with pytest.raises(EvalError, match="fn parameter name must be a symbol"):
+            validate_form(loads("(map (fn [1] (+ 1 1)) [1 2 3])"), _BUILTINS, scope=set())
 
-    def test_map_body_unknown_symbol(self):
+    def test_map_body_unknown_symbol(self) -> None:
         with pytest.raises(EvalError, match="undefined symbol: y"):
-            validate_form(loads("(map x (+ y 1) [1 2 3])"), _BUILTINS, scope=set())
+            validate_form(loads("(map (fn [x] (+ y 1)) [1 2 3])"), _BUILTINS, scope=set())
 
-    def test_reduce_wrong_arity_rejected(self):
-        with pytest.raises(
-            EvalError, match="reduce expects accumulator, element, body, init, and collection"
-        ):
-            validate_form(loads("(reduce acc x (+ acc x) 0)"), _BUILTINS, scope=set())
+    def test_reduce_wrong_arity_rejected(self) -> None:
+        with pytest.raises(EvalError, match="reduce failed: .* missing"):
+            eval_form(loads("(reduce (fn [acc x] (+ acc x)) 0)"), {}, _BUILTINS)
 
-    def test_reduce_binder_must_be_symbol(self):
-        with pytest.raises(EvalError, match="reduce bindings must be symbols"):
-            validate_form(loads("(reduce 1 x (+ 1 x) 0 [1 2])"), _BUILTINS, scope=set())
+    def test_reduce_callback_parameter_must_be_symbol(self) -> None:
+        with pytest.raises(EvalError, match="fn parameter name must be a symbol"):
+            validate_form(loads("(reduce (fn [1 x] (+ 1 x)) 0 [1 2])"), _BUILTINS, scope=set())
 
 
 class TestErrors:
@@ -563,8 +564,8 @@ class TestFunctions:
         with pytest.raises(EvalError, match="msg is not callable"):
             eval_form(loads("(msg 1)"), {"msg": "hello"}, _BUILTINS)
 
-    def test_form_head_must_evaluate_to_a_closure(self):
-        with pytest.raises(EvalError, match="form head is not callable"):
+    def test_form_head_must_evaluate_to_a_callable(self) -> None:
+        with pytest.raises(EvalError, match="is not callable"):
             eval_form(loads("((+ 1 2) 3)"), {}, _BUILTINS)
 
     def test_str_on_a_closure_is_an_eval_error(self):

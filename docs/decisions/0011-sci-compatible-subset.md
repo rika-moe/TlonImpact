@@ -7,7 +7,7 @@
 
 ## 背景
 
-Tlon 将来可能迁移到 Java 技术栈。DSL 是 EDN 子集（ADR 0001），表层语法与 Clojure 高度同源——`.tlon` 文件今天就能被 Clojure reader 原样解析——但语义层存在已知的异形点：`while`/`recur`（Clojure 是 `loop`/`recur`）、显式绑定变量的 `map`/`filter`/`reduce`（Clojure 用 lambda）、fuel 计量（Clojure 无此概念）。
+Tlon 将来可能迁移到 Java 技术栈。DSL 是 EDN 子集（ADR 0001），表层语法与 Clojure 高度同源——`.tlon` 文件今天就能被 Clojure reader 原样解析——但语义层存在已知的异形点：`while`/`recur`（Clojure 是 `loop`/`recur`）、~~显式绑定变量的 `map`/`filter`/`reduce`~~（2026-10-30 已按 ADR 0021 改为高阶函数）、fuel 计量（Clojure 无此概念）。
 
 JVM 生态里存在为"在宿主程序里安全求值不可信 Clojure 代码"而生的标准答案 [SCI（Small Clojure Interpreter）](https://github.com/babashka/sci)：`:namespaces` 白名单 + `:deny` 黑名单机制，与我们按语境切分的四份 builtin 注册表（`builtins.py`）在设计上同构，已被 babashka、Clerk、Joyride 等项目验证。经逐条核对，DSL 现有的全部语义设计在 Clojure/SCI 里都有对应实现，且多数以更自然的形态成立：
 
@@ -15,7 +15,7 @@ JVM 生态里存在为"在宿主程序里安全求值不可信 Clojure 代码"�
 |---|---|
 | `if`/`when`/`let`/`and`/`or` 白名单 | Clojure 原生形式，零成本 |
 | `while`/`recur` | 宏展开到 `loop`/`recur`；尾位置合法性由宏展开期静态检查（强于现在的运行时检查） |
-| 显式绑定 `map`/`filter`（`(map x body coll)`） | 宏展开到 `(map (fn [x] body) coll)` |
+| ~~显式绑定 `map`/`filter`~~（ADR 0021 于 2026-10-30 修订） | 已改为普通高阶函数 `(map (fn [x] body) coll)`，不再需要语法展开 |
 | 四份语境注册表 | SCI `:namespaces` 按语境配置；Adam 专属谓词 = 只注入其 context 的私有命名空间 |
 | 动作即数据（builtin 产出 `ActionRequest`） | builtin 函数返回普通 map；同像性使"求值结果可落盘/diff/审计"成为语言默认行为 |
 | 加载期 total 校验 | spec/malli 校验 spec 骨架 + SCI 白名单约束表达式层 |
@@ -26,7 +26,7 @@ JVM 生态里存在为"在宿主程序里安全求值不可信 Clojure 代码"�
 1. **DSL 语义演进锚定"SCI 可执行的 Clojure 子集"。** 新增语法（特殊形式、求值规则、字面量种类）之前必须先回答：在 SCI 里它是宏还是函数？展开/求值后是什么形态？宏抹不平、必须改解释器内核才能表达的异形语义，不引入。
 2. **上表三个异形点登记为已知迁移映射项**，保留现状不追溯修改——它们在 Python 实现里工作正常，且有宏级映射方案兜底。
 3. **现在不换解释器。** SCI 无 Python 运行时；现在就换的三条路均不成立（见备选方案）。迁移 Java 时换的是求值器，不是语言——`.tlon` 文件本身就是迁移资产。
-4. **迁移启动前做一个 spike 验证**：用 bb/SCI 读入现有 `.tlon` 样例（archivist、relay 等），配 3 个兼容宏（`while`、`map*`、`filter*`）+ mock builtin 命名空间，验证原样可执行。spike 不进主代码库，发现宏抹不平的特性时回到本条决策修订。
+4. **迁移启动前做一个 spike 验证**：用 bb/SCI 读入现有 `.tlon` 样例（archivist、relay 等），配 `while` 兼容宏 + mock builtin 命名空间（2026-10-30 修订：集合函数已无需兼容宏），验证原样可执行。spike 不进主代码库，发现宏抹不平的特性时回到本条决策修订。
 
 ### 明确不做
 

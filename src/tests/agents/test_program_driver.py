@@ -180,3 +180,17 @@ async def test_expired_program_scope_stops_before_new_state_write(store: Program
         await run_program(running, program)
     assert isinstance(failure.value.__cause__, ExecutionDeadlineError)
     assert store.state_get("after-deadline") is None
+
+
+async def test_higher_order_effect_alias_replays_original_operations(store: ProgramStore) -> None:
+    """A passed operation retains its adapter identity and durable call ordering."""
+    program = '''(let [save state-put transform map]
+      (transform save [{:key "first" :value 1} {:key "second" :value 2}]))'''
+    first = await run_program(driver(store), program)
+    assert store.state_get("first") == 1
+    assert store.state_get("second") == 2
+    await state_put(store, "external-first", "first", 10)
+    await state_put(store, "external-second", "second", 20)
+    assert await run_program(driver(store), program) == first
+    assert store.state_get("first") == 10
+    assert store.state_get("second") == 20

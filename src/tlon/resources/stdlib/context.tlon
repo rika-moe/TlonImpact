@@ -8,15 +8,15 @@
         limit (get options :max_tokens)]
     (if (= limit nil) base (assoc base :max_tokens limit))))
 
-(defn append-all [left right] (reduce result item (conj result item) left right))
+(defn append-all [left right] (reduce conj left right))
 (defn nth [items index]
-  (get (reduce state item
+  (get (reduce (fn [state item]
          {:index (+ (get state :index) 1)
-          :value (if (= (get state :index) index) item (get state :value))}
+          :value (if (= (get state :index) index) item (get state :value))})
          {:index 0 :value nil} items) :value))
 ;; Consume each message once, and emit only complete assistant/tool groups.
 (defn groups [history]
-  (let [state (reduce state message
+  (let [state (reduce (fn [state message]
           (let [pending (get state :pending) index (get state :index)
                 result (get state :groups) current (get state :current)]
             (if (< index (count pending))
@@ -28,16 +28,16 @@
                   {:pending [] :index 0 :groups (conj result group) :current []}
                   {:pending pending :index next :groups result :current group}))
               (let [calls (get message :tool_calls [])
-                    ids (reduce ids call
+                    ids (reduce (fn [ids call]
                           (let [id (get call :id)]
                             (assert (and (= id (str id)) (not (= id ""))) "tool call requires nonempty id")
                             (assert (not (contains? ids id)) "duplicate tool call id")
-                            (conj ids id)) [] calls)]
+                            (conj ids id))) [] calls)]
                 (assert (not (= (get message :role) "tool")) "orphan tool result")
                 (if (> (count ids) 0)
                   (let [role (assert (= (get message :role) "assistant") "tool calls require assistant")]
                     {:pending ids :index 0 :groups result :current [message]})
-                  {:pending [] :index 0 :groups (conj result [message]) :current []}))))
+                  {:pending [] :index 0 :groups (conj result [message]) :current []})))))
           {:pending [] :index 0 :groups [] :current []} history)]
     (assert (= (count (get state :pending)) 0) "incomplete tool exchange")
     (get state :groups)))

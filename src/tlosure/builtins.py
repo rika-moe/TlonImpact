@@ -29,11 +29,11 @@ there is no import cycle.
 
 import json
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from typing import Any
 
-from tlosure.edn import Keyword, dumps
+from tlosure.edn import Form, Keyword, dumps
 
 
 class EvalError(Exception):
@@ -82,7 +82,9 @@ class Builtin:
 
     Host shape (``fn`` set): ``fn`` receives ``(env, *evaluated_args)``;
     its internals are **unmetered** — a host builtin's own computation
-    is the host's resource domain, not the language's.
+    is the host's resource domain, not the language's. A host function may
+    return a generator yielding :class:`FunctionCall` requests; the kernel
+    applies these callbacks with shared fuel, depth, and effect handling.
 
     Closure-backed shape (``closure`` set): a data-defined word — the
     entry carries a :class:`Closure` instead of host code, and the
@@ -95,9 +97,10 @@ class Builtin:
     injection); words inside the body resolve through the *caller's*
     registry like any other form head.
 
-    Exactly one of ``fn`` / ``closure`` must be set. ``pure`` marks
-    deterministic computation. External reads suspend like writes and
-    are excluded from pure condition vocabularies.
+    Exactly one of ``fn`` / ``closure`` must be set. ``pure`` marks the
+    implementation itself, not callbacks supplied by its caller: a pure
+    higher-order function still suspends for an effectful callback. External
+    reads suspend like writes and are excluded from pure vocabularies.
     """
 
     fn: Callable[..., Any] | None = None
@@ -112,6 +115,59 @@ class Builtin:
     def from_closure(closure: Closure, *, pure: bool = True) -> "Builtin":
         """A closure-backed (data-defined) registry entry."""
         return Builtin(pure=pure, closure=closure)
+
+
+@dataclass(frozen=True)
+class BuiltinFunction:
+    """First-class registry function retaining its original effect identity."""
+
+    name: str
+    builtin: Builtin
+
+
+@dataclass(frozen=True)
+class FunctionCall:
+    """Request to apply a language function through the evaluator kernel."""
+
+    target: Closure | BuiltinFunction
+    args: list[Any]
+
+
+def _collection_callback(name: str, fn: Any, coll: Any) -> None:
+    if not isinstance(fn, (Closure, BuiltinFunction)):
+        raise EvalError(f"{name} expects a function")
+    if not isinstance(coll, list) or isinstance(coll, Form):
+        raise EvalError(f"{name} expects a vector collection")
+
+
+def builtin_map(env: dict[str, Any], fn: Any, coll: Any) -> Generator[FunctionCall, Any, Any]:
+    """Apply a function to each vector element, returning a vector."""
+    _collection_callback("map", fn, coll)
+    result: list[Any] = []
+    for item in coll:
+        result.append((yield FunctionCall(fn, [item])))
+    return result
+
+
+def builtin_filter(env: dict[str, Any], fn: Any, coll: Any) -> Generator[FunctionCall, Any, Any]:
+    """Return vector elements whose predicate result is truthy."""
+    _collection_callback("filter", fn, coll)
+    result: list[Any] = []
+    for item in coll:
+        if (yield FunctionCall(fn, [item])):
+            result.append(item)
+    return result
+
+
+def builtin_reduce(
+    env: dict[str, Any], fn: Any, init: Any, coll: Any
+) -> Generator[FunctionCall, Any, Any]:
+    """Fold a vector left with a function and an explicit initial value."""
+    _collection_callback("reduce", fn, coll)
+    result = init
+    for item in coll:
+        result = yield FunctionCall(fn, [result, item])
+    return result
 
 
 @dataclass(frozen=True)
@@ -439,6 +495,9 @@ def builtin_json_encode(env: dict[str, Any], value: Any) -> str:
 #: host registry may include verbatim. Pure only; evaluation against it
 #: is side-effect free by construction.
 CORE_BUILTINS: dict[str, Builtin] = {
+    "map": Builtin(builtin_map),
+    "filter": Builtin(builtin_filter),
+    "reduce": Builtin(builtin_reduce),
     "assert": Builtin(builtin_assert, pure=True),
     "integer?": Builtin(builtin_integer, pure=True),
     "json-encode": Builtin(builtin_json_encode, pure=True),

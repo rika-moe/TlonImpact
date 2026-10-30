@@ -52,8 +52,11 @@ class TestContractTypes:
 
 
 class TestRegistries:
-    def test_core_vocabulary_names(self):
+    def test_core_vocabulary_names(self) -> None:
         assert set(CORE_BUILTINS) == {
+            "map",
+            "filter",
+            "reduce",
             "assert",
             "integer?",
             "json-encode",

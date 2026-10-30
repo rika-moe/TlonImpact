@@ -8,7 +8,7 @@
     (when (and (= subject "subscribe") (not (contains? readers sender)))
       (state-put {:key "subscribers" :value (conj readers sender)}))
     (when (= subject "unsubscribe")
-      (state-put {:key "subscribers" :value (filter address (not (= address sender)) readers)}))))
+      (state-put {:key "subscribers" :value (filter (fn [address] (not (= address sender))) readers)}))))
 
 (defn publication-period [mail publishers]
   (let [subject (mail-field mail :subject)]
@@ -46,7 +46,7 @@
 (defn deliver [period edition]
   (when (and edition (> (count (get edition :source-ids)) 0))
     (let [key (str "edition:" period)]
-      (map address
+      (map (fn [address]
         (let [current (state-get {:key key})]
           (when (= (get (get current :delivered) address) nil)
             (let [receipt (mail-send {:to [address] :subject (str "报纸：" period)
@@ -54,7 +54,7 @@
                             :request_id (str "edition:" period ":" address)})]
               (when (and (= (get receipt :status) "accepted") (get receipt :mail_id))
                 (state-put {:key key :value (assoc current :delivered
-                    (assoc (get current :delivered) address receipt))})))))
+                    (assoc (get current :delivered) address receipt))}))))))
         (get edition :subscribers)))))
 
 (defn publish [period collector]

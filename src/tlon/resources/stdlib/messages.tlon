@@ -11,12 +11,12 @@
      :function {:name (get call :name) :arguments (json-encode (get call :arguments))}}))
 
 (defn unique-calls [calls]
-  (reduce ids call
+  (reduce (fn [ids call]
     (let [id (get call :id) name (get call :name)]
       (assert (and (= id (str id)) (not (= id ""))) "tool call requires a string id")
       (assert (and (= name (str name)) (not (= name ""))) "tool call requires a string name")
       (assert (not (contains? ids id)) "duplicate tool call id")
-      (conj ids id))
+      (conj ids id)))
     [] calls))
 
 (defn response [result]
@@ -25,19 +25,19 @@
         message {:role "assistant" :content (get result :content)
                  :reasoning_content (get result :reasoning_content)}]
     (if (= (count ids) 0) message
-      (assoc message :tool_calls (map call (call-wire call) calls)))))
+      (assoc message :tool_calls (map call-wire calls)))))
 
 ;; Require one result per declared call in declaration order, including failures.
 (defn exchange [messages result results]
   (let [calls (get result :tool_calls [])
         ids (unique-calls calls)]
     (assert (= (count calls) (count results)) "tool result count does not match calls")
-    (assert (= ids (map item (get item :id) results)) "tool result id or order mismatch")
-    (assert (= (map call (get call :name) calls) (map item (get item :name) results))
+    (assert (= ids (map (fn [item] (get item :id)) results)) "tool result id or order mismatch")
+    (assert (= (map (fn [call] (get call :name)) calls) (map (fn [item] (get item :name)) results))
             "tool result name mismatch")
-    (reduce history item
+    (reduce (fn [history item]
       (conj history {:role "tool" :tool_call_id (get item :id)
                      :content (json-encode {:success (get item :success)
                                             :data (get item :data)
-                                            :error (get item :error)})})
+                                            :error (get item :error)})}))
       (conj messages (response result)) results)))
