@@ -1,5 +1,7 @@
 # ADR 0013：admin 端点共享 token 鉴权（TLON_ADMIN_TOKEN）
 
+> 后续变更（2026-10-31）：Operator TUI、Python SDK 与 Telegram 已[退役删除](legacy-client-retirement.md)；下文涉及它们的实现和验证记录属于历史。当前客户端为 WebUI，包结构与入口以[当前架构](../architecture.md)为准。
+
 > 已废止：由 [ADR 0033](0033-local-webui-identity.md) 的本地单人身份与浏览器来源边界替代。以下保留历史决策，当前不再读取 TLON_ADMIN_TOKEN。
 
 > 阅读定位：本文保留当时的选择与理由；当前设计见 [server-protocol](../design/server-protocol.md)。当前适用范围：管理端 token 的可选边界，不等于完整身份认证。完整关系见 [决策索引](README.md)。

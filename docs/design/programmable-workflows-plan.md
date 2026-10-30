@@ -1,5 +1,7 @@
 # 可编程工作流程：分阶段实施计划
 
+> 客户端退役更新：后续验收以隔离 TLON_HOME 的 dream + HTTP 投信与持久收件箱核对为准；下文已完成阶段的 SDK 验收保留为历史事实。见[退役决策](../decisions/legacy-client-retirement.md)。
+
 > 历史施工记录：本文保留当时验收与实施状态；其中近亲拒绝、偿付／配额倾斜、见习限制和导师抄送已由 [ADR 0052](../decisions/0052-remove-reproduction-social-gates.md) 删除，现行约束见 [prototypes](prototypes.md) 与 [unified-member-model](unified-member-model.md)。
 
 > 历史实施与验收记录：文中 claims、自动蒸馏、反思及其维护根属于当时实现，已由 [可选私有笔记](memory.md) 取代；现行接口见 [Runtime](runtime.md) 与 [操作参考](../reference/operations-reference.md)。

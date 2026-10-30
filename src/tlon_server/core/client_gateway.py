@@ -157,7 +157,7 @@ class ClientGateway(Component):
         :meth:`set_event_handler`.
 
         Args:
-            client_type: Type of client ("tui", "web", "telegram")
+            client_type: Type of client (e.g. "web")
             metadata: Optional client metadata
             filters: Optional initial event filters declared by the client
 

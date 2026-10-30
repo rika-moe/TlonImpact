@@ -42,10 +42,6 @@ dependencies = [
 otlp = [
     "opentelemetry-exporter-otlp-proto-http>=1.30",
 ]
-# Telegram bot 客户端（PR2 落地本体）；不用此功能不装
-telegram = [
-    "python-telegram-bot>=21",
-]
 
 [project.scripts]
 tlon = "tlon_launcher.main:main"
@@ -55,7 +51,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/tlon", "src/tlosure", "src/tlon_server", "src/tlon_client", "src/tlon_launcher"]
+packages = ["src/tlon", "src/tlosure", "src/tlon_server", "src/tlon_launcher"]
 # webui_dist 是构建期生成的包数据（scripts/build_package.sh 正式打包、
 # scripts/verify_package.sh 质量门验证，均从 apps/webui/dist 同步），
 # 被 .gitignore 排除；artifacts 把它拉回文件选择，不存在时不报错
@@ -109,13 +105,6 @@ disallow_untyped_defs = false
 disallow_incomplete_defs = false
 disallow_untyped_calls = false
 
-# python-telegram-bot 是 optional extra：无 extra 环境下 telegram.* 解析
-# 为 Any（clients/telegram/bot.py 仍能过 mypy）；装上 extra 后 PTB 自带
-# py.typed，按真实类型全量检查
-[[tool.mypy.overrides]]
-module = "telegram.*"
-ignore_missing_imports = true
-
 [tool.pytest.ini_options]
 minversion = "7.0"
 testpaths = ["src/tests"]
@@ -129,7 +118,7 @@ filterwarnings = [
 ]
 
 [tool.coverage.run]
-source = ["tlon", "tlosure", "tlon_server", "tlon_client", "tlon_launcher"]
+source = ["tlon", "tlosure", "tlon_server", "tlon_launcher"]
 omit = ["*/tests/*", "*/test_*"]
 
 [tool.coverage.report]
@@ -164,7 +153,7 @@ dev = [
 ]
 
 [tool.importlinter]
-root_packages = ["tlon", "tlosure", "tlon_server", "tlon_client", "tlon_launcher"]
+root_packages = ["tlon", "tlosure", "tlon_server", "tlon_launcher"]
 
 # base 是最底层：不依赖任何上层域
 [[tool.importlinter.contracts]]
@@ -175,7 +164,6 @@ forbidden_modules = [
     "tlon.agents",
     "tlon.organization",
     "tlon_server",
-    "tlon_client",
     "tlon_launcher",
     "tlon.tools",
     "tlon.sandbox",
@@ -184,13 +172,12 @@ forbidden_modules = [
 
 # organization(mail/messaging) 只依赖 base
 [[tool.importlinter.contracts]]
-name = "organization 不依赖 agents/server/client/launcher/tools/sandbox/prototypes"
+name = "organization 不依赖 agents/server/launcher/tools/sandbox/prototypes"
 type = "forbidden"
 source_modules = "tlon.organization"
 forbidden_modules = [
     "tlon.agents",
     "tlon_server",
-    "tlon_client",
     "tlon_launcher",
     "tlon.tools",
     "tlon.sandbox",
@@ -199,14 +186,13 @@ forbidden_modules = [
 
 # sandbox 只依赖 base
 [[tool.importlinter.contracts]]
-name = "sandbox 不依赖 agents/organization/server/client/launcher/tools/prototypes"
+name = "sandbox 不依赖 agents/organization/server/launcher/tools/prototypes"
 type = "forbidden"
 source_modules = "tlon.sandbox"
 forbidden_modules = [
     "tlon.agents",
     "tlon.organization",
     "tlon_server",
-    "tlon_client",
     "tlon_launcher",
     "tlon.tools",
     "tlon.prototypes",
@@ -215,52 +201,26 @@ forbidden_modules = [
 # tools 仅保留模型协议与结果/溢出适配；领域操作由 operations 定义，
 # 领域端口位于 lifecycle/evolution 等领域包，由装配层注入。
 [[tool.importlinter.contracts]]
-name = "tools 不依赖 agents/server/client/launcher/prototypes"
+name = "tools 不依赖 agents/server/launcher/prototypes"
 type = "forbidden"
 source_modules = "tlon.tools"
 forbidden_modules = [
     "tlon.agents",
     "tlon_server",
-    "tlon_client",
     "tlon_launcher",
     "tlon.prototypes",
 ]
 
 # agents 是领域层：可依赖 base/memory/organization/tools/sandbox，
-# 不得依赖组装层 server/client/launcher 与 prototypes
+# 不得依赖组装层 server/launcher 与 prototypes
 [[tool.importlinter.contracts]]
-name = "agents 不依赖 server/client/launcher/prototypes"
+name = "agents 不依赖 server/launcher/prototypes"
 type = "forbidden"
 source_modules = "tlon.agents"
 forbidden_modules = [
     "tlon_server",
-    "tlon_client",
     "tlon_launcher",
     "tlon.prototypes",
-]
-
-# SDK 是给外部客户端用的纯协议层：不依赖 tlon 包（含 tlon.base），
-# 日志直接用 structlog。这是 tlon_client 轻量分发的前提（）
-[[tool.importlinter.contracts]]
-name = "client.sdk 不依赖 tlon"
-type = "forbidden"
-source_modules = "tlon_client.sdk"
-forbidden_modules = [
-    "tlon",
-    "tlon_server",
-    "tlon_launcher",
-]
-
-# Telegram bot 客户端：与 sdk 同层的纯客户端包，只依赖 sdk / 第三方库
-#（python-telegram-bot）；forbidden 清单镜像上面的 sdk 契约
-[[tool.importlinter.contracts]]
-name = "client.telegram 只依赖 sdk/第三方"
-type = "forbidden"
-source_modules = "tlon_client.telegram"
-forbidden_modules = [
-    "tlon",
-    "tlon_server",
-    "tlon_launcher",
 ]
 
 # tlon_server（ADR 0019）：runtime 触点是 tlon.api 的 domain facades；
@@ -279,9 +239,9 @@ forbidden_modules = [
 ]
 allow_indirect_imports = true
 
-# tlon_launcher 是 CLI 组装层：只许 tlon.base + tlon_server + tlon_client，
+# tlon_launcher 是 CLI 组装层：只许 tlon.base + tlon_server，
 # 不直摸 runtime 内脏，也不经 tlon.api 绕行。只禁直接 import——经
-# tlon_server/tlon_client 的间接传递是允许的（与 server 契约同纪律）
+# tlon_server 的间接传递是允许的（与 server 契约同纪律）
 [[tool.importlinter.contracts]]
 name = "launcher 不直摸 runtime"
 type = "forbidden"
@@ -297,12 +257,12 @@ forbidden_modules = [
 allow_indirect_imports = true
 
 # tlon.api 是 runtime 的北向 API（ADR 0019）：可依赖 runtime 各层，
-# 不得反向依赖组装层 server/client/launcher
+# 不得反向依赖组装层 server/launcher
 [[tool.importlinter.contracts]]
-name = "api 不依赖 server/client/launcher"
+name = "api 不依赖 server/launcher"
 type = "forbidden"
 source_modules = "tlon.api"
-forbidden_modules = ["tlon_server", "tlon_client", "tlon_launcher"]
+forbidden_modules = ["tlon_server", "tlon_launcher"]
 
 # tlosure（DSL 语言核心，ADR 0018）：独立于 tlon，反向依赖禁止
 [[tool.importlinter.contracts]]
@@ -313,7 +273,7 @@ forbidden_modules = ["tlon"]
 
 # Shared operation contracts receive domain ports; never import the caller.
 [[tool.importlinter.contracts]]
-name = "operations 不依赖 agents/server/client/launcher"
+name = "operations 不依赖 agents/server/launcher"
 type = "forbidden"
 source_modules = "tlon.operations"
-forbidden_modules = ["tlon.agents", "tlon_server", "tlon_client", "tlon_launcher"]
+forbidden_modules = ["tlon.agents", "tlon_server", "tlon_launcher"]

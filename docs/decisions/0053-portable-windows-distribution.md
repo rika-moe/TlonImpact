@@ -69,6 +69,6 @@ API Key 等本地配置保存在 `data/`，不进入发行包、不写入日志�
 - 验证关闭浏览器后继续工作、托盘重开页面及正常退出、重新启动、服务异常退出后的再次启动，检查端口和实例锁释放。
 - 退出后将整个目录搬到另一位置和另一台受支持电脑，验证身份、成员、邮件、配置与 workspace 保留；替换程序资源升级后验证 `data/` 未被覆盖。
 - 验证运行时依赖、原型、技能、文档和 WebUI 资源完整，Docker 缺失时文件工具正常且 Shell 不注册，浏览器来源与 workspace 安全约束保持有效。
-- 代码实施执行 `scripts/check_all.sh` 及真实 dream + SDK 邮件冒烟；发行包另做上述端到端验收，不以源码测试通过代替打包结果。
+- 代码实施执行 `scripts/check_all.sh` 及真实 dream + HTTP 邮件冒烟；发行包另做上述端到端验收，不以源码测试通过代替打包结果。
 
 本 ADR 记录发行与产品行为。实施说明见 [通用 WebUI 模型配置](../design/portable-model-setup.md) 和 [便携版使用指南](../guides/windows-portable.md)；Windows CI 构建 ZIP 并运行冻结 EXE，不替代 Windows 10/11 干净实机验收。

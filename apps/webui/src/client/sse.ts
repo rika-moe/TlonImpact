@@ -1,8 +1,7 @@
 /**
  * SSE client for the Tlon server (browser version, protocol v2).
  *
- * Same flow and outward interface as apps/operator/src/client/sseClient.ts,
- * with the Node fetch stream replaced by the browser `EventSource`:
+ * Uses the browser `EventSource` for the session event stream:
  * - POST /sessions declares client_type/mode/filters and returns
  *   the session id plus the participants/agents snapshots (emitted as
  *   "session"/"agents"/"participants" events).

@@ -10,9 +10,8 @@
  * Last LLM call duration + model and most recent tool call. Structural changes
  * (spawned/stopped/…) and config.updated still trigger a full reload.
  *
- * Ported from apps/operator/src/views/AgentsView.tsx: same REST/SSE semantics
- * (GET /agents[/{id}], /admin/config/agents CRUD, SSE agents snapshot +
- * agent* events), rendering layer rewritten to DOM. Staging prototype
+ * Uses GET /agents[/{id}], /admin/config/agents CRUD, SSE agents snapshot +
+ * agent* events. Staging prototype
  * approval moved to the PROTOTYPES view (2026-08-21 decision).
  *
  * Lineage (ADR 0006): the list payload carries prototype / spawned_by /

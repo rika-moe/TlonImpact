@@ -23,15 +23,9 @@ cp .env.example ~/.tlon/.env
 # 编辑 ~/.tlon/.env，按所用 provider 填 API key（{PROVIDER}_API_KEY，如 DEEPSEEK_API_KEY）
 # 模型是成员级配置（ADR 0016）：创建成员时在 WebUI 选择，落 agent.yaml 的 llm.model_name
 
-# 运行（服务端 + 客户端）
-uv run tlon dream     # 终端 1（服务端，REST + SSE，默认 127.0.0.1:8080；启动 banner 显示 WebUI 地址）
-uv run tlon ops       # 终端 2（Operator TUI，含 mail 视图——人类邮件主界面）
+# 运行服务端与 WebUI
+uv run tlon dream     # 服务端，REST + SSE，默认 127.0.0.1:8080；启动 banner 显示 WebUI 地址
 # 浏览器 WebUI 由 dream 托管于 /ui/（需先 cd apps/webui && npm install && npm run build）
-
-# Telegram 客户端（可选第三条人类通道，手机收发邮件）
-uv sync --extra telegram
-# ~/.tlon/.env 配置 TELEGRAM_BOT_TOKEN=<BotFather token>、TELEGRAM_ALLOWED_USERS=<user_id 逗号分隔>
-uv run tlon telegram  # 手机 /send <名字> <内容> 发信；对来信推送点「回复」回信；/inbox 看未读
 
 # 单元测试
 uv run pytest
@@ -44,10 +38,9 @@ uv run pytest
 | `tlosure` | DSL 语言核心（EDN 解析、燃料计费求值、静态校验、通用词汇），不依赖任何 tlon 包 |
 | `tlon` | runtime：EventBus、注册表、成员装配、邮件组织、记忆、工具、沙箱；经 `tlon.api` 暴露 domain facade 与 `build_runtime()` |
 | `tlon_server` | serving 进程：REST/SSE、session/notification、WebUI 托管；只经 `tlon.api` 的 facade 触达 runtime |
-| `tlon_client` | 客户端 SDK（通道适配），供 TUI/Telegram 等人类端复用 |
-| `tlon_launcher` | `tlon` CLI 入口（dream/ops/telegram 子命令），装配上面各包 |
+| `tlon_launcher` | `tlon` CLI 入口（dream 子命令），装配上面各包 |
 
-依赖方向：`tlosure ← tlon ← tlon_server / tlon_client ← tlon_launcher`（单向，import-linter 固话）。文件系统路径无全局单例：`TlonPaths` 在进程入口构造一次，显式注入贯穿各层。
+依赖方向：`tlosure ← tlon ← tlon_server ← tlon_launcher`（单向，import-linter 固话）。文件系统路径无全局单例：`TlonPaths` 在进程入口构造一次，显式注入贯穿各层。
 
 -- 
 ## 开发规范
@@ -70,7 +63,7 @@ uv run pytest
 ### 执行
 - 大活派 subagent：brief 给精确的文件:行号、已核实的现状事实、已定稿决策、测试要求、验证命令；超时/中断用 resume 续跑；完成后必须自己复核（质量门 + 审 diff + 真实冒烟），不盲信汇报
 - 验证质量门：一条命令 `scripts/check_all.sh`（分组 `--static` 静态检查+TS 门禁 / `--unit` / `--integration`，可组合，无参全量；逐项跑完并汇总，任一失败退出码 1），全绿才算完。检查项只在脚本内定义（单一事实源），CI 三个 workflow（static / unit-test / integration-test）与 pre-commit 均调同一脚本分组；TS 门禁要求 apps 下已 `npm install`，缺失时本地跳过、CI 必跑
-- 真实冒烟：起 dream + SDK 发邮件 + 查 `~/.tlon` 收件箱验证；完事清理冒烟痕迹、释放 8080 端口
+- 真实冒烟：以隔离 `TLON_HOME` 起 dream + HTTP 发邮件 + 查该实例持久化收件箱验证；完事清理临时数据和进程、释放 8080 端口，不触碰真实 `~/.tlon`
 
 ### EPIC 施工流程（AI 自服务闭环）
 

@@ -6,13 +6,13 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy
 
 root = Path(SPECPATH).resolve().parents[1]
 sys.setrecursionlimit(max(sys.getrecursionlimit(), 10000))
-packages = ("tlon", "tlosure", "tlon_server", "tlon_client", "tlon_launcher")
+packages = ("tlon", "tlosure", "tlon_server", "tlon_launcher")
 data = []
 hidden = []
 for package in packages:
     # Source data also preserves runtime_identity's code-content fingerprint.
     data += collect_data_files(package, include_py_files=True)
-    hidden += collect_submodules(package, filter=lambda name: "telegram" not in name)
+    hidden += collect_submodules(package)
 data += [(str(root / "docs"), "tlon/resources/docs")]
 data += [(str(root / "apps/webui/dist"), "tlon_server/webui_dist")]
 data += copy_metadata("tlon-impact", recursive=True)
@@ -33,7 +33,7 @@ a = Analysis(
     [str(root / "scripts/portable/entry.py")],
     pathex=[str(root / "src")],
     binaries=[], datas=data, hiddenimports=hidden,
-    excludes=["pytest", "mypy", "ruff", "telegram", "tkinter", "IPython",
+    excludes=["pytest", "mypy", "ruff", "tkinter", "IPython",
               "opentelemetry.exporter.otlp"],
     noarchive=False,
 )

@@ -1,5 +1,7 @@
 # ADR 0033：本地单人 WebUI 身份与浏览器来源边界
 
+> 后续变更（2026-10-31）：Operator TUI、Python SDK 与 Telegram 已[退役删除](legacy-client-retirement.md)；下文涉及它们的实现和验证记录属于历史。当前客户端为 WebUI，包结构与入口以[当前架构](../architecture.md)为准。
+
 - 状态：已采纳（2026-10-17）
 - 关联：#144 跨域读信／冒名发信；替代 ADR 0013 的 admin token 方案
 

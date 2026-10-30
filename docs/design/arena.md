@@ -29,7 +29,7 @@ staging 通道的现状信任闸（[prototypes.md](./prototypes.md)）：加载�
 ```
 
 - **拷入即可信**：staging 原型拷进隔离宇宙的 trusted 库后，`instantiate`（只读 trusted 库）与 spawn 信任闸原样工作——生产信任路径一行不改，「staging 不可实例化」在生产侧仍是铁律
-- **`build_runtime(arena_paths)`**（[api/bootstrap.py](../../src/tlon/api/bootstrap.py) 的 `build_runtime`）装配隔离 runtime：独立 EventBus、不开 REST、不挂通道适配器（Telegram/GitHub 进不了隔离宇宙）。邮件投递全部只发生在隔离宇宙内——邮件泄漏从结构上不存在
+- **`build_runtime(arena_paths)`**（[api/bootstrap.py](../../src/tlon/api/bootstrap.py) 的 `build_runtime`）装配隔离 runtime：独立 EventBus、不开 REST、不挂通道适配器（GitHub 进不了隔离宇宙）。邮件投递全部只发生在隔离宇宙内——邮件泄漏从结构上不存在
 - **临时成员**：id 为 `arena-<run-id>`，经 `instantiate` 正常装配。docker level 用 spec 自己声明的 `:execution`——**这正是被测对象**（声明 L1 的原型在演武场里就是 L1，试图 bash 会被装置层拒绝，拒绝本身进报告）；network 沿用实例化配置（当前默认 none，runner 不另设强制断网）；mem/cpu 收紧
 - **临时数据生命周期**：演武场成员不进入生产社会，用完拆除其隔离数据和容器。生产成员自动停止不隐式删除档案的规则，不要求保留试验家园；评审证据另行归档
 

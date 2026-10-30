@@ -1,5 +1,7 @@
 # ADR 0019：tlon runtime / server / client 包级拆分
 
+> 后续变更（2026-10-31）：Operator TUI、Python SDK 与 Telegram 已[退役删除](legacy-client-retirement.md)；下文涉及它们的实现和验证记录属于历史。当前客户端为 WebUI，包结构与入口以[当前架构](../architecture.md)为准。
+
 > 阅读定位：本文保留当时的选择与理由；当前设计见 [infrastructure](../design/infrastructure.md)、[server-protocol](../design/server-protocol.md)。当前适用范围：包边界保留；facade 数量等历史快照以当前 architecture 为准。完整关系见 [决策索引](README.md)。
 
 状态：已接受（2026-09-20，方向讨论拍板）

@@ -23,7 +23,7 @@ Tlon 让一组成员通过邮件协作，人类也以成员身份收发邮件。
 
 以下规则约束跨领域协作。变更须先讨论并同步相关领域设计；实现类名、默认值和技术选型在下一节描述，不自动成为永久规则。
 
-1. **依赖单向、公开边界明确。** tlosure 不依赖 tlon；runtime 不依赖 server/client/launcher；serving 经 runtime 的公开 facade 触达领域能力。工具通过注入端口使用上层能力，不反向 import 调用方。具体包边界见下表。
+1. **依赖单向、公开边界明确。** tlosure 不依赖 tlon；runtime 不依赖 server/launcher；serving 经 runtime 的公开 facade 触达领域能力。工具通过注入端口使用上层能力，不反向 import 调用方。具体包边界见下表。
 2. **成员间通信走邮件。** 邮件与进程内事件是不同通道：EventBus 通知内部事实和生命周期意图，不能替代成员投信。显式注入的服务、facade 和查询端口可以直接调用，不存在「所有方法调用都必须改成事件」的要求。
 3. **机制与策略分离。** 宿主掌握 IO、调度、预算执行和准入检查；策略通过行为 spec、社会政策等明确入口使用机制，不能绕过宿主的执行边界。策略入口及其权限各有契约，不能统称为可任意修改的数据。
 4. **规则权威与派生状态分开。** 成员规则由 spec 定义；唤醒资格等派生属性不能另存为独立可改的规则来源。模型、执行授权、人格与记忆各有自己的归属，不能从「spec 权威」推出成员可自行改写这些配置。
@@ -36,10 +36,10 @@ Tlon 让一组成员通过邮件协作，人类也以成员身份收发邮件。
 
 ## 当前实现：包与进程
 
-当前常规部署是一个 asyncio 服务端进程（`tlon dream`），以 aiohttp 提供单端口 REST + SSE，并在 `/ui/` 托管 WebUI。Operator 是独立的 TypeScript/Ink 客户端，Python SDK 和 Telegram 也是协议客户端。默认监听 `127.0.0.1:8080`。这些是当前选择，改变仍需设计评估。
+当前常规部署是一个 asyncio 服务端进程（`tlon dream`），以 aiohttp 提供单端口 REST + SSE，并在 `/ui/` 托管 WebUI。当前维护的客户端是 WebUI。默认监听 `127.0.0.1:8080`。这些是当前选择，改变仍需设计评估。
 
 ```text
-WebUI / Operator / Python SDK / Telegram
+               WebUI
                  │ REST + SSE
             tlon_server
                  │ domain facades
@@ -61,14 +61,13 @@ WebUI / Operator / Python SDK / Telegram
 | `tlon.base` | 配置、路径、事件与观测基础设施；不依赖上层领域 |
 | `tlon.organization` | 邮局、邮箱、地址解析与人类/外部适配；不依赖其他业务域 |
 | `tlon.sandbox` | 执行装置与资源监控；不依赖 agents/organization/tools |
-| `tlon.operations` | 共享操作契约、成员作用域调用与 DSL/Tool 薄入口，生产宿主操作已统一装配，不依赖 agents/server/client/launcher。见 [reference](reference/operations-reference.md) |
-| `tlon.tools` | 模型工具协议、结果与溢出文件适配；业务定义和执行位于 `tlon.operations`，不得反向依赖 agents/server/client/launcher/prototypes |
-| `tlon.agents` | 成员装配、调度、模块程序执行和策略接入；不依赖 server/client/launcher/prototypes |
+| `tlon.operations` | 共享操作契约、成员作用域调用与 DSL/Tool 薄入口，生产宿主操作已统一装配，不依赖 agents/server/launcher。见 [reference](reference/operations-reference.md) |
+| `tlon.tools` | 模型工具协议、结果与溢出文件适配；业务定义和执行位于 `tlon.operations`，不得反向依赖 agents/server/launcher/prototypes |
+| `tlon.agents` | 成员装配、调度、模块程序执行和策略接入；不依赖 server/launcher/prototypes |
 | `tlon.prototypes` | 随包携带的原型数据，启动时播种；不是原型管理服务 |
-| `tlon.api` | 当前有 members/mail/prototypes/observability/configs/events/arena 七个 facade 与 runtime 装配；不依赖 server/client/launcher |
+| `tlon.api` | 当前有 members/mail/prototypes/observability/configs/events/arena 七个 facade 与 runtime 装配；不依赖 server/launcher |
 | `tlon_server` | HTTP、客户端会话、通知、WebUI 托管；直接 runtime import 限于 api/base |
-| `tlon_client` | SDK 与 Telegram；不依赖 tlon、server、launcher |
-| `tlon_launcher` | dream/ops/telegram 命令；通过 server/client 和 base 装配，不直摸 runtime 或 api |
+| `tlon_launcher` | dream 命令；通过 server 和 base 装配，不直摸 runtime 或 api |
 
 ## 当前实现：装配与生命周期
 
@@ -113,7 +112,7 @@ serving 侧在 facade 上装配客户端会话、通知服务、通讯录和 HTT
 | 包依赖方向 | import-linter；检查 import 边界，不证明所有调用、注入和权限规则 |
 | 模块初始化纯度与运行身份 | 静态校验、ProgramStore 冻结与回执测试 |
 | runtime 业务隔离 | [多 runtime 集成测试](../src/tests/integration/test_multi_runtime.py)；不包括进程级观测设施完全隔离 |
-| 数据与跨域行为契约 | 领域测试、集成测试、隔离 dream + SDK 冒烟与文档复核 |
+| 数据与跨域行为契约 | 领域测试、集成测试、隔离 dream + HTTP 冒烟与文档复核 |
 
 统一质量门为 `scripts/check_all.sh`。禁止 re-export 属于开发规范，由脚本检查；ruff、类型检查和测试也由同一质量门编排。自动检查覆盖不到的设计边界仍需评审，不能将「检查全绿」等同于所有架构声明均已被机器证明。
 

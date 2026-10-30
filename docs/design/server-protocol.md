@@ -23,7 +23,7 @@ SSE 流上只有一种数据帧（`rest/sessions.py` 的 `_event_frame` 生成�
 {"type": "event", "event_type": "mail.delivered", "payload": {...}, "source": "mail_delivery", "timestamp": "...", "trace_id": "...", "span_id": "...", "parent_span_id": "..."}
 ```
 
-payload 里的 `Mail` 等对象序列化为 `to_dict()` 的平直 JSON；trace 三字段在事件携带时透传，让客户端能把事件挂回服务端 trace 树做关联观察（SDK 和 TUI 的 trace 过滤就靠它）。心跳是 SSE 注释行（`: ping`），不是数据帧——客户端解析器天然忽略注释，不需要专门处理。帧格式没有版本字段：协议版本在会话建立时握手（`protocol_version`），会话存续期间帧格式不变。
+payload 里的 `Mail` 等对象序列化为 `to_dict()` 的平直 JSON；trace 三字段在事件携带时透传，让客户端能把事件挂回服务端 trace 树做关联观察。心跳是 SSE 注释行（`: ping`），不是数据帧——客户端解析器天然忽略注释，不需要专门处理。帧格式没有版本字段：协议版本在会话建立时握手（`protocol_version`），会话存续期间帧格式不变。
 
 ## 端点分组
 
@@ -81,7 +81,7 @@ mode 与 filters 都可经 `PATCH /sessions/{id}` 在线修改，立即生效，
 
 为什么不让 NotificationService 统一推一切、再去重？因为两条路径的语义不同：HumanAdapter 推的是「你的邮箱到了一封信」（成员视角，已按收件人过滤，只含发给自己的副本），NotificationService 推的是「系统里发生了一个事件」（观察者视角，按 mode/filters 过滤）。chat 会话要的是前者——一个人类用户打开邮箱客户端，想看自己的信，不是全社会的邮件流量；运维控制台要的是后者。让两类语义各有其推送点，再在 NotificationService 里显式排除重叠，比统一后按 mode 特判要直白。双轨的代价（同一件事件可能有两条推送路径）被限定为**零重叠**：排除规则保证任何会话的任何一个事件只从一个口子进来。
 
-过滤只在服务端做。客户端（SDK adapter）只声明自己想要的 mode 和 filters，随会话建立/PATCH 发给服务端，本地不再二次过滤——过滤规则只有一个权威副本。
+过滤只在服务端做。客户端只声明自己想要的 mode 和 filters，随会话建立/PATCH 发给服务端，本地不再二次过滤——过滤规则只有一个权威副本。
 
 ## 身份与安全边界
 
@@ -89,18 +89,13 @@ mode 与 filters 都可经 `PATCH /sessions/{id}` 在线修改，立即生效，
 
 WebUI 与 API 同源。统一中间件检查 Host（回环及实际监听端口）、Origin 与 Fetch Metadata，业务请求必须携带 `X-Tlon-WebUI: 1`；原生 EventSource 的 GET /events 允许 `Sec-Fetch-Site: same-origin` 替代。请求头是浏览器来源边界，不是秘密或身份凭据。跨域预检不授权，JSON、SSE 和错误均不输出 CORS 授权头；静态 WebUI 禁止嵌入。health／静态资源免业务请求头，GitHub webhook 保留 HMAC 校验、免 WebUI 请求头与初始化门禁。
 
-ADR 0013 的 admin token 已删除，所有业务接口遵守统一来源边界。本机程序仍受信任，这不是多用户或进程隔离机制。仅维护 WebUI，旧 TUI／SDK／Telegram 不提供自报身份兼容入口。
+ADR 0013 的 admin token 已删除，所有业务接口遵守统一来源边界。本机程序仍受信任，这不是多用户或进程隔离机制。仅维护 WebUI，旧 TUI／SDK／Telegram 已退役删除。
 
 ## 客户端
 
-官方客户端都只经 REST + SSE 与服务端通信：
+[WebUI](./webui.md) 只经 REST + SSE 与服务端通信：使用浏览器 EventSource + REST，真实开流后报告 connected；邮箱另以持久快照同步。旧客户端已[退役删除](../decisions/legacy-client-retirement.md)。
 
-- [apps/operator](../../apps/operator)（TypeScript/Ink TUI）：`src/client/sseClient.ts` 的 `SseClient` 用 fetch 实现整个协议——`POST /sessions` 开流前拿快照，`GET /events` 读流，PATCH 改 mode，断线后指数退避重连（`backoffDelay`，1s 起步、30s 封顶）并**从零重建会话**（新 session id、新快照），断连期间的事件丢弃。`dispose` 中止流并尽力 DELETE 会话。整个客户端协议实现只有这一个文件、两百余行——这是协议面小的直接证据。
-- [WebUI](./webui.md)：浏览器 EventSource + REST，真实开流后报告 connected；邮箱另以持久快照同步。
-- [Telegram](./telegram.md)：经 Python SDK 的 chat 会话接入，仅收自己身份的邮件。
-- [src/tlon_client/sdk/](../../src/tlon_client/sdk)（Python SDK）：`client.py` 的 `TlonClient` = `base_client.py` 的 `BaseClient`（REST + SSE 传输、自动重连、重连后重新 `POST /sessions`）+ `adapter.py` 的 `ClientAdapter`（按客户端类型声明 client_type/mode/filters 等默认行为）。契约上不依赖 `tlon` 包（import-linter 强制）——SDK 能用的就是协议暴露的，没有后门。
-
-客户端共同的约定值得强调：**过滤声明在服务端执行**。adapter 把想要的 mode 和 filters 随 `POST /sessions` / `PATCH` 发给服务端，本地收到什么就展示什么，不再二次过滤。这让「客户端看到什么」的语义只有一个权威实现（`NotificationService`），客户端类型再怎么增加也不会各自漂移出自己的过滤规则。
+客户端的约定值得强调：**过滤声明在服务端执行**。客户端把想要的 mode 和 filters 随 `POST /sessions` / `PATCH` 发给服务端，本地收到什么就展示什么，不再二次过滤。这让「客户端看到什么」的语义只有一个权威实现（`NotificationService`），客户端类型再怎么增加也不会各自漂移出自己的过滤规则。
 
 ## 设计取舍
 
@@ -115,7 +110,7 @@ ADR 0013 的 admin token 已删除，所有业务接口遵守统一来源边界�
 
 **代价与边界**：
 
-- SSE 在 HTTP/1.1 下每连接占一个浏览器连接槽——本场景是本地单用户 TUI/SDK，无感；若未来出现浏览器多标签客户端，再评估 HTTP/2。
+- SSE 在 HTTP/1.1 下每连接占一个浏览器连接槽——当前 WebUI 的多标签页会共享浏览器连接上限，连接数受限时需减少同时打开的标签页。
 - 推送通道不能上行——上行本来就该走 POST，职责分离反而清晰。
 - 断连期间的非邮件事件（agent 状态变化等瞬时通知）会丢，客户端以重连后的会话快照为新的真相起点；邮件不丢，因为邮件是磁盘事实。
 - 单条 SSE 流绑定单个会话，多端是同用户的多个会话；没有广播级的服务端推送聚合，会话数即推送扇出数——本地单用户场景下这不是约束。

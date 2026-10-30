@@ -1,5 +1,7 @@
 # ADR 0030：SQLite 邮局与明确的投信契约
 
+> 后续变更（2026-10-31）：Operator TUI、Python SDK 与 Telegram 已[退役删除](legacy-client-retirement.md)；下文涉及它们的实现和验证记录属于历史。当前客户端为 WebUI，包结构与入口以[当前架构](../architecture.md)为准。
+
 > 阅读定位：本文保留当时的选择与理由；当前设计见 [mail](../design/mail.md)。当前适用范围：SQLite 邮局、事务提交与明确回执；旧验收流水作为历史证据保留。完整关系见 [决策索引](README.md)。
 
 日期：2026-10-16。状态：已实施。

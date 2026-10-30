@@ -2,10 +2,6 @@ import type { AgentState } from "../lib/agentState";
 /**
  * REST client for the Tlon server (browser version).
  *
- * Same endpoint surface as apps/operator/src/client/restClient.ts (see
- * src/tlon/app/server/api/rest.py), plus the logs endpoints the TUI does
- * not use (`GET /logs`, `GET /agents/{id}/logs`).
- *
  * All requests use same-origin relative paths: in production the app is
  * statically hosted by the server itself (`/ui/`), in dev the vite proxy
  * forwards the API paths to 127.0.0.1:8080.

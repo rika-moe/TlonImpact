@@ -60,7 +60,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 
 服务端只允许监听 `127.0.0.1`、`localhost` 或 `::1`，请求 Host 必须是实际监听端口上的回环 authority。Origin 若存在必须同源；`Sec-Fetch-Site` 仅允许缺失、`same-origin` 或 `none`。静态页与 `/health` 无需 WebUI 请求头，其余业务 API（含 `/identity`、`/admin/*`）必须携带 `X-Tlon-WebUI: 1`。原生 EventSource 不能加头，仅 `GET /events` 可用 `Sec-Fetch-Site: same-origin` 替代。边界失败统一返回 403 `untrusted_origin`；跨域预检不放行，所有响应（含 SSE、错误和静态资源）不输出 CORS 授权头，并禁止页面被嵌入。
 
-身份未设置时，业务 API 返回 409 `identity_required`；公开入口、identity API 与 GitHub webhook 例外。`POST /webhooks/github` 沿用自身 HMAC 校验，不要求 WebUI 头，但仍经过 Host/Origin/Fetch Metadata 检查。此边界隔离非同源网页，不隔离本机程序。当前只保证 WebUI；TUI、SDK 与 Telegram 不提供兼容接入。
+身份未设置时，业务 API 返回 409 `identity_required`；公开入口、identity API 与 GitHub webhook 例外。`POST /webhooks/github` 沿用自身 HMAC 校验，不要求 WebUI 头，但仍经过 Host/Origin/Fetch Metadata 检查。此边界隔离非同源网页，不隔离本机程序。当前客户端为 WebUI；TUI、Python SDK 与 Telegram 已退役删除。
 
 ### 条件注册
 
@@ -527,7 +527,7 @@ mode 与 filters 可经 `PATCH /sessions/{id}` 在线修改。过滤只在服务
 
 ## 接入示例
 
-以下示例用于本机 HTTP 检查；当前维护的客户端是 WebUI，不保证旧 SDK、TUI 或 Telegram 兼容。
+以下示例用于本机 HTTP 检查；当前维护的客户端是 WebUI；旧 SDK、TUI 和 Telegram 已退役删除。
 
 ### curl
 

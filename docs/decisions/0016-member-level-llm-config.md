@@ -1,5 +1,7 @@
 # ADR 0016：LLM 配置成员级化——删除进程级 LLM_* 设置
 
+> 后续变更（2026-10-31）：Operator TUI、Python SDK 与 Telegram 已[退役删除](legacy-client-retirement.md)；下文涉及它们的实现和验证记录属于历史。当前客户端为 WebUI，包结构与入口以[当前架构](../architecture.md)为准。
+
 > 阅读定位：本文保留当时的选择与理由；当前设计见 [infrastructure](../design/infrastructure.md)、[webui](../design/webui.md)。当前适用范围：成员级模型配置；不自动创建标准团队的条款已由 [ADR 0036](0036-initial-society.md) 覆盖。完整关系见 [决策索引](README.md)。
 
 状态：已接受（2026-09-16，方向讨论拍板；修订 ADR 0012）

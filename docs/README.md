@@ -40,7 +40,6 @@ architecture 区分规范与当前实现；design 负责当前领域模型和机
 | 治理与扩展 | [Skills](design/skills.md) | SKILL.md 发现、索引、正文读取与信任边界 |
 | 人类接入 | [服务端协议](design/server-protocol.md) | REST/SSE、客户端会话、通知与同步契约 |
 | 人类接入 | [WebUI](design/webui.md) | 页面状态、邮箱同步、线程展示与管理交互 |
-| 人类接入 | [Telegram](design/telegram.md) | SDK 接入、回复关联与失败处理 |
 
 ## 工作程序的分阶段替换（P1–P5 已合并，两个 EPIC 验收完成）
 

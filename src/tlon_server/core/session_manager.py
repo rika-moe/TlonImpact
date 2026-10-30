@@ -20,7 +20,7 @@ class ClientSession:
 
     Attributes:
         id: Unique session ID
-        client_type: Client type ("tui", "web", "telegram")
+        client_type: Client type (e.g. "web")
         connected_at: Connection timestamp
         mode: Current operation mode ("chat", "event", "agent")
         filters: Event filters for this session
@@ -28,7 +28,7 @@ class ClientSession:
     """
 
     id: str
-    client_type: str  # "tui" | "web" | "telegram"
+    client_type: str  # Client-supplied label, e.g. "web"
     connected_at: str
     mode: str = "chat"  # "chat" | "event" | "agent"
     filters: dict[str, Any] = field(default_factory=dict)
@@ -72,7 +72,7 @@ class SessionManager:
         """Create a new client session.
 
         Args:
-            client_type: Type of client ("tui", "web", "telegram")
+            client_type: Type of client (e.g. "web")
             metadata: Optional session metadata
             filters: Optional initial event filters (declared by the client,
                 e.g. client-type default exclusions)
