@@ -2405,6 +2405,7 @@ dependencies = [
     { name = "opentelemetry-sdk" },
     { name = "pydantic" },
     { name = "python-dotenv" },
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
     { name = "pyyaml" },
     { name = "structlog" },
 ]
@@ -2426,12 +2427,12 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
-    { name = "pywin32", marker = "sys_platform == 'win32'" },
     { name = "ruff" },
     { name = "types-aiofiles" },
     { name = "types-croniter" },
     { name = "types-docker" },
     { name = "types-jsonschema" },
+    { name = "types-pywin32" },
     { name = "types-pyyaml" },
 ]
 
@@ -2449,6 +2450,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-telegram-bot", marker = "extra == 'telegram'", specifier = ">=21" },
+    { name = "pywin32", marker = "sys_platform == 'win32'", specifier = ">=311" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "structlog", specifier = ">=23.0.0" },
 ]
@@ -2463,12 +2465,12 @@ dev = [
     { name = "pytest", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.21.0" },
     { name = "pytest-cov", specifier = ">=4.0.0" },
-    { name = "pywin32", marker = "sys_platform == 'win32'", specifier = ">=311" },
     { name = "ruff", specifier = ">=0.15.4" },
     { name = "types-aiofiles", specifier = ">=25.1.0" },
     { name = "types-croniter", specifier = ">=6.2.4.20260711" },
     { name = "types-docker", specifier = ">=7.2.0" },
     { name = "types-jsonschema", specifier = ">=4.26.0" },
+    { name = "types-pywin32", specifier = ">=311.0.0" },
     { name = "types-pyyaml", specifier = ">=6.0.12" },
 ]
 
@@ -2606,6 +2608,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/29/d2/1f742605f5a6d39f993134885b8de41c98af606871d3ebddaf3e776bd1eb/types_jsonschema-4.26.0.20261006.tar.gz", hash = "sha256:3eb7db61b6819d40addfdaac7173e749071a7d4a9a4394f0c844598ec84b2500", size = 16843, upload-time = "2026-10-06T08:16:07.318Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8b/a0/4f2e3c0dc3d5cad958006f2e0307065cc8fe4fbf0393ff0b69d55ee9bbe5/types_jsonschema-4.26.0.20261006-py3-none-any.whl", hash = "sha256:29301f4e65e3928540cdf5e23ad716e38bb0c0b416a48dada213edd3d70206ec", size = 16113, upload-time = "2026-10-06T08:16:06.355Z" },
+]
+
+[[package]]
+name = "types-pywin32"
+version = "312.0.0.20261024"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/51/0b/7633b738ce443e123fd6409a88f72bc0df9af9caeb003eef9dabe2fa5fe8/types_pywin32-312.0.0.20261024.tar.gz", hash = "sha256:e47b0eadd1a4cac58154d5fe5f6ffa43db049312eda718641274d1e6860b2305", size = 357338, upload-time = "2026-10-24T06:36:28.4Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/48/d9/d17d08b7518dc784daf06c1da60ebda8f7c58378b43ced28ce477f225bb5/types_pywin32-312.0.0.20261024-py3-none-any.whl", hash = "sha256:6919413ac7da1dbd364f40ee75bfe884db2ca919f5aa6c24243c6de76f3c3ebb", size = 419244, upload-time = "2026-10-24T06:36:27.055Z" },
 ]
 
 [[package]]

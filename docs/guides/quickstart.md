@@ -10,6 +10,8 @@
 | Docker | 可选 | Shell 及 workspace 外文件访问的沙箱；自己的 workspace 文件读写无需 Docker |
 | LLM API Key | 见下 | 成员调用模型时使用的推理后端；按所用 provider 各配各的（`{PROVIDER}_API_KEY`） |
 
+Windows 原生运行的文件锁、服务生命周期及 workspace 实现见 [Windows 适配设计](../design/windows-support.md)。Windows workspace 需位于固定本地磁盘，不支持 UNC 或映射网络盘；Docker 仍为可选。当前安装流程仍使用 uv，不提供免环境 Windows 安装包；Windows CI 不等同于 Windows 10 实机验收。
+
 ## 1. 安装
 
 ```bash

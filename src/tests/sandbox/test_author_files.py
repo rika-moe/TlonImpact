@@ -1,6 +1,9 @@
 """The published author materials need no Docker or extra filesystem authority."""
 
+import subprocess
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -93,3 +96,66 @@ async def test_custom_workspace_does_not_keep_default_reference_alias() -> None:
         await filesystem(working_dir="/custom").read(
             {"file_path": "/workspace/tlon/docs/README.md"}, CONTEXT
         )
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        r"..\secret",
+        r"nested\..\..\secret",
+        r"C:\secret",
+        "README.md:stream",
+        "NUL.txt",
+        "CON .txt",
+        "NUL .txt",
+        "COM1 .log",
+        "dir. ",
+        "bad\x00name",
+    ],
+)
+async def test_windows_author_components_rejected_before_host_join(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str
+) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (tmp_path / "secret").write_text("private", encoding="utf-8")
+    monkeypatch.setattr("tlon.sandbox.author_files.sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(
+        "tlon.sandbox.author_files.author_mounts",
+        lambda working_dir: {"/workspace/tlon/docs": docs},
+    )
+    for operation, argument in [
+        (filesystem().read, "file_path"),
+        (filesystem().list_directory, "path"),
+    ]:
+        with pytest.raises(RejectedError):
+            await operation({argument: f"/workspace/tlon/docs/{suffix}"}, CONTEXT)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows junction semantics")
+@pytest.mark.parametrize("mount_root", [False, True])
+async def test_windows_author_junctions_are_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mount_root: bool
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret").write_text("private", encoding="utf-8")
+    docs = tmp_path / "docs"
+    if not mount_root:
+        docs.mkdir()
+    junction = docs if mount_root else docs / "escape"
+    subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(junction), str(outside)], check=True, capture_output=True
+    )
+    monkeypatch.setattr(
+        "tlon.sandbox.author_files.author_mounts",
+        lambda working_dir: {"/workspace/tlon/docs": docs},
+    )
+    logical = "tlon/docs/secret" if mount_root else "tlon/docs/escape/secret"
+    try:
+        with pytest.raises(RejectedError, match="reparse"):
+            await filesystem().read({"file_path": logical}, CONTEXT)
+        with pytest.raises(RejectedError, match="reparse"):
+            await filesystem().search({"path": "tlon/docs", "pattern": "private"}, CONTEXT)
+    finally:
+        junction.rmdir()

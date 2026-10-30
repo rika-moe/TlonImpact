@@ -20,3 +20,21 @@ jobs:
       - name: Catalog locks and prototype reviews
         shell: bash
         run: bash scripts/check_all.sh --windows-locks
+
+  workspace:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python }}
+      - name: Install dependencies
+        run: uv sync --group dev
+      - name: Native workspace isolation and SDK smoke
+        shell: bash
+        run: bash scripts/check_all.sh --windows-workspace

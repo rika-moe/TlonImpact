@@ -29,3 +29,17 @@ Windows CI 使用 `bash scripts/check_all.sh --windows-locks`，实际执行跨�
 - `scripts/check_all.sh --windows-smoke` 是 Windows 生命周期、真实 CLI 及邮件入箱验证的单一测试清单，CI 调用该分组。此阶段仍不宣称 Windows workspace 文件边界可用。
 
 Windows 进程树实现依据 [Microsoft Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects) 的子进程继承和最后句柄关闭语义；pywin32 的限制字典结构依据其 [win32job 源码](https://github.com/mhammond/pywin32/blob/main/win32/src/win32job.i)。launcher 进程入口将真实 stdout/stderr 文本流配置为 UTF-8，使重定向的中文和 emoji 输出不依赖 Windows 代码页；StringIO 等嵌入流不变。测试不注入 UTF-8 启动选项，并以 PYTHONIOENCODING=ascii 验证真实 CLI 能启动、输出完整 banner 并正常退出。
+
+## 第三阶段：workspace 文件边界
+
+保留 WorkspaceFiles 的 read/write/archive 接口，POSIX 实现独立保留，Windows 使用 pywin32 和小型 NT 文件接口 ABI 封装。每个用户路径组件先校验，再相对已打开父句柄访问；拒绝 reparse point、非磁盘普通文件及硬链接。目录句柄链在操作期间全部保留并禁止共享写入/删除，避免目录被移动或修改为 reparse point。根目录及其宿主祖先来自可信本地管理配置，根自身仍拒绝 reparse point；首版不支持 UNC/network workspace。
+
+写入独占创建临时文件，刷盘后通过源句柄在已锁定的同一父目录内重命名替换，异常通过句柄删除临时文件，不回退到字符串路径。归档通过目录句柄分页枚举，并在每个子项打开后重新检查类型。Windows 文件刷盘和原子替换不声明与 POSIX 目录 fsync 相同的断电持久性。
+
+Windows 特殊组件校验共享给 author 逻辑路径映射，必须在转换成宿主路径之前拒绝反斜杠、冒号、保留设备名、尾点/空格等。author 资源树由安装管理，拒绝 reparse 项；不声称对受攻击者同时修改的安装资源提供 workspace 级别隔离。
+
+验证须包含 Windows 原生无 Docker 文件工具、分页枚举、链接/junction/硬链接、ADS/设备路径、目标替换和父目录移动竞争。托管 Windows Server CI 不等同于 Windows 10 实机验证；验证结果另行记录。
+
+原生实现依据 [Microsoft NtCreateFile](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile) 的 RootDirectory 相对打开语义、[FILE_RENAME_INFORMATION](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information) 的源句柄同目录重命名语义，以及 [Go Windows openat 实现](https://go.dev/src/internal/syscall/windows/at_windows.go)。常规读写、目录枚举和句柄操作使用 pywin32，仅相对打开与重命名所需 NT ABI 使用 ctypes。Windows 原生 CI 在 Python 3.11 / 3.13 上调用 `scripts/check_all.sh --windows-workspace`，包含 Windows 平台类型检查、共享文件工具、路径/链接/竞态测试和显式 WebUI 标头的 SDK 邮件冒烟。
+
+第三阶段 Windows CI 首次暴露 Win32 `SetFileInformationByHandle(FileRenameInfo)` 对非空 RootDirectory 返回错误 87；改用 NT 相对父目录重命名后又发现系统重新以写权限打开目标目录，与保留的禁止共享写入句柄冲突（错误 32）。最终使用 `NtSetInformationFile(FileRenameInformation)` 的文档化同目录形式：源临时文件句柄保持打开，RootDirectory 为空，目标仅为一个经过校验的文件名。源所在父目录及祖先句柄仍禁止共享写入/删除，因此不能被迁移或重定向；不使用绝对路径，也不放宽共享约束。此语义见 [Microsoft FILE_RENAME_INFORMATION](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information)。修正后的原生验证结果以 CI 为准。

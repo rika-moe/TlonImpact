@@ -105,6 +105,7 @@ async def test_missing_workspace_binding_does_not_fall_back_to_device() -> None:
         await files.read({"file_path": "CONTACTS.md"}, CONTEXT)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX dir_fd replacement hook")
 async def test_target_swap_during_write_never_truncates_outside_inode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

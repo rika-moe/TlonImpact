@@ -76,6 +76,8 @@ workspace 下的 `tlon/docs` 与 `tlon/stdlib` 是 runtime 文档和标准库源
 
 文件领域服务将逻辑工作目录绑定到成员自己的宿主 workspace，五个操作直接访问该目录，无需 Docker。宿主通道拒绝路径逃逸、符号链接与硬链接；目录遍历遇到这些链接时拒绝整次列出/搜索，不跟随目标，并保持作者资料只读；具体实现见 [ADR 0047](../decisions/0047-workspace-contact-files.md)。workspace 外的装置通道经 path_guard 做容器路径白名单检查，再由装置 check_path 检查目标及其祖先，拒绝符号链接路径。读侧额外允许 `/tlon-home`；写/edit 使用配置的写白名单。归档解析拒绝绝对路径、`..` 等非法条目，链接仅列出而不读取其目标。Docker stat 与 archive API 并非同一个原子 open-beneath 操作；并发 L2 命令改写路径仍有 TOCTOU 窗口，不能声称已消除任意并发 symlink 竞态。成员挂载隔离与内核只读挂载仍是最终边界，其他成员目录和宿主 Docker socket 不进入容器。
 
+宿主文件通道按平台选择原生实现：POSIX 保留目录描述符相对访问；Windows 使用父目录句柄相对打开、保留祖先句柄并拒绝共享写入/删除，拒绝所有 reparse point（包括 junction），由临时文件句柄完成替换。Windows workspace 限定固定本地磁盘，逻辑路径拒绝反斜杠、备用数据流、设备名和有歧义的尾点/空格；配置根的宿主祖先须为可信管理路径。Windows 文件刷盘后替换不声称与 POSIX 目录 fsync 具有同等断电持久性。实现及验证范围见 [Windows 适配设计](windows-support.md)。内置作者资料在宿主路径拼接前执行同样的 Windows 组件校验，遍历前拒绝链接和 reparse point；其安装资源树仍是可信只读来源。
+
 装置通道的 `read_file` 与 `write_file` 使用 get_archive / put_archive，字节不经 stdout 解码；MemberFilesystemService 在领域边界另要求 UTF-8 文本。`file_exists` 读 archive 响应头；list/search 把目录 tar 拉回宿主分析，由 [sandbox/archive.py](../../src/tlon/sandbox/archive.py) 完成遍历与匹配，不依赖镜像内 find/grep。搜索内容正则采用 Python `re`。写入父目录通过 tar 目录条目创建，只加入缺失父目录，避免修改已有目录元数据。
 
 ## 网络与资源
