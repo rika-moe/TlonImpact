@@ -4,7 +4,7 @@ import type { RestClient } from "../client/rest";
 import { ModelSetupController } from "../lib/model-setup";
 
 const DEFAULT_MODELS: Record<string, string> = {
-  deepseek: "deepseek/deepseek-chat",
+  deepseek: "deepseek/deepseek-flash",
   openai: "openai/gpt-4o-mini",
   anthropic: "anthropic/claude-sonnet-4-5",
   gemini: "gemini/gemini-2.5-flash",
@@ -47,7 +47,7 @@ function ModelSetupForm({ rest, controller }: { rest: RestClient; controller: Mo
     {state.error && <p role="alert">{state.error}</p>}
     <button className="btn" disabled={state.busy} onClick={() => void controller.load()}>重试</button>
   </>;
-  const initial = state.status.required && Boolean(state.status.initial_member_ids?.length);
+  const initial = state.status.initial_allowed && Boolean(state.status.initial_member_ids?.length);
   return <form onSubmit={(event) => {
     event.preventDefault();
     void controller.save({ provider, model, api_key: key, scope: initial ? "initial" : "selected", agent_ids: initial ? [] : selected })
@@ -68,9 +68,9 @@ function ModelSetupForm({ rest, controller }: { rest: RestClient; controller: Mo
         {member.name} · {member.model ?? "未配置模型"}
       </label>)}
     </fieldset>}
-    <p>API Key 保存后立即用于新请求。已运行成员的模型在下次启动时生效；可从托盘退出并重开 Tlon 使其立即切换。</p>
+    <p>API Key 保存后立即用于新请求。{state.status.initial_allowed ? "首次配置会等待所选成员完成旧任务并自动应用模型，无需重启。" : "已运行成员的模型在下次启动时生效；可从托盘退出并重开 Tlon 使其立即切换。"}</p>
     {state.error && <p role="alert">{state.error}</p>}
     {state.saved && <p role="status">验证通过，配置已保存。{state.status.pending_members?.length ? `${state.status.pending_members.length} 位已运行成员将在下次启动时使用新模型。` : "所选成员已就绪。"}</p>}
-    <button className="btn btn--primary" type="submit" disabled={state.busy || !key || !model || (state.status.required && !initial && !selected.length)}>{state.busy ? "正在验证并保存…" : "验证连接并保存"}</button>
+    <button className="btn btn--primary" type="submit" disabled={state.busy || !key || !model || (state.status.required && state.status.initial_allowed && !initial && !selected.length)}>{state.busy ? "正在验证并应用配置…" : "验证连接并保存"}</button>
   </form>;
 }

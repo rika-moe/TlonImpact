@@ -253,6 +253,7 @@ export type ModelSetupStatus = {
   enabled: boolean;
   required?: boolean;
   providers?: string[];
+  initial_allowed?: boolean;
   initial_member_ids?: string[];
   members?: Array<{ id: string; name: string; model: string | null }>;
   pending_members?: string[];

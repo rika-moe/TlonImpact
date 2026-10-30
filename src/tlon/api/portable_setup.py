@@ -32,6 +32,7 @@ class PortableSetupFacade:
         self._members = members
         self._lock = asyncio.Lock()
         self._marker = paths.tlon_home() / "model-setup.json"
+        self._configured_before = self._marker.exists()
         state = _read_state(paths)
         self._initial_ids = (
             tuple(state.addresses.values()) if state and state.status == "complete" else ()
@@ -40,6 +41,9 @@ class PortableSetupFacade:
     def status(self) -> dict[str, Any]:
         """Return only non-secret state; persisted credential presence is checked."""
         complete = False
+        # Credential repair is not a new initial setup. Even a malformed
+        # completion record permanently withdraws blanket scope authorization.
+        self._configured_before = self._configured_before or self._marker.exists()
         if self._marker.exists():
             try:
                 marker = json.loads(self._marker.read_text(encoding="utf-8"))
@@ -55,7 +59,8 @@ class PortableSetupFacade:
             "enabled": True,
             "required": not complete,
             "providers": list(PROVIDERS),
-            "initial_member_ids": list(self._initial_ids),
+            "initial_allowed": not self._configured_before,
+            "initial_member_ids": [] if self._configured_before else list(self._initial_ids),
             "members": [
                 {"id": cfg.id, "name": cfg.name, "model": cfg.llm.model_name if cfg.llm else None}
                 for cfg in self._configs.list_agent_configs()
@@ -97,16 +102,17 @@ class PortableSetupFacade:
         if not isinstance(supplied_ids, list) or any(not isinstance(i, str) for i in supplied_ids):
             raise SetupError("成员范围格式无效。")
         async with self._lock:
-            required = self.status()["required"]
+            state = self.status()
+            required = state["required"]
             if body["scope"] == "initial":
-                if not required or supplied_ids:
+                if not state["initial_allowed"] or not required or supplied_ids:
                     raise SetupError("首次配置范围不可用于覆盖已有成员，请明确选择成员。")
                 ids = list(self._initial_ids)
                 if not ids:
                     raise SetupError("没有初始成员，请明确选择要配置的成员。")
             elif body["scope"] == "selected":
                 ids = list(dict.fromkeys(supplied_ids))
-                if required and not ids:
+                if state["initial_allowed"] and required and not ids:
                     raise SetupError("首次配置至少需要选择一位成员。")
             else:
                 raise SetupError("请选择初始成员或明确的成员列表。")
@@ -147,11 +153,20 @@ class PortableSetupFacade:
                     if result in {"config-not-found", "start-failed"}:
                         raise SetupError("成员配置尚未生效，请重试。")
                     member = await self._members.get_status(agent_id)
-                    if member and member.get("resident"):
+                    if not state["initial_allowed"] and member and member.get("resident"):
                         pending.append(agent_id)
+                if state["initial_allowed"]:
+                    # Boot may already have assembled the seeded members with
+                    # their original model. wait serializes with boot under the
+                    # registry wake lock and drains the old instance safely.
+                    drained = await asyncio.gather(*(self._members.wait(i) for i in ids))
+                    if not all(drained):
+                        raise SetupError("成员仍在完成当前任务，请稍后重试以完成首次配置。")
                 temporary = self._marker.with_suffix(".tmp")
                 temporary.write_text(json.dumps({"provider": provider}), encoding="utf-8")
                 temporary.replace(self._marker)
+            except SetupError:
+                raise
             except Exception:
                 raise SetupError(
                     "配置未全部完成。已保存的部分会保留，请重试；无需重新启动来更新 API Key。"

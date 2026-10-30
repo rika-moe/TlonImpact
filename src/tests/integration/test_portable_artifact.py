@@ -180,6 +180,7 @@ def test_shipped_executable_mail_and_relocation(
         os.environ,
         TLON_HOME=str(outside),
         OPENAI_API_BASE=mock_model[0],
+        DEEPSEEK_API_KEY="",
         DOCKER_HOST="tcp://127.0.0.1:1",
     )
     # A clean EXE must not resolve Python/uv/Node/Docker from developer PATH.
@@ -205,6 +206,17 @@ def test_shipped_executable_mail_and_relocation(
             if iteration == 0:
                 assert identity["username"] is None
                 _request(base + "/identity", {"username": "portable-user"})
+                # First-use configuration must update already-booted clients,
+                # not merely win a race against their initial assembly.
+                deadline = time.monotonic() + 60
+                while time.monotonic() < deadline:
+                    agents = _request(base + "/agents")["agents"]
+                    if len(agents) == 30 and all(agent["resident"] for agent in agents):
+                        break
+                    time.sleep(0.2)
+                else:
+                    raise AssertionError("Initial society did not finish resident boot")
+                member = _request(base + "/admin/llm/setup")["initial_member_ids"][0]
                 setup = _request(
                     base + "/admin/llm/setup",
                     {
@@ -233,7 +245,6 @@ def test_shipped_executable_mail_and_relocation(
             store = MailStore(TlonPaths(home=data).mail_database_file())
             assert any(token in mail.content for mail in store.mails("human:portable-user"))
             if iteration == 0:
-                member = setup["initial_member_ids"][0]
                 _request(
                     base + "/messages",
                     {

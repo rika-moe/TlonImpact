@@ -53,6 +53,7 @@ async def setup(
 
     members.adopt = AsyncMock(side_effect=adopt)
     members.get_status = AsyncMock(return_value={"resident": False})
+    members.wait = AsyncMock(return_value=True)
     facade = PortableSetupFacade(
         paths, ConfigFacade(config_service=service, tlon_paths=paths), members
     )
@@ -68,7 +69,10 @@ async def test_initial_thirty_members_persist_and_key_becomes_live(
     monkeypatch.setattr("litellm.acompletion", call)
     assert setup.status()["required"]
     assert len(setup.status()["initial_member_ids"]) == 30
+    setup._members.get_status = AsyncMock(return_value={"resident": True})
     response = await setup.configure(BODY)
+    assert setup._members.wait.await_count == 30
+    assert response["pending_members"] == []
     assert response["required"] is False
     assert len(response["members"]) == 30
     assert all(member["model"] == BODY["model"] for member in response["members"])
@@ -116,9 +120,11 @@ async def test_resident_model_changes_are_reported_as_pending(
     monkeypatch.setattr("litellm.acompletion", AsyncMock())
     await setup.configure(BODY)
     setup._members.get_status = AsyncMock(return_value={"resident": True})
+    setup._members.wait.reset_mock()
     selected = setup._initial_ids[0]
     result = await setup.configure({**BODY, "scope": "selected", "agent_ids": [selected]})
     assert result["pending_members"] == [selected]
+    setup._members.wait.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -303,3 +309,48 @@ async def test_real_litellm_connection_and_provider_error_redaction(
         )
     output = capsys.readouterr()
     assert KEY not in caplog.text + output.out + output.err
+
+
+@pytest.mark.parametrize("damage", ["missing-key-file", "environment-conflict", "malformed-marker"])
+async def test_credential_repair_never_reauthorizes_initial_scope(
+    setup: PortableSetupFacade, monkeypatch: pytest.MonkeyPatch, damage: str
+) -> None:
+    monkeypatch.setattr("litellm.acompletion", AsyncMock())
+    await setup.configure(BODY)
+    if damage == "missing-key-file":
+        setup._paths.env_file().unlink()
+    elif damage == "environment-conflict":
+        monkeypatch.setenv("OPENAI_API_KEY", "unrelated-external-key")
+    else:
+        setup._marker.write_text("invalid", encoding="utf-8")
+    # Reopening the facade proves the restriction comes from persisted history.
+    reopened = PortableSetupFacade(setup._paths, setup._configs, setup._members)
+    state = reopened.status()
+    assert state["required"] is True
+    assert state["initial_allowed"] is False
+    assert state["initial_member_ids"] == []
+    before = state["members"]
+    with pytest.raises(SetupError, match="首次配置范围不可"):
+        await reopened.configure(BODY)
+    restored = await reopened.configure({**BODY, "scope": "selected", "api_key": "repaired-key"})
+    assert restored["required"] is False
+    assert restored["initial_allowed"] is False
+    assert restored["members"] == before
+    assert os.environ["OPENAI_API_KEY"] == "repaired-key"
+
+
+async def test_first_setup_waits_for_old_resident_and_busy_drain_remains_retryable(
+    setup: PortableSetupFacade, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("litellm.acompletion", AsyncMock())
+    setup._members.get_status = AsyncMock(return_value={"resident": True})
+    setup._members.wait = AsyncMock(return_value=False)
+    with pytest.raises(SetupError, match="成员仍在完成"):
+        await setup.configure(BODY)
+    assert setup._members.wait.await_count == 30
+    assert not setup._marker.exists()
+    assert setup.status()["required"] and setup.status()["initial_allowed"]
+    setup._members.wait = AsyncMock(return_value=True)
+    result = await setup.configure(BODY)
+    assert not result["required"] and result["pending_members"] == []
+    assert setup._members.wait.await_count == 30

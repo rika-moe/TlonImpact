@@ -4,8 +4,8 @@ import { RestClient } from "../src/client/rest";
 import type { ModelSetupRequest, ModelSetupStatus } from "../src/client/rest";
 import { ModelSetupController } from "../src/lib/model-setup";
 
-const required: ModelSetupStatus = { enabled: true, required: true, providers: ["openai"], initial_member_ids: ["m-a"], members: [{ id: "m-a", name: "Alice", model: "deepseek/deepseek-chat" }] };
-const configured: ModelSetupStatus = { ...required, required: false, pending_members: [] };
+const required: ModelSetupStatus = { enabled: true, required: true, initial_allowed: true, providers: ["openai"], initial_member_ids: ["m-a"], members: [{ id: "m-a", name: "Alice", model: "deepseek/deepseek-flash" }] };
+const configured: ModelSetupStatus = { ...required, required: false, initial_allowed: false, initial_member_ids: [], pending_members: [] };
 const body: ModelSetupRequest = { provider: "openai", model: "openai/gpt-4o-mini", api_key: "secret-test-key", scope: "initial", agent_ids: [] };
 
 test("portable setup stays gated on missing credentials or failed validation and never stores key in controller", async () => {
@@ -68,4 +68,19 @@ test("setup REST uses the existing browser boundary and explicit selected scope"
   const rest = new RestClient();
   assert.deepEqual(await rest.modelSetupStatus(), configured);
   assert.deepEqual(await rest.configureModels(selected), configured);
+});
+
+test("missing credentials after setup allow key-only repair without restoring blanket scope", async () => {
+  let submitted: ModelSetupRequest | null = null;
+  const repair = { ...configured, required: true };
+  const controller = new ModelSetupController({
+    modelSetupStatus: async () => repair,
+    configureModels: async (request) => { submitted = request; return configured; },
+  });
+  await controller.load();
+  assert.equal(controller.getSnapshot().status?.initial_allowed, false);
+  assert.deepEqual(controller.getSnapshot().status?.initial_member_ids, []);
+  const keyOnly: ModelSetupRequest = { ...body, scope: "selected", agent_ids: [] };
+  assert.equal(await controller.save(keyOnly), true);
+  assert.deepEqual(submitted, keyOnly);
 });
