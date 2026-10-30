@@ -13,7 +13,7 @@ import threading
 import time
 import uuid
 from collections.abc import Iterator
-from contextlib import suppress
+from contextlib import closing, suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -294,7 +294,7 @@ def test_shipped_executable_mail_and_relocation(
                     database = data / member / "program.sqlite3"
                     completed = 0
                     if database.exists():
-                        with sqlite3.connect(database) as connection:
+                        with closing(sqlite3.connect(database)) as connection:
                             completed = connection.execute(
                                 "SELECT COUNT(*) FROM runs WHERE completed=1 "
                                 "AND run_id LIKE '%:handler:mail-delivered'"
