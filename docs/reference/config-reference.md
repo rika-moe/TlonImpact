@@ -126,7 +126,7 @@ agent:
 读取方是 [base/settings.py](../../src/tlon/base/settings.py) 的 `Settings`（只处理进程级基建与密钥；业务配置在 `AgentConfig`）与 [base/tracing/otel.py](../../src/tlon/base/tracing/otel.py)。`.env` 在 **`{TLON_HOME}/.env`**（默认 `~/.tlon/.env`，配置与数据同目录）加载，且不覆盖已设置的真实环境变量（`load_process_env`，`override=False`）；`TLON_HOME` 本身只认真实环境变量，不来自 `.env`。
 
 <!-- BEGIN GENERATED: env-vars -->
-`Settings` 读取的环境变量（12 个，按源码顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`Settings` 读取的环境变量（10 个，按源码顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
@@ -134,8 +134,6 @@ agent:
 | `LOG_LEVEL` | INFO |  |
 | `DEBUG` | false |  |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | （未设置） | Observability (OTel): optional OTLP collector, requires the `otlp` extra |
-| `TELEGRAM_BOT_TOKEN` | "" | Telegram bot client (optional `telegram` extra)：@BotFather 颁发的 bot token；缺失则 `tlon telegram` 拒绝启动 |
-| `TELEGRAM_ALLOWED_USERS` | "" | Telegram user-id 白名单（逗号分隔）；为空则拒绝启动 |
 | `TLON_LOG_RETENTION_DAYS` | 7 | Logging: retention (days) for the daily server log file sink |
 | `TLON_CONTAINER_MEMORY_BUDGET` | "" | Society-level container resource budget (issue #24): total memory budget across all agent containers (e.g. "4g"); empty = no budget. Warning-only — exceeding it logs container_memory_budget_exceeded, nothing is enforced. |
 | `TLON_ARENA_MODEL` | "" | 演武场（docs/design/arena.md 「成本界」）：run 请求未带 model 时的缺省； 空 = 未配置，run 必须显式指定模型（显式优于静默错默认） |
@@ -144,13 +142,12 @@ agent:
 | `GITHUB_TOKEN` | "" | GitHub API token（出站：回信 → issue/PR comment）； 空 = 出站禁用，入站不受影响 |
 <!-- END GENERATED: env-vars -->
 
-上表是 `Settings` 的全部读取点；另有三个环境变量由其他模块读取（手写维护）：
+上表是 `Settings` 的全部读取点；另有两个环境变量由其他模块读取（手写维护）：
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `TLON_HOME` | `~/.tlon` | 数据根目录；显式设置但指向不存在/非目录时**报错拒绝启动**（fail-fast，绝不静默回落真实数据根）；缺省 `~/.tlon` 不存在时自动创建（见 [base/paths.py](../../src/tlon/base/paths.py) 的 `_resolve_tlon_home`） |
 | `TLON_TRACE_SAMPLE_RATIO` | 恒采样 | 采样率 `[0, 1]`；非法值拒绝（[base/tracing/otel.py](../../src/tlon/base/tracing/otel.py) 的 `SAMPLE_RATIO_ENV`） |
-| `TLON_USERNAME` | `guest` | `tlon ops` 的默认邮件身份用户名 |
 
 LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全部删除）：成员模型为 `provider/model` 形式，litellm 原生按 provider 前缀读取 `{PROVIDER}_API_KEY`（provider 段大写、`-` 换 `_`，如 `DEEPSEEK_API_KEY` / `ANTHROPIC_API_KEY` / `MOONSHOT_API_KEY` / `OPENAI_API_KEY`）；发请求前 LLMClient 有 preflight，缺 key 即报指明变量名的错。模型选择是成员级配置（agent.yaml `llm.model_name`），私有部署 / 代理用成员级 `llm.api_base` 覆盖端点。`TLON_LOG_RETENTION_DAYS` 管每日服务端日志文件保留（`~/.tlon/shared/logs/server-{date}.jsonl`）；`DEBUG` 为 `"true"` 时生效。
 

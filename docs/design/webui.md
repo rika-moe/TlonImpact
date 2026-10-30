@@ -1,6 +1,6 @@
 # WebUI 设计
 
-WebUI 是浏览器中的人类客户端，由 React + Vite + TypeScript 实现，与 Operator TUI、[Telegram](./telegram.md) 共用 [REST + SSE 协议](./server-protocol.md)。本文负责页面状态、邮箱同步与交互；邮局事务及已读语义由 [mail.md](./mail.md) 定义，精确端点和字段见 [API reference](../reference/api-reference.md)。邮箱一致性的选择历史见 [ADR 0031](../decisions/0031-webui-mail-consistency.md)。
+WebUI 是浏览器中的人类客户端，由 React + Vite + TypeScript 实现，使用 [REST + SSE 协议](./server-protocol.md)。本文负责页面状态、邮箱同步与交互；邮局事务及已读语义由 [mail.md](./mail.md) 定义，精确端点和字段见 [API reference](../reference/api-reference.md)。邮箱一致性的选择历史见 [ADR 0031](../decisions/0031-webui-mail-consistency.md)。
 
 ## 领域约束
 

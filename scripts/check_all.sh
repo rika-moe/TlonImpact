@@ -63,15 +63,13 @@ ts_run() {
 if [ "$want_static" -eq 1 ]; then
     run "ruff"              uv run ruff check src/
     run "no-reexport"       uv run python scripts/check_no_reexport.py
-    run "mypy"              uv run mypy src/tlon src/tlosure src/tlon_server src/tlon_client src/tlon_launcher
+    run "mypy"              uv run mypy src/tlon src/tlosure src/tlon_server src/tlon_launcher
     run "lint-imports"      uv run lint-imports
     run "runtime-identity"  uv run python scripts/gen_runtime_identity.py --check
     run "docs-freshness"    uv run python scripts/gen_reference_docs.py --check
     run "dev-proxy"         uv run python scripts/check_dev_proxy.py
     ts_run "webui-tests"    webui test
     ts_run "webui-build"    webui build
-    ts_run "operator-tests" operator test
-    ts_run "operator-build" operator build
     run "verify-package"    bash scripts/verify_package.sh
 fi
 

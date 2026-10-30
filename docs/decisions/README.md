@@ -100,3 +100,5 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 [ADR 0051：按模型能力与执行资源决定单次输出](0051-model-output-capability.md)：删除统一单次输出配置，按模型能力、剩余上下文和 run 预算决定输出；成功按可靠实际用量结算。
 
 [ADR 0053：Windows 完全便携发行版](0053-portable-windows-distribution.md)：已接受，代码实施中；ZIP 解压启动，程序及全部 Tlon 数据位于同一目录，浏览器界面与托盘生命周期，保留数据的手动升级；发行包与实机验收另行记录。
+
+[旧客户端退役](legacy-client-retirement.md)：删除 Operator TUI、Python SDK 与 Telegram 及专属入口和依赖；当前客户端为 WebUI，真实邮件冒烟直接使用 HTTP。

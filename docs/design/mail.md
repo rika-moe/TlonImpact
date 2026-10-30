@@ -45,7 +45,7 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 
 `subject` 是可选的——LLM 之间的通信经常不需要标题。线程语义完全由 id 链接承担：`in_reply_to` 指向被回复的上游邮件，`thread_id` 是线程根邮件的 id，回复时从上游继承；新线程的 `thread_id` 默认等于邮件自己的 id。这个选择的理由是：subject 是自然语言，重复、可改、跨语言不稳定；id 链接是精确的、机器可验证的，检索和可视化都按 `thread_id` 聚合即可。代价是客户端必须配合——回复时带上 `in_reply_to` 和继承的 `thread_id`，否则就是另起线程。
 
-一个具体例子：A 发出信 m1（`thread_id = m1.id`）；B 回复 m2（`in_reply_to = m1.id`，`thread_id = m1.id`）；A 再回 m3（`in_reply_to = m2.id`，`thread_id = m1.id`）。`thread_id` 把 {m1, m2, m3} 聚成一个会话视图，`in_reply_to` 在会话内部给出回复的父子结构。agent 侧的回复头由模型显式声明（`in_reply_to` 是模型的显式选择，无触发邮件缺省——ADR 0028；线程跟随被引用邮件，见「发信：唯一出口」），人类客户端与 SDK 则要在 `POST /messages` 里显式传 `in_reply_to` / `thread_id`——字段穿透 REST 协议直达 `Mail.create`，服务端不重写。
+一个具体例子：A 发出信 m1（`thread_id = m1.id`）；B 回复 m2（`in_reply_to = m1.id`，`thread_id = m1.id`）；A 再回 m3（`in_reply_to = m2.id`，`thread_id = m1.id`）。`thread_id` 把 {m1, m2, m3} 聚成一个会话视图，`in_reply_to` 在会话内部给出回复的父子结构。agent 侧的回复头由模型显式声明（`in_reply_to` 是模型的显式选择，无触发邮件缺省——ADR 0028；线程跟随被引用邮件，见「发信：唯一出口」），人类客户端则要在 `POST /messages` 里显式传 `in_reply_to` / `thread_id`——字段穿透 REST 协议直达 `Mail.create`，服务端不重写。
 
 ## SQLite 邮局
 
@@ -215,7 +215,7 @@ adapter 与客户端会话的关系是「成员 vs 附着物」：会话可以�
 
 ## 客户端与历史来源
 
-当前维护的人类通道是 [WebUI](./webui.md)，使用 [REST/SSE 协议](./server-protocol.md)。Operator TUI、SDK 与 [Telegram](./telegram.md) 代码仍保留，但不再保证当前服务端接入兼容；本次不维护其可用性。聊天室、正文 @ 寻址与旧 JSONL 投递机制的替代原因分别见 [ADR 0002](../decisions/0002-mail-as-only-channel.md) 与 [ADR 0030](../decisions/0030-sqlite-post-office.md)。
+当前维护的人类通道是 [WebUI](./webui.md)，使用 [REST/SSE 协议](./server-protocol.md)。Operator TUI、Python SDK 与 Telegram 已[退役删除](../decisions/legacy-client-retirement.md)。聊天室、正文 @ 寻址与旧 JSONL 投递机制的替代原因分别见 [ADR 0002](../decisions/0002-mail-as-only-channel.md) 与 [ADR 0030](../decisions/0030-sqlite-post-office.md)。
 
 ## 未实施方向与当前边界
 

@@ -42,8 +42,6 @@ data/csp/
 !data/.gitkeep
 
 # Node
-apps/operator/node_modules/
-apps/operator/dist/
 apps/webui/node_modules/
 apps/webui/dist/
 apps/webui/.vite/

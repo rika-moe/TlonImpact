@@ -1,5 +1,7 @@
 # ADR 0035：系统生成标识与行为化原型库
 
+> 后续变更（2026-10-31）：Operator TUI、Python SDK 与 Telegram 已[退役删除](legacy-client-retirement.md)；下文涉及它们的实现和验证记录属于历史。当前客户端为 WebUI，包结构与入口以[当前架构](../architecture.md)为准。
+
 > P3c 当前实现：宿主能力统一定义为 Operation；Tool 与 DSL 共用定义和执行边界。旧工具名和类名仅记录当时设计，当前入口见 [工具手册](../reference/tools-reference.md)。
 - 状态：已采纳（2026-10-17）
 - 修订：ADR 0006 的行为原型呈现、ADR 0024 的身份边界；不改变成员自主社会身份。

@@ -57,8 +57,6 @@ class Settings:
     log_level: str
     debug: bool
     otel_exporter_otlp_endpoint: str | None
-    telegram_bot_token: str
-    telegram_allowed_users: str
     log_retention_days: int
     container_memory_budget: str
     arena_model: str
@@ -79,11 +77,6 @@ class Settings:
             debug=os.getenv("DEBUG", "false").lower() == "true",
             # Observability (OTel): optional OTLP collector, requires the `otlp` extra
             otel_exporter_otlp_endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
-            # Telegram bot client (optional `telegram` extra)：@BotFather 颁发的
-            # bot token；缺失则 `tlon telegram` 拒绝启动
-            telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
-            # Telegram user-id 白名单（逗号分隔）；为空则拒绝启动
-            telegram_allowed_users=os.getenv("TELEGRAM_ALLOWED_USERS", ""),
             # Logging: retention (days) for the daily server log file sink
             log_retention_days=int(os.getenv("TLON_LOG_RETENTION_DAYS", "7")),
             # Society-level container resource budget (issue #24): total memory

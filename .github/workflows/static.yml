@@ -30,9 +30,7 @@ jobs:
           node-version: 24
 
       - name: Install TS dependencies
-        run: |
-          npm ci --prefix apps/webui
-          npm ci --prefix apps/operator
+        run: npm ci --prefix apps/webui
 
       - name: Static quality gate
         run: scripts/check_all.sh --static

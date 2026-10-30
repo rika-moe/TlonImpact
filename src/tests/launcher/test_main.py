@@ -56,39 +56,6 @@ class TestCreateParser:
         with pytest.raises(SystemExit):
             create_parser().parse_args(["dream", "--host", host])
 
-    def test_ops_defaults(self):
-        args = create_parser().parse_args(["ops"])
-
-        assert args.command == "ops"
-        assert args.host == "127.0.0.1"
-        assert args.rest_port == 8080
-        assert args.username is None
-        assert args.debug is False
-
-    def test_ops_username(self):
-        for flag in ("--username", "-u"):
-            args = create_parser().parse_args(["ops", flag, "alice"])
-            assert args.username == "alice"
-
-    def test_ops_lucid_sets_debug(self):
-        args = create_parser().parse_args(["ops", "--lucid"])
-
-        assert args.debug is True
-
-    def test_telegram_defaults(self):
-        args = create_parser().parse_args(["telegram"])
-
-        assert args.command == "telegram"
-        assert args.host == "127.0.0.1"
-        assert args.rest_port == 8080
-        assert args.username is None
-
-    def test_telegram_has_no_lucid_flag(self):
-        with pytest.raises(SystemExit) as exc_info:
-            create_parser().parse_args(["telegram", "--lucid"])
-
-        assert exc_info.value.code == 2
-
     def test_global_debug_flag(self):
         args = create_parser().parse_args(["--debug"])
 
@@ -117,29 +84,14 @@ class TestMainAsync:
         )
         return paths, settings
 
-    @pytest.mark.parametrize("command", ["dream", "ops", "telegram"])
-    async def test_routes_to_command(self, monkeypatch: pytest.MonkeyPatch, command: str) -> None:
+    async def test_routes_to_dream(self, monkeypatch: pytest.MonkeyPatch) -> None:
         paths, settings = self._patch_infra(monkeypatch)
-        runners: dict[str, AsyncMock] = {}
-        for name in ("run_dream", "run_ops", "run_telegram"):
-            runner = AsyncMock(return_value=0)
-            runners[name] = runner
-            monkeypatch.setattr(main_module, name, runner)
+        runner = AsyncMock(return_value=0)
+        monkeypatch.setattr(main_module, "run_dream", runner)
+        args = self._args("dream")
 
-        args = self._args(command)
-        result = await main_async(args)
-
-        assert result == 0
-        expected_args = {
-            "run_dream": [args, paths, settings],
-            "run_ops": [args],
-            "run_telegram": [args, settings],
-        }
-        for name, runner in runners.items():
-            if name == f"run_{command}":
-                runner.assert_awaited_once_with(*expected_args[name])
-            else:
-                runner.assert_not_awaited()
+        assert await main_async(args) == 0
+        runner.assert_awaited_once_with(args, paths, settings)
 
     async def test_exit_code_passthrough(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self._patch_infra(monkeypatch)

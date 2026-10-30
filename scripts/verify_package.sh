@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 打包内容验证：校验 wheel 该含的东西都含了（五包齐全、原型 DSL 数据文件、初始社会人物资源、WebUI 静态资源）。
+# 打包内容验证：校验 wheel 该含的东西都含了（四包齐全、原型 DSL 数据文件、初始社会人物资源、WebUI 静态资源）。
 # 检查项的唯一事实源——正式打包脚本（scripts/build_package.sh）与质量门
 # （scripts/check_all.sh 的 verify-package 组）都调本脚本，检查项只在这里定义。
 #
@@ -56,7 +56,7 @@ check() { # check <字符串> <描述>：wheel 清单里应能找到
     fi
 }
 
-for pkg in tlon tlosure tlon_server tlon_client tlon_launcher; do
+for pkg in tlon tlosure tlon_server tlon_launcher; do
     check "$pkg/__init__.py" "wheel 含 $pkg 包"
 done
 check "tlon/base/_locked_dependencies.py" "wheel 含锁定依赖指纹"

@@ -2,7 +2,6 @@
  * Snapshot shapes and grouping helpers for the metrics view (pure
  * functions, unit-tested).
  *
- * Copied from apps/operator/src/metrics/snapshot.ts.
  * `GET /metrics` returns `{"metrics": {name: entry}}` as produced by
  * MetricsService.snapshot() (src/tlon/base/metrics.py); here the flat
  * map is grouped into the four metric families (mail / agent / llm /

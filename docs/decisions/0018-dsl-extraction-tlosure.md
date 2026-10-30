@@ -1,5 +1,7 @@
 # ADR 0018：DSL 抽取为独立包 tlosure
 
+> 后续变更（2026-10-31）：Operator TUI、Python SDK 与 Telegram 已[退役删除](legacy-client-retirement.md)；下文涉及它们的实现和验证记录属于历史。当前客户端为 WebUI，包结构与入口以[当前架构](../architecture.md)为准。
+
 > 当前覆盖：普通模块程序已替代旧 stage/v1 执行链；注册表查询现为具名输入的普通 Operation，旧宿主谓词不保留。本文保留历史决策背景，当前接口和历史读取边界见 [退役代码清理](../design/workflow-retirement-cleanup.md)。
 
 > 阅读定位：本文保留当时的选择与理由；当前设计见 [dsl](../design/dsl.md)、[bridge-api](../design/bridge-api.md)。当前适用范围：tlosure 语言核心独立于宿主。完整关系见 [决策索引](README.md)。
