@@ -57,8 +57,7 @@ async def test_shutdown_is_idempotent(tmp_path: Path) -> None:
 
 
 async def test_concurrent_shutdown_tasks_run_teardown_once(tmp_path: Path) -> None:
-    """SIGINT+SIGTERM spawn two shutdown tasks; the flag is set before the
-    first await, so the second task bails immediately."""
+    """Concurrent shutdown calls cannot publish the shutdown event twice."""
     app, runtime = _started_app(tmp_path)
 
     await asyncio.gather(app.shutdown(), app.shutdown())

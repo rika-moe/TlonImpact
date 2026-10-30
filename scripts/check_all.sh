@@ -11,6 +11,7 @@ want_static=0
 want_unit=0
 want_integration=0
 want_windows_locks=0
+want_windows_smoke=0
 if [ $# -eq 0 ]; then
     want_static=1
     want_unit=1
@@ -21,8 +22,9 @@ else
             --static) want_static=1 ;;
             --unit) want_unit=1 ;;
             --integration) want_integration=1 ;;
+            --windows-smoke) want_windows_smoke=1 ;;
             --windows-locks) want_windows_locks=1 ;;
-            *) echo "未知参数: $arg（可用：--static --unit --integration --windows-locks）" >&2; exit 2 ;;
+            *) echo "未知参数: $arg（可用：--static --unit --integration --windows-locks --windows-smoke）" >&2; exit 2 ;;
         esac
     done
 fi
@@ -83,6 +85,14 @@ if [ "$want_windows_locks" -eq 1 ]; then
         src/tests/agents/test_review_prototype.py \
         src/tests/agents/test_staging_prototype.py \
         src/tests/operations/test_evolution_operations.py
+fi
+
+if [ "$want_windows_smoke" -eq 1 ]; then
+    run "pytest-windows-smoke" uv run pytest -q \
+        src/tests/server/test_server_lifecycle.py \
+        src/tests/server/test_serverapp_shutdown.py \
+        src/tests/integration/test_subprocess_cleanup.py \
+        src/tests/integration/test_mail_smoke.py
 fi
 
 printf '\n\033[1m======== 质量门汇总 ========\033[0m\n'

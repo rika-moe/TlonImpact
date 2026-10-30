@@ -26,3 +26,17 @@ jobs:
 
       - name: Integration tests
         run: scripts/check_all.sh --integration
+
+  windows-smoke:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install
+      - run: uv sync --group dev
+      - run: bash scripts/check_all.sh --windows-smoke
