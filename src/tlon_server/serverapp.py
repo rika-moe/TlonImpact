@@ -15,8 +15,9 @@ Usage:
 """
 
 import asyncio
-import functools
 import signal
+import sys
+from types import FrameType
 
 from tlon.api.bootstrap import Runtime, build_runtime
 from tlon.base.events.event import Event, EventType
@@ -253,8 +254,8 @@ class ServerApp:
         """Shutdown the server gracefully.
 
         Stops API servers and shuts down all components in reverse order.
-        Idempotent: re-entry (a second signal's shutdown task, or
-        run_server's finally after a completed shutdown) returns
+        Idempotent: re-entry (including run_server's finally after a
+        completed shutdown) returns
         immediately — the EventBus is stopped by the first pass and
         cannot take a second SYSTEM_SHUTDOWN publish.
         """
@@ -299,15 +300,6 @@ class ServerApp:
 
         logger.info("server_stopped")
 
-    def handle_signal(self, sig: signal.Signals) -> None:
-        """Handle shutdown signals.
-
-        Args:
-            sig: The signal that was received
-        """
-        logger.info("signal_received", signal=sig.name)
-        asyncio.create_task(self.shutdown())
-
 
 async def run_server(
     host: str = "127.0.0.1",
@@ -319,7 +311,8 @@ async def run_server(
 ) -> int:
     """Run the Tlon server.
 
-    This is the main entry point for the server process.
+    This is the main-thread CLI entry point, which owns the process stop-signal
+    handlers. Embedded servers should use ServerApp directly.
 
     Args:
         host: Host to bind to
@@ -355,17 +348,51 @@ async def run_server(
     # Create and run server
     app = ServerApp(host=host, rest_port=rest_port, tlon_paths=tlon_paths, settings=settings)
 
-    # Setup signal handlers
-    loop = asyncio.get_event_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, functools.partial(app.handle_signal, sig))
+    loop = asyncio.get_running_loop()
+    task = asyncio.current_task()
+    assert task is not None
+    requested_stop = False
+    cleaning_up = False
+    if sys.platform == "win32":
+        stop_signal = signal.SIGBREAK
+    else:
+        stop_signal = signal.SIGTERM
+    previous_handler = signal.getsignal(stop_signal)
+    installed = False
+
+    def request_stop() -> None:
+        nonlocal requested_stop
+        if requested_stop or cleaning_up:
+            return
+        requested_stop = True
+        logger.info("signal_received", signal=stop_signal.name)
+        task.cancel()
+
+    def console_stop(signum: int, frame: FrameType | None) -> None:
+        loop.call_soon_threadsafe(request_stop)
 
     try:
+        if sys.platform == "win32":
+            signal.signal(stop_signal, console_stop)
+        else:
+            loop.add_signal_handler(stop_signal, request_stop)
+        installed = True
         await app.initialize()
         await app.start()
+        return 0
+    except asyncio.CancelledError:
+        if not requested_stop:
+            raise
         return 0
     except Exception as e:
         logger.error("server_error", error=str(e), exc_info=True)
         return 1
     finally:
-        await app.shutdown()
+        cleaning_up = True
+        try:
+            await app.shutdown()
+        finally:
+            if installed:
+                if sys.platform != "win32":
+                    loop.remove_signal_handler(stop_signal)
+                signal.signal(stop_signal, previous_handler)

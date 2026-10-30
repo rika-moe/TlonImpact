@@ -18,7 +18,6 @@ import asyncio
 import contextlib
 import logging
 import os
-import signal
 import socket
 import tempfile
 from collections.abc import AsyncGenerator, Callable
@@ -30,6 +29,7 @@ import aiohttp
 import litellm
 import pytest
 
+from tests.process_helpers import ProcessTree
 from tlon.base.paths import TlonPaths
 from tlon.base.settings import Settings
 from tlon.organization.mail.store import MailStore
@@ -94,47 +94,47 @@ async def _wait_ready(
 
 
 async def _stop_server_process(
-    proc: asyncio.subprocess.Process,
+    tree: ProcessTree,
     drain: asyncio.Task[None],
     server_output: Callable[[], str],
 ) -> None:
     """Reap the CLI process group, including descendants holding its output pipe."""
 
-    def signal_group(sig: signal.Signals) -> None:
-        # The group may outlive uv; proc.returncode cannot prove it is gone.
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(proc.pid, sig)
+    proc = tree.proc
 
     async def finish() -> None:
         await proc.wait()
         await drain
 
-    signal_group(signal.SIGTERM)
+    tree.request_stop()
     finished = asyncio.create_task(finish())
     try:
         try:
             await asyncio.wait_for(asyncio.shield(finished), SERVER_TERMINATE_TIMEOUT)
         except TimeoutError:
             logger.warning("tlon dream pid=%s: shutdown pending; killing process group", proc.pid)
-            signal_group(signal.SIGKILL)
+            tree.kill()
             try:
                 await asyncio.wait_for(asyncio.shield(finished), SERVER_KILL_TIMEOUT)
             except TimeoutError as exc:
                 raise TimeoutError(
-                    f"tlon dream process group {proc.pid} did not close after SIGKILL; "
+                    f"tlon dream process group {proc.pid} did not close after forced termination; "
                     f"returncode={proc.returncode}, output_done={drain.done()}:\n{server_output()}"
                 ) from exc
     finally:
         # Also run on cancellation, so an interrupted test cannot leave dream alive.
-        signal_group(signal.SIGKILL)
+        tree.kill()
         finished.cancel()
         drain.cancel()
         await asyncio.gather(finished, drain, return_exceptions=True)
+        tree.close()
 
 
 @asynccontextmanager
 async def _run_server(
     extra_env: dict[str, str] | None = None,
+    *,
+    capture_output: list[str] | None = None,
 ) -> AsyncGenerator[tuple[str, Path]]:
     """Boot a real ``tlon dream`` subprocess with an isolated TLON_HOME.
 
@@ -144,31 +144,26 @@ async def _run_server(
     can report what the server said.
     """
     port = _free_port()
-    output: list[str] = []
+    output: list[str] = capture_output if capture_output is not None else []
 
     def _server_output() -> str:
         return "".join(output[-200:])
 
     with tempfile.TemporaryDirectory(prefix="tlon-smoke-") as tlon_home:
-        proc = await asyncio.create_subprocess_exec(
-            "uv",
-            "run",
-            "tlon",
-            "dream",
-            "--host",
-            "127.0.0.1",
-            "--rest-port",
-            str(port),
-            env={**os.environ, "TLON_HOME": tlon_home, **(extra_env or {})},
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True,
+        argv = ["tlon", "dream", "--host", "127.0.0.1", "--rest-port", str(port)]
+        code = (
+            f"import runpy,sys; sys.argv = {argv!r}; "
+            "runpy.run_module('tlon_launcher.main', run_name='__main__')"
         )
+        tree = await ProcessTree.start(
+            code, env={**os.environ, "TLON_HOME": tlon_home, **(extra_env or {})}
+        )
+        proc = tree.proc
 
         async def _drain() -> None:
             assert proc.stdout is not None
             async for chunk in proc.stdout:
-                output.append(chunk.decode(errors="replace"))
+                output.append(chunk.decode("utf-8", errors="replace"))
 
         drain = asyncio.create_task(_drain())
         phase = "health probe"
@@ -192,7 +187,7 @@ async def _run_server(
             raise
         finally:
             logger.info("tlon dream pid=%s: stopping process group", proc.pid)
-            await _stop_server_process(proc, drain, _server_output)
+            await _stop_server_process(tree, drain, _server_output)
             logger.info("tlon dream pid=%s: process group stopped and output drained", proc.pid)
 
 

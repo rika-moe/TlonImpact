@@ -14,7 +14,10 @@ def builtin_id(display_name: str) -> str:
         metadata = entry.joinpath("prototype.tlon")
         if not entry.is_dir() or not metadata.is_file():
             continue
-        values = {str(key).lstrip(":"): value for key, value in loads(metadata.read_text()).items()}
+        values = {
+            str(key).lstrip(":"): value
+            for key, value in loads(metadata.read_text(encoding="utf-8")).items()
+        }
         if values.get("display-name") == display_name:
             return str(values["name"]).lstrip(":")
     raise ValueError(f"No built-in prototype with display name {display_name!r}")

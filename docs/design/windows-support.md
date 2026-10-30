@@ -20,3 +20,12 @@
 验证覆盖跨进程竞争、异常终止后的锁释放、评审与发布共享锁身份、重复发布及既有评审竞争测试。评审回执在所有平台 flush + 文件 fsync 后 replace；POSIX 额外 fsync 目录，Windows 不执行不支持的目录 fd 操作。这不声称 Windows replace 具备相同断电持久性保证。第一阶段不代表已支持 Windows：服务生命周期和 workspace 的平台差异仍需后续处理。
 
 Windows CI 使用 `bash scripts/check_all.sh --windows-locks`，实际执行跨进程锁、原型评审、staging 和发布操作测试；测试选择只在质量门脚本维护。
+
+## 第二阶段：服务生命周期
+
+- Ctrl+C 由 `asyncio.run()` Runner 取消主任务；Unix SIGTERM、Windows SIGBREAK 请求一次取消，统一由 `run_server` 的 finally 关闭组件。重复停止信号不打断清理，退出恢复原信号处理器。Windows terminate 是强杀，不承诺执行清理。
+- 集成测试直接使用当前 Python 运行 launcher 模块。POSIX 继续回收整个 session 进程组；Windows 使用 Job Object（KILL_ON_JOB_CLOSE），先通过 stdin gate 阻塞执行，加入 job 后才运行目标，避免产生未受管后代。Job handle 仅测试控制进程持有。
+- Windows 正常停止发送 CTRL_BREAK_EVENT，超时终止整个 job；覆盖父先退出、后代仍持输出管道与端口，以及忽略停止信号的场景。该工具只属于测试基础设施。
+- `scripts/check_all.sh --windows-smoke` 是 Windows 生命周期、真实 CLI 及邮件入箱验证的单一测试清单，CI 调用该分组。此阶段仍不宣称 Windows workspace 文件边界可用。
+
+Windows 进程树实现依据 [Microsoft Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects) 的子进程继承和最后句柄关闭语义；pywin32 的限制字典结构依据其 [win32job 源码](https://github.com/mhammond/pywin32/blob/main/win32/src/win32job.i)。launcher 进程入口将真实 stdout/stderr 文本流配置为 UTF-8，使重定向的中文和 emoji 输出不依赖 Windows 代码页；StringIO 等嵌入流不变。测试不注入 UTF-8 启动选项，并以 PYTHONIOENCODING=ascii 验证真实 CLI 能启动、输出完整 banner 并正常退出。

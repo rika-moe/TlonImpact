@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from io import TextIOWrapper
 from typing import TYPE_CHECKING
 
 from tlon.base.logger import configure_logging
@@ -201,6 +202,11 @@ def main() -> int:
     Returns:
         Exit code
     """
+    # CLI output is UTF-8 even when redirected on a non-UTF-8 Windows code page.
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, TextIOWrapper):
+            stream.reconfigure(encoding="utf-8", errors=stream.errors)
+
     # Parse args first to determine if we need async
     parser = create_parser()
     args = parser.parse_args()
