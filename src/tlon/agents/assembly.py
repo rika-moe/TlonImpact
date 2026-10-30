@@ -182,7 +182,7 @@ async def assemble_member_services(
     )
     filesystem_operations = make_filesystem_operations(filesystem)
     operations.extend(filesystem_operations)
-    if config.docker.level == "L2":
+    if config.docker.level == "L2" and docker_runtime is not None:
         shell_service = MemberShellService(config.docker, docker_runtime)
         operations.extend(make_shell_operations(shell_service))
     operations.extend(

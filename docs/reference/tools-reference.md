@@ -77,11 +77,11 @@ model-call 返回建议，tool-execute 逐叶执行并返回真实结果。每�
 | 52 | `model-context` | [operations/model.py](../../src/tlon/operations/model.py) 的 `OperationTool` 投影 | model |
 <!-- END GENERATED: tool-registry -->
 
-上表列出完整工具目录；所有成员均注册 member-spawn、prototype-write，实际调用仍受资源硬限制和原型审批约束。所有成员均可使用绑定自身的四个调度工具。L0/L1/L2 均注册五个文件操作，自己的 workspace 无需 Docker，内置作者资料只读；L0/L1 不注册两个 Shell 工具。
+上表列出完整工具目录；所有成员均注册 member-spawn、prototype-write，实际调用仍受资源硬限制和原型审批约束。所有成员均可使用绑定自身的四个调度工具。L0/L1/L2 均注册五个文件操作，自己的 workspace 无需 Docker，内置作者资料只读；L0/L1 不注册两个 Shell 工具；L2 也仅在成员装配时 Docker 初始化成功后注册。
 
 依赖倒置：`tlon.tools` 不许反向依赖 `tlon.agents`/`tlon.prototypes`，agents 域与 prototypes 域工具的端口（`AgentLifecycle` Protocol、`SpawnRejectedError`、`StopRejectedError`）声明在 [lifecycle/ports.py](../../src/tlon/lifecycle/ports.py)，原型端口（`PrototypeError`、`PrototypeSummary`）声明在 [evolution/ports.py](../../src/tlon/evolution/ports.py)；装配时由 `AgentRegistry` 注入成员作用域领域服务，OperationTool 只投影相应操作。
 
-workspace 的五个文件操作直接访问成员自己的持久目录，无需 Docker；文档与标准库映射只读。workspace 外的 filesystem 访问和 shell 工具共享同一个 `DockerRuntime` 实例（[sandbox/docker_runtime.py](../../src/tlon/sandbox/docker_runtime.py)）。文件柜容器创建后**从不启动**（issue #25），首次文件 I/O 时惰性创建/按名重挂；装置通道经 get_archive/put_archive 读写（list/search 把目录 tar 拉回 host 侧解包，write 把缺失父目录作为 tar 目录条目带入），容器内零命令执行。Docker daemon 不可用时依赖装置的调用返回 `error="Docker runtime not initialized"`，agent 本体照常启动。`docker.level: L0` 的成员没有 Docker 装置，但可通过普通文件工具访问自己的 workspace 和只读作者资料；`docker.level: L1` 的成员（issue #40）只有 filesystem 五件，shell 工具不注册且 `run()` 由装置层直接拒绝。
+workspace 的五个文件操作直接访问成员自己的持久目录，无需 Docker；文档与标准库映射只读。workspace 外的 filesystem 访问和 shell 工具共享同一个 `DockerRuntime` 实例（[sandbox/docker_runtime.py](../../src/tlon/sandbox/docker_runtime.py)）。文件柜容器创建后**从不启动**（issue #25），首次文件 I/O 时惰性创建/按名重挂；装置通道经 get_archive/put_archive 读写（list/search 把目录 tar 拉回 host 侧解包，write 把缺失父目录作为 tar 目录条目带入），容器内零命令执行。成员装配时 Docker daemon 不可用则不注册 Shell 工具；依赖装置的文件调用返回 `error="Docker runtime not initialized"`，agent 本体照常启动。`docker.level: L0` 的成员没有 Docker 装置，但可通过普通文件工具访问自己的 workspace 和只读作者资料；`docker.level: L1` 的成员（issue #40）只有 filesystem 五件，shell 工具不注册且 `run()` 由装置层直接拒绝。
 
 ## mail
 

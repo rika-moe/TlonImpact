@@ -216,7 +216,10 @@ class TestExecutionLevelAssembly:
         if caps.docker_runtime is not None:
             caps.docker_runtime.close()
 
-    async def test_l2_registers_device_tools(self, tlon_paths: TlonPaths) -> None:
+    async def test_l2_registers_device_tools(
+        self, tlon_paths: TlonPaths, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("tlon.agents.assembly.DockerRuntime", MagicMock())
         caps = await self._assemble(tlon_paths, "L2")
 
         names = set(caps.tool_executor.list_tools()) | {op.name for op in caps.operations}
@@ -289,6 +292,9 @@ async def test_workspace_operations_survive_unavailable_docker(
     caps = await TestExecutionLevelAssembly()._assemble(tlon_paths, level)
     member_id = f"member-{level.lower()}"
     assert caps.docker_runtime is None
+    assert caps.shell_service is None
+    assert BASH_TOOLS.isdisjoint(caps.tool_executor.list_tools())
+    assert BASH_TOOLS.isdisjoint(op.name for op in caps.operations)
     executor = OperationExecutor(
         OperationRegistry(caps.operations), CallContext(member_id, "workspace", "call")
     )
