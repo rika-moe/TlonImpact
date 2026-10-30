@@ -46,13 +46,16 @@ class ConfigFacade:
         agent_id: str,
         *,
         model_name: str | None = None,
+        use_provider_defaults: bool = False,
     ) -> AgentConfig | None:
         """Rewrite a member's agent.yaml with updated LLM knobs.
 
         model_copy preserves the untouched knobs (top_p / an
         explicit context_window override); a fresh LLMConfig would
         silently reset them to defaults. Fields left None keep their
-        current value. The caller hot-adopts the member afterwards so the
+        current value. Portable hosted-provider setup explicitly sets
+        use_provider_defaults to clear endpoint/capability overrides.
+        The caller hot-adopts the member afterwards so the
         running registry picks the change up.
 
         Returns:
@@ -63,9 +66,13 @@ class ConfigFacade:
         if cfg is None:
             return None
         base = cfg.llm if cfg.llm is not None else LLMConfig()
-        update: dict[str, str] = {}
+        update: dict[str, str | None] = {}
         if model_name:
             update["model_name"] = model_name
+        if use_provider_defaults:
+            # A hosted-provider selection must not retain another endpoint or
+            # model's capability overrides (portable setup, ADR 0053).
+            update.update(api_base=None, context_window=None, max_output_tokens=None)
         cfg.llm = base.model_copy(update=update)
         yaml_save(cfg, self._paths.tlon_home())
         return cfg

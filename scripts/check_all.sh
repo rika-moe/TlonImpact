@@ -13,6 +13,7 @@ want_integration=0
 want_windows_locks=0
 want_windows_smoke=0
 want_windows_workspace=0
+want_windows_portable=0
 if [ $# -eq 0 ]; then
     want_static=1
     want_unit=1
@@ -25,8 +26,9 @@ else
             --integration) want_integration=1 ;;
             --windows-smoke) want_windows_smoke=1 ;;
             --windows-workspace) want_windows_workspace=1 ;;
+            --windows-portable) want_windows_portable=1 ;;
             --windows-locks) want_windows_locks=1 ;;
-            *) echo "未知参数: $arg（可用：--static --unit --integration --windows-locks --windows-smoke --windows-workspace）" >&2; exit 2 ;;
+            *) echo "未知参数: $arg（可用：--static --unit --integration --windows-locks --windows-smoke --windows-workspace --windows-portable）" >&2; exit 2 ;;
         esac
     done
 fi
@@ -108,6 +110,18 @@ if [ "$want_windows_workspace" -eq 1 ]; then
         src/tests/sandbox/test_author_files.py \
         src/tests/agents/test_assembly.py::test_workspace_operations_survive_unavailable_docker \
         src/tests/integration/test_windows_workspace.py
+fi
+
+if [ "$want_windows_portable" -eq 1 ]; then
+    run "portable-windows-types" uv run --group dev mypy --platform win32 \
+        src/tlon_launcher/portable.py src/tlon_launcher/portable_paths.py \
+        src/tlon_launcher/portable_instance.py src/tlon_launcher/portable_runtime.py \
+        src/tlon_launcher/portable_tray.py
+    run "portable-native-unit" uv run --group dev pytest -q \
+        src/tests/launcher/test_portable.py src/tests/server/test_portable_model_setup.py
+    run "portable-build" uv run --no-dev --group portable-build python scripts/build_windows_portable.py
+    run "portable-frozen-smoke" env TLON_PORTABLE_ZIP="$(pwd)/dist/windows-portable/Tlon-windows-x64.zip" \
+        uv run --group dev pytest -q src/tests/integration/test_portable_artifact.py
 fi
 
 printf '\n\033[1m======== 质量门汇总 ========\033[0m\n'

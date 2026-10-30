@@ -1,7 +1,7 @@
 # ADR 0053：Windows 完全便携发行版
 
 日期：2026-10-30
-状态：已接受，待实施
+状态：已接受，代码实施中；发行包与实机验收结果另行记录
 
 ## 背景
 
@@ -71,4 +71,4 @@ PyInstaller 目录模式是候选打包方案；具体工具及版本须经依�
 - 验证运行时依赖、原型、技能、文档和 WebUI 资源完整，Docker 缺失时文件工具正常且 Shell 不注册，浏览器来源与 workspace 安全约束保持有效。
 - 代码实施执行 `scripts/check_all.sh` 及真实 dream + SDK 邮件冒烟；发行包另做上述端到端验收，不以源码测试通过代替打包结果。
 
-本 ADR 仅记录已接受的发行与产品行为，不表示便携启动器、配置向导或 ZIP 产物已经实现。
+本 ADR 记录发行与产品行为。实施说明见 [便携模型配置](../design/portable-model-setup.md) 和 [便携版使用指南](../guides/windows-portable.md)；Windows CI 构建 ZIP 并运行冻结 EXE，不替代 Windows 10/11 干净实机验收。

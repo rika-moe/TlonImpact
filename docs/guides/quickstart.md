@@ -10,7 +10,7 @@
 | Docker | 可选 | Shell 及 workspace 外文件访问的沙箱；自己的 workspace 文件读写无需 Docker |
 | LLM API Key | 见下 | 成员调用模型时使用的推理后端；按所用 provider 各配各的（`{PROVIDER}_API_KEY`） |
 
-Windows 原生运行的文件锁、服务生命周期及 workspace 实现见 [Windows 适配设计](../design/windows-support.md)。Windows workspace 需位于固定本地磁盘，不支持 UNC 或映射网络盘；Docker 仍为可选。当前安装流程仍使用 uv，不提供免环境 Windows 安装包；Windows CI 不等同于 Windows 10 实机验收。
+Windows 普通用户的 ZIP 解压启动流程见 [Windows 便携版](windows-portable.md)；本页继续说明 uv/CLI 入口。便携构建与验收设计见 [ADR 0053](../decisions/0053-portable-windows-distribution.md)，实际可下载版本以发布记录为准。Windows 原生运行的文件锁、服务生命周期及 workspace 实现见 [Windows 适配设计](../design/windows-support.md)。Windows workspace 需位于固定本地磁盘，不支持 UNC 或映射网络盘；Docker 仍为可选。Windows CI 不等同于 Windows 10 实机验收。
 
 ## 1. 安装
 

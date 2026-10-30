@@ -15,6 +15,7 @@ import { TracesView } from "./views/TracesView";
 import { MetricsView } from "./views/MetricsView";
 import { SessionsView } from "./views/SessionsView";
 import { LogsView } from "./views/LogsView";
+import { ModelSetupGate } from "./components/ModelSetup";
 import { SettingsView } from "./views/SettingsView";
 
 type BadgeKind = "connected" | "reconnecting" | "down";
@@ -151,7 +152,7 @@ export default function App(): ReactElement {
   const [username, setUsername] = useState("");
   useEffect(() => { void identity.load(); }, [identity]);
   if (state.identity?.username) {
-    return <Operator rest={rest} username={state.identity.username} />;
+    return <ModelSetupGate rest={rest}><Operator rest={rest} username={state.identity.username} /></ModelSetupGate>;
   }
   return (
     <main className="identity-screen">

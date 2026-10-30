@@ -38,3 +38,31 @@ jobs:
       - name: Native workspace isolation and SDK smoke
         shell: bash
         run: bash scripts/check_all.sh --windows-workspace
+
+
+  portable:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/webui/package-lock.json
+      - name: Build WebUI
+        run: |
+          npm --prefix apps/webui ci
+          npm --prefix apps/webui run build
+      - name: Build and exercise frozen Windows distribution
+        shell: bash
+        run: bash scripts/check_all.sh --windows-portable
+      - name: Upload portable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tlon-windows-x64
+          path: dist/windows-portable/Tlon-windows-x64.zip
+          if-no-files-found: error

@@ -249,6 +249,23 @@ export type LlmModelInfo = {
   deprecation_date: string | null;
 };
 
+export type ModelSetupStatus = {
+  enabled: boolean;
+  required?: boolean;
+  providers?: string[];
+  initial_member_ids?: string[];
+  members?: Array<{ id: string; name: string; model: string | null }>;
+  pending_members?: string[];
+};
+
+export type ModelSetupRequest = {
+  provider: string;
+  model: string;
+  api_key: string;
+  scope: "initial" | "selected";
+  agent_ids: string[];
+};
+
 /**
  * Prototype write rejection (POST/PATCH): like RestError but also carries
  * the server's semantic reason code (e.g. "invalid_prototype" on 400).
@@ -682,6 +699,14 @@ export class RestClient {
   /** Administratively remove a member (records + home archive deleted). */
   async deleteAgent(agentId: string): Promise<Record<string, unknown>> {
     return this.send("DELETE", `/admin/config/agents/${encodeURIComponent(agentId)}`);
+  }
+
+  modelSetupStatus(): Promise<ModelSetupStatus> {
+    return this.get("/admin/llm/setup");
+  }
+
+  configureModels(body: ModelSetupRequest): Promise<ModelSetupStatus> {
+    return this.send("POST", "/admin/llm/setup", body);
   }
 
   /** Chat model metadata from the litellm registry (GET /admin/llm/models). */
