@@ -27,6 +27,10 @@ from functools import lru_cache
 from typing import Any
 
 _PARSE_CACHE_MAX_SOURCE_LENGTH = 65_536
+_MAX_SOURCE_LENGTH = 1_048_576
+_MAX_NODES = 100_000
+_MAX_DEPTH = 100
+_MAX_MAP_PAIRS = 256
 
 _SYMBOL_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789*+!-_?./<>=&")
 _SYMBOL_START_EXTRA = set("*+!_?./<>=&")
@@ -167,11 +171,15 @@ def _dump_string(value: str) -> str:
 class _Parser:
     """Recursive-descent cursor over the input text."""
 
-    def __init__(self, text: str):
+    def __init__(self, text: str) -> None:
         self._text = text
         self._pos = 0
         self._line = 1
         self._column = 1
+        self._nodes = 0
+        self._depth = 0
+        if len(text) > _MAX_SOURCE_LENGTH:
+            raise self.error("source length limit exceeded")
 
     # ── Cursor ──
 
@@ -212,13 +220,22 @@ class _Parser:
         self.skip_whitespace()
         if self.at_end:
             raise self.error("unexpected end of input")
+        if self._nodes >= _MAX_NODES:
+            raise self.error("node limit exceeded")
+        self._nodes += 1
         ch = self.peek()
-        if ch == "{":
-            return self.parse_map()
-        if ch == "[":
-            return self.parse_vector()
-        if ch == "(":
-            return self.parse_form()
+        if ch in "{[(":
+            if self._depth >= _MAX_DEPTH:
+                raise self.error("container depth limit exceeded")
+            self._depth += 1
+            try:
+                if ch == "{":
+                    return self.parse_map()
+                if ch == "[":
+                    return self.parse_vector()
+                return self.parse_form()
+            finally:
+                self._depth -= 1
         if ch == '"':
             return self.parse_string()
         if ch == ":":
@@ -268,6 +285,8 @@ class _Parser:
             if self.peek() == "}":
                 self.advance()
                 break
+            if len(items) >= 2 * _MAX_MAP_PAIRS:
+                raise self.error("map pair limit exceeded")
             items.append(self.parse_value())
         if len(items) % 2 != 0:
             raise self.error("map literal must contain an even number of forms")
