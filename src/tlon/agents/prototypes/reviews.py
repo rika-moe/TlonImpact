@@ -1,6 +1,5 @@
 """Explicit prototype material reads and durable, advisory review receipts."""
 
-import fcntl
 import hashlib
 import json
 import os
@@ -19,6 +18,7 @@ from tlon.agents.prototypes.info import (
     _read_metadata,
     _validate_name,
 )
+from tlon.base.directory_lock import directory_lock
 from tlon.base.paths import TlonPaths
 from tlon.evolution.ports import PrototypeError
 
@@ -29,14 +29,8 @@ _VERDICTS = {"通过", "不通过", "弃权"}
 @contextmanager
 def staging_lock(tlon_paths: TlonPaths) -> Iterator[None]:
     """Serialize material reads, human updates/decisions and review writes."""
-    root = tlon_paths.prototypes_staging_dir()
-    root.mkdir(parents=True, exist_ok=True)
-    fd = os.open(root, os.O_RDONLY)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+    with directory_lock(tlon_paths.prototypes_staging_dir()):
         yield
-    finally:
-        os.close(fd)
 
 
 def _directory(name: str, tlon_paths: TlonPaths) -> Path:
@@ -265,11 +259,14 @@ def submit_prototype_review(
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary, directory / REVIEWS_FILE)
-            fd = os.open(directory, os.O_RDONLY)
-            try:
-                os.fsync(fd)
-            finally:
-                os.close(fd)
+            # Windows cannot open directories through os.open. The receipt
+            # file was flushed above; directory fsync is a POSIX durability step.
+            if os.name != "nt":
+                fd = os.open(directory, os.O_RDONLY)
+                try:
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)

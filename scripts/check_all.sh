@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# 质量门：一条命令跑完全部检查，CI 三个 workflow 与 pre-commit 均调本脚本分组。
+# 质量门：一条命令跑完全部检查，CI 与 pre-commit 均调本脚本分组。
 # 分组：--static（静态检查 + TS 门禁）/ --unit / --integration，可组合；无参 = 全部。
+# --windows-locks 是 Windows 原生适配第一阶段专项；无参全量已包含这些单测。
 # 每项独立执行（不 fail-fast，一次看清所有红灯），末尾汇总，任一失败退出码为 1。
 set -uo pipefail
 
@@ -9,6 +10,7 @@ cd "$(dirname "$0")/.."
 want_static=0
 want_unit=0
 want_integration=0
+want_windows_locks=0
 if [ $# -eq 0 ]; then
     want_static=1
     want_unit=1
@@ -19,7 +21,8 @@ else
             --static) want_static=1 ;;
             --unit) want_unit=1 ;;
             --integration) want_integration=1 ;;
-            *) echo "未知参数: $arg（可用：--static --unit --integration）" >&2; exit 2 ;;
+            --windows-locks) want_windows_locks=1 ;;
+            *) echo "未知参数: $arg（可用：--static --unit --integration --windows-locks）" >&2; exit 2 ;;
         esac
     done
 fi
@@ -72,6 +75,14 @@ fi
 
 if [ "$want_integration" -eq 1 ]; then
     run "pytest-integration" uv run pytest src/tests/integration/ -vv --durations=10
+fi
+
+if [ "$want_windows_locks" -eq 1 ]; then
+    run "pytest-windows-locks" uv run pytest -q \
+        src/tests/base/test_directory_lock.py \
+        src/tests/agents/test_review_prototype.py \
+        src/tests/agents/test_staging_prototype.py \
+        src/tests/operations/test_evolution_operations.py
 fi
 
 printf '\n\033[1m======== 质量门汇总 ========\033[0m\n'

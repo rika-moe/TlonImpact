@@ -24,6 +24,7 @@ dependencies = [
     "PyYAML>=6.0",
     "python-dotenv>=1.0.0",
     "aiofiles>=23.0.0",
+    "filelock>=3.25.2",
     # Docker
     "docker>=6.0.0",
     # Server
