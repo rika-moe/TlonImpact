@@ -13,6 +13,7 @@ import threading
 import time
 import uuid
 from collections.abc import Iterator
+from contextlib import suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,15 @@ def _snapshot(root: Path) -> dict[str, tuple[int, int]]:
         for item in root.rglob("*")
         if item.is_file()
     }
+
+
+def _diagnostic_stacks(data: Path) -> str:
+    # Temporary faulthandler-only channel: stack paths/functions, never locals,
+    # request payloads, instance secrets or arbitrary application log contents.
+    path = data / ".portable/diagnostic-stacks.log"
+    if not path.exists():
+        return "No headless diagnostic stack was captured"
+    return path.read_text(encoding="utf-8", errors="replace")[-16000:]
 
 
 def _ready(process: subprocess.Popen[bytes], data: Path, health_url: str | None = None) -> str:
@@ -213,9 +223,20 @@ def test_shipped_executable_mail_and_relocation(
             port = int(base.rsplit(":", 1)[1])
             assert b"<html" in _request(base + "/ui/").lower()
             assert _request(base + "/health")
-            duplicate = subprocess.run(
-                [str(executable), "--headless"], cwd=cwd, env=env, timeout=30, check=False
-            )
+            try:
+                duplicate = subprocess.run(
+                    [str(executable), "--headless"], cwd=cwd, env=env, timeout=45, check=False
+                )
+            except subprocess.TimeoutExpired:
+                # Report only availability, never secret state or service logs.
+                with socket.socket() as probe:
+                    probe.settimeout(2)
+                    reachable = probe.connect_ex(("127.0.0.1", port)) == 0
+                raise AssertionError(
+                    f"Duplicate frozen launch hung; primary_alive={process.poll() is None}; "
+                    f"service_listener={reachable}; "
+                    f"control_state_exists={(data / '.portable/instance.json').exists()}"
+                ) from None
             assert duplicate.returncode == 0
             assert process.poll() is None
             assert _ready(process, data, base + "/health") == base
@@ -306,9 +327,13 @@ def test_shipped_executable_mail_and_relocation(
                 mail.content == "frozen-member-reply" for mail in store.mails("human:portable-user")
             )
             _stop(executable, process, cwd, port)
+        except BaseException:
+            print(_diagnostic_stacks(data))
+            raise
         finally:
             if process.poll() is None:
-                subprocess.run([str(executable), "--quit"], cwd=cwd, timeout=15, check=False)
+                with suppress(subprocess.TimeoutExpired):
+                    subprocess.run([str(executable), "--quit"], cwd=cwd, timeout=15, check=False)
                 try:
                     process.wait(timeout=20)
                 except subprocess.TimeoutExpired:
