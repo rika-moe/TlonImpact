@@ -60,7 +60,7 @@ function ModelSetupForm({ rest, controller }: { rest: RestClient; controller: Mo
     <label>模型<input className="input" list={listId} value={model} onChange={(event) => setModel(event.target.value)} required disabled={state.busy} /></label>
     <datalist id={listId}>{models.filter((name) => name.startsWith(`${provider}/`)).map((name) => <option key={name} value={name} />)}</datalist>
     <label>API Key<input className="input" type="password" value={key} onChange={(event) => setKey(event.target.value)} autoComplete="off" required maxLength={4096} disabled={state.busy} /></label>
-    <p>凭据保存在此 Tlon 文件夹的 data/.env 中，未经加密。复制整个文件夹也会复制凭据，请仅与可信的人共享。</p>
+    <p>凭据保存在当前实例数据目录的 .env 文件中，未经加密。复制数据目录也会复制凭据，请仅与可信的人共享。</p>
     {initial ? <p>将所选模型应用到 {state.status.initial_member_ids?.length} 位初始成员。</p> : <fieldset disabled={state.busy}>
       <legend>应用模型的成员（不选择时仅更新服务商 API Key）</legend>
       {state.status.members?.map((member) => <label key={member.id} style={{ display: "block" }}>
@@ -68,7 +68,7 @@ function ModelSetupForm({ rest, controller }: { rest: RestClient; controller: Mo
         {member.name} · {member.model ?? "未配置模型"}
       </label>)}
     </fieldset>}
-    <p>API Key 保存后立即用于新请求。{state.status.initial_allowed ? "首次配置会等待所选成员完成旧任务并自动应用模型，无需重启。" : "已运行成员的模型在下次启动时生效；可从托盘退出并重开 Tlon 使其立即切换。"}</p>
+    <p>API Key 保存后立即用于新请求。{state.status.initial_allowed ? "首次配置会等待所选成员完成旧任务并自动应用模型，无需重启。" : "已运行成员的模型在下次启动时生效；重启 Tlon 即可应用。"}</p>
     {state.error && <p role="alert">{state.error}</p>}
     {state.saved && <p role="status">验证通过，配置已保存。{state.status.pending_members?.length ? `${state.status.pending_members.length} 位已运行成员将在下次启动时使用新模型。` : "所选成员已就绪。"}</p>}
     <button className="btn btn--primary" type="submit" disabled={state.busy || !key || !model || (state.status.required && state.status.initial_allowed && !initial && !selected.length)}>{state.busy ? "正在验证并应用配置…" : "验证连接并保存"}</button>

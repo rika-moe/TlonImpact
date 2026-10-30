@@ -1,4 +1,4 @@
-"""Portable WebUI setup: verified provider credentials and explicit member models."""
+"""WebUI model setup: verified provider credentials and explicit member models."""
 
 import asyncio
 import json
@@ -7,7 +7,7 @@ import re
 from typing import Any
 
 import litellm
-from dotenv import dotenv_values, set_key
+from dotenv import set_key
 
 from tlon.agents.initial_society import _read_state
 from tlon.api.config import ConfigFacade
@@ -23,7 +23,7 @@ class SetupError(ValueError):
     """A safe, user-visible setup failure containing no provider exception text."""
 
 
-class PortableSetupFacade:
+class ModelSetupFacade:
     """Serialize credential checks and writes for one explicitly bound instance."""
 
     def __init__(self, paths: TlonPaths, configs: ConfigFacade, members: MembersFacade) -> None:
@@ -32,29 +32,42 @@ class PortableSetupFacade:
         self._members = members
         self._lock = asyncio.Lock()
         self._marker = paths.tlon_home() / "model-setup.json"
-        self._configured_before = self._marker.exists()
+        self._pending = paths.tlon_home() / "model-setup.pending"
+        self._existing_credentials = not self._pending.exists() and self._has_member_credentials()
+        self._configured_before = self._marker.exists() or self._existing_credentials
         state = _read_state(paths)
         self._initial_ids = (
             tuple(state.addresses.values()) if state and state.status == "complete" else ()
         )
 
+    def _has_member_credentials(self) -> bool:
+        """Match the provider credential lookup used by LLMClient."""
+        for config in self._configs.list_agent_configs():
+            model = config.llm.model_name if config.llm else None
+            if model and "/" in model:
+                provider = model.split("/", 1)[0]
+                if os.getenv(f"{provider.upper().replace('-', '_')}_API_KEY"):
+                    return True
+        return False
+
     def status(self) -> dict[str, Any]:
-        """Return only non-secret state; persisted credential presence is checked."""
-        complete = False
-        # Credential repair is not a new initial setup. Even a malformed
-        # completion record permanently withdraws blanket scope authorization.
+        """Return non-secret state using credentials effective in this process."""
+        # Snapshot recognition prevents a partial configure from bypassing the
+        # remaining member writes simply because it already saved a key.
+        complete = self._existing_credentials and self._has_member_credentials()
         self._configured_before = self._configured_before or self._marker.exists()
         if self._marker.exists():
+            complete = False
             try:
                 marker = json.loads(self._marker.read_text(encoding="utf-8"))
                 provider = marker["provider"]
                 if provider in PROVIDERS:
-                    key = dotenv_values(self._paths.env_file(), interpolate=False).get(
-                        f"{provider.upper()}_API_KEY"
-                    )
-                    complete = bool(key and os.getenv(f"{provider.upper()}_API_KEY") == key)
+                    complete = bool(os.getenv(f"{provider.upper()}_API_KEY"))
             except (ValueError, KeyError, TypeError, OSError):
                 complete = False
+        if not any(cfg.llm for cfg in self._configs.list_agent_configs()):
+            complete = True
+            self._configured_before = True
         return {
             "enabled": True,
             "required": not complete,
@@ -139,6 +152,8 @@ class PortableSetupFacade:
             try:
                 # dotenv rewrites atomically and quotes values; the input grammar
                 # additionally excludes dotenv interpolation and line injection.
+                if state["initial_allowed"]:
+                    self._pending.touch()
                 set_key(str(self._paths.env_file()), f"{provider.upper()}_API_KEY", key)
                 os.environ[f"{provider.upper()}_API_KEY"] = key
                 for agent_id in ids:
@@ -165,6 +180,7 @@ class PortableSetupFacade:
                 temporary = self._marker.with_suffix(".tmp")
                 temporary.write_text(json.dumps({"provider": provider}), encoding="utf-8")
                 temporary.replace(self._marker)
+                self._pending.unlink(missing_ok=True)
             except SetupError:
                 raise
             except Exception:

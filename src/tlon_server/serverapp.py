@@ -20,7 +20,7 @@ import sys
 from types import FrameType
 
 from tlon.api.bootstrap import Runtime, build_runtime
-from tlon.api.portable_setup import PortableSetupFacade
+from tlon.api.model_setup import ModelSetupFacade
 from tlon.base.events.event import Event, EventType
 from tlon.base.logger import configure_logging, get_logger
 from tlon.base.metrics import init_metrics, shutdown_metrics
@@ -79,7 +79,6 @@ class ServerApp:
         rest_port: int = 8080,
         tlon_paths: TlonPaths | None = None,
         settings: Settings | None = None,
-        portable_setup: bool = False,
     ):
         """Initialize the server application (does not create components yet).
 
@@ -99,7 +98,6 @@ class ServerApp:
         self.rest_port = rest_port
         self._paths = tlon_paths or TlonPaths()
         self._settings = settings or Settings.from_env()
-        self._portable_setup_enabled = portable_setup
         self.shared_dir = self._paths.shared_dir()
 
         # The assembled runtime (set by initialize())
@@ -202,11 +200,7 @@ class ServerApp:
             configs=runtime.configs,
             events=runtime.events,
             arena=runtime.arena,
-            portable_setup=(
-                PortableSetupFacade(self._paths, runtime.configs, runtime.members)
-                if self._portable_setup_enabled
-                else None
-            ),
+            model_setup=ModelSetupFacade(self._paths, runtime.configs, runtime.members),
             host=self.host,
             port=self.rest_port,
             identity=identity,

@@ -29,7 +29,7 @@ Tlon 仍处于早期开发阶段，适合愿意尝试新交互方式、探索 AI
 
 ### Windows：绿色版
 
-> **Windows ZIP 尚未发布。** 截至 2026-10-30，最新发行版 `v0.0.4-alpha.1` 只有 Python 包。请以 [Releases](https://github.com/rika-moe/TlonImpact/releases) 中实际出现的 `Tlon-windows-x64.zip` 附件为准；下面是该绿色包发布后的使用步骤。
+前往 [Releases](https://github.com/rika-moe/TlonImpact/releases) 下载 `Tlon-windows-x64.zip` 附件；下面是该绿色包发布后的使用步骤。
 
 1. 下载 `Tlon-windows-x64.zip`，将**整个文件夹**解压到可写的本地磁盘，例如 `D:\Tlon`。
 2. 双击 `Tlon.exe`，在浏览器打开 [http://127.0.0.1:8080/ui/](http://127.0.0.1:8080/ui/) 。
@@ -50,26 +50,19 @@ uv tool install --prerelease allow tlon-impact
 
 安装命令显式允许预发布版本。发布包不一定包含最新源码中的功能，具体以 [发行说明](https://github.com/rika-moe/TlonImpact/releases) 为准。
 
-创建配置目录，并打开配置文件：
-
-```bash
-mkdir -p ~/.tlon
-nano ~/.tlon/.env
-```
-
-填入以下内容，将示例值换成自己的 DeepSeek API Key；在 nano 中按 **Ctrl+O → Enter** 保存，再按 **Ctrl+X** 退出：
-
-```dotenv
-DEEPSEEK_API_KEY=你的_API_Key
-```
-
 启动 Tlon（若提示找不到命令，先运行 `uv tool update-shell`，再重新打开终端）：
 
 ```bash
 tlon dream
 ```
 
-浏览器打开 Tlon WebUI [http://127.0.0.1:8080/ui/](http://127.0.0.1:8080/ui/)，首次设置用户名后即可进入。全新实例的成员默认使用 `deepseek/deepseek-flash`；普通命令行启动需要通过上述配置文件提供凭据，没有绿色版的首次模型配置向导。
+浏览器打开 Tlon WebUI [http://127.0.0.1:8080/ui/](http://127.0.0.1:8080/ui/)，按页面提示完成首次设置：
+
+1. 设置用户名。
+2. 在“连接模型服务”页面选择服务商和模型，填写 API Key。默认是 DeepSeek 的 `deepseek/deepseek-flash`。
+3. 点击“验证连接并保存”，成功后即可给成员写信。
+
+无需手动编辑配置文件。已有模型凭据的实例会直接进入；以后可在 **SETTINGS** 中更新凭据，并选择需要更换模型的成员。
 
 数据默认保存在 `~/.tlon/`。在运行 Tlon 的终端按 **Ctrl+C** 停止。
 
@@ -119,7 +112,7 @@ uv tool upgrade --prerelease allow tlon-impact
 
 **需要付费吗？**
 
-模型服务商通常按调用量计费，多位成员参与可能产生多次调用。绿色版首次验证连接也会发送一条简短请求，可能产生少量费用。Tlon 的使用授权见下方许可证。
+模型服务商通常按调用量计费，多位成员参与可能产生多次调用。首次验证连接也会发送一条简短请求，可能产生少量费用。Tlon 的使用授权见下方许可证。
 
 **API Key 保存在哪里？**
 

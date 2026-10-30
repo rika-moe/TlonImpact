@@ -28,8 +28,8 @@ from tlon.api.config import ConfigFacade
 from tlon.api.events import EventsFacade
 from tlon.api.mail import MailFacade
 from tlon.api.members import MembersFacade
+from tlon.api.model_setup import ModelSetupFacade
 from tlon.api.observability import ObservabilityFacade
-from tlon.api.portable_setup import PortableSetupFacade
 from tlon.api.prototypes import PrototypesFacade
 from tlon.base.logger import get_logger
 from tlon.base.version import VERSION
@@ -112,7 +112,7 @@ class RESTAPIHandler(
         configs: ConfigFacade | None = None,
         events: EventsFacade | None = None,
         arena: ArenaFacade | None = None,
-        portable_setup: PortableSetupFacade | None = None,
+        model_setup: ModelSetupFacade | None = None,
         debug: bool = False,
         github_webhook_secret: str | None = None,
     ):
@@ -141,7 +141,7 @@ class RESTAPIHandler(
         self.configs = configs
         self.events = events
         self.arena = arena
-        self.portable_setup = portable_setup
+        self.model_setup = model_setup
         self.debug = debug
         self.identity = identity
         self.github_ingress = events is not None and events.github_enabled
@@ -496,7 +496,7 @@ class RESTServer:
         configs: ConfigFacade | None = None,
         events: EventsFacade | None = None,
         arena: ArenaFacade | None = None,
-        portable_setup: PortableSetupFacade | None = None,
+        model_setup: ModelSetupFacade | None = None,
         host: str = "127.0.0.1",
         port: int = 8080,
         debug: bool = False,
@@ -535,7 +535,7 @@ class RESTServer:
             configs=configs,
             events=events,
             arena=arena,
-            portable_setup=portable_setup,
+            model_setup=model_setup,
             debug=debug,
             identity=identity,
             github_webhook_secret=github_webhook_secret,
