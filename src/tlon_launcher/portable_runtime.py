@@ -124,7 +124,6 @@ class PortableRuntime:
                 rest_port=0,
                 tlon_paths=paths,
                 settings=settings,
-                portable_setup=True,
             )
             if self._stop.is_set():
                 return

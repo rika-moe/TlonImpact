@@ -20,8 +20,8 @@ from tlon.api.config import ConfigFacade
 from tlon.api.events import EventsFacade
 from tlon.api.mail import MailFacade
 from tlon.api.members import MembersFacade
+from tlon.api.model_setup import ModelSetupFacade
 from tlon.api.observability import ObservabilityFacade
-from tlon.api.portable_setup import PortableSetupFacade
 from tlon.api.prototypes import PrototypesFacade
 from tlon_server.core.client_gateway import ClientGateway
 from tlon_server.core.local_identity import LocalIdentity
@@ -42,7 +42,7 @@ class RestHandlerBase:
     configs: ConfigFacade | None
     events: EventsFacade | None
     arena: ArenaFacade | None
-    portable_setup: PortableSetupFacade | None
+    model_setup: ModelSetupFacade | None
     debug: bool
     identity: LocalIdentity
     github_ingress: bool

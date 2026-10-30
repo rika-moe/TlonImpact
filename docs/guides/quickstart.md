@@ -15,26 +15,12 @@ Windows 普通用户的 ZIP 解压启动流程见 [Windows 便携版](windows-po
 ## 1. 安装
 
 ```bash
-uv tool install tlon-impact
+uv tool install --prerelease allow tlon-impact
 ```
 
-升级：`uv tool upgrade tlon-impact`。P5 的旧 v1 原型处置与内置包更新见 [P5 升级说明](../releases/p5.md)；播种不会覆盖已有目录。
+升级：`uv tool upgrade --prerelease allow tlon-impact`。P5 的旧 v1 原型处置与内置包更新见 [P5 升级说明](../releases/p5.md)；播种不会覆盖已有目录。
 
-## 2. 配置环境变量
-
-`~/.tlon/.env`（与数据同目录；模板见仓库根的 `.env.example`）按 provider 填 API key——用哪家的模型配哪家的（litellm 原生约定 `{PROVIDER}_API_KEY`，provider 段大写、`-` 换 `_`）：
-
-```bash
-mkdir -p ~/.tlon
-echo 'DEEPSEEK_API_KEY=your-api-key-here' >> ~/.tlon/.env
-# MOONSHOT_API_KEY=...    # 用 moonshot 的模型就配这个
-# ANTHROPIC_API_KEY=...
-# OPENAI_API_KEY=...
-```
-
-`.env` 不覆盖真实环境变量（[base/settings.py](../../src/tlon/base/settings.py) 的 `load_process_env`，`override=False`）；没配 key 服务端也能启动，只是 agent 处理邮件时调用 LLM 会失败（报错会指明缺哪个变量）。**模型不在进程级配置**（ADR 0016）：每个成员的模型在创建时选择，落在成员 `agent.yaml` 的 `llm.model_name`。全部变量见 `reference/config-reference.md` 第 4 节。
-
-## 3. 起服务端 —— 初始社会 + 原型库
+## 2. 启动 Tlon
 
 ```bash
 tlon dream
@@ -46,9 +32,17 @@ tlon dream
 
 看到日志出现 `server_started` 即就绪。此时 `curl http://127.0.0.1:8080/health` 应返回 200。
 
-## 4. 查看初始成员或创建成员（WebUI）
+## 3. 在浏览器连接模型
 
-浏览器打开 http://127.0.0.1:8080/ui/（静态资源随包分发，无需 Node）。全新实例的 AGENTS 视图会列出 30 位人物，可以直接选择通信。也可以创建自己的成员：AGENTS 视图 → CREATE → 按行为选择原型（如「标准无执行迭代」）→ 填名字、**模型**（`provider/model` 形式，如 `deepseek/deepseek-chat`，对应第 2 步配的 key）→ CREATE。成员 ID 由系统生成（m-UUID），无需填写；原型显示名描述行为，不代表职业。成员即刻热加载上线。
+打开 [Tlon WebUI](http://127.0.0.1:8080/ui/)（静态资源随包分发，无需 Node）。首次设置用户名后，未配置模型凭据的实例显示“连接模型服务”。选择服务商、模型，填写 API Key，点击“验证连接并保存”。默认选择 DeepSeek 的 `deepseek/deepseek-flash`；验证会发送简短模型请求，可能产生少量费用。
+
+普通 CLI 与 Windows 便携版使用同一向导。凭据保存到当前实例的 `.env`：普通 CLI 默认 `~/.tlon/.env`，自定义 `TLON_HOME` 时随该目录，便携版为程序旁的 `data/.env`。首次配置会应用到初始社会的成员，无需手动修改文件。以后在 **SETTINGS** 中更新凭据，或明确选择要换模型的成员；已运行成员更换模型需按页面提示重启 Tlon。
+
+已经通过环境变量或实例 `.env` 配置至少一位成员模型凭据的用户直接进入，不会被强制重新验证或覆盖模型。其他缺少凭据的成员仍需分别配置。
+
+## 4. 查看成员
+
+全新实例的 **AGENTS** 视图列出 30 位人物，可以直接选择通信。也可以通过 **AGENTS → CREATE** 创建自己的成员，选择工作方式、填写名字和模型。模型仍属于各个成员，不是全局统一设置。
 
 ## 5. 发第一封信
 
@@ -72,6 +66,12 @@ tlon dream
 - **Shell 工具不可用或 workspace 外文件访问报 `Docker runtime not initialized`** — Docker daemon 没起来或不可用；装配时 Docker 初始化失败不会注册 Shell 工具，启动 Docker 后需重新装配成员（例如重启 Tlon）；不影响 agent 本体和邮件收发。
 - **改了 `agent.yaml` 不生效** — 服务端启动时扫描一次，热重载走 `POST /admin/config/agents/{agent_id}/reload`（条件注册端点，见 `reference/api-reference.md`）。
 - **访问地址限制** — 仅支持本机回环地址 `127.0.0.1`、`localhost`、`::1`，不支持局域网或公网部署；非回环绑定会直接启动失败。WebUI 首次设置实例 username 后自动进入，不设密码或 admin token；浏览器来源边界见 [ADR 0033](../decisions/0033-local-webui-identity.md)。
+
+## 可选：手动配置凭据
+
+熟悉命令行的用户仍可在启动前设置环境变量，或编辑当前实例的 `.env`，例如 `DEEPSEEK_API_KEY=your-api-key`。变量名是模型名称中服务商部分大写、`-` 换 `_`，再加 `_API_KEY`。完整模板见仓库根目录 `.env.example`。
+
+启动时真实环境变量优先于 `.env`。在网页明确保存新凭据时，会同时更新实例文件与当前进程；下次启动仍遵循环境变量优先规则。凭据存在只用于判断是否需要首次向导，不代表已验证服务商账户可用。
 
 ## 附录：其他客户端（源码场景）
 

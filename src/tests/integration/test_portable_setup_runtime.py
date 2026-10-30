@@ -74,9 +74,7 @@ async def test_first_setup_replaces_booted_models_before_first_reply(
     async with TestServer(model_app) as model_server:
         monkeypatch.setenv("OPENAI_API_BASE", str(model_server.make_url("/v1")))
         paths = TlonPaths(tmp_path)
-        server = ServerApp(
-            rest_port=0, tlon_paths=paths, settings=Settings.from_env(), portable_setup=True
-        )
+        server = ServerApp(rest_port=0, tlon_paths=paths, settings=Settings.from_env())
         await server.initialize()
         running = asyncio.create_task(server.start())
         try:

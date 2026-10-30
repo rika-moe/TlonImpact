@@ -151,7 +151,6 @@ def test_control_ready_duplicate_and_shutdown_errors(
     class App:
         def __init__(self, **kwargs: Any) -> None:
             assert kwargs["tlon_paths"].env_file() == layout.data / ".env"
-            assert kwargs["portable_setup"] is True
             self.ready = asyncio.Event()
             self.rest_port = 0
             self.runner: web.AppRunner | None = None

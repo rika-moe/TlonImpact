@@ -1,4 +1,4 @@
-"""Portable setup uses real member configs and never exposes provider credentials."""
+"""Model setup uses real member configs and never exposes provider credentials."""
 
 import asyncio
 import json
@@ -16,11 +16,12 @@ from dotenv import dotenv_values
 from tlon.agents.bootstrap import bootstrap_society
 from tlon.api.config import ConfigFacade
 from tlon.api.members import MembersFacade
-from tlon.api.portable_setup import PortableSetupFacade, SetupError
+from tlon.api.model_setup import ModelSetupFacade, SetupError
 from tlon.base.config import ConfigService, LLMConfig, yaml_save
 from tlon.base.events.event_bus import EventBus
 from tlon.base.llm_client import LLMClient
 from tlon.base.paths import TlonPaths
+from tlon.base.settings import load_process_env
 from tlon_server.api.rest import RESTAPIHandler
 from tlon_server.core.local_identity import LocalIdentity
 
@@ -35,9 +36,8 @@ BODY: dict[str, Any] = {
 
 
 @pytest.fixture
-async def setup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> AsyncIterator[PortableSetupFacade]:
+async def setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[ModelSetupFacade]:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "")
     monkeypatch.setenv("OPENAI_API_KEY", "")
     paths = TlonPaths(tmp_path)
     bootstrap_society(paths)
@@ -54,7 +54,7 @@ async def setup(
     members.adopt = AsyncMock(side_effect=adopt)
     members.get_status = AsyncMock(return_value={"resident": False})
     members.wait = AsyncMock(return_value=True)
-    facade = PortableSetupFacade(
+    facade = ModelSetupFacade(
         paths, ConfigFacade(config_service=service, tlon_paths=paths), members
     )
     yield facade
@@ -63,7 +63,7 @@ async def setup(
 
 
 async def test_initial_thirty_members_persist_and_key_becomes_live(
-    setup: PortableSetupFacade, monkeypatch: pytest.MonkeyPatch
+    setup: ModelSetupFacade, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     call = AsyncMock()
     monkeypatch.setattr("litellm.acompletion", call)
@@ -85,14 +85,16 @@ async def test_initial_thirty_members_persist_and_key_becomes_live(
         assert cfg is not None and cfg.llm is not None
         assert cfg.llm.model_name == BODY["model"]
         assert cfg.llm.context_window is None and cfg.llm.api_base is None
-    again = PortableSetupFacade(setup._paths, setup._configs, setup._members)
+    again = ModelSetupFacade(setup._paths, setup._configs, setup._members)
     assert again.status()["required"] is False
     setup._paths.env_file().unlink()
-    assert again.status()["required"] is True  # Process env alone cannot fake a saved setup.
+    assert again.status()["required"] is False  # Process environment remains effective.
+    monkeypatch.delenv("OPENAI_API_KEY")
+    assert again.status()["required"] is True
 
 
 async def test_initial_scope_preserves_extra_members_and_resets_selected_model_overrides(
-    setup: PortableSetupFacade, monkeypatch: pytest.MonkeyPatch
+    setup: ModelSetupFacade, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("litellm.acompletion", AsyncMock())
     initial = setup._configs.load_agent(setup._initial_ids[0])
@@ -115,7 +117,7 @@ async def test_initial_scope_preserves_extra_members_and_resets_selected_model_o
 
 
 async def test_resident_model_changes_are_reported_as_pending(
-    setup: PortableSetupFacade, monkeypatch: pytest.MonkeyPatch
+    setup: ModelSetupFacade, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("litellm.acompletion", AsyncMock())
     await setup.configure(BODY)
@@ -144,7 +146,7 @@ async def test_resident_model_changes_are_reported_as_pending(
     ],
 )
 async def test_invalid_values_do_not_call_provider_or_write(
-    setup: PortableSetupFacade, monkeypatch: pytest.MonkeyPatch, patch: dict[str, Any]
+    setup: ModelSetupFacade, monkeypatch: pytest.MonkeyPatch, patch: dict[str, Any]
 ) -> None:
     call = AsyncMock()
     monkeypatch.setattr("litellm.acompletion", call)
@@ -156,7 +158,7 @@ async def test_invalid_values_do_not_call_provider_or_write(
 
 
 async def test_validation_failure_does_not_save_or_leak_secret(
-    setup: PortableSetupFacade,
+    setup: ModelSetupFacade,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
@@ -172,7 +174,7 @@ async def test_validation_failure_does_not_save_or_leak_secret(
 
 
 async def test_explicit_scope_does_not_overwrite_other_models(
-    setup: PortableSetupFacade, monkeypatch: pytest.MonkeyPatch
+    setup: ModelSetupFacade, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("litellm.acompletion", AsyncMock())
     await setup.configure(BODY)
@@ -188,22 +190,32 @@ async def test_explicit_scope_does_not_overwrite_other_models(
     assert os.environ["OPENAI_API_KEY"] == "replacement-key"
 
 
+@pytest.mark.parametrize("scope", ["initial", "selected"])
 async def test_partial_apply_is_not_marked_complete_and_retry_finishes(
-    setup: PortableSetupFacade, monkeypatch: pytest.MonkeyPatch
+    setup: ModelSetupFacade, monkeypatch: pytest.MonkeyPatch, scope: str
 ) -> None:
     monkeypatch.setattr("litellm.acompletion", AsyncMock())
+    body = {
+        **BODY,
+        "scope": scope,
+        "agent_ids": [setup._initial_ids[0]] if scope == "selected" else [],
+    }
     adopt = setup._members.adopt
     setup._members.adopt = AsyncMock(side_effect=RuntimeError("adoption failed"))
     with pytest.raises(SetupError, match="未全部完成"):
-        await setup.configure(BODY)
+        await setup.configure(body)
     assert setup.status()["required"]
     assert not setup._marker.exists()
+    assert setup._pending.exists()
     setup._members.adopt = adopt
-    assert not (await setup.configure(BODY))["required"]
+    reopened = ModelSetupFacade(setup._paths, setup._configs, setup._members)
+    assert reopened.status()["required"] and reopened.status()["initial_allowed"]
+    assert not (await reopened.configure(body))["required"]
+    assert not reopened._pending.exists()
 
 
 async def test_key_updates_are_serialized_and_validation_does_not_change_live_key(
-    setup: PortableSetupFacade, monkeypatch: pytest.MonkeyPatch
+    setup: ModelSetupFacade, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     entered, release = asyncio.Event(), asyncio.Event()
     calls: list[str] = []
@@ -229,14 +241,14 @@ async def test_key_updates_are_serialized_and_validation_does_not_change_live_ke
     assert dotenv_values(setup._paths.env_file())["OPENAI_API_KEY"] == "second-key"
 
 
-async def test_http_route_is_portable_only_and_origin_protected(
-    setup: PortableSetupFacade, monkeypatch: pytest.MonkeyPatch
+async def test_http_route_requires_service_and_is_origin_protected(
+    setup: ModelSetupFacade, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("litellm.acompletion", AsyncMock())
     identity = LocalIdentity(setup._paths.webui_identity_file())
     identity.initialize("alice")
-    for portable in (None, setup):
-        handler = RESTAPIHandler(None, identity=identity, portable_setup=portable)
+    for service in (None, setup):
+        handler = RESTAPIHandler(None, identity=identity, model_setup=service)
         async with TestClient(TestServer(handler.create_app())) as client:
             response = await client.post("/admin/llm/setup", json=BODY)
             assert response.status == 403
@@ -247,17 +259,17 @@ async def test_http_route_is_portable_only_and_origin_protected(
             )
             assert response.status == 403
             response = await client.get("/admin/llm/setup", headers={"X-Tlon-WebUI": "1"})
-            assert (await response.json())["enabled"] is (portable is not None)
+            assert (await response.json())["enabled"] is (service is not None)
             response = await client.post(
                 "/admin/llm/setup", json=BODY, headers={"X-Tlon-WebUI": "1"}
             )
-            assert response.status == (404 if portable is None else 200)
+            assert response.status == (404 if service is None else 200)
             assert KEY not in await response.text()
 
 
 @pytest.mark.parametrize("accepted", [True, False])
 async def test_real_litellm_connection_and_provider_error_redaction(
-    setup: PortableSetupFacade,
+    setup: ModelSetupFacade,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
@@ -311,20 +323,20 @@ async def test_real_litellm_connection_and_provider_error_redaction(
     assert KEY not in caplog.text + output.out + output.err
 
 
-@pytest.mark.parametrize("damage", ["missing-key-file", "environment-conflict", "malformed-marker"])
+@pytest.mark.parametrize("damage", ["missing-key", "empty-key", "malformed-marker"])
 async def test_credential_repair_never_reauthorizes_initial_scope(
-    setup: PortableSetupFacade, monkeypatch: pytest.MonkeyPatch, damage: str
+    setup: ModelSetupFacade, monkeypatch: pytest.MonkeyPatch, damage: str
 ) -> None:
     monkeypatch.setattr("litellm.acompletion", AsyncMock())
     await setup.configure(BODY)
-    if damage == "missing-key-file":
-        setup._paths.env_file().unlink()
-    elif damage == "environment-conflict":
-        monkeypatch.setenv("OPENAI_API_KEY", "unrelated-external-key")
+    if damage == "missing-key":
+        monkeypatch.delenv("OPENAI_API_KEY")
+    elif damage == "empty-key":
+        monkeypatch.setenv("OPENAI_API_KEY", "")
     else:
         setup._marker.write_text("invalid", encoding="utf-8")
     # Reopening the facade proves the restriction comes from persisted history.
-    reopened = PortableSetupFacade(setup._paths, setup._configs, setup._members)
+    reopened = ModelSetupFacade(setup._paths, setup._configs, setup._members)
     state = reopened.status()
     assert state["required"] is True
     assert state["initial_allowed"] is False
@@ -340,7 +352,7 @@ async def test_credential_repair_never_reauthorizes_initial_scope(
 
 
 async def test_first_setup_waits_for_old_resident_and_busy_drain_remains_retryable(
-    setup: PortableSetupFacade, monkeypatch: pytest.MonkeyPatch
+    setup: ModelSetupFacade, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("litellm.acompletion", AsyncMock())
     setup._members.get_status = AsyncMock(return_value={"resident": True})
@@ -354,3 +366,120 @@ async def test_first_setup_waits_for_old_resident_and_busy_drain_remains_retryab
     result = await setup.configure(BODY)
     assert not result["required"] and result["pending_members"] == []
     assert setup._members.wait.await_count == 30
+
+
+@pytest.mark.parametrize("source", ["environment", "dotenv", "override"])
+async def test_existing_credentials_skip_setup_without_writes_or_verification(
+    setup: ModelSetupFacade, monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    call = AsyncMock()
+    monkeypatch.setattr("litellm.acompletion", call)
+    monkeypatch.delenv("DEEPSEEK_API_KEY")
+    if source != "environment":
+        setup._paths.env_file().write_text("DEEPSEEK_API_KEY=file-key\n", encoding="utf-8")
+    if source != "dotenv":
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "environment-key")
+    load_process_env(setup._paths)
+    before = {p: p.read_bytes() for p in setup._paths.tlon_home().rglob("*") if p.is_file()}
+    reopened = ModelSetupFacade(setup._paths, setup._configs, setup._members)
+    state = reopened.status()
+    assert not state["required"] and not state["initial_allowed"]
+    assert state["initial_member_ids"] == []
+    assert "key" not in json.dumps(state)
+    assert os.environ["DEEPSEEK_API_KEY"] == (
+        "file-key" if source == "dotenv" else "environment-key"
+    )
+    assert before == {p: p.read_bytes() for p in setup._paths.tlon_home().rglob("*") if p.is_file()}
+    call.assert_not_awaited()
+    with pytest.raises(SetupError, match="首次配置范围不可"):
+        await reopened.configure(BODY)
+    result = await reopened.configure({**BODY, "scope": "selected"})
+    assert result["members"] == state["members"]
+    assert not result["required"]
+    setup._members.adopt.assert_not_awaited()
+
+
+async def test_existing_provider_uses_runtime_key_naming(
+    setup: ModelSetupFacade, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    member = setup._configs.load_agent(setup._initial_ids[0])
+    assert member is not None
+    member.llm = LLMConfig(model_name="custom-provider/example", context_window=8192)
+    yaml_save(member, setup._paths.tlon_home())
+    await setup._members.adopt(member.id)
+    monkeypatch.setenv("CUSTOM_PROVIDER_API_KEY", "custom-key")
+    reopened = ModelSetupFacade(setup._paths, setup._configs, setup._members)
+    assert not reopened.status()["required"]
+    assert not reopened.status()["initial_allowed"]
+    monkeypatch.delenv("CUSTOM_PROVIDER_API_KEY")
+    assert reopened.status()["required"]
+    assert not reopened.status()["initial_allowed"]
+
+
+async def test_unrelated_credentials_do_not_skip_new_setup(
+    setup: ModelSetupFacade, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "unrelated-key")
+    reopened = ModelSetupFacade(setup._paths, setup._configs, setup._members)
+    assert reopened.status()["required"] and reopened.status()["initial_allowed"]
+
+
+async def test_completed_setup_uses_effective_environment_override(
+    setup: ModelSetupFacade, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("litellm.acompletion", AsyncMock())
+    await setup.configure(BODY)
+    monkeypatch.setenv("OPENAI_API_KEY", "external-override")
+    load_process_env(setup._paths)
+    reopened = ModelSetupFacade(setup._paths, setup._configs, setup._members)
+    assert not reopened.status()["required"]
+    assert not reopened.status()["initial_allowed"]
+    assert os.environ["OPENAI_API_KEY"] == "external-override"
+
+
+async def test_empty_instance_allows_entry_and_key_only_configuration(
+    setup: ModelSetupFacade, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configs = MagicMock(spec=ConfigFacade)
+    configs.list_agent_configs.return_value = []
+    reopened = ModelSetupFacade(setup._paths, configs, setup._members)
+    assert not reopened.status()["required"]
+    assert not reopened.status()["initial_allowed"]
+    monkeypatch.setattr("litellm.acompletion", AsyncMock())
+    result = await reopened.configure({**BODY, "scope": "selected"})
+    assert not result["required"] and result["members"] == []
+    configs.update_llm.assert_not_called()
+
+
+async def test_removing_all_members_does_not_trap_existing_session(
+    setup: ModelSetupFacade,
+) -> None:
+    configs = MagicMock(spec=ConfigFacade)
+    configs.list_agent_configs.return_value = setup._configs.list_agent_configs()
+    reopened = ModelSetupFacade(setup._paths, configs, setup._members)
+    assert reopened.status()["required"]
+    configs.list_agent_configs.return_value = []
+    assert not reopened.status()["required"]
+    assert not reopened.status()["initial_allowed"]
+
+
+async def test_removing_members_after_partial_setup_allows_entry_and_retry(
+    setup: ModelSetupFacade, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("litellm.acompletion", AsyncMock())
+    setup._members.adopt = AsyncMock(side_effect=RuntimeError("adoption failed"))
+    with pytest.raises(SetupError, match="未全部完成"):
+        await setup.configure(BODY)
+    assert setup._pending.exists()
+
+    configs = MagicMock(spec=ConfigFacade)
+    configs.list_agent_configs.return_value = []
+    reopened = ModelSetupFacade(setup._paths, configs, setup._members)
+    assert not reopened.status()["required"]
+    assert not reopened.status()["initial_allowed"]
+    assert reopened._pending.exists()
+
+    result = await reopened.configure({**BODY, "scope": "selected"})
+    assert not result["required"] and result["members"] == []
+    assert not reopened._pending.exists()
+    configs.update_llm.assert_not_called()
