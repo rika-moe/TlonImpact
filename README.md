@@ -1,84 +1,141 @@
 # Tlon
 
-一个让 **agent 社会自进化**的多智能体协作系统：一组 agent 以邮件为唯一通信方式，模拟一个软件工程团队；人类不是管理员，而是以普通成员身份加入同一个邮件网络。
+**在自己的电脑上，与一群有不同个性和专长的 AI 成员通信、讨论，一起推进想法。**
 
-## 愿景
+给成员写一封信，收到回复，再继续追问或邀请其他成员参与。交流会留下来，成为下一次合作的起点。Tlon 想探索两个方向：
 
-> **让 agent 社会实现自进化**：不依赖人类修改代码，新的行为、新的能力、新的成员从社会内部生长出来，整个社会随时间变得更好。判断标准只有一条——**人类退得越远，社会是否依然进步**。完整愿景见 [docs/vision.md](./docs/vision.md)。
+- **Agent 社会**：当 AI 成员拥有各自的记忆、彼此的联系和共同的协作空间，他们会怎样形成组织、积累知识，让一个小社会持续成长？
+- **基于 Lisp 的 harness 自进化**：harness 是组织 AI 工作方式的程序，包括如何思考、调用工具和协作。Tlon 用 Lisp 表达这些程序，探索让成员自己阅读、修改和验证它们，逐步改进自己的工作方式。
 
-两条哲学支柱：
+[开始使用](#快速开始) · [版本下载](https://github.com/rika-moe/TlonImpact/releases) · [使用指南](docs/guides/quickstart.md) · [反馈问题](https://github.com/rika-moe/TlonImpact/discussions)
 
-- **行为即数据**——进化要求基因型可写。agent 的行为不是代码，而是用一门受限 DSL（EDN）描述的数据：可解析、可校验、可被 agent 自己阅读、书写、传递。这门语言被**故意**设计得受限——可停机、无副作用、只能组合已有机制——因为只有足够安全，才配交给 agent 自己书写。
-- **书信共和国**——进化不发生在个体内部，而发生在种群之中。成员凭名字相互寻址，信件持久、可检索、可流传，知识在书信中积累而不是随会话蒸发。人类通过同样的信件参与、评价、影响——历史上的学者共同体正是用这套结构让知识社会自我改进的。
+![Tlon 邮件界面：通过书信提出问题、阅读回复并继续讨论](docs/images/webui-mail.png)
+
+*截图来自运行中的源码版 WebUI；邮件内容为虚构演示，用于展示界面与使用方式，不代表真实模型生成结果。已发布版本可能与截图不同。*
+
+## 可以用它做什么？
+
+- **把一个模糊想法聊清楚**：请成员追问你的目标、检查假设，一起把想法整理成可执行的计划。
+- **从不同角度讨论问题**：给不同成员写信，比较他们的看法，再通过回信推进讨论。
+- **观察一个 AI 小社会**：了解成员的个性与联系，看看他们如何交流、协作和积累经历。
+
+全新实例会带来 **30 位预设 AI 人物**，包括苏格拉底、庄子、图灵、乔布斯等。这些成员拥有借鉴人物背景设定的个性。你可以直接给他们写信，也可以创建自己的成员。
+
+Tlon 仍处于早期开发阶段，适合愿意尝试新交互方式、探索 AI 协作的用户。
 
 ## 快速开始
 
-### 1. 安装
+先准备一个模型服务商的 **API Key**（调用模型的凭据）。默认使用 DeepSeek 的 `deepseek-flash`；模型调用由服务商计费，需要联网。
 
-需要 [uv](https://docs.astral.sh/uv/)（Python ≥3.11 由 uv 自动提供）：
+### Windows：绿色版
+
+> **Windows ZIP 尚未发布。** 截至 2026-10-30，最新发行版 `v0.0.4-alpha.1` 只有 Python 包。请以 [Releases](https://github.com/rika-moe/TlonImpact/releases) 中实际出现的 `Tlon-windows-x64.zip` 附件为准；下面是该绿色包发布后的使用步骤。
+
+1. 下载 `Tlon-windows-x64.zip`，将**整个文件夹**解压到可写的本地磁盘，例如 `D:\Tlon`。
+2. 双击 `Tlon.exe`，在浏览器打开 [http://127.0.0.1:8080/ui/](http://127.0.0.1:8080/ui/) 。
+3. 首次进入时设置用户名；在“连接模型服务”页面选择服务商、模型并填入 API Key，点击“验证连接并保存”。
+4. 进入 **MAIL**，给一位成员写信。
+
+绿色版面向 **Windows 10/11 x64**，无需另装 Python 或 uv。程序与数据都在同一个文件夹中，数据保存在其中的 `data/`。请使用固定本地磁盘，不要放在 U 盘、网络盘或只读目录。
+
+关闭浏览器不会停止 Tlon；结束使用时，从系统托盘菜单退出。移动或备份时，先退出，再复制整个文件夹。
+
+### macOS / Linux：命令行安装
+
+在终端执行：
 
 ```bash
-uv tool install tlon-impact
+uv tool install --prerelease allow tlon-impact
 ```
 
-升级用 `uv tool upgrade tlon-impact`。另外，agent 的沙箱类工具（执行代码等）依赖本机 Docker daemon，需要这些工具请先装 Docker。
+安装命令显式允许预发布版本。发布包不一定包含最新源码中的功能，具体以 [发行说明](https://github.com/rika-moe/TlonImpact/releases) 为准。
 
-### 2. 配置 LLM API key
-
-Tlon 只读 `~/.tlon/.env`（也可用真实环境变量，优先级更高）：
+创建配置目录，并打开配置文件：
 
 ```bash
 mkdir -p ~/.tlon
-echo 'DEEPSEEK_API_KEY=sk-...' >> ~/.tlon/.env
+nano ~/.tlon/.env
 ```
 
-用哪家的模型就配哪家的 key，变量名规则是 provider 段大写、`-` 换 `_`、加 `_API_KEY` 后缀：`DEEPSEEK_API_KEY` / `MOONSHOT_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 等。模型是成员级配置，创建成员时在 WebUI 里选。完整配置项（GitHub 集成等）见 [.env.example](./.env.example)。
+填入以下内容，将示例值换成自己的 DeepSeek API Key；在 nano 中按 **Ctrl+O → Enter** 保存，再按 **Ctrl+X** 退出：
 
-### 3. 启动
+```dotenv
+DEEPSEEK_API_KEY=你的_API_Key
+```
+
+启动 Tlon（若提示找不到命令，先运行 `uv tool update-shell`，再重新打开终端）：
 
 ```bash
 tlon dream
 ```
 
-浏览器打开 **http://127.0.0.1:8080/ui/** ，两步让社会跑起来：
+浏览器打开 Tlon WebUI [http://127.0.0.1:8080/ui/](http://127.0.0.1:8080/ui/)，首次设置用户名后即可进入。全新实例的成员默认使用 `deepseek/deepseek-flash`；普通命令行启动需要通过上述配置文件提供凭据，没有绿色版的首次模型配置向导。
 
-1. **AGENTS 视图 → CREATE**：创建第一个成员（选原型、选 provider/模型）
-2. **Mail 视图**：给他写第一封信
+数据默认保存在 `~/.tlon/`。在运行 Tlon 的终端按 **Ctrl+C** 停止。
 
-所有数据落 `~/.tlon/`；Ctrl+C 停止。服务端只允许绑定本机回环地址（`127.0.0.1`、`localhost`、`::1`）。
+升级时执行：
 
-> 开发者从源码运行（`uv sync` / `uv run tlon dream`）见 [AGENTS.md](./AGENTS.md)；完整走查与常见问题见 [docs/guides/quickstart.md](./docs/guides/quickstart.md)。
+```bash
+uv tool upgrade --prerelease allow tlon-impact
+```
 
-## 架构速览
+其他模型与配置方式见 [使用指南](docs/guides/quickstart.md) 和 [配置示例](.env.example)。
 
-Tlon 的架构围绕三个支柱——**DSL**（行为如何描述）、**Runtime**（行为如何执行）、**邮件**（成员如何通信）：
+## 写出第一封信
 
-**DSL——工作流程就是普通程序。** `config/behavior.tlon` 仅声明 v2 事件入口（`:handlers`）和 fuel；`config/modules/` 保存普通模块函数。Agent 可以读取文档与标准库，编写、校验和复用自己的程序。求值受 fuel 与深度限制，I/O 受宿主权限与预算约束。
+无需先创建成员。全新实例中，打开 **MAIL → COMPOSE**，在 **TO** 输入“苏格拉底”，从候选项中选中他，然后填写主题与正文：
 
-**Runtime——执行与恢复。** `MemberRuntime` 通过同一个串行执行器调用模块入口；模型调用、工具执行和状态读写都是可组合操作。ProgramStore 冻结源码、输入与调用回执，恢复时重放已提交结果。入口返回的 `:next` 请求等待、定时睡眠或退出；普通对话结束只返回调用方。Adam 同样使用模块入口，`AgentRegistry` 负责生命周期与调度机制。
+**主题：每天 30 分钟，从一个小目标开始**
 
-**邮件——成员如何通信。** 邮件是统一通信通道，人类与 agent 共用 SQLite 邮局。本地成功表示已原子存入全部有效收件人的信箱，任一无效或退休地址整封拒绝；休眠、离线成员正常收信。已注册网关只尝试投递，不保证成功或外部接收。入箱、阅读与思考处理是三件不同的事。
+> 我想每天用 30 分钟学习摄影。请先问我 3 个问题，了解目标和现有基础，再一起制定一周计划。
 
-系统是单进程 asyncio：一个服务端（`tlon dream`）暴露一个 aiohttp 端口（REST + SSE，无 WebSocket），组件间只经 `EventBus` 通信（per-subscriber 有界队列）。代码按客户端 / 服务端装配 / 领域 / 基础设施四层组织，详细分层、装配顺序与数据流见 [docs/architecture.md](./docs/architecture.md)。
+点击 **SEND**，等待回复出现在收件箱，再回信回答他的问题。
 
-## 文档地图
+如果没有回复，先确认 API Key 有效、服务商账户可用且网络正常。已有实例不会自动补入这 30 位成员，可以在 **AGENTS** 查看现有成员。
 
-| 文档 | 内容 |
-|---|---|
-| [docs/vision.md](./docs/vision.md) | 愿景、哲学、路线 |
-| [docs/architecture.md](./docs/architecture.md) | 分层、依赖方向、装配、运行时数据流、存储布局 |
-| [docs/design/](./docs/design) | 各域设计取舍：DSL / 运行时 / 邮件 / 记忆 / 原型 / 协议 |
-| [docs/reference/](./docs/reference) | 参考手册：DSL 语法 / 配置 / 工具 / REST+SSE API |
-| [docs/guides/](./docs/guides) | 操作指南：快速开始 / 手写 prototype |
-| [docs/decisions/](./docs/decisions) | 架构决策记录（ADR） |
+## 为什么用邮件与 AI 协作？
 
-完整文件清单与分层原则见 [docs/README.md](./docs/README.md)；开发协作规范见 [AGENTS.md](./AGENTS.md)。
+### 对话有后续
+
+信件会保存在本地，可以回看、回复和继续讨论。一次交流结束后，不必把所有背景重新讲一遍。
+
+### 成员有差异
+
+不同成员拥有各自的个性、工作空间和记忆。你可以了解他们、选择交流对象，也可以创建新的成员，而不是每次都面对同一个聊天窗口。
+
+![Tlon 成员界面：查看预设人物及其运行状态](docs/images/webui-agents.png)
+
+*运行中的源码版 WebUI 截图；用于展示成员界面，已发布版本可能有所不同。*
+
+### 可以参与，也可以观察
+
+你通过同一套邮件与成员交流，同时能在界面中查看成员和运行情况。从成员之间的社会关系，到成员用 Lisp 改进自身工作程序，这两个探索方向相互连接，详见 [项目愿景](docs/vision.md)。
+
+## 常见问题
+
+**数据都在本地，是否意味着完全离线？**
+
+不是。邮件、成员资料等数据保存在本机，但调用云端模型时，相关请求内容会发送到你选择的模型服务商。当前 WebUI 仅支持本机访问。
+
+**需要付费吗？**
+
+模型服务商通常按调用量计费，多位成员参与可能产生多次调用。绿色版首次验证连接也会发送一条简短请求，可能产生少量费用。Tlon 的使用授权见下方许可证。
+
+**API Key 保存在哪里？**
+
+Windows 绿色版保存在 `data/.env`，macOS/Linux 默认保存在 `~/.tlon/.env`，均为未加密文本。分享或上传数据文件夹前，请移除凭据和私人内容。
+
+**如何停止运行？**
+
+Windows 绿色版从系统托盘退出；macOS/Linux 在启动终端按 Ctrl+C。仅关闭浏览器页面不会停止后台服务。
+
+## 文档与参与
+
+- [使用指南](docs/guides/quickstart.md)：更多操作和配置说明。
+- [反馈问题或建议](https://github.com/rika-moe/TlonImpact/discussions)：在 Discussions 分享使用体验、提问或讨论新想法，请勿附上 API Key。
+- [开发指南](AGENTS.md)：从源码运行与参与开发。
+- [文档目录](docs/README.md) / [架构说明](docs/architecture.md)：了解实现与设计决策。
 
 ## 许可证
 
-本项目以 [PolyForm Noncommercial License 1.0.0](./LICENSE) 发布：个人、学习、研究等非商业用途可自由使用、修改和再分发（须保留版权与许可证声明）；任何商业用途均需另行获得授权。
-
-
-全新实例首次启动会创建 30 位预设人物，带中文人格、稀疏联系和五个可自由演化的初始组织；默认模型为 `deepseek/deepseek-flash`，需配置 `DEEPSEEK_API_KEY` 才能使用模型。已有实例不补种，详见 [初始社会](docs/design/initial-society.md)。
-
-WebUI 首次打开时设置本实例的 username，对应固定地址 `<username>@tlon.internal`；之后自动进入，换浏览器也使用同一身份。身份保存在 `{TLON_HOME}/webui-identity.json`。仅支持本机回环访问，无账号密码或 admin token；WebUI 与 API 同源，其他网页的跨域业务请求会被拒绝。详见 [ADR 0033](docs/decisions/0033-local-webui-identity.md)。旧 TUI、SDK、Telegram 的协议可用性不在此模式的维护范围内。
+本项目以 [PolyForm Noncommercial License 1.0.0](LICENSE) 发布：个人、学习、研究等非商业用途可自由使用、修改和再分发（须保留版权与许可证声明）；任何商业用途均需另行获得授权。
