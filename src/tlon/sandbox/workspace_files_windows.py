@@ -63,7 +63,9 @@ def _read(handle: int) -> bytes:
 
 
 def _replace(handle: int, parent: int, name: str) -> None:
-    replace_relative(handle, parent, name)
+    # The caller retains parent throughout this same-directory operation.
+    _attributes(parent)
+    replace_relative(handle, name)
 
 
 def _parts(relative: str) -> list[str]:

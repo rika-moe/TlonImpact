@@ -151,12 +151,14 @@ def open_relative(
     return handle.value
 
 
-def replace_relative(handle: int, parent: int, name: str) -> None:
-    """Replace a single directory entry using native FILE_RENAME_INFORMATION.
+def replace_relative(handle: int, name: str) -> None:
+    """Rename within the held source file's directory using a single leaf.
 
-    Win32 SetFileInformationByHandle rejects a non-null RootDirectory on the
-    tested Windows runner. NtSetInformationFile accepts the directory handle
-    directly, without rebuilding or reparsing an absolute destination path.
+    FILE_RENAME_INFORMATION documents a null RootDirectory plus a simple
+    filename as same-directory rename. The source handle remains open and its
+    parent chain denies deletion, so the destination cannot be redirected.
+    Supplying RootDirectory instead makes Windows reopen the target directory
+    for write access, conflicting with those retained protective handles.
     """
     validate_windows_component(name)
     encoded = name.encode("utf-16-le")
@@ -165,7 +167,7 @@ def replace_relative(handle: int, parent: int, name: str) -> None:
     buffer = ctypes.create_string_buffer(ctypes.sizeof(_RenameInformation) + len(encoded))
     information = _RenameInformation.from_buffer(buffer)
     information.ReplaceIfExists = 1
-    information.RootDirectory = parent
+    information.RootDirectory = None
     information.FileNameLength = len(encoded)
     ctypes.memmove(
         ctypes.addressof(buffer) + _RenameInformation.FileName.offset, encoded, len(encoded)
