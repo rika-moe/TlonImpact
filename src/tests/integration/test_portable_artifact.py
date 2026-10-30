@@ -53,27 +53,44 @@ def _snapshot(root: Path) -> dict[str, tuple[int, int]]:
     }
 
 
-def _ready(process: subprocess.Popen[bytes], data: Path) -> str:
+def _ready(process: subprocess.Popen[bytes], data: Path, health_url: str | None = None) -> str:
     from tlon_launcher.portable_instance import request_existing
 
     deadline = time.monotonic() + 120
     last = "not started"
     while time.monotonic() < deadline:
         if process.poll() is not None:
-            logs = [
-                str(path) + "\n" + path.read_text(encoding="utf-8", errors="replace")[-12000:]
-                for path in data.rglob("*.log")
-            ]
-            raise AssertionError(f"Frozen EXE exited {process.returncode}: {logs}")
+            raise AssertionError(
+                f"Frozen EXE exited {process.returncode}; see portable data logs locally"
+            )
         try:
             status = request_existing(data, action="status", timeout=1.0)
             if status and status.get("status") == "ready":
                 return str(status["url"]).removesuffix("/ui/")
             last = repr(status)
         except (OSError, ValueError, RuntimeError) as exc:
-            last = str(exc)
+            cause = exc.__cause__
+            reason = getattr(cause, "reason", None)
+            last = (
+                f"{type(exc).__name__}, cause={type(cause).__name__}, "
+                f"errno={getattr(cause, 'errno', None)}, reason={type(reason).__name__}, "
+                f"reason_errno={getattr(reason, 'errno', None)}"
+            )
         time.sleep(0.2)
-    raise AssertionError(f"Frozen EXE never became ready: {last}")
+    state_path = data / ".portable/instance.json"
+    state = json.loads(state_path.read_text()) if state_path.exists() else {}
+    public_state = {key: state.get(key) for key in ("version", "pid", "port")}
+    health = False
+    if health_url:
+        try:
+            with urlopen(health_url, timeout=2) as response:
+                health = response.status == 200
+        except OSError:
+            pass
+    raise AssertionError(
+        f"Frozen EXE never became ready: {last}; process={process.pid}; "
+        f"state={public_state}; health={health}"
+    )
 
 
 def _stop(executable: Path, process: subprocess.Popen[bytes], cwd: Path, port: int) -> None:
@@ -201,7 +218,7 @@ def test_shipped_executable_mail_and_relocation(
             )
             assert duplicate.returncode == 0
             assert process.poll() is None
-            assert _ready(process, data) == base
+            assert _ready(process, data, base + "/health") == base
             identity = _request(base + "/identity")
             if iteration == 0:
                 assert identity["username"] is None

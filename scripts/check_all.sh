@@ -119,7 +119,7 @@ if [ "$want_windows_portable" -eq 1 ]; then
         src/tlon_launcher/portable_tray.py
     run "portable-native-unit" uv run --group dev pytest -q \
         src/tests/launcher/test_portable.py src/tests/server/test_portable_model_setup.py
-    run "portable-build" uv run --no-dev --group portable-build python scripts/build_windows_portable.py
+    run "portable-build" uv run --exact --locked --no-dev --group portable-build python scripts/build_windows_portable.py
     run "portable-frozen-smoke" env TLON_PORTABLE_ZIP="$(pwd)/dist/windows-portable/Tlon-windows-x64.zip" \
         uv run --group dev pytest -q src/tests/integration/test_portable_artifact.py
 fi
