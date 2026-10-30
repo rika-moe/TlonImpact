@@ -29,7 +29,7 @@ Tlon 仍处于早期开发阶段，适合愿意尝试新交互方式、探索 AI
 
 ### Windows：绿色版
 
-> **Windows ZIP 尚未发布。** 截至 2026-10-30，最新发行版 `v0.0.4-alpha.1` 只有 Python 包。请以 [Releases](https://github.com/rika-moe/TlonImpact/releases) 中实际出现的 `Tlon-windows-x64.zip` 附件为准；下面是该绿色包发布后的使用步骤。
+前往 [Releases](https://github.com/rika-moe/TlonImpact/releases) 下载 `Tlon-windows-x64.zip` 附件；下面是该绿色包发布后的使用步骤。
 
 1. 下载 `Tlon-windows-x64.zip`，将**整个文件夹**解压到可写的本地磁盘，例如 `D:\Tlon`。
 2. 双击 `Tlon.exe`，在浏览器打开 [http://127.0.0.1:8080/ui/](http://127.0.0.1:8080/ui/) 。
@@ -56,7 +56,7 @@ uv tool install --prerelease allow tlon-impact
 tlon dream
 ```
 
-浏览器打开 [Tlon WebUI](http://127.0.0.1:8080/ui/)，按页面提示完成首次设置：
+浏览器打开 Tlon WebUI [http://127.0.0.1:8080/ui/](http://127.0.0.1:8080/ui/)，按页面提示完成首次设置：
 
 1. 设置用户名。
 2. 在“连接模型服务”页面选择服务商和模型，填写 API Key。默认是 DeepSeek 的 `deepseek/deepseek-flash`。
