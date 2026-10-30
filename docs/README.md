@@ -51,6 +51,7 @@ architecture 区分规范与当前实现；design 负责当前领域模型和机
 ## 共享操作的当前机制与后续范围
 
 - [统一宿主操作](design/operations.md)：宿主契约与 DSL/LLM 入口；Capability 已删除。
+- [内容缓存](design/content-caches.md)：schema 定义校验、EDN 解析及成员状态隔离边界。
 - [分阶段实施计划](design/operations-plan.md)：两个串行 EPIC、分阶段独立 PR 任务及验收标准；P1–P6 已合并；P8a 独立收口文档与审计，其余范围单列。
 - [执行作用域与共享额度](design/execution-scope.md)：已落地的 P4b 预算预留、取消/截止、声明顺序与可重入写边界。
 - [调用记录与恢复](design/invocation-recovery.md)：已落地的 P4a 唯一叶子回执、冻结身份、unknown 与会话重放边界。
@@ -68,6 +69,7 @@ architecture 区分规范与当前实现；design 负责当前领域模型和机
 | [operations-reference](reference/operations-reference.md) | P1–P6 共享操作契约、双入口、宿主领域与调用恢复 |
 | [api-reference](reference/api-reference.md) | REST/SSE 端点、字段、错误与事件 |
 | [quickstart](guides/quickstart.md) | 安装、启动、创建成员与发信 |
+| [integration-tests](guides/integration-tests.md) | 最小成员集成测试与完整社会验收边界 |
 | [writing-a-prototype](guides/writing-a-prototype.md) | 编写一个行为原型 |
 
 ## 维护约定

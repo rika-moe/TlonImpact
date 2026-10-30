@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
+import pytest
 
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.store import MailStore
@@ -22,6 +23,7 @@ async def _list_agents(base_url: str) -> list[dict[str, Any]]:
         return (await response.json())["agents"]
 
 
+@pytest.mark.full_initial_society
 async def test_initial_society_served_with_local_contacts_and_preserved_on_restart(
     tmp_path: Path,
 ) -> None:

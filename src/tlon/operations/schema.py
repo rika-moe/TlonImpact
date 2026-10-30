@@ -1,6 +1,8 @@
 """Strict JSON data boundary and admitted JSON Schema 2020-12 subset."""
 
+import json
 import math
+from functools import lru_cache
 from typing import Any, cast
 
 from jsonschema import Draft202012Validator
@@ -74,6 +76,13 @@ _KEYWORDS = frozenset(
     }
 )
 _DIALECT = "https://json-schema.org/draft/2020-12/schema"
+_SCHEMA_CACHE_MAX_LENGTH = 65_536
+
+
+@lru_cache(maxsize=256)
+def _check_schema_cached(serialized: str) -> None:
+    """Remember successful meta-validation without retaining mutable schemas."""
+    Draft202012Validator.check_schema(json.loads(serialized))
 
 
 def json_value(value: Any, *, edn_keys: bool = False) -> Any:
@@ -188,7 +197,11 @@ def admit_schema(
 
     visit(copied, "schema")
     try:
-        Draft202012Validator.check_schema(copied)
+        serialized = json.dumps(copied, sort_keys=True, separators=(",", ":"))
+        if len(serialized) > _SCHEMA_CACHE_MAX_LENGTH:
+            Draft202012Validator.check_schema(copied)
+        else:
+            _check_schema_cached(serialized)
     except SchemaError as error:
         raise DefinitionError(error.message) from error
     if input_schema and (

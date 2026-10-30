@@ -22,7 +22,11 @@ Parse failures raise :class:`EDNParseError` with line/column information.
 files).
 """
 
+from copy import deepcopy
+from functools import lru_cache
 from typing import Any
+
+_PARSE_CACHE_MAX_SOURCE_LENGTH = 65_536
 
 _SYMBOL_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789*+!-_?./<>=&")
 _SYMBOL_START_EXTRA = set("*+!_?./<>=&")
@@ -92,7 +96,18 @@ def loads(text: str) -> Any:
 
 
 def loads_all(text: str) -> list[Any]:
-    """Parse every top-level EDN form, including an empty source."""
+    """Parse every form, returning independent trees even for repeated sources."""
+    if len(text) > _PARSE_CACHE_MAX_SOURCE_LENGTH:
+        return _parse_all(text)
+    return deepcopy(_cached_parse_all(text))
+
+
+@lru_cache(maxsize=256)
+def _cached_parse_all(text: str) -> list[Any]:
+    return _parse_all(text)
+
+
+def _parse_all(text: str) -> list[Any]:
     parser = _Parser(text)
     forms: list[Any] = []
     parser.skip_whitespace()

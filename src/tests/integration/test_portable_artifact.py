@@ -173,6 +173,7 @@ def mock_model() -> Iterator[tuple[str, list[dict[str, Any]]]]:
         thread.join(timeout=5)
 
 
+@pytest.mark.full_initial_society
 def test_shipped_executable_mail_and_relocation(
     tmp_path: Path, mock_model: tuple[str, list[dict[str, Any]]]
 ) -> None:
