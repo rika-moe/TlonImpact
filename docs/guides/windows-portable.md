@@ -47,7 +47,7 @@ npm --prefix apps/webui run build
 bash scripts/check_all.sh --windows-portable
 ```
 
-该分组执行 Windows 类型与单元检查，在不安装开发依赖的构建环境中使用 PyInstaller 目录模式打包，再运行真实 EXE 验收。输出为 `dist/windows-portable/Tlon-windows-x64.zip`，内容只有 `Tlon.exe` 和 `runtime/`；Windows CI 成功后将 ZIP 作为工作流产物上传。
+该分组执行 Windows 类型与单元检查，在不安装开发依赖的构建环境中使用 PyInstaller 目录模式打包，再运行真实 EXE 验收。输出为 `dist/windows-portable/Tlon-windows-x64.zip`，内容只有 `Tlon.exe` 和 `runtime/`；推送 `v*` tag 时，Release 工作流运行全部 Windows 检查并上传 ZIP；Linux 质量门与 Windows 验收全部通过后，ZIP 随 Python 包附在 GitHub Release 中。PR 与 main 推送不运行 Windows 检查或打包。
 
 自动验收使用本机模拟模型服务验证实际 LiteLLM 请求和成员工作程序，不使用真实用户 API Key，也不表示外部服务商已人工验收。`--headless` 与 `--quit` 供自动验收管理进程；普通用户直接双击，无需命令行。
 

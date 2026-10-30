@@ -43,3 +43,7 @@ Windows 特殊组件校验共享给 author 逻辑路径映射，必须在转换�
 原生实现依据 [Microsoft NtCreateFile](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile) 的 RootDirectory 相对打开语义、[FILE_RENAME_INFORMATION](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information) 的源句柄同目录重命名语义，以及 [Go Windows openat 实现](https://go.dev/src/internal/syscall/windows/at_windows.go)。常规读写、目录枚举和句柄操作使用 pywin32，仅相对打开与重命名所需 NT ABI 使用 ctypes。Windows 原生 CI 在 Python 3.11 / 3.13 上调用 `scripts/check_all.sh --windows-workspace`，包含 Windows 平台类型检查、共享文件工具、路径/链接/竞态测试和显式 WebUI 标头的 SDK 邮件冒烟。
 
 第三阶段 Windows CI 首次暴露 Win32 `SetFileInformationByHandle(FileRenameInfo)` 对非空 RootDirectory 返回错误 87；改用 NT 相对父目录重命名后又发现系统重新以写权限打开目标目录，与保留的禁止共享写入句柄冲突（错误 32）。最终使用 `NtSetInformationFile(FileRenameInformation)` 的文档化同目录形式：源临时文件句柄保持打开，RootDirectory 为空，目标仅为一个经过校验的文件名。源所在父目录及祖先句柄仍禁止共享写入/删除，因此不能被迁移或重定向；不使用绝对路径，也不放宽共享约束。此语义见 [Microsoft FILE_RENAME_INFORMATION](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information)。修正后的原生验证结果以 CI 为准。
+
+## 发布阶段验证
+
+Windows 检查与便携打包仅由 `v*` tag 的 Release 工作流调用；PR 与 main 推送只运行 Linux 静态、单元与集成质量门。保留 Windows 锁、Python 3.11/3.13 workspace、启动冒烟及冻结 EXE 验收，测试清单仍由 `scripts/check_all.sh` 维护。Windows 全部成功后才运行发布 job；Linux 全量质量门和版本检查也必须通过，才能上传 PyPI 并创建 GitHub Release。Windows ZIP 使用独立下载目录，避免混入 PyPI 的 `dist/`，最终附在同一个 GitHub Release。这个取舍会把 Windows 专属问题的发现时间延迟到发布阶段。
