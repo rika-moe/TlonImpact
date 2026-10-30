@@ -25,6 +25,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "aiofiles>=23.0.0",
     "filelock>=3.25.2",
+    "pywin32>=311; sys_platform == 'win32'",
     # Docker
     "docker>=6.0.0",
     # Server
@@ -139,7 +140,7 @@ exclude_lines = [
 
 [dependency-groups]
 dev = [
-    "pywin32>=311; sys_platform == 'win32'",
+    "types-pywin32>=311.0.0",
     "mypy>=1.19.1",
     "pre-commit>=4.5.1",
     "ruff>=0.15.4",

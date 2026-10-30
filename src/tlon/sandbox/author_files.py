@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import io
 import posixpath
+import stat
+import sys
 import tarfile
+from collections.abc import Iterator
 from pathlib import Path
+
+from tlon.sandbox.windows_paths import validate_windows_component
 
 
 def author_root(working_dir: str) -> str:
@@ -29,6 +34,14 @@ def is_author_path(path: str, working_dir: str) -> bool:
     return path == root or path.startswith(root + "/")
 
 
+def _reject_links(path: Path) -> None:
+    info = path.lstat()
+    if stat.S_ISLNK(info.st_mode) or (
+        getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+    ):
+        raise ValueError("Symbolic links and reparse points are not allowed in author materials")
+
+
 def author_path(path: str, working_dir: str) -> tuple[str, Path] | None:
     """Resolve only published files; reject links even within the resource tree."""
     candidate = posixpath.normpath(posixpath.join(working_dir, path))
@@ -37,10 +50,12 @@ def author_path(path: str, working_dir: str) -> tuple[str, Path] | None:
         if candidate == target or candidate.startswith(target + "/"):
             relative = candidate.removeprefix(target).lstrip("/")
             local = source
+            _reject_links(local)
             for component in relative.split("/") if relative else []:
+                if sys.platform == "win32":
+                    validate_windows_component(component)
                 local /= component
-                if local.is_symlink():
-                    raise ValueError("Symbolic links are not allowed in author material paths")
+                _reject_links(local)
             if not local.exists():
                 raise FileNotFoundError(candidate)
             return candidate, local
@@ -49,11 +64,17 @@ def author_path(path: str, working_dir: str) -> tuple[str, Path] | None:
 
 def author_archive(path: Path) -> bytes:
     """Reuse the existing archive listing/search implementation without a device."""
+
+    def entries(current: Path) -> Iterator[Path]:
+        # Check before descending: Windows junctions must never be traversed.
+        _reject_links(current)
+        yield current
+        if current.is_dir():
+            for child in sorted(current.iterdir()):
+                yield from entries(child)
+
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w") as archive:
-        entries = [path, *sorted(path.rglob("*"))] if path.is_dir() else [path]
-        for entry in entries:
-            if entry.is_symlink():
-                raise ValueError("Symbolic links are not allowed in author materials")
+        for entry in entries(path):
             archive.add(entry, arcname=str(entry.relative_to(path.parent)), recursive=False)
     return buffer.getvalue()

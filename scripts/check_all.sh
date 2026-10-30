@@ -12,6 +12,7 @@ want_unit=0
 want_integration=0
 want_windows_locks=0
 want_windows_smoke=0
+want_windows_workspace=0
 if [ $# -eq 0 ]; then
     want_static=1
     want_unit=1
@@ -23,8 +24,9 @@ else
             --unit) want_unit=1 ;;
             --integration) want_integration=1 ;;
             --windows-smoke) want_windows_smoke=1 ;;
+            --windows-workspace) want_windows_workspace=1 ;;
             --windows-locks) want_windows_locks=1 ;;
-            *) echo "未知参数: $arg（可用：--static --unit --integration --windows-locks --windows-smoke）" >&2; exit 2 ;;
+            *) echo "未知参数: $arg（可用：--static --unit --integration --windows-locks --windows-smoke --windows-workspace）" >&2; exit 2 ;;
         esac
     done
 fi
@@ -93,6 +95,19 @@ if [ "$want_windows_smoke" -eq 1 ]; then
         src/tests/server/test_serverapp_shutdown.py \
         src/tests/integration/test_subprocess_cleanup.py \
         src/tests/integration/test_mail_smoke.py
+fi
+
+if [ "$want_windows_workspace" -eq 1 ]; then
+    run "mypy-windows-workspace" uv run mypy --platform win32 \
+        src/tlon/sandbox/_windows_handles.py \
+        src/tlon/sandbox/workspace_files_windows.py \
+        src/tlon/sandbox/windows_paths.py
+    run "pytest-windows-workspace" uv run pytest -q \
+        src/tests/sandbox/test_windows_workspace_files.py \
+        src/tests/sandbox/test_workspace_files.py \
+        src/tests/sandbox/test_author_files.py \
+        src/tests/agents/test_assembly.py::test_workspace_operations_survive_unavailable_docker \
+        src/tests/integration/test_windows_workspace.py
 fi
 
 printf '\n\033[1m======== 质量门汇总 ========\033[0m\n'
