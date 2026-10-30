@@ -9,6 +9,8 @@ provider and paths, keeping the import direction agents → tools (the
 ports live in ``tlon.lifecycle.ports`` / ``tlon.evolution.ports``).
 """
 
+import asyncio
+import threading
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -66,6 +68,34 @@ if TYPE_CHECKING:
     from tlon.base.config import AgentInfoProvider
 
 logger = get_logger(__name__)
+
+
+async def _create_docker_runtime(config: AgentConfig, paths: TlonPaths) -> DockerRuntime:
+    """Probe Docker off-loop; cancellation retains ownership of a late client."""
+    ownership = threading.Lock()
+    abandoned = False
+    runtime: DockerRuntime | None = None
+
+    def construct() -> None:
+        nonlocal runtime
+        created = DockerRuntime(config.docker, config.id, paths)
+        with ownership:
+            if not abandoned:
+                runtime = created
+                return
+        created.close()
+
+    try:
+        await asyncio.to_thread(construct)
+    except asyncio.CancelledError:
+        with ownership:
+            abandoned = True
+            created, runtime = runtime, None
+        if created is not None:
+            created.close()
+        raise
+    assert runtime is not None
+    return runtime
 
 
 def _build_llm_config(file_config: LLMConfig | None, agent_id: str) -> LLMConfig:
@@ -146,7 +176,7 @@ async def assemble_member_services(
     else:
         try:
             docker_runtime = AuditedExecutionDevice(
-                DockerRuntime(config.docker, config.id, tlon_paths), agent_id=config.id
+                await _create_docker_runtime(config, tlon_paths), agent_id=config.id
             )
         except Exception as e:
             logger.warning("docker_unavailable", agent_name=config.name, error=str(e))

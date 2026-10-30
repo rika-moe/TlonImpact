@@ -62,26 +62,18 @@ def main(argv: list[str] | None = None, *, executable: Path | None = None) -> in
                 from tlon_launcher.portable_runtime import PortableRuntime
 
                 if args.headless:
-                    import faulthandler
-
                     runtime = PortableRuntime(
                         layout,
                         lease,
                         lambda event, value: None,
                         smoke_seconds=args.smoke_seconds,
                     )
-                    # Temporary frozen-CI diagnostic: stacks only, never locals.
-                    with (layout.control / "diagnostic-stacks.log").open("w") as stacks:
-                        faulthandler.dump_traceback_later(30, repeat=True, file=stacks)
-                        try:
-                            runtime.start()
-                            try:
-                                runtime.join()
-                            except KeyboardInterrupt:
-                                runtime.stop()
-                                runtime.join()
-                        finally:
-                            faulthandler.cancel_dump_traceback_later()
+                    runtime.start()
+                    try:
+                        runtime.join()
+                    except KeyboardInterrupt:
+                        runtime.stop()
+                        runtime.join()
                 elif sys.platform == "win32":
                     from tlon_launcher.portable_tray import Tray
 

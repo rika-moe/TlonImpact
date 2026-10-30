@@ -50,3 +50,5 @@ bash scripts/check_all.sh --windows-portable
 该分组执行 Windows 类型与单元检查，在不安装开发依赖的构建环境中使用 PyInstaller 目录模式打包，再运行真实 EXE 验收。输出为 `dist/windows-portable/Tlon-windows-x64.zip`，内容只有 `Tlon.exe` 和 `runtime/`；Windows CI 成功后将 ZIP 作为工作流产物上传。
 
 自动验收使用本机模拟模型服务验证实际 LiteLLM 请求和成员工作程序，不使用真实用户 API Key，也不表示外部服务商已人工验收。`--headless` 与 `--quit` 供自动验收管理进程；普通用户直接双击，无需命令行。
+
+成员装配时的 Docker 连接探测在工作线程执行，避免不可用的 Docker 地址阻塞网页及实例控制；装配取消时仍会回收随后建立的客户端。冻结包测试以不存在的 Windows named pipe 模拟未安装 Docker，慢连接与取消行为由独立回归测试覆盖。

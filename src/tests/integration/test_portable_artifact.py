@@ -54,15 +54,6 @@ def _snapshot(root: Path) -> dict[str, tuple[int, int]]:
     }
 
 
-def _diagnostic_stacks(data: Path) -> str:
-    # Temporary faulthandler-only channel: stack paths/functions, never locals,
-    # request payloads, instance secrets or arbitrary application log contents.
-    path = data / ".portable/diagnostic-stacks.log"
-    if not path.exists():
-        return "No headless diagnostic stack was captured"
-    return path.read_text(encoding="utf-8", errors="replace")[-16000:]
-
-
 def _ready(process: subprocess.Popen[bytes], data: Path, health_url: str | None = None) -> str:
     from tlon_launcher.portable_instance import request_existing
 
@@ -208,7 +199,7 @@ def test_shipped_executable_mail_and_relocation(
         TLON_HOME=str(outside),
         OPENAI_API_BASE=mock_model[0],
         DEEPSEEK_API_KEY="",
-        DOCKER_HOST="tcp://127.0.0.1:1",
+        DOCKER_HOST=f"npipe:////./pipe/tlon-portable-absent-{uuid.uuid4().hex}",
     )
     # A clean EXE must not resolve Python/uv/Node/Docker from developer PATH.
     env["PATH"] = str(Path(os.environ["SYSTEMROOT"]) / "System32")
@@ -225,7 +216,7 @@ def test_shipped_executable_mail_and_relocation(
             assert _request(base + "/health")
             try:
                 duplicate = subprocess.run(
-                    [str(executable), "--headless"], cwd=cwd, env=env, timeout=45, check=False
+                    [str(executable), "--headless"], cwd=cwd, env=env, timeout=30, check=False
                 )
             except subprocess.TimeoutExpired:
                 # Report only availability, never secret state or service logs.
@@ -327,9 +318,6 @@ def test_shipped_executable_mail_and_relocation(
                 mail.content == "frozen-member-reply" for mail in store.mails("human:portable-user")
             )
             _stop(executable, process, cwd, port)
-        except BaseException:
-            print(_diagnostic_stacks(data))
-            raise
         finally:
             if process.poll() is None:
                 with suppress(subprocess.TimeoutExpired):

@@ -26,7 +26,9 @@ hidden += collect_submodules(
     ), on_error="warn once",
 )
 hidden += collect_submodules("tiktoken_ext")
-hidden += ["win32timezone", "win32gui", "win32api", "win32con", "win32file"]
+hidden += ["win32timezone", "win32gui", "win32api", "win32con", "win32file",
+           "win32event", "win32pipe", "docker.transport.npipeconn",
+           "docker.transport.npipesocket"]
 a = Analysis(
     [str(root / "scripts/portable/entry.py")],
     pathex=[str(root / "src")],
