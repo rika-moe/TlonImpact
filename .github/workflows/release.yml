@@ -14,10 +14,10 @@ jobs:
       contents: write # actions/checkout 拉取 + gh release create 建 Release（显式 permissions 会把未列出的降为 none）
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
 
@@ -28,9 +28,9 @@ jobs:
         run: uv sync --group dev
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
 
       # TS 门禁要求两端 node_modules（check_all.sh 的 ts_run 契约：CI 恒执行）
       - name: Install TS dependencies

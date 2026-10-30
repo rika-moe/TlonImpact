@@ -77,5 +77,9 @@ tlon dream
 
 WebUI 之外还有两个客户端，面向源码开发者，需 `git clone` 仓库后使用（见 [AGENTS.md](../../AGENTS.md)）：
 
-- **Operator TUI**（`uv run tlon ops`）：终端运维控制台，邮件主界面 + 成员/原型管理，需 Node ≥ 22 构建（`cd apps/operator && npm install && npm run build`）。
+- **Operator TUI**（`uv run tlon ops`）：终端运维控制台，邮件主界面 + 成员/原型管理，需 Node ≥ 24 构建（`cd apps/operator && npm install && npm run build`）。
 - **Telegram bot**（`uv run tlon telegram`）：手机收发邮件，需 `uv sync --extra telegram` 并在 `.env` 配 `TELEGRAM_BOT_TOKEN` / `TELEGRAM_ALLOWED_USERS`。
+
+## 前端开发环境
+
+WebUI 与 Operator 的开发、构建和 CI 基线统一为 Node.js 24，两个包声明 Node ≥ 24 并使用 24.x 的 Node 类型定义。普通用户访问已构建的 WebUI 不需要安装 Node。GitHub Actions 自身的运行时由 Action 版本决定，与 `setup-node` 为项目安装的版本分别维护。
