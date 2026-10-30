@@ -1,10 +1,7 @@
 name: Windows
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_call:
 
 jobs:
   catalogs:
@@ -66,3 +63,17 @@ jobs:
           name: Tlon-windows-x64
           path: dist/windows-portable/Tlon-windows-x64.zip
           if-no-files-found: error
+
+  windows-smoke:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+      - run: uv python install
+      - run: uv sync --group dev
+      - run: bash scripts/check_all.sh --windows-smoke
