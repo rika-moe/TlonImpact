@@ -1,10 +1,11 @@
 """Publish a complete staging package with a single directory rename."""
 
-import fcntl
 import os
 from collections.abc import Mapping
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
+from tlon.base.directory_lock import directory_lock
 
 
 def publish_directory(target: Path, files: Mapping[str, str | bytes]) -> None:
@@ -24,13 +25,8 @@ def publish_directory(target: Path, files: Mapping[str, str | bytes]) -> None:
                 stream.write(content.encode("utf-8") if isinstance(content, str) else content)
                 stream.flush()
                 os.fsync(stream.fileno())
-        directory_fd = os.open(target.parent, os.O_RDONLY)
-        try:
+        with directory_lock(target.parent):
             # Serialize the short check+publication window across processes.
-            # The directory itself is the lock; no stale lockfiles survive a crash.
-            fcntl.flock(directory_fd, fcntl.LOCK_EX)
             if target.exists():
                 raise FileExistsError(f"staging package '{target.name}' already exists")
             package.rename(target)
-        finally:
-            os.close(directory_fd)

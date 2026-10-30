@@ -86,7 +86,7 @@ def test_digest_covers_each_material(tmp_path: Path, path: str) -> None:
     paths, name = _stage(tmp_path)
     before = read_prototype(name, tlon_paths=paths)["digest"]
     material = paths.prototypes_staging_dir() / name / path
-    material.write_text(material.read_text() + "\n", encoding="utf-8")
+    material.write_text(material.read_text(encoding="utf-8") + "\n", encoding="utf-8")
     assert read_prototype(name, tlon_paths=paths)["digest"] != before
     with pytest.raises(PrototypeError, match="digest changed"):
         read_prototype(name, tlon_paths=paths, path=path, digest=before)
@@ -100,7 +100,7 @@ def test_review_excluded_from_digest_and_idempotent(tmp_path: Path) -> None:
     first = _submit(paths, name)
     assert _submit(paths, name) == first
     assert read_prototype(name, tlon_paths=paths)["digest"] == before
-    text = (paths.prototypes_staging_dir() / name / "REVIEW.md").read_text()
+    text = (paths.prototypes_staging_dir() / name / "REVIEW.md").read_text(encoding="utf-8")
     assert text.count("<!-- tlon-review-receipt ") == 1
     with pytest.raises(PrototypeError, match="different arguments"):
         _submit(paths, name, reason="不同意见")
@@ -175,7 +175,7 @@ def test_concurrent_writes_preserve_receipts(tmp_path: Path) -> None:
         receipts = list(pool.map(lambda index: _submit(paths, name, call_id=str(index)), range(20)))
     for receipt in receipts:
         assert _submit(paths, name, call_id=receipt["call_id"]) == receipt
-    text = (paths.prototypes_staging_dir() / name / "REVIEW.md").read_text()
+    text = (paths.prototypes_staging_dir() / name / "REVIEW.md").read_text(encoding="utf-8")
     assert text.count("<!-- tlon-review-receipt ") == 20
 
 
@@ -284,7 +284,7 @@ def test_human_decision_waits_for_review_commit(
         receipt = write.result(timeout=5)
         decision.result(timeout=5)
     if action == "approve":
-        text = (paths.prototypes_dir() / name / "REVIEW.md").read_text()
+        text = (paths.prototypes_dir() / name / "REVIEW.md").read_text(encoding="utf-8")
         assert receipt["digest"] in text
         assert "Run: `run`" in text and "Call: `call`" in text
     else:
