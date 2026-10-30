@@ -344,16 +344,66 @@ def builtin_assert(env: dict[str, Any], condition: Any, message: str) -> Any:
     return condition
 
 
+JSON_MAX_NODES = 100_000
+JSON_MAX_BYTES = 1_048_576
+JSON_MAX_DEPTH = 100
+
+
 def builtin_json_encode(env: dict[str, Any], value: Any) -> str:
     """Encode strict JSON data, accepting EDN keywords only as object keys."""
     active: set[int] = set()
+    nodes = 0
+    output_bytes = 0
+
+    def charge(size: int) -> None:
+        nonlocal output_bytes
+        if size > JSON_MAX_BYTES - output_bytes:
+            raise EvalError(f"JSON output exceeds {JSON_MAX_BYTES} UTF-8 bytes")
+        output_bytes += size
+
+    def charge_string(item: str) -> None:
+        # Count before allocating escaped text or UTF-8 copies.
+        charge(2)
+        for char in item:
+            code = ord(char)
+            if 0xD800 <= code <= 0xDFFF:
+                raise EvalError("JSON strings must contain valid Unicode scalar values")
+            if char in '"\\\b\f\n\r\t':
+                charge(2)
+            elif code < 0x20:
+                charge(6)
+            else:
+                charge(1 if code < 0x80 else 2 if code < 0x800 else 3 if code < 0x10000 else 4)
 
     def normalize(item: Any, depth: int) -> Any:
-        if depth > 100:
-            raise EvalError("JSON nesting exceeds 100")
-        if item is None or type(item) in (str, bool, int):
+        nonlocal nodes
+        if depth > JSON_MAX_DEPTH:
+            raise EvalError(f"JSON nesting exceeds {JSON_MAX_DEPTH}")
+        nodes += 1
+        if nodes > JSON_MAX_NODES:
+            raise EvalError(f"JSON expansion exceeds {JSON_MAX_NODES} nodes")
+        if item is None:
+            charge(4)
+            return item
+        if type(item) is bool:
+            charge(4 if item else 5)
+            return item
+        if type(item) is str:
+            charge_string(item)
+            return item
+        if type(item) is int:
+            # Decimal-digit lower bound: reject impossible output sizes before
+            # conversion. Retain Python's decimal conversion guard as well.
+            minimum_digits = max(1, (item.bit_length() - 1) * 30102 // 100000 + 1)
+            if minimum_digits + (item < 0) > JSON_MAX_BYTES - output_bytes:
+                raise EvalError(f"JSON output exceeds {JSON_MAX_BYTES} UTF-8 bytes")
+            try:
+                charge(len(str(item)))
+            except ValueError as error:
+                raise EvalError("JSON integer exceeds decimal conversion limit") from error
             return item
         if type(item) is float and math.isfinite(item):
+            charge(len(json.dumps(item, allow_nan=False)))
             return item
         if type(item) not in (list, dict):
             raise EvalError(f"not a JSON value: {type(item).__name__}")
@@ -362,16 +412,19 @@ def builtin_json_encode(env: dict[str, Any], value: Any) -> str:
             raise EvalError("cyclic JSON value")
         active.add(identity)
         try:
+            charge(2 + max(0, len(item) - 1))
             if type(item) is list:
                 return [normalize(child, depth + 1) for child in item]
             result: dict[str, Any] = {}
             for key, child in item.items():
+                if type(key) not in (str, Keyword):
+                    raise EvalError("JSON object keys must be strings or keywords")
+                charge_string(key)
+                charge(1)  # colon
                 if type(key) is Keyword:
                     key = str(key)
-                if type(key) is not str:
-                    raise EvalError("JSON object keys must be strings or keywords")
                 if key in result:
-                    raise EvalError(f"duplicate normalized JSON key: {key}")
+                    raise EvalError("duplicate normalized JSON key")
                 result[key] = normalize(child, depth + 1)
             return result
         finally:

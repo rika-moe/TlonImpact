@@ -188,3 +188,13 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 ## 纯数据校验与 JSON 编码
 
 `(integer? value)` 仅对整数返回 true，布尔和浮点数返回 false。`(assert condition message)` 在条件为假时抛 EvalError，否则返回条件值。`(json-encode value)` 用标准 JSON 编码严格数据，接受字符串/有限数字/布尔/nil、列表和 map，Keyword 仅可用作 map key；拒绝符号、代码 Form、NaN、归一化冲突键、循环和超过 100 层的嵌套。这些词没有宿主效果，不能用来执行字符串代码。
+
+### 资源规模硬上限（ADR 0054）
+
+EDN 的 `loads` / `loads_all` 每次最多接受 1,048,576 个源码字符、100,000 个值节点和 100 层容器；每张 map 最多 256 对键值，重复键也计数。`loads_all` 的顶层 form 共用节点预算。检查在解析或插入超额内容之前执行，超限抛带位置的 `EDNParseError`。缓存不放宽限制，整数键仍合法。
+
+`json-encode` 最多展开 100,000 个值节点，输出最多 1,048,576 UTF-8 字节（包含键、转义和标点），保留原有 100 层深度限制。合法共享引用每次出现分别计数，超限抛 `EvalError`；输出大小在完整序列化之前检查。
+
+这些是独立于 evaluator fuel 的语言级固定限制，没有成员配置或无限制开关，也不表示其他 builtin 已有统一内存限制。决策与阈值依据见 [ADR 0054](../decisions/0054-tlosure-resource-limits.md)。
+
+JSON 字符串及键必须可编码为 UTF-8，拒绝孤立 surrogate 并抛 `EvalError`；整数十进制转换仍受 Python 自身限制，转换失败统一为 `EvalError`。

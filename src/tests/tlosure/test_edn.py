@@ -282,8 +282,9 @@ class TestRoundtrip:
 
 
 class TestDeepNesting:
-    def test_deeply_nested_vectors_parse(self):
-        depth = 150
+    def test_deeply_nested_vectors_parse(self) -> None:
+        # ADR 0054 makes 100 container levels the supported parsing boundary.
+        depth = 100
         value = loads("[" * depth + "1" + "]" * depth)
         for _ in range(depth):
             assert isinstance(value, list)
@@ -291,8 +292,9 @@ class TestDeepNesting:
             value = value[0]
         assert value == 1
 
-    def test_deeply_nested_forms_parse(self):
-        depth = 150
+    def test_deeply_nested_forms_parse(self) -> None:
+        # ADR 0054 makes 100 container levels the supported parsing boundary.
+        depth = 100
         value = loads("(" * depth + ")" * depth)
         assert isinstance(value, Form)
         inner: Any = value
