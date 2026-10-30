@@ -75,7 +75,7 @@ async def test_real_cli_cleanup_releases_listener(
     from urllib.parse import urlsplit
 
     stop = conftest._stop_server_process
-    wait_ready = conftest._wait_ready
+    captured: list[str] = []
     stopped: list[int | None] = []
 
     async def verify_stop(
@@ -85,24 +85,15 @@ async def test_real_cli_cleanup_releases_listener(
         stopped.append(tree.proc.returncode)
         assert "server_stopped" in output(), output()
 
-    async def verify_ready(
-        url: str, proc: asyncio.subprocess.Process, output: Callable[[], str]
-    ) -> None:
-        await wait_ready(url, proc, output)
-        # Inspect before identity seeding pushes the banner out of the diagnostic tail.
-        async with asyncio.timeout(3.0):
-            while "🐙 Tlon dream is running" not in output():
-                await asyncio.sleep(0.01)
-
-    monkeypatch.setattr(conftest, "_wait_ready", verify_ready)
     monkeypatch.setattr(conftest, "_stop_server_process", verify_stop)
     env = {"PYTHONIOENCODING": encoding} if encoding else None
-    async with conftest._run_server(extra_env=env) as (url, _):
+    async with conftest._run_server(extra_env=env, capture_output=captured) as (url, _):
         port = urlsplit(url).port
         assert port is not None
         with socket.create_connection(("127.0.0.1", port), timeout=1.0):
             pass
     assert stopped == [0]
+    assert "🐙 Tlon dream is running" in "".join(captured)
     with socket.socket() as probe:
         probe.settimeout(0.2)
         assert probe.connect_ex(("127.0.0.1", port)) != 0

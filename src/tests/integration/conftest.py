@@ -133,6 +133,8 @@ async def _stop_server_process(
 @asynccontextmanager
 async def _run_server(
     extra_env: dict[str, str] | None = None,
+    *,
+    capture_output: list[str] | None = None,
 ) -> AsyncGenerator[tuple[str, Path]]:
     """Boot a real ``tlon dream`` subprocess with an isolated TLON_HOME.
 
@@ -142,7 +144,7 @@ async def _run_server(
     can report what the server said.
     """
     port = _free_port()
-    output: list[str] = []
+    output: list[str] = capture_output if capture_output is not None else []
 
     def _server_output() -> str:
         return "".join(output[-200:])
