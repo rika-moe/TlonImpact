@@ -20,6 +20,7 @@ from tlon_server.serverapp import ServerApp
 from .conftest import WEBUI_HEADERS, _initialize_identity
 
 
+@pytest.mark.full_initial_society
 async def test_first_setup_replaces_booted_models_before_first_reply(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

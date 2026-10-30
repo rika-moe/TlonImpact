@@ -68,6 +68,7 @@ architecture 区分规范与当前实现；design 负责当前领域模型和机
 | [operations-reference](reference/operations-reference.md) | P1–P6 共享操作契约、双入口、宿主领域与调用恢复 |
 | [api-reference](reference/api-reference.md) | REST/SSE 端点、字段、错误与事件 |
 | [quickstart](guides/quickstart.md) | 安装、启动、创建成员与发信 |
+| [integration-tests](guides/integration-tests.md) | 最小成员集成测试与完整社会验收边界 |
 | [writing-a-prototype](guides/writing-a-prototype.md) | 编写一个行为原型 |
 
 ## 维护约定

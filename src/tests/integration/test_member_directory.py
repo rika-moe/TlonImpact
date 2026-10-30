@@ -29,11 +29,28 @@ async def test_member_directory_matches_delivery_offline_and_after_restart(tmp_p
     async with _server(tmp_path) as (url, app):
         assert app._runtime is not None
         runtime = app._runtime
-        seeded_ids = set(runtime.members.list_ids())
+        assert runtime.members.list_ids() == []
+        # Keep a real non-retired member across restart; empty directory checks
+        # would lose the original durable-discovery coverage.
+        async with (
+            aiohttp.ClientSession(headers=WEBUI_HEADERS) as http,
+            http.post(
+                f"{url}/admin/config/agents",
+                json={
+                    "prototype": builtin_id("计划后执行"),
+                    "name": "Carol",
+                    "model": "openai/gpt-test",
+                },
+            ) as response,
+        ):
+            assert response.status == 200
+            carol_id = (await response.json())["agent_id"]
+        baseline_ids = set(runtime.members.list_ids())
         baseline = (
             await _directory_tool(directory=runtime.agent_registry).execute_context({})
         ).data
-        assert len(seeded_ids) == 30
+        assert baseline_ids == {carol_id}
+        assert any(member["id"] == carol_id for member in baseline)
         async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
             async with http.post(
                 f"{url}/admin/config/agents",
@@ -66,7 +83,7 @@ async def test_member_directory_matches_delivery_offline_and_after_restart(tmp_p
             assert report["scanned_count"] == len(result.data)
             assert report["failed_members"] == []
             # Merely listing the unified directory does not change lifecycle targets.
-            assert set(runtime.agent_registry.get_all_ids()) == seeded_ids | {bob_id}
+            assert set(runtime.agent_registry.get_all_ids()) == baseline_ids | {bob_id}
             receipt = await _send_mail(http, url, "directory address is deliverable", to=["alice"])
             assert _read_inbox(tmp_path, "human:alice")[0]["id"] == receipt["mail_id"]
         await asyncio.to_thread(runtime.post_office.store.retire, bob_id)

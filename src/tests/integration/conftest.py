@@ -12,6 +12,10 @@ Two server fixtures, two jobs:
 
 Helpers cover the common flows: waiting on conditions, asserting mail
 delivery, and reading a member's SQLite inbox.
+
+In-process tests create only their own members. Tests of the initial
+society opt into full_initial_society; real CLI subprocesses always keep
+the production bootstrap path.
 """
 
 import asyncio
@@ -42,6 +46,20 @@ SERVER_KILL_TIMEOUT = 5.0
 logger = logging.getLogger(__name__)
 TEST_MODEL_OUTPUT_TOKENS = 8192
 TEST_MODEL_CONTEXT_WINDOW = 32768
+
+
+@pytest.fixture(autouse=True)
+def minimal_initial_society(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep real runtime assembly, without unrelated members in ordinary tests."""
+    if request.node.get_closest_marker("full_initial_society") is not None:
+        return
+
+    def skip_initial_members(paths: TlonPaths) -> int:
+        return 0
+
+    monkeypatch.setattr("tlon.agents.bootstrap.seed_initial_society", skip_initial_members)
 
 
 @pytest.fixture(autouse=True)

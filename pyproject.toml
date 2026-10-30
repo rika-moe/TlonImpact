@@ -121,6 +121,9 @@ minversion = "7.0"
 testpaths = ["src/tests"]
 asyncio_mode = "auto"
 addopts = "-v --tb=short"
+markers = [
+    "full_initial_society: retain the real 30-member seed in integration tests",
+]
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
