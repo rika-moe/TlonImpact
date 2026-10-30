@@ -7,8 +7,7 @@ superseded once bounded loops entered the language — and again by
 ADR 0021, which gave the language full function capability):
 
 - special forms are a closed whitelist: ``if`` / ``when`` / ``let`` /
-  ``and`` / ``or`` / ``while`` / ``recur`` / ``map`` / ``filter`` /
-  ``reduce`` / ``defn`` / ``fn`` — no ``def``, no macros, no mutable
+  ``and`` / ``or`` / ``while`` / ``recur`` / ``defn`` / ``fn`` — no ``def``, no macros, no mutable
   global state. ``defn`` defines a named function anywhere a body form
   is allowed (the name is bound into the *current* environment dict, so
   recursion and later sibling forms both resolve it); ``fn`` evaluates
@@ -23,11 +22,10 @@ ADR 0021, which gave the language full function capability):
   tail position (``if`` branches, trailing ``when``/``let`` bodies, and
   the final ``and``/``or`` argument inherit tail position). ``recur``
   never crosses a function boundary: applying a closure clears the
-  enclosing loop context for the duration of the call. ``map`` /
-  ``filter`` / ``reduce`` iterate a vector with an explicitly bound
-  element variable (no lambda needed; closures also compose with them).
-  Every iteration is still metered — each step consumes one fuel unit —
-  so every loop is bounded by fuel;
+  enclosing loop context for the duration of the call. Ordinary collection
+  functions ``map`` / ``filter`` / ``reduce`` request callbacks through
+  the same kernel; each callback application consumes one fuel unit,
+  in addition to evaluating its body;
 - every other form head must name a registered :class:`Builtin` or
   resolve to a :class:`Closure` in the environment — a Symbol head
   resolves special form → environment → builtin registry, in that order;
@@ -87,13 +85,15 @@ from typing import Any
 from tlosure.builtins import (
     Builtin,
     BuiltinCall,
+    BuiltinFunction,
     Closure,
     EvalDepthError,
     EvalError,
     FuelExhaustedError,
+    FunctionCall,
 )
 from tlosure.edn import Form, Symbol, dumps
-from tlosure.validate import _binding_names, _params, validate_form
+from tlosure.validate import SPECIAL_FORMS, _binding_names, _params, validate_form
 
 __all__ = [
     "DEFAULT_FUEL",
@@ -114,24 +114,6 @@ __all__ = [
 DEFAULT_FUEL = 1000
 DEFAULT_MAX_DEPTH = 100
 MAX_FUEL = 10000
-
-SPECIAL_FORMS = frozenset(
-    {
-        "quote",
-        "if",
-        "when",
-        "let",
-        "and",
-        "or",
-        "while",
-        "recur",
-        "map",
-        "filter",
-        "reduce",
-        "defn",
-        "fn",
-    }
-)
 
 
 class _Recur(Exception):  # noqa: N818 — a control-flow signal, not an error
@@ -308,9 +290,11 @@ class Evaluator:
             return (yield from self._eval_form(value, env, depth))
         if isinstance(value, Symbol):
             name = str(value)
-            if name not in env:
-                raise EvalError(f"undefined symbol: {name}")
-            return env[name]
+            if name in env:
+                return env[name]
+            if name in self._builtins and name not in SPECIAL_FORMS:
+                return BuiltinFunction(name, self._builtins[name])
+            raise EvalError(f"undefined symbol: {name}")
         if isinstance(value, list):
             items: list[Any] = []
             for item in value:
@@ -331,50 +315,76 @@ class Evaluator:
         if not form:
             raise EvalError("cannot evaluate empty form ()")
         head = form[0]
-        if not isinstance(head, Symbol):
-            # A Form head is a function-valued expression applied to the
-            # arguments, e.g. ((fn [x] (inc x)) 5); anything else is a
-            # shape error.
-            if not isinstance(head, Form):
-                raise EvalError(f"form head must be a symbol, got {dumps(head)}")
-            fn_value = yield from self._eval(head, env, depth + 1)
-            if not isinstance(fn_value, Closure):
-                raise EvalError(f"form head is not callable: {dumps(head)}")
-            args = yield from self._eval_values(form[1:], env, depth)
-            return (yield from self._apply(fn_value, args, depth))
-        name = str(head)
-        if name in SPECIAL_FORMS:
-            return (yield from self._eval_special(name, form, env, depth))
-        if name in env:
-            # Environment bindings shadow builtins (ADR 0021 head
-            # resolution: special form → env Closure → builtin).
-            bound = env[name]
-            if not isinstance(bound, Closure):
-                raise EvalError(f"{name} is not callable (in form {dumps(form)})")
-            args = yield from self._eval_values(form[1:], env, depth)
-            return (yield from self._apply(bound, args, depth))
-        builtin = self._builtins.get(name)
-        if builtin is None:
-            raise EvalError(f"unknown function: {name} (in form {dumps(form)})")
+        if isinstance(head, Symbol) and str(head) in SPECIAL_FORMS:
+            return (yield from self._eval_special(str(head), form, env, depth))
+        if isinstance(head, Symbol):
+            name = str(head)
+            if name in env:
+                target = env[name]
+            elif name in self._builtins:
+                target = BuiltinFunction(name, self._builtins[name])
+            else:
+                raise EvalError(f"unknown function: {name} (in form {dumps(form)})")
+        elif isinstance(head, Form):
+            target = yield from self._eval(head, env, depth + 1)
+        else:
+            raise EvalError(f"form head must be a symbol, got {dumps(head)}")
+        if not isinstance(target, (Closure, BuiltinFunction)):
+            raise EvalError(f"{dumps(head)} is not callable (in form {dumps(form)})")
         args = yield from self._eval_values(form[1:], env, depth)
+        return (yield from self._call(target, args, env, depth))
+
+    def _call(
+        self, target: Closure | BuiltinFunction, args: list[Any], env: dict[str, Any], depth: int
+    ) -> Generator[BuiltinCall, Any, Any]:
+        """Apply any language function, including requested callbacks."""
+        if depth > self._max_depth:
+            raise EvalDepthError(f"evaluation depth exceeds {self._max_depth} at function call")
+        if isinstance(target, Closure):
+            return (yield from self._apply(target, args, depth))
+        name, builtin = target.name, target.builtin
         if builtin.closure is not None:
-            # Data-defined word (closure-backed entry): applied like any
-            # closure — the body draws fuel and depth from this run,
-            # unlike a host builtin's unmetered internals.
             return (yield from self._apply(builtin.closure, args, depth))
         fn = builtin.fn
-        assert fn is not None  # Builtin.__post_init__: exactly one of fn / closure
+        assert fn is not None
         if not builtin.pure:
             return (yield BuiltinCall(name=name, builtin=builtin, args=args, env=env, depth=depth))
         token = _CURRENT_EVALUATION.set((self, depth))
         try:
-            return fn(env, *args)
+            result = fn(env, *args)
         except EvalError:
             raise
-        except Exception as e:
-            raise EvalError(f"{name} failed: {e} (in form {dumps(form)})") from e
+        except Exception as error:
+            raise EvalError(f"{name} failed: {error}") from error
         finally:
             _CURRENT_EVALUATION.reset(token)
+        if not isinstance(result, Generator):
+            return result
+        response: Any = None
+        try:
+            while True:
+                token = _CURRENT_EVALUATION.set((self, depth))
+                try:
+                    request = result.send(response)
+                except StopIteration as done:
+                    return done.value
+                except EvalError:
+                    raise
+                except Exception as error:
+                    raise EvalError(f"{name} failed: {error}") from error
+                finally:
+                    _CURRENT_EVALUATION.reset(token)
+                if not isinstance(request, FunctionCall):
+                    raise EvalError(f"{name} yielded an invalid function call")
+                self._fuel.remaining -= 1
+                if self._fuel.remaining < 0:
+                    raise FuelExhaustedError(
+                        f"fuel exhausted (budget {self._budget}) while applying callback",
+                        budget=self._budget,
+                    )
+                response = yield from self._call(request.target, request.args, env, depth + 1)
+        finally:
+            result.close()
 
     def _apply(
         self, closure: Closure, args: list[Any], depth: int
@@ -506,42 +516,6 @@ class Evaluator:
                 raise EvalError("fn expects a parameter vector and at least one body form")
             params, rest = _params(args[0], "fn")
             return Closure(params=params, rest=rest, body=list(args[1:]), env=env)
-        if name in ("map", "filter"):
-            if len(args) != 3:
-                raise EvalError(f"{name} expects a binding, a body, and a collection")
-            binder = args[0]
-            if not isinstance(binder, Symbol):
-                raise EvalError(f"{name} binding must be a symbol, got {dumps(binder)}")
-            coll = yield from self._eval(args[2], env, depth + 1)
-            if isinstance(coll, Form) or not isinstance(coll, list):
-                raise EvalError(f"{name} expects a vector collection, got {dumps(coll)}")
-            body = args[1]
-            out: list[Any] = []
-            for item in coll:
-                item_env = dict(env)
-                item_env[str(binder)] = item
-                value = yield from self._eval(body, item_env, depth + 1)
-                if name == "map":
-                    out.append(value)
-                elif value:
-                    out.append(item)
-            return out
-        if name == "reduce":
-            if len(args) != 5:
-                raise EvalError("reduce expects accumulator, element, body, init, and collection")
-            acc_name, x_name = args[0], args[1]
-            if not isinstance(acc_name, Symbol) or not isinstance(x_name, Symbol):
-                raise EvalError("reduce bindings must be symbols")
-            acc = yield from self._eval(args[3], env, depth + 1)
-            coll = yield from self._eval(args[4], env, depth + 1)
-            if isinstance(coll, Form) or not isinstance(coll, list):
-                raise EvalError(f"reduce expects a vector collection, got {dumps(coll)}")
-            for item in coll:
-                item_env = dict(env)
-                item_env[str(acc_name)] = acc
-                item_env[str(x_name)] = item
-                acc = yield from self._eval(args[2], item_env, depth + 1)
-            return acc
         raise EvalError(f"unknown special form: {name}")
 
     def _eval_bindings(

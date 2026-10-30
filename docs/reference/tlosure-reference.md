@@ -34,10 +34,10 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 
 ### 2.1 特殊形式（封闭白名单 `SPECIAL_FORMS`）
 
-无 `def`、无宏、无可变全局状态；除下列形式外，form 头必须解析为环境中的闭包（用户函数）或已注册的 builtin 名（分辨顺序：特殊形式 → env → builtin）。`defn` / `fn` 是 [ADR 0021](../decisions/0021-tlosure-full-functions.md) 引入的完整函数能力，语义见 §2.1.1。
+无 `def`、无宏、无可变全局状态；除下列形式外，form 头必须解析为函数值（闭包或注册表函数）（分辨顺序：特殊形式 → env → builtin）。`defn` / `fn` 是 [ADR 0021](../decisions/0021-tlosure-full-functions.md) 引入的完整函数能力，语义见 §2.1.1。
 
 <!-- BEGIN GENERATED: dsl-special-forms -->
-封闭白名单（13 个）：`quote`、`if`、`when`、`let`、`and`、`or`、`while`、`recur`、`map`、`filter`、`reduce`、`defn`、`fn`。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+封闭白名单（10 个）：`quote`、`if`、`when`、`let`、`and`、`or`、`while`、`recur`、`defn`、`fn`。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 <!-- END GENERATED: dsl-special-forms -->
 
 | 形式 | 形状 | 语义 |
@@ -49,9 +49,6 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 | `and` / `or` | `(and a...)` / `(or a...)` | 短路；`and` 返回第一个假值或末值，`or` 返回第一个真值或 `nil` |
 | `while` | `(while [name init ...] test body...)` | Clojure 风格有界循环：test 为假结束（返回 `nil`），body 末值即循环值；迭代靠 `recur` |
 | `recur` | `(recur v...)` | 只能出现在**最近一层 `while` 的尾位置**（`if` 分支、`when`/`let` 末尾 body、`and`/`or` 末参数继承尾位置）；参数个数须等于 `while` 绑定数；参数先在旧环境求值再同时重绑 |
-| `map` | `(map x body coll)` | 对向量逐元素绑定 `x` 求值 body，收集结果向量。**注意参数顺序是绑定、body、集合** |
-| `filter` | `(filter x body coll)` | 同上，收集 body 为真的元素本身 |
-| `reduce` | `(reduce acc x body init coll)` | 五个参数：累加器名、元素名、body、初值、集合 |
 | `defn` | `(defn name [params] body...)` | 在当前环境定义命名函数（任意 body 位置，不限顶层），返回闭包本身；详见 §2.1.1 |
 | `fn` | `(fn [params] body...)` | 匿名闭包值，不绑定名字；详见 §2.1.1 |
 
@@ -63,18 +60,39 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 
 - **定义**：`(defn name [params] body...)` 把闭包绑定进当前环境 dict——名字在定义体内立即可见（递归由此成立），同一 body 的后续兄弟 form 也可见（`let`/`when`/`while` body 同理）。`defn` 表达式的值是闭包本身。
 - **闭包捕获**：`(fn [params] body...)` 求值为 `Closure` 值，按引用捕获定义处环境。`(let [base 10] ((fn [x] (+ base x)) 5))` → `15`。函数体引用宿主 env 的 `msg`/`event`/`self` 等绑定与在顶层无异。
-- **应用**：Symbol 头按「特殊形式 → env → builtin」顺序分辨，env 里的闭包优先于同名 builtin；头也可以是 Form（先求值，必须是闭包）：`((fn [x] (inc x)) 5)` → `6`。env 里解析到非闭包值报 `... is not callable`。
+- **应用**：Symbol 头按「特殊形式 → env → builtin」顺序分辨，env 里的函数值优先于同名 builtin；头也可以是 Form（先求值，必须是函数值）：`((fn [x] (inc x)) 5)` → `6`。env 里解析到非函数值报 `... is not callable`。
 - **参数向量**：`[a b]` 定参，应用时实参个数必须恰等；`[a b & rest]` 变长，`&` 恰在倒数第二位、后随一个符号，多余实参收进 `rest` 向量（无多余时是 `[]`），实参数不得少于定参数。元数不符报 `EvalError`（带函数名）。
 - **递归**：直接自引用（`(defn fact [n] (if (< n 2) 1 (* n (fact (dec n)))))`）。深层递归撞 `max_depth`（`EvalDepthError`），指数扇出撞 fuel（`FuelExhaustedError`）——终止性仍由两道闸保证。
 - **`recur` 不跨函数边界**（Clojure 语义）：进入函数应用时保存并清空 enclosing loop 上下文，退出时恢复；函数体内的 `recur` 报「recur outside while」，外层 `while` 在函数返回后继续正常工作。静态校验镜像同一规则（fn/defn body 以无 enclosing loop 校验）。
 - **静态校验的作用域规则是「先定义后使用」**：body 按序穿线，`defn` 的名字只对其后的兄弟 form 可见；`defn` 体内引用后定义的兄弟函数在加载期被拒（尽管按引用捕获在运行期能解析）。
 - **函数体可组合效果调用**：异步驱动在非纯宿主 builtin 的调用处暂停并交出 `BuiltinCall`，宿主返回实际结果后继续求值。闭包和普通表达式使用相同的调用边界。
 
-### 2.1.2 注册表里的闭包词（closure-backed builtin）
+### 2.1.2 集合高阶函数
+
+`map`、`filter`、`reduce` 是普通注册表函数，不是特殊形式。所有参数先正常求值；函数和集合也可以由表达式返回。
+
+| 函数 | 调用 | 结果 |
+|---|---|---|
+| `map` | `(map f coll)` | 对向量逐项调用单参函数 `f`，立即返回结果向量 |
+| `filter` | `(filter pred coll)` | 逐项调用 `pred`，保留结果为真的原元素，返回向量 |
+| `reduce` | `(reduce f init coll)` | 从 `init` 开始，依次调用 `(f accumulator item)`，返回最终累加值 |
+
+```clojure
+(map inc [1 2 3])                         ; [2 3 4]
+(filter (fn [x] (> x 1)) [1 2 3])         ; [2 3]
+(reduce + 0 [1 2 3])                      ; 6
+(let [transform map] (transform inc [1])) ; [2]
+```
+
+注册表函数与闭包均可作为参数、返回值和局部绑定；局部同名绑定可遮蔽集合函数。函数别名保留原注册表操作名，效果调用照常暂停、恢复和记录。集合函数的 `pure` 标记只表示自身不执行外部操作，不表示回调一定无效果。空集合返回 `[]`（map/filter）或 `init`（reduce），仍检查回调是函数及输入是向量。仅支持这里列出的元数，不提供惰性、多集合或无初值 reduce。
+
+旧显式绑定语法已删除；自定义源码须改写为函数参数形式。回调共享调用方的 fuel 和深度预算，每次回调应用计 1 单位 fuel，其闭包 body 另按节点计费；直接宿主函数回调也不会绕过迭代计费。`recur` 不能跨回调函数边界。详见 [ADR 0021 的修订](../decisions/0021-tlosure-full-functions.md)。
+
+### 2.1.3 注册表里的闭包词（closure-backed builtin）
 
 `Builtin` 注册表条目有两种实现形状（[src/tlosure/builtins.py](../../src/tlosure/builtins.py)，`fn` 与 `closure` 恰居其一）：
 
-- **宿主形**（`fn`）：Python 函数，收 `(env, *求值后参数)`；其内部计算**不计费**——宿主词汇自己的开销属于宿主资源域。
+- **宿主形**（`fn`）：Python 函数，收 `(env, *求值后参数)`；其内部计算**不计费**——宿主词汇自己的开销属于宿主资源域。高阶集合函数通过生成器产出通用函数调用请求，由同一求值器计费并执行回调，不直接在 Python 中调用 DSL 闭包。
 - **闭包形**（`closure`，经 `Builtin.from_closure` 构造）：条目携带一个 `Closure` 而非宿主代码——**数据定义的词**。求值器命中该条目时走与 `defn`/`fn` 闭包完全相同的应用路径（`_apply`）：元数检查、参数绑定、body 逐 form 经求值器递归——**body 的每一步计入调用方的 fuel 与深度预算**。这是与宿主形的实质语义差：数据定义的词留在 fuel 纪律内，不会成为预算黑洞。
 
 闭包形条目的捕获 env 就是注册时给定的那个：宿主注册**空 env** 意味着 body 只见自己的参数绑定（零注入），调用方 env 里的符号对 body 不可见；body 内的词（form 头）照常经**调用方的注册表**解析。`.pure` 标记两种形状通用，宿主的纯度分区（如宿主选择只注册纯函数）不经区分地工作。静态校验无需特殊处理：词名在注册表里即通过，元数由运行时的闭包应用兜住（与宿主 builtin 同）。这属于通用语言能力；Tlon 的 Capability 目录机制已删除。
@@ -87,8 +105,8 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 
 - 一步 = 一次**节点求值**：字面量自求值、符号解析、向量/map 的每个元素、一次 builtin 调用、特殊形式中**实际被求值**的每个子表达式，各计 1 步；
 - 未走的分支不计费：`if`/`when` 未命中的分支、`and`/`or` 短路掉的后续参数消耗为 0；
-- builtin **内部**的计算不计费——宿主词汇自己的开销属于宿主的资源域，不属于语言计量；**闭包形条目（§2.1.2）相反**：body 是普通求值，计入调用方预算；
-- 循环（`while`/`recur`、`map`/`filter`/`reduce`）的每次迭代、函数应用的每个 body form 与嵌套调用，都经过节点求值，因此必然被预算包住。
+- builtin **内部**的计算不计费——宿主词汇自己的开销属于宿主的资源域，不属于语言计量；**闭包形条目（§2.1.3）相反**：body 是普通求值，计入调用方预算；
+- `while`/`recur` 每轮与函数 body 经过节点求值；`map`/`filter`/`reduce` 每次回调应用额外计 1 步，回调 body 仍按节点计费，直接宿主回调也有应用计费。
 
 **预算边界**：
 
@@ -117,10 +135,13 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 ### 3.1 `CORE_BUILTINS`（通用谓词与访问器）
 
 <!-- BEGIN GENERATED: dsl-builtins-core -->
-`CORE_BUILTINS`（17 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`CORE_BUILTINS`（20 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 名称 | pure | 说明 |
 |---|---|---|
+| `map` | 是 | Apply a function to each vector element, returning a vector. |
+| `filter` | 是 | Return vector elements whose predicate result is truthy. |
+| `reduce` | 是 | Fold a vector left with a function and an explicit initial value. |
 | `assert` | 是 | Reject invalid data without introducing a host effect. |
 | `integer?` | 是 | Test for an integer value, excluding booleans. |
 | `json-encode` | 是 | Encode strict JSON data, accepting EDN keywords only as object keys. |

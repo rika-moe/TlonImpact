@@ -4,7 +4,7 @@
 
 ;; Read public aggregate facts explicitly. No member mailbox or full trace scan.
 (defn total [metrics name]
-  (reduce value point (+ value (get point :value 0)) 0
+  (reduce (fn [value point] (+ value (get point :value 0))) 0
     (get (get metrics name {}) :points [])))
 
 (defn short-description [text]
@@ -14,13 +14,13 @@
   (let [metrics (get (metrics-read {}) :metrics {})
         health (social-health {})
         proposals (prototype-staging-list {})
-        summaries (get (reduce result proposal
+        summaries (get (reduce (fn [result proposal]
                     (let [items (get result :items)]
                       (if (< (count items) 10)
                         {:items (conj items {:name (get proposal :name)
                           :display-name (get proposal :display_name)
                           :description (short-description (get proposal :description ""))})}
-                        result)) {:items []} proposals) :items)
+                        result))) {:items []} proposals) :items)
         ids [(str "observation:" period ":metrics-read")
              (str "observation:" period ":social-health")
              (str "observation:" period ":prototype-staging-list")]]

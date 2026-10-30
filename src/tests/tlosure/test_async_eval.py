@@ -27,9 +27,9 @@ def evaluator(*, extra: dict[str, Builtin] | None = None, fuel: int = 1000) -> E
     [
         "(let [x 2 y (+ x 3)] {:sum (+ x y) :values [x y]})",
         "(while [n 0] (< n 4) (if (= n 3) n (recur (inc n))))",
-        "(let [f (fn [x & rest] (+ x (count rest)))] (map n (f n 7 8) [1 2]))",
+        "(let [f (fn [x & rest] (+ x (count rest)))] (map (fn [n] (f n 7 8)) [1 2]))",
         "(let [unused (defn sum [n] (if (= n 0) 0 (+ n (sum (dec n)))))] (sum 4))",
-        "(reduce a x (+ a x) 0 (filter n (> n 1) [1 2 3]))",
+        "(reduce (fn [a x] (+ a x)) 0 (filter (fn [n] (> n 1)) [1 2 3]))",
         "(quote {:data (unknown effect)})",
     ],
 )
@@ -96,8 +96,8 @@ async def test_nested_closures_map_and_recur_resume_in_order() -> None:
 
     run = evaluator(extra={"fetch": Builtin(lambda env, x: x, pure=False)})
     source = """(let [f (fn [x] (fetch x))]
-      (map n (while [i 0 total 0] true
-        (if (= i 2) total (recur (inc i) (+ total (f (+ n i)))))) [1 3]))"""
+      (map (fn [n] (while [i 0 total 0] true
+        (if (= i 2) total (recur (inc i) (+ total (f (+ n i))))))) [1 3]))"""
     assert await run.eval_async(loads(source), {}, 0, handler) == [30, 70]
     assert calls == [1, 2, 3, 4]
 

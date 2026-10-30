@@ -17,12 +17,12 @@
         (let [turn (conversation/step (assoc (assoc options :messages history) :tools tools))
               calls (get (get turn :response) :tool_calls [])
               results (get turn :results)
-              candidate (reduce found call
+              candidate (reduce (fn [found call]
                 (if (= (get call :name) "program-check")
-                  (let [matching (filter result (= (get result :id) (get call :id)) results)
-                        checked (reduce previous result result nil matching)]
+                  (let [matching (filter (fn [result] (= (get result :id) (get call :id))) results)
+                        checked (reduce (fn [previous result] result) nil matching)]
                     (if (and (get checked :success) (get (get checked :data) :valid))
                       (get call :arguments) found))
-                  found)
+                  found))
                 nil calls)]
           (if candidate candidate (recur (get turn :messages) (+ round 1))))))))

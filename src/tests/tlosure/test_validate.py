@@ -77,16 +77,17 @@ class TestSpecialFormShapes:
         with pytest.raises(EvalError, match="let binding name must be a symbol"):
             validate_form(loads("(let [:k 1] 1)"), _BUILTINS, scope=set())
 
-    def test_filter_shape_errors(self):
-        with pytest.raises(EvalError, match="filter expects a binding, a body, and a collection"):
-            validate_form(loads("(filter x (> x 1))"), _BUILTINS, scope=set())
-        with pytest.raises(EvalError, match="filter binding must be a symbol"):
-            validate_form(loads("(filter 1 (> 1 1) [1 2])"), _BUILTINS, scope=set())
+    def test_filter_arguments_use_normal_validation(self) -> None:
+        validate_form(loads("(filter (fn [x] (> x 1)))"), _BUILTINS, scope=set())
+        with pytest.raises(EvalError, match="undefined symbol: x"):
+            validate_form(loads("(filter x (> x 1) [1 2])"), _BUILTINS, scope=set())
+        with pytest.raises(EvalError, match="fn parameter name must be a symbol"):
+            validate_form(loads("(filter (fn [1] (> 1 1)) [1 2])"), _BUILTINS, scope=set())
 
-    def test_reduce_element_binder_must_be_symbol(self):
-        # test_eval.py covers a non-symbol accumulator; this is the other branch.
-        with pytest.raises(EvalError, match="reduce bindings must be symbols"):
-            validate_form(loads("(reduce acc 1 (+ acc 1) 0 [1])"), _BUILTINS, scope=set())
+    def test_reduce_callback_element_parameter_must_be_symbol(self) -> None:
+        # Callback parameters are checked by the ordinary fn validator.
+        with pytest.raises(EvalError, match="fn parameter name must be a symbol"):
+            validate_form(loads("(reduce (fn [acc 1] (+ acc 1)) 0 [1])"), _BUILTINS, scope=set())
 
 
 class TestTailPosition:
@@ -138,14 +139,14 @@ class TestTailPosition:
             with pytest.raises(EvalError, match="recur must be in tail position of while"):
                 validate_form(loads(source), _BUILTINS, scope=set())
 
-    def test_recur_in_map_filter_reduce_body_rejected(self):
-        # Iteration bodies are not tail positions of the enclosing loop.
+    def test_recur_in_map_filter_reduce_body_rejected(self) -> None:
+        # Callback functions cannot recur into their enclosing loop.
         for source in (
-            "(while [i 0] (< i 3) (map x (recur (inc i)) [1]))",
-            "(while [i 0] (< i 3) (filter x (recur (inc i)) [1]))",
-            "(while [i 0] (< i 3) (reduce acc x (recur (inc i)) 0 [1]))",
+            "(while [i 0] (< i 3) (map (fn [x] (recur (inc i))) [1]))",
+            "(while [i 0] (< i 3) (filter (fn [x] (recur (inc i))) [1]))",
+            "(while [i 0] (< i 3) (reduce (fn [acc x] (recur (inc i))) 0 [1]))",
         ):
-            with pytest.raises(EvalError, match="recur must be in tail position of while"):
+            with pytest.raises(EvalError, match="recur outside while"):
                 validate_form(loads(source), _BUILTINS, scope=set())
 
     def test_recur_in_nested_while_binds_inner_loop(self):
@@ -206,20 +207,20 @@ class TestScope:
     def test_while_bindings_are_sequential(self):
         validate_form(loads("(while [i 0 j i] (< i 3) (recur (inc i) j))"), _BUILTINS, scope=set())
 
-    def test_map_filter_binder_scoped_to_body_only(self):
-        validate_form(loads("(map x (+ x 1) xs)"), _BUILTINS, scope={"xs"})
-        validate_form(loads("(filter x (> x 1) xs)"), _BUILTINS, scope={"xs"})
+    def test_map_filter_callback_parameters_scoped_to_body_only(self) -> None:
+        validate_form(loads("(map (fn [x] (+ x 1)) xs)"), _BUILTINS, scope={"xs"})
+        validate_form(loads("(filter (fn [x] (> x 1)) xs)"), _BUILTINS, scope={"xs"})
         # The collection argument does not see the binder.
         with pytest.raises(EvalError, match="undefined symbol: x"):
-            validate_form(loads("(map x (+ x 1) x)"), _BUILTINS, scope=set())
+            validate_form(loads("(map (fn [x] (+ x 1)) x)"), _BUILTINS, scope=set())
 
-    def test_reduce_binders_scoped_to_body_only(self):
-        validate_form(loads("(reduce acc x (+ acc x) 0 xs)"), _BUILTINS, scope={"xs"})
+    def test_reduce_callback_parameters_scoped_to_body_only(self) -> None:
+        validate_form(loads("(reduce (fn [acc x] (+ acc x)) 0 xs)"), _BUILTINS, scope={"xs"})
         # Neither init nor collection sees the binders.
         with pytest.raises(EvalError, match="undefined symbol: acc"):
-            validate_form(loads("(reduce acc x (+ acc x) acc [1])"), _BUILTINS, scope=set())
+            validate_form(loads("(reduce (fn [acc x] (+ acc x)) acc [1])"), _BUILTINS, scope=set())
         with pytest.raises(EvalError, match="undefined symbol: x"):
-            validate_form(loads("(reduce acc x (+ acc x) 0 x)"), _BUILTINS, scope=set())
+            validate_form(loads("(reduce (fn [acc x] (+ acc x)) 0 x)"), _BUILTINS, scope=set())
 
 
 class TestFunctionValidation:

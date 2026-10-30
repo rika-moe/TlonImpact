@@ -11,7 +11,7 @@ handwritten; only the drift-prone inventories are generated:
   enum table from base/events/event.py (wire value + trailing comment).
 - ``dsl-special-forms`` / ``dsl-builtins-core`` / ``dsl-builtins-arithmetic``
   in docs/reference/tlosure-reference.md — the language-level whitelists
-  (special forms from tlosure/eval.py, the general ``CORE_BUILTINS`` and
+  (special forms from tlosure/validate.py, the general ``CORE_BUILTINS`` and
   ``ARITHMETIC_BUILTINS`` vocabularies from tlosure/builtins.py).
 - ``dsl-on-events`` / ``dsl-builtins-pure`` /
   ``dsl-fuel-defaults`` / ``bridge-query-ports`` in dsl-reference.md —
@@ -667,7 +667,7 @@ def _cell(text: str) -> str:
 
 def render_dsl_special_forms() -> str:
     """SPECIAL_FORMS whitelist for docs/reference/tlosure-reference.md §2.1."""
-    forms = _frozenset_strings(EVAL_FILE, "SPECIAL_FORMS")
+    forms = _frozenset_strings(TLOSURE_SRC / "validate.py", "SPECIAL_FORMS")
     names = "、".join(f"`{f}`" for f in forms)
     return f"封闭白名单（{len(forms)} 个）：{names}。{GENERATED_NOTE}"
 
