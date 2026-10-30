@@ -78,7 +78,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 ## 端点总表
 
 <!-- BEGIN GENERATED: rest-endpoints -->
-`create_app` 共注册 53 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`create_app` 共注册 55 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 方法 | 路径 | handler | 注册条件 |
 |---|---|---|---|
@@ -109,6 +109,8 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 | PATCH | `/admin/config/agents/{agent_id}` | `handle_update_agent` | 无条件 |
 | DELETE | `/admin/config/agents/{agent_id}` | `handle_delete_agent` | 无条件 |
 | GET | `/admin/llm/models` | `handle_list_llm_models` | 无条件 |
+| GET | `/admin/llm/setup` | `handle_model_setup_status` | 无条件 |
+| POST | `/admin/llm/setup` | `handle_model_setup` | 无条件 |
 | GET | `/admin/prototypes/staging` | `handle_list_staging` | 无条件 |
 | POST | `/admin/prototypes/staging` | `handle_create_staging_prototype` | 无条件 |
 | GET | `/admin/prototypes/staging/{name}` | `handle_get_staging_prototype` | 无条件 |

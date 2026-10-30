@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ReactElement } from "react";
 import type { ServerEvent, ViewProps } from "../types";
 import "../styles/settings.css";
+import { ModelSettings } from "../components/ModelSetup";
 
 /** Flatten nested config objects into dotted key/value display rows. */
 function flatten(obj: Record<string, unknown>, prefix = ""): Array<[string, string]> {
@@ -24,14 +25,9 @@ function formatAgentConfig(agent: Record<string, unknown>): string {
   return parts.join(" · ");
 }
 
-/**
- * SETTINGS — merges the TUI's config + settings views. Read-only: server
- * config (GET /config) and member configs (GET /admin/config/agents).
- * The process-level
- * LLM env editor is gone (ADR 0016): LLM config is member-level now —
- * the model is picked when creating a member, API keys are the
- * provider's own `{PROVIDER}_API_KEY` env vars. SSE `config.updated`
- * reloads the read-only sections.
+/** Server/member summaries plus the explicitly enabled portable model form.
+ * Model choices remain member-level; only provider credentials are shared.
+ * SSE config.updated reloads the read-only summaries.
  */
 export function SettingsView({ rest, sse }: ViewProps): ReactElement {
   const [config, setConfig] = useState<Record<string, unknown> | null>(null);
@@ -81,6 +77,7 @@ export function SettingsView({ rest, sse }: ViewProps): ReactElement {
         </button>
       </div>
 
+      <ModelSettings rest={rest} />
       <div className="settings-grid">
         <div className="panel">
           <h3 className="tech-label settings-section-title">SERVER CONFIG · GET /config</h3>

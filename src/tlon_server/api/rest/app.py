@@ -29,6 +29,7 @@ from tlon.api.events import EventsFacade
 from tlon.api.mail import MailFacade
 from tlon.api.members import MembersFacade
 from tlon.api.observability import ObservabilityFacade
+from tlon.api.portable_setup import PortableSetupFacade
 from tlon.api.prototypes import PrototypesFacade
 from tlon.base.logger import get_logger
 from tlon.base.version import VERSION
@@ -111,6 +112,7 @@ class RESTAPIHandler(
         configs: ConfigFacade | None = None,
         events: EventsFacade | None = None,
         arena: ArenaFacade | None = None,
+        portable_setup: PortableSetupFacade | None = None,
         debug: bool = False,
         github_webhook_secret: str | None = None,
     ):
@@ -139,6 +141,7 @@ class RESTAPIHandler(
         self.configs = configs
         self.events = events
         self.arena = arena
+        self.portable_setup = portable_setup
         self.debug = debug
         self.identity = identity
         self.github_ingress = events is not None and events.github_enabled
@@ -196,6 +199,8 @@ class RESTAPIHandler(
         app.router.add_delete("/admin/config/agents/{agent_id}", self.handle_delete_agent)
         # Admin LLM registry (ADR 0016 §4): model metadata for the WebUI dropdown
         app.router.add_get("/admin/llm/models", self.handle_list_llm_models)
+        app.router.add_get("/admin/llm/setup", self.handle_model_setup_status)
+        app.router.add_post("/admin/llm/setup", self.handle_model_setup)
         app.router.add_get("/admin/prototypes/staging", self.handle_list_staging)
         app.router.add_post("/admin/prototypes/staging", self.handle_create_staging_prototype)
         app.router.add_get("/admin/prototypes/staging/{name}", self.handle_get_staging_prototype)
@@ -491,6 +496,7 @@ class RESTServer:
         configs: ConfigFacade | None = None,
         events: EventsFacade | None = None,
         arena: ArenaFacade | None = None,
+        portable_setup: PortableSetupFacade | None = None,
         host: str = "127.0.0.1",
         port: int = 8080,
         debug: bool = False,
@@ -529,6 +535,7 @@ class RESTServer:
             configs=configs,
             events=events,
             arena=arena,
+            portable_setup=portable_setup,
             debug=debug,
             identity=identity,
             github_webhook_secret=github_webhook_secret,
@@ -550,6 +557,7 @@ class RESTServer:
 
         self._site = web.TCPSite(self._runner, self.host, self.port)
         await self._site.start()
+        self.port = self._runner.addresses[0][1]
 
         self._running = True
         logger.info("rest_api_server_started", host=self.host, port=self.port)

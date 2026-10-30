@@ -13,6 +13,8 @@ the seven device-dependent shell/filesystem tools; ``L1`` assembles the
 runtime and the filesystem five, but not the bash pair.
 """
 
+import asyncio
+import threading
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -173,6 +175,48 @@ class TestExecutionLevelAssembly:
             agent_info=_FakeAgentInfo({config.id: config}),  # type: ignore[arg-type]
             tlon_paths=tlon_paths,
         )
+
+    @pytest.mark.parametrize("cancel", [False, True])
+    async def test_slow_docker_probe_keeps_loop_responsive_and_owns_late_client(
+        self, tlon_paths: TlonPaths, monkeypatch: pytest.MonkeyPatch, cancel: bool
+    ) -> None:
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
+        release = threading.Event()
+        closed = threading.Event()
+        client = MagicMock()
+        client.close.side_effect = closed.set
+
+        def construct(*args: Any) -> Any:
+            loop.call_soon_threadsafe(started.set)
+            assert release.wait(timeout=3), "Docker probe blocked the event loop"
+            return client
+
+        monkeypatch.setattr("tlon.agents.assembly.DockerRuntime", construct)
+        task = asyncio.create_task(self._assemble(tlon_paths, "L2"))
+        try:
+            await asyncio.wait_for(started.wait(), timeout=2)
+            # This coroutine can run while the synchronous probe is still blocked.
+            assert not task.done()
+            if cancel:
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                client.close.assert_not_called()
+                release.set()
+                assert await asyncio.to_thread(closed.wait, 2)
+            else:
+                release.set()
+                services = await asyncio.wait_for(task, timeout=2)
+                client.close.assert_not_called()
+                assert services.docker_runtime is not None
+                services.docker_runtime.close()
+            client.close.assert_called_once()
+        finally:
+            release.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     async def test_l0_has_workspace_files_without_runtime(
         self, tlon_paths: TlonPaths, monkeypatch: pytest.MonkeyPatch

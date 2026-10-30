@@ -6,6 +6,8 @@ from typing import Any
 import litellm
 from aiohttp import web
 
+from tlon.api.portable_setup import SetupError
+
 from .common import RestHandlerBase
 
 _MODELS_PER_MILLION = 1_000_000
@@ -62,3 +64,24 @@ class AdminLlmHandlers(RestHandlerBase):
         """
         models = _chat_models()
         return self._json_response({"status": "success", "models": models, "count": len(models)})
+
+    async def handle_model_setup_status(self, request: web.Request) -> web.Response:
+        """Expose whether the portable configuration gate is required."""
+        return self._json_response(
+            self.portable_setup.status() if self.portable_setup else {"enabled": False}
+        )
+
+    async def handle_model_setup(self, request: web.Request) -> web.Response:
+        """Validate credentials without echoing them, then apply an explicit scope."""
+        if self.portable_setup is None:
+            return self._json_response({"error": "此入口未启用便携配置。"}, status=404)
+        if self.identity.username is None:
+            return self._json_response({"error": "请先设置实例名字。"}, status=409)
+        try:
+            body = await request.json()
+        except (ValueError, TypeError):
+            return self._json_response({"error": "配置格式无效。"}, status=400)
+        try:
+            return self._json_response(await self.portable_setup.configure(body))
+        except SetupError as exc:
+            return self._json_response({"error": str(exc)}, status=400)
