@@ -18,6 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from zipfile import ZipFile
 
@@ -38,11 +39,16 @@ def _request(url: str, body: dict[str, Any] | None = None) -> Any:
         data=json.dumps(body).encode() if body is not None else None,
         headers={"X-Tlon-WebUI": "1", "Content-Type": "application/json"},
     )
-    with urlopen(request, timeout=30) as response:
-        content = response.read()
-        if "json" in response.headers.get("Content-Type", ""):
-            return json.loads(content)
-        return content
+    try:
+        with urlopen(request, timeout=30) as response:
+            content = response.read()
+            if "json" in response.headers.get("Content-Type", ""):
+                return json.loads(content)
+            return content
+    except HTTPError as error:
+        # Setup errors are sanitized by the server; never print request bodies/keys.
+        detail = json.loads(error.read()).get("error", "request failed")
+        raise AssertionError(f"{request.get_method()} {url}: HTTP {error.code}: {detail}") from None
 
 
 def _snapshot(root: Path) -> dict[str, tuple[int, int]]:
@@ -329,6 +335,23 @@ def test_shipped_executable_mail_and_relocation(
                 mail.content == "frozen-member-reply" for mail in store.mails("human:portable-user")
             )
             _stop(executable, process, cwd, port)
+        except AssertionError as error:
+            diagnostics: list[dict[str, Any]] = []
+            for log in data.rglob("*.jsonl"):
+                for line in log.read_text(encoding="utf-8").splitlines():
+                    with suppress(ValueError):
+                        record = json.loads(line)
+                        if record.get("event") == "model_setup_connection_failed":
+                            diagnostics.append(
+                                {
+                                    key: record.get(key)
+                                    for key in ("exception_type", "cause_type", "missing_module")
+                                }
+                            )
+            raise AssertionError(
+                f"{error}; mock_model_requests={len(mock_model[1])}; "
+                f"setup_diagnostics={diagnostics}"
+            ) from None
         finally:
             if process.poll() is None:
                 with suppress(subprocess.TimeoutExpired):
