@@ -82,6 +82,17 @@ EPIC issue（任务清单型）的 standardized 施工法，已在 // 验证。�
    - 施工中发现既有文档欠账（前序 PR 漏同步的描述）：顺带修，在 PR 描述中注明
    - 网络抖动后 `git pull` 失败导致分支基点错误的，删了重建分支再继续
 
+### 版本发布流程
+
+发布细节见 [Windows 发布阶段验证](docs/design/windows-support.md#发布阶段验证)；自动发布步骤以 [Release 工作流](.github/workflows/release.yml) 为准。
+
+1. **准备版本 PR**：`pyproject.toml` 使用规范版本号（如 `0.0.5a1`），执行 `uv lock` 和 `uv run python scripts/gen_runtime_identity.py`，将版本、`uv.lock`、`src/tlon/base/_locked_dependencies.py` 一起提交。只改项目版本也会改变锁文件指纹，不得漏更新。
+2. **发布前验证**：运行 `scripts/check_all.sh` 和上述隔离 `TLON_HOME` 真实冒烟；推送候选分支后执行 `gh workflow run windows.yml --ref <分支名>`，等待 Windows 全部任务通过，包括实际 ZIP/冻结 EXE 验收。普通 PR CI 不包含 Windows 检查；手动 Windows 工作流只上传 CI artifact，不发布版本。
+3. **合并与标签**：PR CI 和 Windows 验收全绿后合并，执行 `git checkout main && git pull --ff-only`，核对发布提交，再创建并推送与版本对应的 `v<版本号>` 标签。自行合并仍须用户明确授权，打标签与发布须在用户授权范围内。
+4. **跟踪自动发布**：标签触发 Release，依次完成 Windows 验收、Linux 全量质量门、标签与包版本一致性检查、Python 包构建、PyPI Trusted Publishing 和 GitHub Release 创建。Windows ZIP 与 Python 包附在同一 Release；当前工作流标记为预发布。
+5. **发布后核验**：确认整个工作流成功，并查询 PyPI 对应版本的 wheel/源码包及 GitHub Release 的 Windows ZIP 附件。汇报版本、发布链接、下载链接和验证结果；仅触发工作流不算发布完成。
+6. **失败处理**：修复仍走分支 + PR；重跑旧标签不会包含新提交。先核对 PyPI 与 GitHub Release 是否已产生发布结果；仅在尚未发布且用户明确授权时更新失败标签，并用指定旧 SHA 的 `--force-with-lease` 防止覆盖并发变更。已有发布结果则递增版本号，不覆盖已发布版本。网络异常后先查真实状态，再重试，避免重复发布。
+
 ### 质量准则
 - 既有测试无需保障通过率， 没通过的单元测试可以直接删除明
 - 文档与代码同步：设计文档随代码更新；历史达成情况保留，被废止的决策用删除线或新决策覆盖
@@ -93,4 +104,4 @@ EPIC issue（任务清单型）的 standardized 施工法，已在 // 验证。�
 
 ---
 
-*最后更新：2026-09-05*
+*最后更新：2026-10-31*
