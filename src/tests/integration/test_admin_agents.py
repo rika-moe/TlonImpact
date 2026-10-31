@@ -31,7 +31,7 @@ async def test_agent_config_crud_lifecycle(inproc_server: tuple[str, Path]) -> N
         async with http.post(
             f"{base_url}/admin/config/agents",
             json={
-                "prototype": builtin_id("标准工具迭代"),
+                "prototype": builtin_id("标准智能体"),
                 "name": name,
                 "model": "openai/gpt-test",
             },
@@ -41,7 +41,7 @@ async def test_agent_config_crud_lifecycle(inproc_server: tuple[str, Path]) -> N
         agent_id = created["agent_id"]
         assert created["status"] == "success"
         assert created["name"] == name
-        assert created["prototype"] == builtin_id("标准工具迭代")
+        assert created["prototype"] == builtin_id("标准智能体")
 
         config_dir = tlon_home / agent_id / "config"
         assert (config_dir / "agent.yaml").is_file()
@@ -50,7 +50,7 @@ async def test_agent_config_crud_lifecycle(inproc_server: tuple[str, Path]) -> N
             assert resp.status == 200
             listed: dict[str, Any] = await resp.json()
         match = [a for a in listed["agents"] if a["id"] == agent_id]
-        assert match == [{"id": agent_id, "name": name, "prototype": builtin_id("标准工具迭代")}]
+        assert match == [{"id": agent_id, "name": name, "prototype": builtin_id("标准智能体")}]
 
         try:
             async with http.patch(
@@ -116,7 +116,7 @@ async def test_agent_config_validation(inproc_server: tuple[str, Path]) -> None:
     async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
         # Missing name -> 400
         async with http.post(
-            f"{base_url}/admin/config/agents", json={"prototype": builtin_id("标准工具迭代")}
+            f"{base_url}/admin/config/agents", json={"prototype": builtin_id("标准智能体")}
         ) as resp:
             assert resp.status == 400
 
@@ -134,7 +134,7 @@ async def test_agent_config_validation(inproc_server: tuple[str, Path]) -> None:
         # Missing model -> 400 (ADR 0016: no process-level fallback)
         async with http.post(
             f"{base_url}/admin/config/agents",
-            json={"prototype": builtin_id("标准工具迭代"), "name": "无名氏"},
+            json={"prototype": builtin_id("标准智能体"), "name": "无名氏"},
         ) as resp:
             assert resp.status == 400
 
@@ -159,7 +159,7 @@ async def test_self_file_read_and_patch(inproc_server: tuple[str, Path]) -> None
         async with http.post(
             f"{base_url}/admin/config/agents",
             json={
-                "prototype": builtin_id("标准工具迭代"),
+                "prototype": builtin_id("标准智能体"),
                 "name": "自我文件测试",
                 "model": "openai/gpt-test",
                 "persona": original,

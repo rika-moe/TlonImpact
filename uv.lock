@@ -2467,7 +2467,7 @@ wheels = [
 
 [[package]]
 name = "tlon-impact"
-version = "0.0.4a3"
+version = "0.0.5a1"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },

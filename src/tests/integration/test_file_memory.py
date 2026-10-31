@@ -94,7 +94,7 @@ async def test_optional_file_memory_survives_restart_without_automatic_injection
             http.post(
                 url + "/admin/config/agents",
                 json={
-                    "prototype": builtin_id("标准工具迭代"),
+                    "prototype": builtin_id("标准智能体"),
                     "name": "私有笔记测试员",
                     "model": "openai/gpt-test",
                 },

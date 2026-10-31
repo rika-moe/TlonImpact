@@ -26,7 +26,7 @@ manifest 成员包含 key、name、background、element（wood/fire/earth/metal/
 
 ## 创建与生命周期
 
-bootstrap 先播种内置原型与技能，再初始化成员。五位全部复用“标准工具迭代”原型（L2），模型为成员级 `deepseek/deepseek-flash`，top_p=0.9。其余部署设置沿用 AgentConfig 默认值。API key 由用户在实例 `.env` 配置，不打包密钥。
+bootstrap 先播种内置原型与技能，再初始化成员。五位全部复用“标准智能体”原型（L2），模型为成员级 `deepseek/deepseek-flash`，top_p=0.9。其余部署设置沿用 AgentConfig 默认值。API key 由用户在实例 `.env` 配置，不打包密钥。
 
 `initial-society.json` 保存初始化状态、初始成员地址索引和未完成计划，SQLite 初始化锁互斥，`.initial-society-staging/` 暂存完整成员。未完成计划冻结地址、manifest 和人格；中断后继续原计划，已发布成员文件不覆盖。完成后重启或升级不再创建、补回或覆盖成员，也不应重新验证已经完成的历史人物计划。完成后保留地址索引，供首次模型配置定位初始成员；manifest 与人格计划不再承担运行职责。
 
