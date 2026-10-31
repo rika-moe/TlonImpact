@@ -33,6 +33,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from tlon.base.events.event import Event, EventType
+from tlon.base.execution import bind_execution
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.observability.ports import OrphanMailProvider
@@ -245,7 +246,8 @@ class PublicHealthMonitor:
         if self._subscription_id is None:
             self._subscription_id = self._event_bus.subscribe(EventType.MAIL_NEW, self._on_mail_new)
         if self._scan_task is None:
-            self._scan_task = asyncio.create_task(self.run())
+            with bind_execution(None):
+                self._scan_task = asyncio.create_task(self.run())
         logger.info("public_health_monitor_initialized")
 
     async def shutdown(self) -> None:

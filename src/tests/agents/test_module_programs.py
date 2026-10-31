@@ -472,3 +472,30 @@ async def test_program_prompt_never_embeds_mutable_contact_book(tmp_path: Path) 
     assert await member._program_system_prompt() == before
     assert "private relationship" not in before
     assert "CONTACTS.md" in before
+
+
+async def test_member_mail_runs_survive_creator_deadline_and_cancellation(tmp_path: Path) -> None:
+    import time
+
+    from tlon.agents.program_store import ProgramStore
+    from tlon.base.execution import ExecutionScope, bind_execution
+
+    parent = ExecutionScope(ProgramStore(None), "spawn", 1, "output", deadline=time.time() + 30)
+    member = _member(tmp_path)
+    with bind_execution(parent):
+        await member.initialize()
+    parent.deadline = time.time() - 1
+    parent.cancel()
+    try:
+        for _ in range(2):
+            event = _event()
+            await member._on_event(event)
+            await asyncio.wait_for(member._queue.join(), 2)
+            record = member._program_store.get_run(
+                f"{event.payload['mail'].id}:handler:mail-delivered"
+            )
+            assert record is not None and record.completed and record.error is None
+        inbox = Mailbox(tmp_path / "shared/mail.sqlite3", "sender")
+        assert [mail.content for mail in await inbox.unread()] == ["reply:hello", "reply:hello"]
+    finally:
+        await member.shutdown()

@@ -184,8 +184,8 @@ async def test_expired_program_scope_stops_before_new_state_write(store: Program
 
 async def test_higher_order_effect_alias_replays_original_operations(store: ProgramStore) -> None:
     """A passed operation retains its adapter identity and durable call ordering."""
-    program = '''(let [save state-put transform map]
-      (transform save [{:key "first" :value 1} {:key "second" :value 2}]))'''
+    program = """(let [save state-put transform map]
+      (transform save [{:key "first" :value 1} {:key "second" :value 2}]))"""
     first = await run_program(driver(store), program)
     assert store.state_get("first") == 1
     assert store.state_get("second") == 2
@@ -194,3 +194,44 @@ async def test_higher_order_effect_alias_replays_original_operations(store: Prog
     assert await run_program(driver(store), program) == first
     assert store.state_get("first") == 10
     assert store.state_get("second") == 20
+
+
+@pytest.mark.parametrize("cancelled", [False, True], ids=["deadline", "cancelled"])
+async def test_default_root_ignores_ambient_scope_and_replays(
+    store: ProgramStore, cancelled: bool
+) -> None:
+    from tlon.base.execution import bind_execution
+
+    parent = ExecutionScope(store, "creator", 1, "output", deadline=time.time() - 1)
+    if cancelled:
+        parent.cancel()
+    with bind_execution(parent):
+        for run_id in ("first", "second", "first"):
+            running = driver(store, run_id=run_id)
+            await run_program(running, '(state-put {:key "independent" :value true})')
+            assert running.execution_scope.parent is None
+            assert running.execution_scope.deadline is None
+    assert store.state_get("independent") is True
+
+
+@pytest.mark.parametrize("cancelled", [False, True], ids=["deadline", "cancelled"])
+async def test_explicit_scope_keeps_parent_constraints(
+    store: ProgramStore, cancelled: bool
+) -> None:
+    parent = ExecutionScope(
+        store, "creator", 4096, "output", deadline=None if cancelled else time.time() - 1
+    )
+    if cancelled:
+        parent.cancel()
+    template = driver(store)
+    running = ProgramDriver(
+        store,
+        "creator",
+        template.builtins,
+        operations=template.operations,
+        member_id="a",
+        execution_scope=parent.child("nested"),
+    )
+    with pytest.raises(asyncio.CancelledError if cancelled else EvalError):
+        await run_program(running, '(state-put {:key "blocked" :value true})')
+    assert store.state_get("blocked") is None

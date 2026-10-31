@@ -695,3 +695,27 @@ async def test_registry_shutdown_stops_members_concurrently(tmp_path: Path) -> N
         registry._agents[member_id] = SimpleNamespace(shutdown=shutdown)
     await asyncio.wait_for(registry.shutdown(), 1)
     assert len(started) == count
+
+
+async def test_lifecycle_task_outlives_request_scope(bus: EventBus, tmp_path: Path) -> None:
+    from tlon.agents.program_store import ProgramStore
+    from tlon.base.execution import ExecutionScope, bind_execution, current_execution
+
+    registry = AgentRegistry(
+        event_bus=bus,
+        agent_info_provider=_StaticProvider({}),
+        tlon_paths=TlonPaths(home=tmp_path),
+        post_office=make_office(bus, tmp_path),
+    )
+    parent = ExecutionScope(ProgramStore(None), "request", 1, "output")
+    observed: list[ExecutionScope | None] = []
+
+    async def lifecycle() -> None:
+        observed.append(current_execution())
+
+    with bind_execution(parent):
+        registry._launch_lifecycle(lifecycle())
+        assert current_execution() is parent
+    parent.cancel()
+    await asyncio.gather(*registry._lifecycle_tasks)
+    assert observed == [None]

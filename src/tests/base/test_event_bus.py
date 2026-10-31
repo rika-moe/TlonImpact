@@ -264,3 +264,30 @@ async def _wait_until(predicate: Callable[[], bool], interval: float = 0.01) -> 
     """Poll until the predicate holds (caller wraps with wait_for)."""
     while not predicate():
         await asyncio.sleep(interval)
+
+
+async def test_consumer_detaches_execution_but_preserves_other_context(bus: EventBus) -> None:
+    from contextvars import ContextVar
+
+    from tlon.agents.program_store import ProgramStore
+    from tlon.base.execution import ExecutionScope, bind_execution, current_execution
+
+    marker: ContextVar[str] = ContextVar("subscription_marker", default="missing")
+    parent = ExecutionScope(ProgramStore(None), "subscriber", 1, "output")
+    observed: list[tuple[ExecutionScope | None, str]] = []
+
+    async def handler(event: Event) -> None:
+        observed.append((current_execution(), marker.get()))
+
+    token = marker.set("retained")
+    try:
+        with bind_execution(parent):
+            bus.subscribe(EventType.MAIL_NEW, handler)
+            assert current_execution() is parent
+    finally:
+        marker.reset(token)
+    parent.cancel()
+    for seq in range(2):
+        await bus.publish(_make_event(seq))
+    await _drain(bus)
+    assert observed == [(None, "retained"), (None, "retained")]

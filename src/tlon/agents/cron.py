@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import yaml
 from croniter import croniter
 
+from tlon.base.execution import bind_execution
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import POSTMASTER_ADDRESS, Mail, address_for_member
@@ -67,7 +68,8 @@ class CronScheduler:
         if self._tasks:
             return
         self._entries = self._load_declared()
-        self._tasks = [asyncio.create_task(self._run_entry(entry)) for entry in self._entries]
+        with bind_execution(None):
+            self._tasks = [asyncio.create_task(self._run_entry(entry)) for entry in self._entries]
         logger.info(
             "cron_scheduler_initialized",
             entries=[entry.name for entry in self._entries],
