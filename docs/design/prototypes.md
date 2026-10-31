@@ -189,3 +189,7 @@ agent 侧入口是 `LifecycleService`（[lifecycle/service.py](../../src/tlon/li
 批准绑定作者源码 digest，实例化复制完整包；篡改批准内容拒绝新实例，已有实例和冻结运行保持原源码。标准工作库由宿主显式链接，实际使用的依赖在运行时冻结；旧原型和交互消费者不因 P4a 提前切换。
 
 行动循环必须通过 `mail-send` / `mail-forward` 交付，通过独立且成功的 `finish-turn` 结束；纯文本不自动发信或结束。截断、空输出及无工具调用明确失败，不自动标读。内部规划和边界交接允许文本输出，但拒绝截断结果；标准循环不自动自评。见 [ADR 0048](../decisions/0048-action-loop-and-model-budgets.md)。
+
+## Agent 作者入口
+
+Agent 编写原型统一从 workspace 的 `tlon/docs/guides/writing-a-prototype.md` 开始。该指南负责完整作者包、静态校验、提交及运行验收的操作路径；语言与宿主契约继续由 reference 定义。完整入门示例直接放在指南内，保证随 docs 映射和发行包可读；标准库源码仍从 `tlon/stdlib/` 查阅。`prototype-write`、`program-check` 与普通起草函数均指向同一入口。机器提案不携带人格，不接受参数模板。真实模型验收与 mock 工具链测试分别记录，不以静态通过替代运行证据。

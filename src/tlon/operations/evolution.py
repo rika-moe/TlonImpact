@@ -105,7 +105,7 @@ _OUTPUTS = {
 
 _CONTRACTS: dict[str, tuple[str, dict[str, Any]]] = {
     "prototype-write": (
-        "创作一个新的 behavior prototype（纯行为规约，无人格），写入 staging 区。完整 v2 Behavior+模块包；工作流程使用普通函数组合。新 prototype 默认不可信：需人类批准（ops/WebUI）后才能被 member-spawn 使用。behavior 是 v2 EDN handlers 入口，modules 是完整相对路径到源码映射（只描述程序，无法授予工具）。v2 完整模块包不接受参数模板。可选 parent 记录谱系（从哪个既有原型派生），generation 由服务端推导。",
+        "先用 file-read 读取 tlon/docs/guides/writing-a-prototype.md，按指南用 program-check 校验完整候选。创作一个新的 behavior prototype（纯行为规约，无人格），写入 staging 区。完整 v2 Behavior+模块包；工作流程使用普通函数组合。新 prototype 默认不可信：需人类批准（ops/WebUI）后才能被 member-spawn 使用。behavior 是 v2 EDN handlers 入口，modules 是完整相对路径到源码映射（只描述程序，无法授予工具）。v2 完整模块包不接受参数模板。可选 parent 记录谱系（从哪个既有原型派生），generation 由服务端推导。",
         {
             "type": "object",
             "properties": {

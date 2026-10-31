@@ -19,7 +19,7 @@ def program_check_operation(checker: ProgramChecker | None = None) -> Operation:
 
     return Operation(
         "program-check",
-        "静态校验完整 v2 Behavior 与 modules，不执行程序、不发布、不批准。错误以 diagnostics 返回；读取 tlon/docs/README.md 获取作者参考。",
+        "静态校验完整 v2 Behavior 与 modules，不执行程序、不发布、不批准。错误以 diagnostics 返回；读取 tlon/docs/guides/writing-a-prototype.md 获取作者参考。",
         {
             "type": "object",
             "properties": {
