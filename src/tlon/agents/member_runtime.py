@@ -327,11 +327,13 @@ class MemberRuntime(Member):
         for handler in admitted_handlers:
             if handler.on is None:
                 self._deferred_boot.append(handler)
-        self._program_task = asyncio.create_task(self._program_loop())
-        self._program_task.add_done_callback(self._program_finished)
+        with bind_execution(None):
+            self._program_task = asyncio.create_task(self._program_loop())
+            self._program_task.add_done_callback(self._program_finished)
         await self._scan_unread_mail()
         if self._mailbox is not None:
-            self._rescan_task = asyncio.create_task(self._rescan_loop())
+            with bind_execution(None):
+                self._rescan_task = asyncio.create_task(self._rescan_loop())
         self._state = MemberState.ACTIVE
 
     async def shutdown(self) -> None:

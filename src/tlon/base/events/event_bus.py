@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 
 from tlon.base.component import Component
 from tlon.base.events.event import Event, EventType
+from tlon.base.execution import bind_execution
 from tlon.base.logger import get_logger
 
 logger = get_logger(__name__)
@@ -241,7 +242,8 @@ class EventBus(Component):
 
     def _start_consumer(self, subscription: _Subscription) -> None:
         """Spawn the long-lived consumer task for a subscription."""
-        subscription.task = asyncio.create_task(self._consume_events(subscription))
+        with bind_execution(None):
+            subscription.task = asyncio.create_task(self._consume_events(subscription))
 
     async def _consume_events(self, subscription: _Subscription) -> None:
         """Consume events from one subscription's queue, in FIFO order.

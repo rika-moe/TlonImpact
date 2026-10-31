@@ -72,6 +72,7 @@ from tlon.base.component import Component
 from tlon.base.config import AgentConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
+from tlon.base.execution import bind_execution
 from tlon.base.logger import get_logger
 from tlon.base.metrics import MetricsService
 from tlon.base.paths import TlonPaths
@@ -389,10 +390,12 @@ class AgentRegistry(Component):
 
         # Idle fact monitor (idempotent across re-initialize)
         if self._idle_monitor_task is None:
-            self._idle_monitor_task = asyncio.create_task(self._reaper.run())
+            with bind_execution(None):
+                self._idle_monitor_task = asyncio.create_task(self._reaper.run())
 
         if self._mail_rescue_task is None:
-            self._mail_rescue_task = asyncio.create_task(self._rescue_mail_loop())
+            with bind_execution(None):
+                self._mail_rescue_task = asyncio.create_task(self._rescue_mail_loop())
 
         # Public-health monitor (noise subscription + orphan scan task)
         await self._health.initialize()
@@ -652,9 +655,10 @@ class AgentRegistry(Component):
         )
 
     def _launch_lifecycle(self, coroutine: Coroutine[object, object, Any]) -> None:
-        task = asyncio.create_task(coroutine)
+        with bind_execution(None):
+            task = asyncio.create_task(coroutine)
+            task.add_done_callback(self._lifecycle_done)
         self._lifecycle_tasks.add(task)
-        task.add_done_callback(self._lifecycle_done)
 
     def _lifecycle_done(self, task: asyncio.Task[None]) -> None:
         self._lifecycle_tasks.discard(task)
@@ -956,7 +960,10 @@ class AgentRegistry(Component):
         if agent_id in self._pending_stop_tasks:
             return
         logger.info("pending_stop_registered", agent_id=agent_id, stopped_by=stopped_by)
-        self._pending_stop_tasks[agent_id] = asyncio.create_task(self._watch_pending_stop(agent_id))
+        with bind_execution(None):
+            self._pending_stop_tasks[agent_id] = asyncio.create_task(
+                self._watch_pending_stop(agent_id)
+            )
 
     async def _watch_pending_stop(self, agent_id: str) -> None:
         """Fire a pending stop the moment the member's work drains.
@@ -1367,9 +1374,10 @@ class AgentRegistry(Component):
         if previous is not None:
             previous.cancel()
         intent = self._scheduling_intents[member_id]
-        self._sleep_tasks[member_id] = asyncio.create_task(
-            self._wake_at_deadline(member_id, wake_at, intent)
-        )
+        with bind_execution(None):
+            self._sleep_tasks[member_id] = asyncio.create_task(
+                self._wake_at_deadline(member_id, wake_at, intent)
+            )
 
     async def _wake_at_deadline(
         self, member_id: str, wake_at: str, expected: tuple[str, str | None, str]

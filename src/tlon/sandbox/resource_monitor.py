@@ -30,6 +30,7 @@ import docker
 from docker.utils import parse_bytes
 
 from tlon.base.component import Component
+from tlon.base.execution import bind_execution
 from tlon.base.logger import get_logger
 from tlon.sandbox.docker_client import create_docker_client
 from tlon.sandbox.docker_runtime import EXEC_NAME_MARKER
@@ -142,7 +143,8 @@ class ContainerResourceMonitor(Component):
         except Exception as e:
             logger.warning("container_monitor_docker_unreachable", error=str(e))
             self._client = None
-        self._task = asyncio.create_task(self._run())
+        with bind_execution(None):
+            self._task = asyncio.create_task(self._run())
         self._initialized = True
         logger.info("container_resource_monitor_initialized", interval=self._interval)
 

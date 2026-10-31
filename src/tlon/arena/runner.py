@@ -42,6 +42,7 @@ from tlon.arena.corpus import (
 from tlon.arena.report import ArenaReport, generate_report
 from tlon.base.config import LLMConfig, yaml_load_file, yaml_save
 from tlon.base.events.event import Event
+from tlon.base.execution import bind_execution
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
@@ -365,9 +366,10 @@ class ArenaRunner:
             created_at=_utc_now(),
         )
         self._runs[run.run_id] = run
-        task = asyncio.create_task(self._execute(run))
+        with bind_execution(None):
+            task = asyncio.create_task(self._execute(run))
+            task.add_done_callback(self._tasks.discard)
         self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
         return run
 
     # ---------- 生命周期 ----------

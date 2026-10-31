@@ -11,7 +11,6 @@ from tlon.base.execution import (
     ExecutionDeadlineError,
     ExecutionScope,
     bind_execution,
-    current_execution,
 )
 from tlon.operations.core import CallContext
 from tlon.operations.dsl import DSLAdapter
@@ -43,7 +42,7 @@ class ProgramDriver:
         self.builtins = dict(builtins)
         self.index = 0
         self.execution_scope = execution_scope or ExecutionScope(
-            store, run_id, token_budget, "output", parent=current_execution()
+            store, run_id, token_budget, "output"
         )
 
     async def run_entry(self, entry: Closure, event: dict[str, Any], *, fuel: int) -> Any:
