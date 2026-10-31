@@ -37,10 +37,12 @@ async def test_initial_society_served_with_local_contacts_and_preserved_on_resta
     async with _server(home_a) as (url, app):
         assert app._runtime is not None
         members = await _list_agents(url)
-        assert len(members) == 30
+        assert len(members) == 5
         ids_a = {member["id"] for member in members}
-        assert len(ids_a) == 30
-        assert {"孔子", "屠呦呦", "老子", "孙武"} <= {member["name"] for member in members}
+        assert len(ids_a) == 5
+        assert {"孔子", "达·芬奇", "法拉第", "玛格丽特·汉密尔顿", "李清照"} == {
+            member["name"] for member in members
+        }
         for member_id in ids_a:
             config = app._runtime.members.get_config(member_id)
             assert config is not None
@@ -51,7 +53,7 @@ async def test_initial_society_served_with_local_contacts_and_preserved_on_resta
                 assert re.search(r"[\u4e00-\u9fff]", (config_dir / filename).read_text())
             contacts = TlonPaths(home_a).agent_contacts_file(member_id).read_text()
             peers = re.findall(r"(m-[0-9a-f]+)@tlon\.internal", contacts)
-            assert 2 <= len(peers) <= 4
+            assert len(peers) == 2
             assert len(peers) == len(set(peers))
             assert set(peers) <= ids_a - {member_id}
             assert MailStore(TlonPaths(home_a).mail_database_file()).mails(member_id) == []
@@ -67,7 +69,7 @@ async def test_initial_society_served_with_local_contacts_and_preserved_on_resta
 
     async with _server(home_b) as (url, _):
         ids_b = {member["id"] for member in await _list_agents(url)}
-        assert len(ids_b) == 30
+        assert len(ids_b) == 5
         assert ids_a.isdisjoint(ids_b)
         for member_id in ids_b:
             contacts = TlonPaths(home_b).agent_contacts_file(member_id).read_text()

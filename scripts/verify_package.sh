@@ -98,14 +98,21 @@ with ZipFile(sys.argv[1]) as archive:
     root = "tlon/initial_society/"
     manifest = json.loads(archive.read(root + "manifest.json"))
     members = manifest["members"]
-    assert len(members) == 30, "initial society must contain 30 members"
+    expected_keys = {"confucius", "leonardo-da-vinci", "michael-faraday",
+                     "margaret-hamilton", "li-qingzhao"}
+    assert len(members) == 5 and {m["key"] for m in members} == expected_keys
+    expected_personas = {root + key + "/" + filename for key in expected_keys
+                         for filename in ("IDENTITY.md", "SOUL.md", "RULES.md")}
+    actual_personas = {name for name in archive.namelist()
+                       if name.startswith(root) and name.endswith(".md")}
+    assert actual_personas == expected_personas, "wheel must contain exactly 15 persona files"
     names = set(archive.namelist())
     for member in members:
         for filename in ("IDENTITY.md", "SOUL.md", "RULES.md"):
             path = root + member["key"] + "/" + filename
             assert path in names, f"missing packaged persona: {path}"
             assert archive.read(path).strip(), f"empty packaged persona: {path}"
-print("✅ wheel 含初始社会清单与全部 90 份中文人格文件")
+print("✅ wheel 含初始社会清单与全部 15 份中文人格文件")
 PYCODE
 then
     :

@@ -86,7 +86,7 @@ async def test_first_setup_replaces_booted_models_before_first_reply(
                     while True:
                         async with http.get(base_url + "/agents") as response:
                             agents = (await response.json())["agents"]
-                        if len(agents) == 30 and all(agent["resident"] for agent in agents):
+                        if len(agents) == 5 and all(agent["resident"] for agent in agents):
                             break
                         await asyncio.sleep(0.05)
                 async with http.get(base_url + "/admin/llm/setup") as response:

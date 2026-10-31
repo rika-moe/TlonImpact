@@ -33,7 +33,7 @@ ADR 0012 把 LLM 配置统一到进程级 `LLM_*` 环境变量，后续迭代补
 
 - admin API `POST /admin/config/agents` 的 body 必填 `model`；
 - spawn 的子成员默认继承父成员的模型（成本/能力画像随谱系，ADR 0014 的选择压语义）；
-- ~~**bootstrap 不再自动播种标准团队成员**（首次启动由人类经 WebUI/admin API 创建成员并选模型）。~~ 已由 [ADR 0036](0036-initial-society.md) 覆盖：全新实例首启创建 30 位初始成员并明确写入成员级模型；已有实例不补种。`default_team.py` 保持退役，初始人物与行为原型分开管理。
+- ~~**bootstrap 不再自动播种标准团队成员**（首次启动由人类经 WebUI/admin API 创建成员并选模型）。~~ 已由 [ADR 0036](0036-initial-society.md) 覆盖：全新实例首启按[当前初始社会设计](../design/initial-society.md)创建 5 位初始成员并明确写入成员级模型；已有实例不补种。`default_team.py` 保持退役，初始人物与行为原型分开管理。
 
 ### 3. spec 删除 `:llm` 声明
 

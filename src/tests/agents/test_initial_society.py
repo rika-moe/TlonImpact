@@ -19,7 +19,7 @@ def test_members_have_model_persona_and_local_contacts(tmp_path: Path) -> None:
     paths = TlonPaths(tmp_path)
     bootstrap_society(paths)
     agents = yaml_load_all(tmp_path)
-    assert len(agents) == 30
+    assert len(agents) == 5
     for agent_id, config in agents.items():
         assert config.llm.model_name == "deepseek/deepseek-flash"
         assert "max_tokens" not in config.llm.model_dump()
@@ -43,7 +43,7 @@ def test_members_have_model_persona_and_local_contacts(tmp_path: Path) -> None:
             for line in contacts.splitlines()
             if line.startswith("- 地址：")
         ]
-        assert 2 <= len(addresses) <= 4
+        assert len(addresses) == 2
         assert all(address.endswith("@tlon.internal") for address in addresses)
         assert all(
             address.removesuffix("@tlon.internal") in agents
@@ -127,7 +127,7 @@ def test_partial_publication_preserves_published_persona(tmp_path: Path) -> None
     paths.agent_identity_file(published).write_text("已发布之后的修改", "utf-8")
     with patch.object(initial_society, "_stage_members", side_effect=AssertionError):
         bootstrap_society(paths)
-    assert len(yaml_load_all(tmp_path)) == 30
+    assert len(yaml_load_all(tmp_path)) == 5
     assert paths.agent_identity_file(published).read_text("utf-8") == "已发布之后的修改"
 
 
@@ -154,5 +154,86 @@ def test_concurrent_initializers_use_one_plan(tmp_path: Path) -> None:
     shutil.copytree(tmp_path / "source" / "prototypes", paths.prototypes_dir())
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(initial_society.seed_initial_society, [paths, paths]))
-    assert sorted(results) == [0, 30]
-    assert len(yaml_load_all(tmp_path)) == 30
+    assert sorted(results) == [0, 5]
+    assert len(yaml_load_all(tmp_path)) == 5
+
+
+def test_contacts_only_describe_outgoing_relations(tmp_path: Path) -> None:
+    paths = TlonPaths(tmp_path)
+    bootstrap_society(paths)
+    plan = initial_society._new_plan()
+    assert plan.manifest is not None
+    addresses = {
+        (paths.agent_dir(agent_id) / ".initial-society-key").read_text(): agent_id
+        for agent_id in yaml_load_all(tmp_path)
+    }
+    for member in plan.manifest.members:
+        contacts = paths.agent_contacts_file(addresses[member.key]).read_text()
+        outgoing = [r for r in plan.manifest.relations if r.source == member.key]
+        assert {
+            line.removeprefix("- 地址：")
+            for line in contacts.splitlines()
+            if line.startswith("- 地址：")
+        } == {addresses[r.target] + "@tlon.internal" for r in outgoing}
+        assert contacts.count("- 关系：爱／欣赏（相生）") == 1
+        assert contacts.count("- 关系：恨／抵触（相克）") == 1
+        assert all(r.reason in contacts for r in outgoing)
+        assert "不代表对方对我的态度" in contacts
+
+
+def test_completed_plan_is_retired_but_pending_plan_must_be_valid(tmp_path: Path) -> None:
+    paths = TlonPaths(tmp_path)
+    bootstrap_society(paths)
+    member = next(iter(yaml_load_all(tmp_path)))
+    paths.agent_soul_file(member).write_text("自己的变化", "utf-8")
+    completed = json.loads(paths.initial_society_state_file().read_text())
+    retired_plan = {
+        "status": "complete",
+        "manifest": {"retired": True},
+        "addresses": completed["addresses"],
+    }
+    paths.initial_society_state_file().write_text(json.dumps(retired_plan))
+    bootstrap_society(paths)
+    assert paths.agent_soul_file(member).read_text("utf-8") == "自己的变化"
+    state = initial_society._read_state(paths)
+    assert state is not None and state.addresses == completed["addresses"]
+    assert len(yaml_load_all(tmp_path)) == 5
+    retired_plan["status"] = "pending"
+    paths.initial_society_state_file().write_text(json.dumps(retired_plan))
+    with pytest.raises(RuntimeError, match="状态损坏"):
+        bootstrap_society(paths)
+
+
+@pytest.mark.parametrize(
+    "defect", ["duplicate", "self", "unknown", "missing", "blank", "split-cycle", "element"]
+)
+def test_invalid_directed_graph_is_rejected(defect: str) -> None:
+    plan = initial_society._new_plan()
+    assert plan.manifest is not None
+    manifest = plan.manifest.model_dump()
+    relations = manifest["relations"]
+    if defect == "duplicate":
+        relations.append(relations[0].copy())
+    elif defect == "self":
+        relations[0]["target"] = relations[0]["source"]
+    elif defect == "unknown":
+        relations[0]["target"] = "not-a-member"
+    elif defect == "missing":
+        relations.pop()
+    elif defect == "blank":
+        relations[0]["reason"] = "   "
+    elif defect == "element":
+        manifest["members"][0]["element"] = manifest["members"][1]["element"]
+    else:
+        # Keep one incoming/outgoing love edge per member but split into 2 + 3 cycles.
+        keys = [m["key"] for m in manifest["members"]]
+        targets = [keys[1], keys[0], keys[4], keys[2], keys[3]]
+        hate_targets = [keys[2], keys[4], keys[3], keys[1], keys[0]]
+        for relation in relations:
+            if relation["kind"] == "love":
+                relation["target"] = targets[keys.index(relation["source"])]
+            else:
+                relation["target"] = hate_targets[keys.index(relation["source"])]
+    message = "five-member cycle" if defect == "split-cycle" else None
+    with pytest.raises(ValueError, match=message):
+        initial_society._Manifest.model_validate(manifest)
