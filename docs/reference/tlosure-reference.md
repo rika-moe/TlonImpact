@@ -34,7 +34,7 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 
 ### 2.1 特殊形式（封闭白名单 `SPECIAL_FORMS`）
 
-无 `def`、无宏、无可变全局状态；除下列形式外，form 头必须解析为函数值（闭包或注册表函数）（分辨顺序：特殊形式 → env → builtin）。`defn` / `fn` 是 [ADR 0021](../decisions/0021-tlosure-full-functions.md) 引入的完整函数能力，语义见 §2.1.1。
+表达式求值器不接受 `def`（模块顶层允许字面常量 `def`，见下方“源码模块”）；无宏、无可变全局状态；除下列形式外，form 头必须解析为函数值（闭包或注册表函数）（分辨顺序：特殊形式 → env → builtin）。`defn` / `fn` 是 [ADR 0021](../decisions/0021-tlosure-full-functions.md) 引入的完整函数能力，语义见 §2.1.1。
 
 <!-- BEGIN GENERATED: dsl-special-forms -->
 封闭白名单（10 个）：`quote`、`if`、`when`、`let`、`and`、`or`、`while`、`recur`、`defn`、`fn`。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）

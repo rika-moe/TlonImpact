@@ -8,7 +8,7 @@
   (let [limit (get options :max_rounds)
         tools (get options :tools ["file-read" "file-list" "file-search" "program-check"])
         initial (messages/append (get options :messages)
-                  (messages/user "Read tlon/docs/README.md with file-read, and read relevant docs and tlon/stdlib sources. Write a complete v2 behavior/modules package. Submit candidate source as program-check arguments; repair diagnostics until valid. Do not publish."))]
+                  (messages/user "Read tlon/docs/guides/writing-a-prototype.md with file-read, and read relevant docs and tlon/stdlib sources. Write a complete v2 behavior/modules package. Submit candidate source as program-check arguments; repair diagnostics until valid. Do not publish."))]
     (assert (and (integer? limit) (> limit 0)) "max_rounds must be a positive integer")
     (assert (contains? tools "program-check") "draft requires program-check")
     (while [history initial round 0]

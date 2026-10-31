@@ -1,5 +1,7 @@
 # 编写模块工作程序
 
+Agent 从需求开始创作时，先读 [原型作者入口](writing-a-prototype.md)，其中包含 workspace 内可直接读取的完整双模块源码与工具参数。本文详述运行契约。
+
 P1 已提供人工完整模块包、事件入口和持久执行。P2 已提供完整模型请求与纯消息标准库；P3 提供受控工具分派和普通对话函数，P4a 已提供 Agent 完整模块提案和标准工作函数；P5 已将全部内置原型切换为 v2 模块程序。设计见 [可编程工作流程](../design/programmable-workflows.md)。
 
 ## 文件与入口
@@ -81,7 +83,7 @@ ProgramStore 的 entry_programs 保存结果与调度意图，运行完成与意
 
 `model-call` 必填 `messages`，可选正整数 `max_tokens`（省略时按冻结模型输出能力、剩余上下文和 run 剩余预算取小值）；`tools` 是工具名称列表，省略等同 `[]`。消息 role 可用 user、assistant、tool，作者不能提供 system 消息或任意工具 schema。工具目录由成员装配提供；模型只生成工具建议，工具执行由显式 tool-execute 编排端口负责。
 
-返回值含 `content`（工具专用响应可为 nil）、`tool_calls`、`finish_reason`、`usage`、`reasoning_content`。每条 tool_call 是 `{:id "..." :name "..." :arguments {...}}`；usage 保留 provider 的 snake_case 键。不要将 nil content 当成模型调用失败。完整示例见 [生成—核验—修订回信程序](../../src/tlon/resources/examples/reviewed-reply/README.md)，三个普通函数共享同一根预算（成员 `program_token_budget`，默认 100000，与单次输出上限分开）。
+返回值含 `content`（工具专用响应可为 nil）、`tool_calls`、`finish_reason`、`usage`、`reasoning_content`。每条 tool_call 是 `{:id "..." :name "..." :arguments {...}}`；usage 保留 provider 的 snake_case 键。不要将 nil content 当成模型调用失败。生成、核验与修订可组合为三个普通函数，共享同一根预算（成员 `program_token_budget`，默认 100000，与单次输出上限分开）。
 
 v2 受理时原子冻结宿主系统提示词、模型配置及工具定义；恢复沿用冻结配置。新模型请求校验当前工具目录，已提交结果允许按原工具契约重放。如果模型响应与额度已提交，但外层 Operation 回执尚未提交，恢复从同一 ProgramStore 模型记录补回执，不调用 provider、不重复扣额。已派发但结果未提交仍是 unknown，不能自动重发。output 模式按获准输出额度预留，成功后按可靠 completion_tokens 结算；total 模式按可靠总 usage 结算。缺失可靠用量时保留预留。
 
@@ -109,7 +111,7 @@ v2 受理时原子冻结宿主系统提示词、模型配置及工具定义；�
 
 只有输入/领域拒绝可转换为模型可修正的工具失败。取消、截止、预算、恢复失配、未知效果和基础设施异常传播给运行器。工具结果按原 ID 关联完整 assistant 响应，不能把部分成功拼成缺少 tool 结果的新模型请求。
 
-完整示例见 [工具辅助核验回信](../../src/tlon/resources/examples/tool-reviewed-reply/README.md)：子对话读取时钟后返回，外层继续核验、修订和发信。内置原型均为 v2 模块程序；旧 agent session 已删除，历史归属 program run。
+例如子对话读取时钟后返回，外层继续核验、修订和发信；完整工具循环可读取 workspace 的 `tlon/stdlib/conversation.tlon`。内置原型均为 v2 模块程序；旧 agent session 已删除，历史归属 program run。
 
 ## Agent 起草、审阅和派生（P4a）
 
@@ -123,7 +125,7 @@ program-check 是只读 Operation，复用发布时的完整包校验。返回 v
 
 ## 标准方法、连续上下文与交接（P4a）
 
-`tlon.workflows` 导出 short-turn、plan-then-act、evidence-check、route、forward。前三项接收普通 conversation options；route 的 method 选择短回合、计划执行或显式证据核验，方法本身仍是可嵌套调用的函数。forward 接收目标地址和原 mail_id，经 mail-forward 转发原信。完整两模块示例见 [standard-work](../../src/tlon/resources/examples/standard-work/README.md)。
+`tlon.workflows` 导出 short-turn、plan-then-act、evidence-check、route、forward。前三项接收普通 conversation options；route 的 method 选择短回合、计划执行或显式证据核验，方法本身仍是可嵌套调用的函数。forward 接收目标地址和原 mail_id，经 mail-forward 转发原信。完整双模块包与提交参数见 [原型作者入口](writing-a-prototype.md)；这些方法的实际实现可读取 workspace 的 `tlon/stdlib/workflows.tlon`。
 
 `tlon.context/assemble` 组合 prefix/history/task；`fit` 根据宿主 model-context 的完整请求估算核查窗口，超限明确拒绝，`complete` 组合 fit 与 model-call。估算包括冻结系统提示与选定工具，返回 input_tokens、context_window、output_tokens、fits 及 token_budget_limit/token_budget_remaining/token_budget_measure，不调用 provider、不消费模型额度；估算不能保证 provider 的最终 token 计数。
 
@@ -146,7 +148,7 @@ v2 运行的责任邮件、原错误与模型草稿保留。终止或不安全 u
 
 通用 cron 只按 `cron.yaml` 把静态任务投递给指定成员。它不内置文摘角色、采编 prompt 或人类收件人名单；没有配置时不产生周期邮件。成员在普通 mail-delivered 入口中核对出版发件人，以触发邮件的时间确定刊期，并使用普通状态、模型和邮件操作完成业务。
 
-可参考 [来信报](../../src/tlon/resources/examples/newspaper/README.md) 与 [社会文摘报](../../src/tlon/resources/examples/social-newspaper/README.md)。两者使用 Lisp 共享刊期冻结与投递恢复；后者显式查询观测工具收集材料。创建报社和订阅均需明确操作，不在首启或升级时自动创建或订阅。
+刊期冻结与投递恢复的实际实现可读取 workspace 的 `tlon/stdlib/newspaper.tlon`；社会文摘类程序需显式查询观测工具收集材料。创建报社和订阅均需明确操作，不在首启或升级时自动创建或订阅。
 
 
 共享模块 `tlon.newspaper` 提供普通函数 `subscriptions`、`publication-period`、`freeze`、`deliver`、`publish`。采集器是接收刊期的 Lisp 函数，返回 `{:materials ... :source-ids [...] :footer "..."}`；没有第二套 Python 流程配置。`freeze` 先复用已有刊期，仅在有订阅者且有来源材料时编辑；来信报在冻结后、分发前消费投稿 ID，社会文摘报通过 `publish` 组合冻结与分发。资料来源、正文、订阅名单和逐地址 accepted 回执由普通持久状态保存。

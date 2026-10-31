@@ -13,7 +13,9 @@ from typing import Any
 from tlon.evolution.ports import PrototypeError, PrototypeSummary
 from tlon.operations.schema import RejectedError
 
-_BEHAVIOR_HINT = "Read tlon/docs/README.md and use program-check before prototype-write."
+_BEHAVIOR_HINT = (
+    "Read tlon/docs/guides/writing-a-prototype.md and use program-check before prototype-write."
+)
 
 
 def require_bundle(behavior: Any, modules: Any) -> tuple[str, dict[str, str]]:
