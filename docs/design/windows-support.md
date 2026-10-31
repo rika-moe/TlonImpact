@@ -46,4 +46,6 @@ Windows 特殊组件校验共享给 author 逻辑路径映射，必须在转换�
 
 ## 发布阶段验证
 
-Windows 检查与便携打包仅由 `v*` tag 的 Release 工作流调用；PR 与 main 推送只运行 Linux 静态、单元与集成质量门。保留 Windows 锁、Python 3.11/3.13 workspace、启动冒烟及冻结 EXE 验收，测试清单仍由 `scripts/check_all.sh` 维护。Windows 全部成功后才运行发布 job；Linux 全量质量门和版本检查也必须通过，才能上传 PyPI 并创建 GitHub Release。Windows ZIP 使用独立下载目录，避免混入 PyPI 的 `dist/`，最终附在同一个 GitHub Release。这个取舍会把 Windows 专属问题的发现时间延迟到发布阶段。
+Windows 检查与便携打包自动由 `v*` tag 的 Release 工作流调用，也支持手动选择分支执行 `Windows` 工作流以验证发布修复（仅测试与上传 CI artifact，不发布版本）；PR 与 main 推送只运行 Linux 静态、单元与集成质量门。保留 Windows 锁、Python 3.11/3.13 workspace、启动冒烟及冻结 EXE 验收，测试清单仍由 `scripts/check_all.sh` 维护。Windows 全部成功后才运行发布 job；Linux 全量质量门和版本检查也必须通过，才能上传 PyPI 并创建 GitHub Release。Windows ZIP 使用独立下载目录，避免混入 PyPI 的 `dist/`，最终附在同一个 GitHub Release。这个取舍会把 Windows 专属问题的发现时间延迟到发布阶段。
+
+发布准备必须将 `pyproject.toml` 版本、`uv.lock` 和生成的 `src/tlon/base/_locked_dependencies.py` 一起提交。版本使用规范拼写（例如 `0.0.5a1`），tag 为 `v0.0.5a1`，与发布检查一致；修改后执行 `uv lock`、`uv run python scripts/gen_runtime_identity.py` 和 `scripts/check_all.sh`。即使只改变项目自身版本，锁文件内容也会变化，必须更新指纹；CI 继续拒绝过期指纹，不在打包时自动修补。失败 tag 重跑仍读取原提交，修复合并后应由维护者决定新 tag，不能靠重跑让旧 tag 包含新代码。
