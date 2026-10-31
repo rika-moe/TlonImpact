@@ -11,12 +11,8 @@ from tlon.agents.prototypes.instantiate import instantiate
 from tlon.base.paths import TlonPaths
 
 LABELS = (
-    "计划后执行",
-    "短回合交流",
     "标准工具迭代",
-    "标准文件迭代",
     "定址转发",
-    "标准无执行迭代",
     "条件路由",
 )
 
@@ -43,13 +39,7 @@ def test_complete_builtin_module_package(tmp_path: Path, label: str) -> None:
         "boot": "work.main/boot",
         "mail-delivered": "work.main/handle",
     }
-    assert spec.execution_level == (
-        "L2"
-        if label in {"计划后执行", "标准工具迭代"}
-        else "L1"
-        if label == "标准文件迭代"
-        else "L0"
-    )
+    assert spec.execution_level == ("L2" if label == "标准工具迭代" else "L0")
     assert config.docker.level == spec.execution_level
     assert len(modules) == 1
     assert "run-loop" not in behavior + str(modules)
@@ -60,7 +50,7 @@ def test_complete_builtin_module_package(tmp_path: Path, label: str) -> None:
 
 def test_seed_preserves_existing_package_sources(tmp_path: Path) -> None:
     paths = TlonPaths(tmp_path)
-    assert seed_prototypes(paths) == 21
+    assert seed_prototypes(paths) == 9
     source = paths.prototypes_dir() / builtin_id("标准工具迭代") / "modules/work/main.tlon"
     source.write_text("user-owned source")
     assert seed_prototypes(paths) == 0
@@ -151,5 +141,5 @@ def test_builtin_agents_have_no_automatic_delivery_review() -> None:
         assert "review_instructions" not in source
         assert '"reviewed"' not in source
         assert "自评" not in text
-    assert len(labels) == 7
+    assert len(labels) == 3
     assert not any("证据核验" in label for label in labels)

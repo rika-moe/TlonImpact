@@ -68,13 +68,13 @@ async def test_initial_thirty_members_persist_and_key_becomes_live(
     call = AsyncMock()
     monkeypatch.setattr("litellm.acompletion", call)
     assert setup.status()["required"]
-    assert len(setup.status()["initial_member_ids"]) == 30
+    assert len(setup.status()["initial_member_ids"]) == 5
     setup._members.get_status = AsyncMock(return_value={"resident": True})
     response = await setup.configure(BODY)
-    assert setup._members.wait.await_count == 30
+    assert setup._members.wait.await_count == 5
     assert response["pending_members"] == []
     assert response["required"] is False
-    assert len(response["members"]) == 30
+    assert len(response["members"]) == 5
     assert all(member["model"] == BODY["model"] for member in response["members"])
     assert KEY not in json.dumps(response)
     assert os.environ["OPENAI_API_KEY"] == KEY
@@ -107,7 +107,7 @@ async def test_initial_scope_preserves_extra_members_and_resets_selected_model_o
     yaml_save(extra, setup._paths.tlon_home())
     await setup._members.adopt(extra.id)
     response = await setup.configure(BODY)
-    assert len(response["members"]) == 31
+    assert len(response["members"]) == 6
     saved = setup._configs.load_agent(initial.id)
     untouched = setup._configs.load_agent(extra.id)
     assert saved is not None and saved.llm is not None
@@ -359,13 +359,13 @@ async def test_first_setup_waits_for_old_resident_and_busy_drain_remains_retryab
     setup._members.wait = AsyncMock(return_value=False)
     with pytest.raises(SetupError, match="成员仍在完成"):
         await setup.configure(BODY)
-    assert setup._members.wait.await_count == 30
+    assert setup._members.wait.await_count == 5
     assert not setup._marker.exists()
     assert setup.status()["required"] and setup.status()["initial_allowed"]
     setup._members.wait = AsyncMock(return_value=True)
     result = await setup.configure(BODY)
     assert not result["required"] and result["pending_members"] == []
-    assert setup._members.wait.await_count == 30
+    assert setup._members.wait.await_count == 5
 
 
 @pytest.mark.parametrize("source", ["environment", "dotenv", "override"])

@@ -14,7 +14,7 @@ def _paths(tmp_path: Path) -> TlonPaths:
 def test_bootstrap_seeds_prototypes_and_initial_members(tmp_path: Path) -> None:
     p = _paths(tmp_path)
     bootstrap_society(p)
-    assert len(yaml_load_all(p.tlon_home())) == 30
+    assert len(yaml_load_all(p.tlon_home())) == 5
     assert any(p.prototypes_dir().iterdir())
 
 
@@ -24,7 +24,7 @@ def test_bootstrap_is_idempotent(tmp_path: Path) -> None:
     bootstrap_society(p)
     bootstrap_society(p)  # must not raise nor duplicate
 
-    assert len(yaml_load_all(p.tlon_home())) == 30
+    assert len(yaml_load_all(p.tlon_home())) == 5
 
 
 def test_existing_agent_untouched(tmp_path: Path) -> None:

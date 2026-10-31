@@ -93,7 +93,7 @@ async def test_patch_cannot_adopt_offline_member_at_operator_address(
     base_url, home = inproc_server
     paths = TlonPaths(home)
     instantiate(
-        builtin_id("计划后执行"),
+        builtin_id("标准工具迭代"),
         "alice",
         "Offline member",
         model="openai/gpt-test",

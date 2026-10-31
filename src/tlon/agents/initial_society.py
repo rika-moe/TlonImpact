@@ -4,7 +4,7 @@ import shutil
 import sqlite3
 from importlib import resources
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -18,26 +18,52 @@ class _Member(BaseModel):
     key: str = Field(pattern=r"^[a-z][a-z0-9_-]*$")
     name: str = Field(min_length=1)
     background: str = Field(min_length=1)
-    organization: str | None = None
+    element: Literal["wood", "fire", "earth", "metal", "water"]
+
+
+class _Relation(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    source: str
+    target: str
+    kind: Literal["love", "hate"]
+    reason: str = Field(min_length=1)
 
 
 class _Manifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model: str = Field(min_length=1)
     prototype: str = Field(pattern=r"^p-[a-f0-9]{32}$")
-    members: list[_Member] = Field(min_length=1)
-    relations: list[tuple[str, str]]
+    members: list[_Member] = Field(min_length=5, max_length=5)
+    relations: list[_Relation]
 
     @model_validator(mode="after")
     def validate_graph(self) -> "_Manifest":
         keys = {member.key for member in self.members}
         if len(keys) != len(self.members):
             raise ValueError("duplicate initial member key")
-        edges = {frozenset(edge) for edge in self.relations}
+        if len({member.element for member in self.members}) != 5:
+            raise ValueError("initial society requires five distinct elements")
+        edges = {(edge.source, edge.target) for edge in self.relations}
         if len(edges) != len(self.relations) or any(
-            len(edge) != 2 or not edge <= keys for edge in edges
+            source == target or source not in keys or target not in keys for source, target in edges
         ):
             raise ValueError("invalid initial society relations")
+        for kind in ("love", "hate"):
+            relations = [edge for edge in self.relations if edge.kind == kind]
+            if (
+                len(relations) != 5
+                or {edge.source for edge in relations} != keys
+                or {edge.target for edge in relations} != keys
+            ):
+                raise ValueError("each relation kind requires one incoming and outgoing edge")
+            successors = {edge.source: edge.target for edge in relations}
+            visited: set[str] = set()
+            current = next(iter(keys))
+            while current not in visited:
+                visited.add(current)
+                current = successors[current]
+            if visited != keys:
+                raise ValueError("each relation kind must form one five-member cycle")
         return self
 
 
@@ -49,9 +75,19 @@ class _State(BaseModel):
     personas: dict[str, dict[str, str]] = Field(default_factory=dict)
     staged: bool = False
 
+    @model_validator(mode="before")
+    @classmethod
+    def retire_completed_plan(cls, value: Any) -> Any:
+        # Terminal records are markers, not resumable plans. Retired plan contents
+        # have no validation or execution responsibility after completion.
+        # Preserve the member index used by first-time model setup.
+        if isinstance(value, dict) and value.get("status") in {"complete", "skipped"}:
+            return {"status": value["status"], "addresses": value.get("addresses", {})}
+        return value
+
     @model_validator(mode="after")
     def validate_plan(self) -> "_State":
-        if self.status != "skipped":
+        if self.status == "pending":
             if self.manifest is None:
                 raise ValueError("missing initial society manifest")
             keys = {m.key for m in self.manifest.members}
@@ -141,22 +177,21 @@ def _new_plan() -> _State:
 
 def _contacts(member: _Member, state: _State) -> str:
     assert state.manifest is not None
-    neighbors = {
-        b if a == member.key else a for a, b in state.manifest.relations if member.key in (a, b)
-    }
-    sections = ["# 联系簿"]
-    for other in state.manifest.members:
-        if other.key not in neighbors:
+    members = {other.key: other for other in state.manifest.members}
+    sections = [
+        "# 联系簿",
+        "以下是我对他人的单向初始倾向，不代表对方对我的态度。"
+        "爱恨是创作设定，尚未实际通信，可以随共同经历改变。",
+    ]
+    for relation in state.manifest.relations:
+        if relation.source != member.key:
             continue
-        relation = "初始相识，已有基本了解，尚未实际通信。"
-        if member.organization and member.organization == other.organization:
-            relation = (
-                f"同属{member.organization}，已有初始合作约定，"
-                "愿意共同探索；尚未实际通信或产生成果，双方均可退出或另组。"
-            )
+        other = members[relation.target]
+        kind = "爱／欣赏（相生）" if relation.kind == "love" else "恨／抵触（相克）"
         sections.append(
             f"## {other.name}\n- 地址：{state.addresses[other.key]}@tlon.internal\n"
-            f"- 描述：{other.background}。{relation}"
+            f"- 描述：{other.background}\n"
+            f"- 方向：我 → {other.name}\n- 关系：{kind}\n- 理由：{relation.reason}"
         )
     return "\n\n".join(sections) + "\n"
 
@@ -219,8 +254,7 @@ def seed_initial_society(paths: TlonPaths) -> int:
             _stage_members(paths, state)
         for key, address in state.addresses.items():
             _publish_member(paths, key, address)
-        state.status = "complete"
-        _save_state(paths, state)
+        _save_state(paths, _State(status="complete", addresses=state.addresses))
         shutil.rmtree(paths.initial_society_staging_dir(), ignore_errors=True)
         return len(state.addresses)
     finally:

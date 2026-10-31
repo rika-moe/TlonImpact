@@ -241,7 +241,7 @@ def test_shipped_executable_mail_and_relocation(
                 deadline = time.monotonic() + 60
                 while time.monotonic() < deadline:
                     agents = _request(base + "/agents")["agents"]
-                    if len(agents) == 30 and all(agent["resident"] for agent in agents):
+                    if len(agents) == 5 and all(agent["resident"] for agent in agents):
                         break
                     time.sleep(0.2)
                 else:

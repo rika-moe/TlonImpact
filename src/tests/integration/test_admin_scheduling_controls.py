@@ -45,7 +45,7 @@ async def test_admin_sleep_wake_drain_wait_and_terminal_death(tmp_path: Path) ->
         assert app._runtime is not None
         registry = app._runtime.agent_registry
         store = app._runtime.post_office.store
-        prototype = builtin_id("短回合交流")
+        prototype = builtin_id("标准工具迭代")
         async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
             async with http.post(
                 f"{url}/admin/config/agents",

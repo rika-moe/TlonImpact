@@ -51,7 +51,7 @@
 | `request_timeout` | `float` | 300.0 | 运行时字段，不进 YAML |
 <!-- END GENERATED: agent-yaml-fields-llm -->
 
-首装 30 位预设成员使用 `deepseek/deepseek-flash`，明确写入各自配置；后续可在 WebUI 调整，不是进程级兜底。
+首装 5 位预设成员使用 `deepseek/deepseek-flash`，明确写入各自配置；后续可在 WebUI 调整，不是进程级兜底。
 
 `model_name` 是**必填**的成员级声明（ADR 0016——没有进程级兜底）：`provider/model` 形式（如 `deepseek/deepseek-chat`），创建成员时经 WebUI / admin API 的 `model` 字段落盘，未声明的成员装配期硬报错；API key 不在此配置——litellm 原生读取 `{PROVIDER}_API_KEY` 环境变量（见第 4 节）。采样参数不配置——请求从不携带 temperature，供应商默认生效。`top_p` 每 agent 可调。单次输出默认按 LiteLLM 元数据中的模型输出能力、剩余上下文和 run 剩余预算取小值（含推理消耗）；不再配置 `llm.max_tokens`，程序显式传入 `max_tokens` 只能进一步收紧。模型输出能力是冻结的运行时字段，不写入成员 YAML；无法解析时明确报错。`api_base`（默认 `null`）是成员级的端点覆盖：私有部署 / 代理 / OpenAI 兼容端点配 `model_name: openai/<model>` + `api_base: <url>`，`null` 时走 litellm 注册表路由。`context_window` 为 `null`（默认）时启动组装自动从 litellm 模型注册表解析（ADR 0012 阶段 2），显式值作为注册表缺失/滞后时的覆盖。运行时字段（`max_retries`、`base_delay`、`request_timeout`）只有代码默认值（不再有环境变量来源），Pydantic 标注 `exclude=True`，不落盘。
 
@@ -201,7 +201,7 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 ## 6. 配置相关的常用操作
 
 - **增/删 agent**：[base/config.py](../../src/tlon/base/config.py) 的 `yaml_save` / `yaml_delete`（删除即 `rm -rf ~/.tlon/{agent_id}/`）；热加载走 REST `POST /admin/config/agents/{agent_id}/reload`（条件注册，见 `reference/api-reference.md`）。
-- **交互式管理**：ops 的 Agents 视图——创建成员（`c`，需选模型）/ 编辑人格与模型（`e`）/ 删除（`d`）/ 原型审批（`s`）；全新实例首启创建 30 位预设成员（[初始社会](../design/initial-society.md)，ADR 0036）；已有实例不补种。
+- **交互式管理**：ops 的 Agents 视图——创建成员（`c`，需选模型）/ 编辑人格与模型（`e`）/ 删除（`d`）/ 原型审批（`s`）；全新实例首启创建 5 位预设成员（[初始社会](../design/initial-society.md)，ADR 0036）；已有实例不补种。
 - **agent 目录结构假设**：任何新路径需求必须加进 `TlonPaths`，不许在其他模块硬编码目录结构（[base/paths.py](../../src/tlon/base/paths.py) 模块 docstring 的硬性规定）。
 
 模型请求和普通工具分别限时：model-call 使用模型 request_timeout（当前为运行时默认 300 秒），普通工具使用 tool.per_timeout（默认 30 秒），两者均受当前执行域更早的截止时间约束。嵌套模型调用不能扩大父工具期限。派发后未知请求不会自动重发，详见 [ADR 0050](../decisions/0050-model-operation-timeouts.md)。
