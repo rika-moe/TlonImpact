@@ -24,6 +24,7 @@ from zipfile import ZipFile
 
 import pytest
 
+from tests.program_helpers import member_boot_idle
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.store import MailStore
 
@@ -201,8 +202,7 @@ def test_shipped_executable_mail_and_relocation(
     }
     assert expected_prototypes
     assert {
-        path.parent.name
-        for path in (folder / "runtime/tlon/prototypes").glob("*/behavior.tlon")
+        path.parent.name for path in (folder / "runtime/tlon/prototypes").glob("*/behavior.tlon")
     } == expected_prototypes
     cwd = tmp_path / "unrelated-cwd"
     cwd.mkdir()
@@ -257,7 +257,7 @@ def test_shipped_executable_mail_and_relocation(
                 deadline = time.monotonic() + 60
                 while time.monotonic() < deadline:
                     agents = _request(base + "/agents")["agents"]
-                    if len(agents) == 5 and all(agent["resident"] for agent in agents):
+                    if len(agents) == 5 and all(member_boot_idle(data, agent) for agent in agents):
                         break
                     time.sleep(0.2)
                 else:
