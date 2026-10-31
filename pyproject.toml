@@ -1,6 +1,6 @@
 [project]
 name = "tlon-impact"
-version = "0.0.5-alpha.1"
+version = "0.0.5a1"
 description = "Self-evolving agents, towards AGI"
 readme = "README.md"
 license = "PolyForm-Noncommercial-1.0.0"
