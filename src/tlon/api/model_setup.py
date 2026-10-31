@@ -13,10 +13,12 @@ from tlon.agents.initial_society import _read_state
 from tlon.api.config import ConfigFacade
 from tlon.api.members import MembersFacade
 from tlon.base.config import LLMConfig
+from tlon.base.logger import get_logger
 from tlon.base.model_limits import resolve_model_limits
 from tlon.base.paths import TlonPaths
 
 PROVIDERS = ("deepseek", "openai", "anthropic", "gemini")
+logger = get_logger(__name__)
 
 
 class SetupError(ValueError):
@@ -85,7 +87,7 @@ class ModelSetupFacade:
 
         Disk/env/member writes are retryable; the completion marker is written
         last. A partial failure is reported honestly and never marks setup done.
-        Provider errors are deliberately not included in responses or logs.
+        Provider error text is never included in responses or logs.
         """
         if not isinstance(body, dict) or set(body) != {
             "provider",
@@ -144,7 +146,14 @@ class ModelSetupFacade:
                     ),
                     timeout=25,
                 )
-            except Exception:
+            except Exception as error:
+                cause = error.__cause__ or error.__context__
+                logger.warning(
+                    "model_setup_connection_failed",
+                    provider=provider,
+                    exception_type=type(error).__name__,
+                    cause_type=type(cause).__name__ if cause is not None else None,
+                )
                 raise SetupError(
                     "连接验证失败，请检查服务商、模型、API Key 和网络后重试。"
                 ) from None

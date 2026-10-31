@@ -12,6 +12,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from dotenv import dotenv_values
+from structlog.testing import capture_logs
 
 from tlon.agents.bootstrap import bootstrap_society
 from tlon.api.config import ConfigFacade
@@ -163,9 +164,21 @@ async def test_validation_failure_does_not_save_or_leak_secret(
     caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr("litellm.acompletion", AsyncMock(side_effect=RuntimeError(KEY)))
-    with pytest.raises(SetupError) as error:
+    failure = RuntimeError(KEY)
+    failure.__cause__ = ModuleNotFoundError(KEY)
+    monkeypatch.setattr("litellm.acompletion", AsyncMock(side_effect=failure))
+    with capture_logs() as events, pytest.raises(SetupError) as error:
         await setup.configure(BODY)
+    assert events == [
+        {
+            "event": "model_setup_connection_failed",
+            "log_level": "warning",
+            "provider": "openai",
+            "exception_type": "RuntimeError",
+            "cause_type": "ModuleNotFoundError",
+        }
+    ]
+    assert KEY not in json.dumps(events)
     assert KEY not in str(error.value)
     output = capsys.readouterr()
     assert KEY not in caplog.text + output.out + output.err

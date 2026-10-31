@@ -1,6 +1,9 @@
 """Small ordinary module packages shared by domain tests."""
 
+import sqlite3
+from contextlib import closing
 from pathlib import Path
+from typing import Any
 
 from tlon.agents.member_spec import MemberSpec
 from tlon.agents.program_package import validate_program_sources
@@ -9,6 +12,27 @@ MINIMAL_BEHAVIOR = "{:version 2 :handlers {:boot work/handle}}"
 MINIMAL_MODULES = {
     "work.tlon": "(ns work (:export handle r2)) (defn handle [event] {:result nil}) (defn r2 [event] {:result nil})"
 }
+
+
+def member_boot_idle(home: Path, agent: dict[str, Any]) -> bool:
+    """Require persisted boot completion as well as an idle resident snapshot."""
+    if not agent["resident"] or agent["state"] != "waiting" or agent["waking"]:
+        return False
+    database = home / agent["id"] / "program.sqlite3"
+    if not database.exists():
+        return False
+    with closing(sqlite3.connect(database)) as connection:
+        initialized = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='runs'"
+        ).fetchone()
+        if not initialized:
+            return False
+        runs = connection.execute("SELECT run_id, completed, error FROM runs").fetchall()
+    boot_finished = any(
+        identity.endswith(":handler:boot") and completed and error is None
+        for identity, completed, error in runs
+    )
+    return boot_finished and all(completed or error is not None for _, completed, error in runs)
 
 
 def fixture_modules(behavior: str) -> dict[str, str]:
