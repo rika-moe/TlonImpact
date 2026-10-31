@@ -100,7 +100,7 @@ async def test_standard_agent_preserves_raw_calls_across_restart_and_resets_chan
             http.post(
                 url + "/admin/config/agents",
                 json={
-                    "prototype": builtin_id("标准工具迭代"),
+                    "prototype": builtin_id("标准智能体"),
                     "name": "连续消息测试员",
                     "model": "openai/gpt-test",
                 },

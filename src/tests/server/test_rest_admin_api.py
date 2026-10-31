@@ -77,7 +77,7 @@ class TestAdminCreateAgent:
         handler, reg, p = _handler(tmp_path)
         req = StubRequest(
             body={
-                "prototype": builtin_id("标准工具迭代"),
+                "prototype": builtin_id("标准智能体"),
                 "name": "新工程师",
                 "model": "deepseek/deepseek-chat",
                 "persona": {"identity": "你是新工程师", "profile": "开发", "behavior": "干活"},
@@ -90,11 +90,11 @@ class TestAdminCreateAgent:
         body = json.loads(resp.text)
         agent_id = body["agent_id"]
         assert len(agent_id) == 34 and agent_id.startswith("m-")
-        assert body["prototype"] == builtin_id("标准工具迭代")
+        assert body["prototype"] == builtin_id("标准智能体")
         reg.adopt_agent.assert_awaited_once_with(agent_id)
 
         configs = yaml_load_all(p.tlon_home())
-        assert configs[agent_id].prototype == builtin_id("标准工具迭代")
+        assert configs[agent_id].prototype == builtin_id("标准智能体")
         # member-level LLM config (ADR 0016): the model lands in agent.yaml
         assert configs[agent_id].llm is not None
         assert configs[agent_id].llm.model_name == "deepseek/deepseek-chat"
@@ -111,7 +111,7 @@ class TestAdminCreateAgent:
         response = await handler.handle_create_agent(
             StubRequest(
                 body={
-                    "prototype": builtin_id("标准工具迭代"),
+                    "prototype": builtin_id("标准智能体"),
                     "name": "开发工程师",
                     "model": "deepseek/deepseek-chat",
                     "agent_id": legacy_id,
@@ -139,7 +139,7 @@ class TestAdminCreateAgent:
         response = await handler.handle_create_agent(
             StubRequest(
                 body={
-                    "prototype": builtin_id("标准工具迭代"),
+                    "prototype": builtin_id("标准智能体"),
                     "name": "开发工程师",
                     "model": "deepseek/deepseek-chat",
                 }
@@ -157,7 +157,7 @@ class TestAdminCreateAgent:
         handler, _reg, _p = _handler(tmp_path)
 
         resp = await handler.handle_create_agent(
-            StubRequest(body={"prototype": builtin_id("标准工具迭代")})
+            StubRequest(body={"prototype": builtin_id("标准智能体")})
         )
 
         assert resp.status == 400
@@ -167,7 +167,7 @@ class TestAdminCreateAgent:
         handler, _reg, _p = _handler(tmp_path)
 
         resp = await handler.handle_create_agent(
-            StubRequest(body={"prototype": builtin_id("标准工具迭代"), "name": "x"})
+            StubRequest(body={"prototype": builtin_id("标准智能体"), "name": "x"})
         )
 
         assert resp.status == 400
@@ -211,7 +211,7 @@ class TestAdminUpdateAgent:
         handler, registry, paths = _handler(tmp_path)
         # Supported offline creation does not pass the REST create/reload guards.
         instantiate(
-            builtin_id("标准工具迭代"),
+            builtin_id("标准智能体"),
             agent_id,
             "离线成员",
             model="openai/gpt-5",
@@ -240,7 +240,7 @@ class TestAdminUpdateAgent:
         from tlon.agents.prototypes.instantiate import instantiate
 
         instantiate(
-            builtin_id("标准工具迭代"), "dev-1", "新工程师", model="openai/gpt-5", tlon_paths=p
+            builtin_id("标准智能体"), "dev-1", "新工程师", model="openai/gpt-5", tlon_paths=p
         )
         req = StubRequest(
             body={
@@ -942,7 +942,7 @@ class TestGetAgentLineageFields:
         reg = MagicMock()
         reg.get_config.return_value = SimpleNamespace(
             name="新工程师",
-            prototype=builtin_id("标准工具迭代"),
+            prototype=builtin_id("标准智能体"),
             spawned_by="gu-yanxi",
             spawn_depth=1,
         )
@@ -964,7 +964,7 @@ class TestGetAgentLineageFields:
 
         assert resp.status == 200
         body = json.loads(resp.text)
-        assert body["config"]["prototype"] == builtin_id("标准工具迭代")
+        assert body["config"]["prototype"] == builtin_id("标准智能体")
         assert body["config"]["spawned_by"] == "gu-yanxi"
         assert body["config"]["spawn_depth"] == 1
 

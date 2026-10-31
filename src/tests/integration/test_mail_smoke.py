@@ -37,7 +37,7 @@ async def test_mail_to_agent_lands_in_inbox(tlon_server: tuple[str, Path]) -> No
         http.post(
             f"{base_url}/admin/config/agents",
             json={
-                "prototype": builtin_id("标准工具迭代"),
+                "prototype": builtin_id("标准智能体"),
                 "name": "林知遥",
                 "model": "openai/gpt-4o",
             },

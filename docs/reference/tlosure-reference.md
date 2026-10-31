@@ -116,7 +116,7 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 
 **预算分摊**：一个 `Evaluator` 实例 = 一个预算计数器。单表达式走 `eval_form`；宿主若要让多个表达式共用一个总预算（如一个模块入口及其调用的函数共享 `:fuel`），直接构造 `Evaluator` 连续 `eval`——每次调用从同一个计数器扣。共享还是分段由宿主决定。
 
-计量常量（[src/tlosure/eval.py](../../src/tlosure/eval.py) 顶部）：默认预算 `DEFAULT_FUEL = 1000`；硬顶 `MAX_FUEL = 10000`；嵌套深度硬顶 `DEFAULT_MAX_DEPTH = 100`。
+计量常量（[src/tlosure/eval.py](../../src/tlosure/eval.py) 顶部）：默认预算 `DEFAULT_FUEL = 1000`；硬顶 `MAX_FUEL = 400000`；嵌套深度硬顶 `DEFAULT_MAX_DEPTH = 100`。
 
 ### 2.3 效果调用与 `BuiltinCall`
 

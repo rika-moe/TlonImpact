@@ -1,15 +1,17 @@
 """Action loops deliver and finish only through successfully executed tools."""
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tlon.agents.member_spec import MemberSpec
 from tlon.agents.program_package import program_builtins, program_module_sources
 from tlon.operations.schema import edn_value, json_value
 from tlosure.builtins import Builtin
 from tlosure.edn import loads
-from tlosure.eval import eval_form
+from tlosure.eval import DEFAULT_MAX_DEPTH, Evaluator
 from tlosure.modules import ModulePackage
 
 
@@ -25,6 +27,7 @@ def execute(
     contract: str = "contract",
     pressure: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     data: dict[str, Any] | None = None,
+    packaged: bool = False,
 ) -> tuple[list, list]:
     requests: list[dict[str, Any]] = []
     deliveries: list[dict[str, Any]] = []
@@ -119,6 +122,21 @@ def execute(
     """
         }
     )
+    fuel = 10000
+    entry = "test/handle"
+    if packaged:
+        prototype = Path(__file__).parents[2] / "tlon/prototypes/p-dfb3a5ccdcf84d749c9d075182f12888"
+        sources = program_module_sources(
+            {
+                str(path.relative_to(prototype / "modules")): path.read_text()
+                for path in (prototype / "modules").rglob("*.tlon")
+            }
+        )
+        behavior = MemberSpec.from_edn(loads((prototype / "behavior.tlon").read_text()))
+        fuel = behavior.fuel
+        entry = next(
+            handler.entry for handler in behavior.handlers if handler.event_name == "mail-delivered"
+        )
     package = ModulePackage.from_sources(sources, builtins)
     event = {
         "mail": {"id": "mail", "content": "hello", "to": ["member@tlon.internal"]},
@@ -127,13 +145,14 @@ def execute(
         "max_rounds": max_rounds,
         "self": {"address": "member@tlon.internal"},
     }
-    result = eval_form(
+    evaluator = Evaluator(builtins, fuel, DEFAULT_MAX_DEPTH)
+    result = evaluator.eval(
         loads("(handle event)"),
-        {"handle": package.entry("test/handle"), "event": event},
-        builtins,
-        fuel=10000,
+        {"handle": package.entry(str(entry)), "event": event},
+        0,
     )
     if trace is not None:
+        trace["fuel_used"] = fuel - evaluator.fuel_remaining
         trace["result"] = json_value(result, edn_keys=True)["result"]
     return requests, deliveries
 
@@ -436,3 +455,45 @@ def test_bad_boundary_summary_never_marks_read_or_dispatches_summary_tools(
         execute([finish(), response], pressure=pressure, trace=trace)
     assert trace["marked"] == trace["deliveries"] == []
     assert [call["name"] for call in trace["tool_calls"]] == ["finish-turn"]
+
+
+@pytest.mark.parametrize("handoff", [False, True])
+def test_packaged_standard_agent_finishes_on_round_200(handoff: bool) -> None:
+    trace: dict[str, Any] = {}
+    responses = tool_rounds(199) + [finish()]
+    if handoff:
+        responses.append({"content": "completed 200 rounds; next task remains"})
+
+    def pressure(options: dict[str, Any]) -> dict[str, Any]:
+        finished = any(call["name"] == "finish-turn" for call in trace["tool_calls"])
+        return resource_view(8500 if handoff and finished and options["tools"] else 1000)
+
+    requests, deliveries = execute(responses, packaged=True, trace=trace, pressure=pressure)
+    assert len(requests) == 200 + int(handoff)
+    assert len(trace["tool_calls"]) == 199 * 5 + 1
+    assert trace["marked"] == [{"mail_ids": ["mail"]}]
+    assert deliveries == []
+    assert bool(trace["result"].get("continuation")) == handoff
+
+
+def tool_rounds(count: int) -> list[dict[str, Any]]:
+    return [
+        {
+            "tool_calls": [
+                {"id": f"round-{round_number}-tool-{index}", "name": "time-now", "arguments": {}}
+                for index in range(5)
+            ]
+        }
+        for round_number in range(count)
+    ]
+
+
+def test_packaged_standard_agent_stops_after_200_unfinished_rounds() -> None:
+    from tlosure.eval import EvalError
+
+    trace: dict[str, Any] = {}
+    with pytest.raises(EvalError, match="agent work round-limit reached before completion"):
+        execute(tool_rounds(200) + [finish()], packaged=True, trace=trace)
+    assert len(trace["requests"]) == 200
+    assert len(trace["tool_calls"]) == 1000
+    assert trace["marked"] == trace["deliveries"] == []

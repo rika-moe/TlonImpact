@@ -1,1 +1,1 @@
-{:version 2 :execution {:level :L2} :handlers {:boot work.main/boot :mail-delivered work.main/handle} :fuel 10000}
+{:version 2 :execution {:level :L2} :handlers {:boot work.main/boot :mail-delivered work.main/handle} :fuel 400000}

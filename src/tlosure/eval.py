@@ -113,7 +113,7 @@ __all__ = [
 
 DEFAULT_FUEL = 1000
 DEFAULT_MAX_DEPTH = 100
-MAX_FUEL = 10000
+MAX_FUEL = 400_000
 
 
 class _Recur(Exception):  # noqa: N818 — a control-flow signal, not an error

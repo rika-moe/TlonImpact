@@ -11,7 +11,7 @@ from tlon.agents.prototypes.instantiate import instantiate
 from tlon.base.paths import TlonPaths
 
 LABELS = (
-    "标准工具迭代",
+    "标准智能体",
     "定址转发",
     "条件路由",
 )
@@ -39,7 +39,7 @@ def test_complete_builtin_module_package(tmp_path: Path, label: str) -> None:
         "boot": "work.main/boot",
         "mail-delivered": "work.main/handle",
     }
-    assert spec.execution_level == ("L2" if label == "标准工具迭代" else "L0")
+    assert spec.execution_level == ("L2" if label == "标准智能体" else "L0")
     assert config.docker.level == spec.execution_level
     assert len(modules) == 1
     assert "run-loop" not in behavior + str(modules)
@@ -51,7 +51,7 @@ def test_complete_builtin_module_package(tmp_path: Path, label: str) -> None:
 def test_seed_preserves_existing_package_sources(tmp_path: Path) -> None:
     paths = TlonPaths(tmp_path)
     assert seed_prototypes(paths) == 9
-    source = paths.prototypes_dir() / builtin_id("标准工具迭代") / "modules/work/main.tlon"
+    source = paths.prototypes_dir() / builtin_id("标准智能体") / "modules/work/main.tlon"
     source.write_text("user-owned source")
     assert seed_prototypes(paths) == 0
     assert source.read_text() == "user-owned source"
@@ -117,7 +117,7 @@ def test_local_routing_never_calls_model(
 
 def test_seed_does_not_mix_new_modules_into_existing_package(tmp_path: Path) -> None:
     paths = TlonPaths(tmp_path)
-    existing = paths.prototypes_dir() / builtin_id("标准工具迭代")
+    existing = paths.prototypes_dir() / builtin_id("标准智能体")
     existing.mkdir(parents=True)
     (existing / "behavior.tlon").write_text("user-owned behavior")
     seed_prototypes(paths)
