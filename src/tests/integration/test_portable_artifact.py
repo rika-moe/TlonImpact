@@ -15,6 +15,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import closing, suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
@@ -187,7 +188,16 @@ def test_shipped_executable_mail_and_relocation(
     sources = list((folder / "runtime/tlon").rglob("*.py"))
     assert sources and sum(path.stat().st_size for path in sources) > 100_000
     assert (folder / "runtime/tlosure").is_dir()
-    assert len(list((folder / "runtime/tlon/prototypes").glob("*/behavior.tlon"))) == 7
+    expected_prototypes = {
+        entry.name
+        for entry in files("tlon.prototypes").iterdir()
+        if entry.is_dir() and entry.joinpath("behavior.tlon").is_file()
+    }
+    assert expected_prototypes
+    assert {
+        path.parent.name
+        for path in (folder / "runtime/tlon/prototypes").glob("*/behavior.tlon")
+    } == expected_prototypes
     cwd = tmp_path / "unrelated-cwd"
     cwd.mkdir()
     outside = tmp_path / "external-tlon-home"
