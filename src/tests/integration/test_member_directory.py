@@ -37,7 +37,7 @@ async def test_member_directory_matches_delivery_offline_and_after_restart(tmp_p
             http.post(
                 f"{url}/admin/config/agents",
                 json={
-                    "prototype": builtin_id("计划后执行"),
+                    "prototype": builtin_id("标准工具迭代"),
                     "name": "Carol",
                     "model": "openai/gpt-test",
                 },
@@ -55,7 +55,7 @@ async def test_member_directory_matches_delivery_offline_and_after_restart(tmp_p
             async with http.post(
                 f"{url}/admin/config/agents",
                 json={
-                    "prototype": builtin_id("计划后执行"),
+                    "prototype": builtin_id("标准工具迭代"),
                     "name": "Bob",
                     "model": "openai/gpt-test",
                 },

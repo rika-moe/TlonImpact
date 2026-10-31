@@ -87,7 +87,11 @@ from zipfile import ZipFile
 with ZipFile(sys.argv[1]) as archive:
     prototype_roots = {name.rsplit("/", 1)[0] for name in archive.namelist()
                        if name.startswith("tlon/prototypes/p-") and name.endswith("/behavior.tlon")}
-    assert len(prototype_roots) == 7, "all seven builtin prototypes must be packaged"
+    assert prototype_roots == {
+        "tlon/prototypes/p-dfb3a5ccdcf84d749c9d075182f12888",
+        "tlon/prototypes/p-91142a0f8d3f4d30847af46a47f9ee9f",
+        "tlon/prototypes/p-39c280594c5b4e4084ce8aad72e6b07f",
+    }, "wheel must contain exactly the three supported builtin prototypes"
     for prototype in prototype_roots:
         assert prototype + "/modules/work/main.tlon" in archive.namelist(), prototype
         assert b":version 2" in archive.read(prototype + "/behavior.tlon"), prototype

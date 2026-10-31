@@ -1,4 +1,0 @@
-(ns work.main (:require [tlon.agent :as agent]) (:export boot handle))
-(defn boot [event] {:result nil})
-(defn handle [event]
-  (agent/respond event {:max_rounds 10 :history_limit 20}))
