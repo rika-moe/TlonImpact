@@ -18,7 +18,9 @@ from tlon.organization.mail.store import MailStore
 from tlosure.edn import dumps
 
 
-def failed(member: MemberRuntime, home: Path) -> tuple[ProgramRun, Mail]:
+def failed(
+    member: MemberRuntime, home: Path, run_id: str = "failed-run"
+) -> tuple[ProgramRun, Mail]:
     store = MailStore(TlonPaths(home=home).mail_database_file())
     store.register_member("human:alice")
     mail = Mail.create(
@@ -28,15 +30,40 @@ def failed(member: MemberRuntime, home: Path) -> tuple[ProgramRun, Mail]:
     )
     store.add_to_inbox(mail, "member")
     member._program_store.ensure_entry(
-        "failed-run",
+        run_id,
         "{}",
         dumps(edn_value({"payload": {"mail": {"__tlon_mail__": mail.to_dict()}}})),
         {},
     )
-    member._program_store.fail("failed-run", "failure retained")
-    record = member._program_store.get_run("failed-run")
+    member._program_store.fail(run_id, "failure retained")
+    record = member._program_store.get_run(run_id)
     assert record is not None
     return record, mail
+
+
+async def test_distinct_failed_runs_notify_once_across_restart(tmp_path: Path) -> None:
+    member = _member(tmp_path)
+    first, first_mail = failed(member, tmp_path, "first-failed-run")
+    second, second_mail = failed(member, tmp_path, "second-failed-run")
+    assert member._program_store.database is not None
+
+    await member._restore_entry_failures()
+    await member._restore_entry_failures()
+    inbox = Mailbox(TlonPaths(home=tmp_path).mail_database_file(), "human:alice")
+    notifications = await inbox.unread()
+    assert len(notifications) == 2
+    assert {mail.in_reply_to for mail in notifications} == {first_mail.id, second_mail.id}
+    assert member._failure_notification_done == {first.run_id, second.run_id}
+
+    restored = _member(tmp_path)
+    restored._operation_executor.call = AsyncMock(
+        side_effect=AssertionError("must reuse both committed notification receipts")
+    )
+    await restored._restore_entry_failures()
+    await restored._restore_entry_failures()
+    restored._operation_executor.call.assert_not_awaited()
+    assert restored._failure_notification_done == {first.run_id, second.run_id}
+    assert {mail.id for mail in await inbox.unread()} == {mail.id for mail in notifications}
 
 
 async def test_successful_sqlite_receipt_survives_build_change_without_executor(

@@ -17,7 +17,7 @@ import asyncio
 import threading
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -418,3 +418,26 @@ async def test_born_member_runtime_exposes_and_executes_reproduction_tools(tmp_p
     assert written.success, written.error
     assert written.data["trusted"] is False
     await member.shutdown()
+
+
+@pytest.mark.parametrize("failure", [False, True])
+async def test_gitea_assembly_prepares_image_and_closes_failed_client(
+    tlon_paths: TlonPaths, monkeypatch: pytest.MonkeyPatch, failure: bool
+) -> None:
+    from tlon.agents.assembly import _create_docker_runtime
+
+    runtime = MagicMock()
+    runtime.prepare = AsyncMock(side_effect=RuntimeError("build failed") if failure else None)
+    monkeypatch.setattr("tlon.agents.assembly.DockerRuntime", MagicMock(return_value=runtime))
+    config = AgentConfig(
+        id="member-dev", name="developer", docker=DockerRuntimeConfig(network_mode="gitea")
+    )
+    if failure:
+        with pytest.raises(RuntimeError, match="build failed"):
+            await _create_docker_runtime(config, tlon_paths)
+        runtime.close.assert_called_once()
+    else:
+        assert await _create_docker_runtime(config, tlon_paths) is runtime
+        runtime.close.assert_not_called()
+    runtime.prepare.assert_awaited_once()
+    runtime.ensure_running.assert_not_called()

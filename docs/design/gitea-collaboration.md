@@ -32,7 +32,7 @@ docker:
   network_mode: gitea
 ```
 
-`gitea` 是实例网络的逻辑名称，不是一个全局 Docker 网络。默认仍为 `none`；该值不提升 L0/L1 的执行等级。授权成员的一次性执行单元使用随包提供配方构建的 Git/tea 镜像；文件柜仍使用声明的基础镜像且不联网。该模式下执行镜像由集成管理，`docker.image` 仅决定文件柜镜像。镜像固定 Git `1:2.34.1-1ubuntu1.18` 与 tea `0.16.0`（amd64/arm64 下载均校验 SHA256），按配方内容派生 tag 缓存，首次执行需要构建；构建失败返回执行失败。构建使用流式取消与请求超时，退出等待宿主 worker 结束；关闭客户端流不等同于保证 Docker daemon 的构建任务立即停止。
+`gitea` 是实例网络的逻辑名称，不是一个全局 Docker 网络。默认仍为 `none`；该值不提升 L0/L1 的执行等级。授权成员的一次性执行单元使用随包提供配方构建的开发镜像；文件柜仍使用声明的基础镜像且不联网。该模式下执行镜像由集成管理，`docker.image` 仅决定文件柜镜像。开发镜像基于官方 `node:24-bookworm-slim`，预装 Node/npm、Python/pip/venv、C/C++/make、完整 Perl、Git/curl、jq/rg/zip/unzip；tea 固定 `0.16.0`（amd64/arm64 下载均校验 SHA256）。配方 tag 用于本地缓存，不保证滚动基础镜像及发行包逐字节复现。成员装配时先准备镜像，同一进程的成员共用构建锁，完成后才开放执行工具；构建失败不创建执行单元。Shell 调用不再承担镜像构建时间。Gitea 成员的启动上限为普通装配的 60 秒加共享镜像准备预算，避免外层启动计时提前取消冷构建；其他成员保持 60 秒。开发镜像冷构建使用 900 秒协作预算、流式取消与 120 秒构建请求读取超时，退出等待宿主 worker 结束；关闭客户端流不等同于保证 Docker daemon 的构建任务立即停止。
 
 每次执行通过注入端口获取本成员凭据，并检查成员仍存在、未退休；sandbox 不读取宿主凭据文件。临时容器环境提供 `GITEA_INSTANCE_URL`、`GITEA_TOKEN`（tea 原生支持）和 `TLON_GITEA_URL`、`TLON_GITEA_USERNAME`、`TLON_GITEA_TOKEN`。Git 使用预装 credential helper，精确匹配内部服务的协议与主机，禁用 HTTP 重定向，不依赖可写 HOME 或上次容器的登录文件。tea 启动仍需创建配置目录，`XDG_CONFIG_HOME=/tmp/tlon-config` 指向每次执行的 tmpfs；不执行 `tea login`，认证仍来自环境。工作副本的 remote 保留无凭据 URL。环境凭据对本成员的代码可见，不能防止成员主动输出自己的 token；宿主管理密码不进入执行单元。
 
@@ -255,3 +255,11 @@ Gitea 仍在运行而 dream 停止时，webhook 可能投递失败。第一阶�
 - [Gitea API 用法](https://docs.gitea.com/1.26/development/api-usage)：认证与 token scope。
 - [Gitea webhook](https://docs.gitea.com/usage/repository/webhooks/)：事件、签名、delivery 标识和重投。
 - [Gitea tea](https://about.gitea.com/products/tea/)：官方命令行客户端。
+
+## 开发沙箱准备（2026-11-01）
+
+成员显式使用 `network_mode: gitea` 接入托管开发环境。镜像预装 Node.js/npm、Python/pip/venv、C/C++/make、完整 Perl 及 Git/tea/curl；成员装配时先完成共享镜像准备，再创建沙箱，Shell 调用不承担首次构建。运行单元仍保持只读根文件系统与临时凭据，项目依赖安装到持久 workspace（例如 `npm install`、`python3 -m venv .venv` 后使用虚拟环境的 pip），npm/pip 缓存使用 `/tmp`。
+
+既有成员和用户原型不由播种自动覆盖。本次用户明确授权的本地配置维护将标准智能体副本同步至 PR #251 的 200 轮和 400000 fuel，并启用成员的 Gitea 网络；先备份，不修改历史运行回执或重新投递邮件。执行超时继续保留结果未知的语义，不能未经核实重放可能已经产生副作用的命令。
+
+执行日志按容器记录 create/start/wait/logs_stdout/logs_stderr/cleanup 的阶段起止、耗时与异常类型，不记录命令或凭据。

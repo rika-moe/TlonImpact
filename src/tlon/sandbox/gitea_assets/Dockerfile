@@ -1,7 +1,9 @@
-FROM ubuntu:22.04
-# Fixed CLI releases; credentials are supplied only when an execution unit starts.
+FROM node:24-bookworm-slim
+# Official maintained Node LTS plus Debian development tools.
+# Credentials are supplied only when an execution unit starts.
 RUN apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 update \
- && apt-get install -y --no-install-recommends ca-certificates curl git=1:2.34.1-1ubuntu1.18 \
+ && apt-get install -y --no-install-recommends ca-certificates curl git python3 python3-pip python3-venv \
+      build-essential perl jq ripgrep unzip zip \
  && rm -rf /var/lib/apt/lists/*
 RUN arch="$(dpkg --print-architecture)" \
  && case "$arch" in \

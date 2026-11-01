@@ -711,6 +711,7 @@ class TestGiteaExecution:
             "tlon.sandbox.docker_runtime.ensure_gitea_image",
             lambda client, **kwargs: "managed-image",
         )
+        await runtime.prepare()
         for token in ("token-one", "token-two"):
             result = await runtime.run("git status")
             assert result.exit_code == 0
@@ -744,6 +745,7 @@ class TestGiteaExecution:
             "tlon.sandbox.docker_runtime.ensure_gitea_image",
             lambda client, **kwargs: "managed-image",
         )
+        await runtime.prepare()
         result = await runtime.run("true")
         assert result.exit_code == -1
         assert "secret-token" not in result.stderr
@@ -760,7 +762,7 @@ class TestGiteaExecution:
         runtime._gitea_access.assert_not_awaited()
         runtime.client.containers.create.assert_not_called()
 
-    async def test_cancelled_build_settles_before_run_returns(self, tmp_path, monkeypatch):
+    async def test_cancelled_build_settles_before_preparation_returns(self, tmp_path, monkeypatch):
         import asyncio
 
         runtime, _ = _runtime_with_exec_unit(monkeypatch, tmp_path)
@@ -777,11 +779,54 @@ class TestGiteaExecution:
             raise RuntimeError("build stopped")
 
         monkeypatch.setattr("tlon.sandbox.docker_runtime.ensure_gitea_image", build)
-        task = asyncio.create_task(runtime.run("true"))
+        task = asyncio.create_task(runtime.prepare())
         await asyncio.wait_for(started.wait(), 2)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
         assert finished.is_set()
+        runtime._gitea_access.assert_not_awaited()
+        runtime.client.containers.create.assert_not_called()
+
+    async def test_prepares_before_cabinet_lookup_and_reuses_image(self, tmp_path, monkeypatch):
+        runtime = _make_runtime(monkeypatch, tmp_path)
+        runtime.config.network_mode = "gitea"
+        events: list[str] = []
+
+        def build(client: Any, **kwargs: Any) -> str:
+            events.append("build")
+            return "prepared"
+
+        monkeypatch.setattr("tlon.sandbox.docker_runtime.ensure_gitea_image", build)
+        cabinet = MagicMock()
+        cabinet.attrs = _matching_attrs(runtime._expected_spec())
+        runtime.client.containers.get.side_effect = lambda _: (events.append("cabinet"), cabinet)[1]
+        await runtime.ensure_running()
+        await runtime.prepare()
+        assert events == ["build", "cabinet"]
+        cabinet.start.assert_not_called()
+        runtime.client.containers.create.assert_not_called()
+
+    async def test_failed_preparation_creates_no_cabinet(self, tmp_path, monkeypatch):
+        runtime = _make_runtime(monkeypatch, tmp_path)
+        runtime.config.network_mode = "gitea"
+
+        def build(client: Any, **kwargs: Any) -> str:
+            raise RuntimeError("build failed")
+
+        monkeypatch.setattr("tlon.sandbox.docker_runtime.ensure_gitea_image", build)
+        with pytest.raises(RuntimeError, match="build failed"):
+            await runtime.ensure_running()
+        runtime.client.containers.get.assert_not_called()
+        runtime.client.containers.create.assert_not_called()
+
+    async def test_unprepared_run_never_builds(self, tmp_path, monkeypatch):
+        runtime = _make_runtime(monkeypatch, tmp_path)
+        runtime.config.network_mode = "gitea"
+        runtime._gitea_access = AsyncMock()
+        build = MagicMock()
+        monkeypatch.setattr("tlon.sandbox.docker_runtime.ensure_gitea_image", build)
+        assert (await runtime.run("true")).exit_code == -1
+        build.assert_not_called()
         runtime._gitea_access.assert_not_awaited()
         runtime.client.containers.create.assert_not_called()
