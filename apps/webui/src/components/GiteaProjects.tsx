@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { RestError } from "../client/rest";
-import type { GiteaProjectsSnapshot, RestClient } from "../client/rest";
+import type { GiteaProjectsSnapshot, GiteaStatus, RestClient } from "../client/rest";
 
 /** Human grants for upstream review; development takes place in personal forks. */
 export function GiteaProjects({ rest }: { rest: RestClient }): ReactElement {
   const [snapshot, setSnapshot] = useState<GiteaProjectsSnapshot | null>(null);
+  const [status, setStatus] = useState<GiteaStatus | null>(null);
+  const [statusError, setStatusError] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const locked = useRef(false);
@@ -21,7 +23,11 @@ export function GiteaProjects({ rest }: { rest: RestClient }): ReactElement {
     setError(null);
     try {
       if (write) await write();
-      setSnapshot(await rest.giteaProjects());
+      const [projects, service] = await Promise.allSettled([rest.giteaProjects(), rest.giteaStatus()]);
+      setStatus(service.status === "fulfilled" ? service.value : null);
+      setStatusError(service.status === "rejected");
+      if (projects.status === "rejected") throw projects.reason;
+      setSnapshot(projects.value);
     } catch (err) {
       setSnapshot(null);
       setError(err instanceof RestError && err.status === 503
@@ -49,10 +55,23 @@ export function GiteaProjects({ rest }: { rest: RestClient }): ReactElement {
     <section className="panel gitea-projects" aria-labelledby="gitea-projects-title">
       <div className="settings-toolbar">
         <h3 id="gitea-projects-title" className="tech-label settings-section-title">GITEA · 项目与评审权限</h3>
-        <button type="button" className="btn btn--secondary" disabled={busy} onClick={() => { void refresh(); }}>刷新项目</button>
+        <button type="button" className="btn btn--secondary" disabled={busy} onClick={() => { void refresh(); }}>刷新状态</button>
       </div>
       <p>成员在自己的 fork 中开发，再向上游提交 PR。所有成员可阅读和讨论；人类授予的 reviewer 可合并 PR，拥有上游写入权限，但没有仓库管理权限。</p>
       <p>在 Gitea 项目页面完成 fork、提交和评审。以下保护规则仅用于上游仓库，保护分支必须通过 PR 合并。</p>
+      <section aria-label="Gitea 通知状态">
+        <h4>讨论通知</h4>
+        {statusError ? <p className="settings-error">通知状态读取失败，请刷新重试。</p>
+          : status === null ? <p className="settings-dim">正在读取通知状态…</p>
+            : !status.webhooks ? <p className="settings-dim">通知桥接尚未配置。</p>
+              : <>
+                <p>状态：{status.webhooks.state} · {status.webhooks.message}</p>
+                <p>待投递：{status.webhooks.pending ?? 0} · 失败待重试：{status.webhooks.failed ?? 0} · 无匹配收件人：{status.webhooks.unrouted ?? 0} · 已接入仓库：{status.webhooks.repositories ?? 0}</p>
+                {status.webhooks.last_rejection && <p className="settings-error">最近拒绝：{status.webhooks.last_rejection}</p>}
+                {!!status.webhooks.recent_failures?.length && <ul className="settings-error">{status.webhooks.recent_failures.map((failure) => <li key={`${failure.event_key}/${failure.member_id}`}>{failure.member_id} · 尝试 {failure.attempts} 次：{failure.error}</li>)}</ul>}
+              </>}
+        <small className="settings-dim">通知邮件将成员带到对应 Issue / PR；讨论仍在 Gitea 中进行。点击刷新查看最新投递状态。</small>
+      </section>
       {error && <p role="alert" className="settings-error">{error}</p>}
       {busy && <p role="status" className="settings-dim">正在读取或保存项目状态…</p>}
       {snapshot && <>

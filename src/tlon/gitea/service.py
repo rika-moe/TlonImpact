@@ -12,6 +12,8 @@ from tlon.gitea.initialize import OPERATOR, ORGANIZATION, initialize
 from tlon.gitea.members import MemberManager
 from tlon.gitea.projects import ProjectManager
 from tlon.gitea.storage import GiteaError, load_records
+from tlon.gitea.webhook_remote import WebhookRemote
+from tlon.gitea.webhook_transport import prepare_transport, probe_transport
 from tlon.sandbox.docker_client import create_docker_client
 
 
@@ -51,7 +53,56 @@ class GiteaService:
         if self._status["state"] != "ready":
             raise GiteaError("Gitea is unavailable")
         _, credentials = load_records(self._paths, self._port)
-        return ProjectManager(str(self._status["url"]), credentials["admin_password"], control=control)
+        return ProjectManager(
+            str(self._status["url"]), credentials["admin_password"], control=control
+        )
+
+    def webhook_remote(self, control: StartupControl) -> WebhookRemote:
+        """Construct the host-only webhook client under the caller's instance lock."""
+        if self._status["state"] != "ready":
+            raise GiteaError("Gitea is unavailable")
+        _, credentials = load_records(self._paths, self._port)
+        return WebhookRemote(
+            str(self._status["url"]), credentials["admin_password"], control=control
+        )
+
+    def prepare_webhooks(self, port: int, control: StartupControl) -> dict[str, str]:
+        """Prepare a callback under the caller's instance lock; preserve the container."""
+        if self._status["state"] != "ready":
+            raise GiteaError("Gitea is unavailable")
+        state, _ = load_records(self._paths, self._port)
+        client = create_docker_client()
+        try:
+            client.api.timeout = 5
+            container = ensure_container(
+                client, self._paths, str(state["instance_id"]), self._port, control=control
+            )
+            return prepare_transport(
+                client,
+                container,
+                self._paths,
+                str(state["instance_id"]),
+                port,
+                str(self._status["url"]),
+                control,
+            )
+        finally:
+            client.close()
+
+    def probe_webhook(self, transport: dict[str, str], control: StartupControl) -> None:
+        """Verify callback reachability from the strictly owned service container."""
+        state, _ = load_records(self._paths, self._port)
+        if transport["instance_id"] != str(state["instance_id"]):
+            raise GiteaError("Gitea webhook instance mismatch")
+        client = create_docker_client()
+        try:
+            client.api.timeout = 5
+            container = ensure_container(
+                client, self._paths, str(state["instance_id"]), self._port, control=control
+            )
+            probe_transport(container, transport, control)
+        finally:
+            client.close()
 
     def _ensure(self) -> dict[str, object]:
         try:

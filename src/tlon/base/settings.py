@@ -64,10 +64,13 @@ class Settings:
     github_recipient: str
     github_token: str
     gitea_port: int = 3000
+    gitea_webhook_port: int = 3001
 
     def __post_init__(self) -> None:
         if not 1 <= self.gitea_port <= 65535:
             raise ValueError("TLON_GITEA_PORT must be between 1 and 65535")
+        if not 1 <= self.gitea_webhook_port <= 65535:
+            raise ValueError("TLON_GITEA_WEBHOOK_PORT must be between 1 and 65535")
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -103,4 +106,6 @@ class Settings:
             github_token=os.getenv("GITHUB_TOKEN", ""),
             # Managed Gitea: loopback HTTP port (1..65535), separate from dream
             gitea_port=int(os.getenv("TLON_GITEA_PORT", "3000")),
+            # Dedicated signed Gitea webhook listener; never serves WebUI/admin
+            gitea_webhook_port=int(os.getenv("TLON_GITEA_WEBHOOK_PORT", "3001")),
         )

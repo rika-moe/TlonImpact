@@ -1,6 +1,6 @@
 # ADR 0055：Tlon 托管 Gitea 与成员软件协作
 
-状态：已接受（2026-11-01）；#256 托管服务、#257 成员接入与 #258 fork + PR 项目治理已实现；#259 通知桥接尚未实施。施工跟踪：[EPIC #255](https://github.com/rika-moe/TlonImpact/issues/255)。当前实施边界见目标设计的“当前实现”章节，历史决策不作为完整能力已交付的声明。
+状态：已接受（2026-11-01）；#256 托管服务、#257 成员接入与 #258 fork + PR 项目治理已实现；#259 通知桥接已实现。macOS + Colima 闭环与恢复实测通过；Linux/Windows 回调尚未实测。施工跟踪：[EPIC #255](https://github.com/rika-moe/TlonImpact/issues/255)。当前实施边界见目标设计的“当前实现”章节，历史决策不作为完整能力已交付的声明。
 
 目标设计：[Gitea 软件协作](../design/gitea-collaboration.md)。部分修订 [ADR 0002](0002-mail-as-only-channel.md) 的通信范围；保留 [ADR 0030](0030-sqlite-post-office.md) 的投信契约及 [ADR 0033](0033-local-webui-identity.md) 的本地 WebUI 边界。
 

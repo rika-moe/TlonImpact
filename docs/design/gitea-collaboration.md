@@ -1,6 +1,6 @@
 # Gitea 软件协作设计
 
-> 决策见 [ADR 0055](../decisions/0055-managed-gitea-collaboration.md)。#256 已实现持久服务、初始管理身份/组织与启动状态；#257 增加成员身份和执行接入；#258 增加个人 fork + 上游 PR 的项目治理；#259 通知桥接尚未实施。下节说明当前机制，之后的总体契约继续约束后续施工，不代表完整协作闭环已经可用。
+> 决策见 [ADR 0055](../decisions/0055-managed-gitea-collaboration.md)。#256 已实现持久服务、初始管理身份/组织与启动状态；#257 增加成员身份和执行接入；#258 增加个人 fork + 上游 PR 的项目治理；#259 已实现通知桥接。下节说明当前机制与实测边界；Linux/Windows 回调未实测，不作为已通过能力声明。
 
 ## 当前实现：托管服务（#256）
 
@@ -18,7 +18,7 @@
 - 启动工作使用 300 秒协作预算，HTTP/Docker 请求设超时，镜像流按进度检查截止；管理员 CLI 使用容器内 30 秒 kill 截止及宿主 detached exec 轮询。退出发取消信号并等待正在进行的有限 IO 与清理，不留下仍会继续创建容器的后台线程；总预算不是能中断内核或 Docker daemon 的硬实时保证。
 - 退出只释放集成任务和客户端，持久容器使用 `unless-stopped` 重启策略。服务停止、升级、删除和数据恢复仍由明确的管理操作完成，当前没有新增自动销毁或迁移命令。
 
-`ready` 表示本轮服务初始化及配置检查通过，是启动结果快照，不是持续存活监控。运行中手工停止 Gitea 后，重启 dream 会再次确保可用；当前状态端点不自动探活或重启服务。成员同步状态单独报告；项目治理按请求查询实际状态，webhook 仍在后续阶段。
+`ready` 表示本轮服务初始化及配置检查通过，是启动结果快照，不是持续存活监控。运行中手工停止 Gitea 后，重启 dream 会再次确保可用；当前状态端点不自动探活或重启服务。成员同步状态单独报告；项目治理按请求查询实际状态，通知桥接独立报告就绪与投递状态。
 
 ## 当前实现：成员与执行接入（#257）
 
@@ -51,6 +51,26 @@ WebUI 设置页提供私有组织项目的创建、已有仓库纳管、保护�
 受保护分支禁止直接推送、强推和删除，合并名单仅包含项目 reviewer 团队及人类账号 `tlon-operator`，不允许管理员绕过正常合并检查。reviewer 获得上游写权但不是仓库管理员；其未保护分支仍遵循 Gitea 原生 write 权限。个人 fork 不注入上游保护规则，可正常强推和删除自己的开发分支。
 
 固定 Gitea 28.2.0 实测确认：成员的 `max_repo_creation=0` 禁止新建普通仓库，但镜像默认 `ALLOW_FORK_WITHOUT_MAXIMUM_LIMIT=true` 允许原生 fork，不需为此提升账号权限。退休会禁用账号、撤销 token 并退出组织，保留 fork 与已打开 PR；已打开 PR 的提交仍可经上游 PR ref 获取和合并。私有 fork 不保证 reviewer 能直接 clone，评审使用上游 ref，具体命令见下文。
+
+## 当前实现：通知桥接（#259）
+
+独立 webhook listener 由 dream 托管，`TLON_GITEA_WEBHOOK_PORT` 默认 `3001`，监听 `0.0.0.0`，仅提供实例专属的 `/gitea/{instance_id}` 回调路径，不挂载管理 API。已有 WebUI/管理入口仍保留原来的 loopback、Host 和同源请求边界。回调必须通过原始请求体的 HMAC-SHA256 验签、1 MiB 请求大小限制及实例核对；签名通过后还会查询 Gitea 当前项目治理，精确匹配受管私有仓库 ID 与 `tlon/<repo>` 全名。
+
+宿主探测 Gitea 容器可达的回调地址，在受管 `app.ini` 中设置精确的回调 IP 与端口 allowlist，不放行任意私网或整个局域网；必要时重启持久 Gitea 容器使配置生效，保留数据和容器身份。写入配置前持久保存待重启标记，重启失败或崩溃后继续恢复，健康检查通过才清除标记。启动从实际 Gitea 容器发起带签名的 ping，连通性验证成功后才进入桥接就绪流程。macOS + Colima 的回调通路已有实测；Linux 与 Windows 尚未实测，各实例仍须实际 ping 成功，不能仅凭平台分支存在就宣称支持。
+
+桥接为每个当前受管仓库创建实例 URL 对应的 Gitea webhook，关注 issue、指派、评论、PR、review 请求、review 和 PR 同步事件。按精确实例 UUID 路径识别自有 hook；回调 IP/端口变化时更新原 hook URL，保留密钥与 delivery 历史。重复实例 hook 或冲突类型会报错，不接管其他实例路径的 hook。API 配置使用 `pull_request_review` 事件组，接收使用 `X-Gitea-Event-Type` 区分三个具体 review 事件。作者、被指派者、请求的 reviewer、当前正文中的 mention，以及分页查询到的讨论/评审参与者组成候选收件人；用户名大小写不敏感，排除操作者，只映射到仍有效且可投递的成员。历史描述里的 mention 不会因每条新评论重复唤醒。
+
+`webhooks.sqlite3` 在同一事务内保存事件、delivery ID、不可变邮件计划和待投递记录。邮件身份、时间、内容和稳定 mail ID 首次接受后固定；新 delivery ID 的重投不会重算已接收事件的投递计划。重启后即使 Gitea/回调暂不可用，已接收但投递失败的记录仍通过邮局自动重试，重试按尝试次数排列，避免前面的失败收件人阻塞后续通知；退休或不可投递成员记为跳过。邮件使用外部集成身份 `notifications@gitea.invalid`，接入原有邮局和调度，不强制唤醒休眠成员。
+
+在 `GET /admin/gitea` 的 `webhooks` 字段查看状态、pending/failed/unrouted 计数及近期 delivery 与事件关联；WebUI 设置页刷新 Gitea 状态可看到同一结果。此状态与 Gitea 主服务启动快照分开：容器仍运行不代表回调 listener 在线，队列积压也不表示事件从未收到。
+
+Webhook 桥接的可用状态绑定 listener 与签名探针生命周期：探针成功前、失败后和 listener 停止后均不执行 hook 同步，也不能由后台 worker 标记为 ready；已经接收的持久队列继续投递。远端同步的暂时失败可以重试，但不能恢复已经失效的回调生命周期。
+
+停机期间从未接收的事件不会出现在本地 pending 中。恢复 dream 后，应由有项目设置权限的人类在 Gitea 项目的 **Settings → Webhooks** 中打开本实例 hook，检查失败 delivery，并手工重投。固定版本已实测原生登录会话与仓库 hook 页面，再调用该页面的 `POST /tlon/<repo>/settings/hooks/<id>/replay/<delivery UUID>` 重投操作；它会复制原 payload 并生成新的 delivery UUID。同源保护会拒绝跨站重投；连续两次重投仅产生一封持久邮件。不要通过改写 payload 或新建评论模拟重投。
+
+签名密钥保存在宿主私有 `webhook.json`，固定于 hook 创建时。Gitea 28.2 的 PATCH API 不更新 secret，GET 也不返回 secret；桥接只对账 URL、事件、启用状态和内容类型，不宣称自动修复密钥漂移。人工修改 Gitea hook secret 后，验签失败会在桥接诊断中呈现。确认密钥不一致时，先检查并保留需要的失败 delivery 记录，经人类确认后手工删除该实例 hook，桥接会用持久密钥重建；删除 hook 会丢失其 delivery 历史，因此程序绝不自动删除。
+
+macOS + Colima、Gitea 28.2.0 与 tea 0.16.0 已实测 fork 开发、请求评审通知、评审意见通知、修订推送通知、reviewer 合并及人类 operator 合并；测试证据绑定最终 commit。隔离 dream 的 HTTP 投信与持久收件箱，以及退出后 Gitea 留存均通过。质量门结果见对应 PR。
 
 ## 目标与事实边界
 
@@ -159,7 +179,7 @@ git switch --detach FETCH_HEAD
 
 退休禁用作者账号并撤销 token，保留 fork、提交和已有 PR 的历史；固定版本实测确认上述上游 ref 仍能 fetch，reviewer 仍可合并已打开 PR。继任成员用新账号/fork，不继承旧 reviewer 权限。
 
-第一阶段由 reviewer 判断最终 commit 的测试证据和评审意见。参与评审不等于拥有合并权，不自动提升权限；不设置统一强制审批人数或伪造 CI 必过规则。通知转邮件仍由 #259 实施。
+第一阶段由 reviewer 判断最终 commit 的测试证据和评审意见。参与评审不等于拥有合并权，不自动提升权限；不设置统一强制审批人数或伪造 CI 必过规则。通知转邮件由上述 #259 桥接提供。
 
 ## 网络与入口边界
 
@@ -187,6 +207,10 @@ issue/PR/review 保存软件成果相关讨论的原文及版本关系；Tlon �
 4. 接收落盘后崩溃可扫描待投递记录；投信成功而标记未完成时，用同一 mail ID 重试，不能产生重复收件。通知仍遵循现有调度策略，收到邮件不强制越过睡眠或退休限制。
 
 Gitea 仍在运行而 dream 停止时，webhook 可能投递失败。第一阶段明确显示桥接离线与失败记录，提供经验证的 Gitea 重投路径；不假设上游自动无限重试，不承诺全部停机事件自动补齐。恢复后的人工重投与已接收事件恢复是不同机制。未收到过的事件不能仅靠本地 pending 表恢复；自动离线对账属于后续增强。
+
+### 事件版本的实现边界
+
+普通评论使用原生 comment ID、动作、更新时间和正文摘要区分；不同评论和可辨识的后续编辑不会因正文相同而合并。Gitea 28.2 的 review webhook 只提供 `review.type` 和 `review.content`，没有原生 review ID 或独立评审时间；因此语义键结合 PR 更新时间、操作者、commit、评审类型与正文摘要。若两次评审产生完全相同的这些快照，两者无法从该版本 payload 区分，会合并为一次通知。这是首阶段的明确通知粒度限制，评审原文及各次记录仍以 Gitea 为准，不据此删除或合并 Gitea review。
 
 ## 包边界与职责
 
