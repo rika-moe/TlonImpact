@@ -161,6 +161,7 @@ name = "base 不依赖任何上层域"
 type = "forbidden"
 source_modules = "tlon.base"
 forbidden_modules = [
+    "tlon.gitea",
     "tlon.agents",
     "tlon.organization",
     "tlon_server",
@@ -176,6 +177,7 @@ name = "organization 不依赖 agents/server/launcher/tools/sandbox/prototypes"
 type = "forbidden"
 source_modules = "tlon.organization"
 forbidden_modules = [
+    "tlon.gitea",
     "tlon.agents",
     "tlon_server",
     "tlon_launcher",
@@ -190,6 +192,7 @@ name = "sandbox 不依赖 agents/organization/server/launcher/tools/prototypes"
 type = "forbidden"
 source_modules = "tlon.sandbox"
 forbidden_modules = [
+    "tlon.gitea",
     "tlon.agents",
     "tlon.organization",
     "tlon_server",
@@ -231,6 +234,7 @@ name = "server 只依赖 tlon.api + tlon.base"
 type = "forbidden"
 source_modules = "tlon_server"
 forbidden_modules = [
+    "tlon.gitea",
     "tlon.agents",
     "tlon.organization",
     "tlon.sandbox",
@@ -247,6 +251,7 @@ name = "launcher 不直摸 runtime"
 type = "forbidden"
 source_modules = "tlon_launcher"
 forbidden_modules = [
+    "tlon.gitea",
     "tlon.agents",
     "tlon.organization",
     "tlon.sandbox",
@@ -277,3 +282,10 @@ name = "operations 不依赖 agents/server/launcher"
 type = "forbidden"
 source_modules = "tlon.operations"
 forbidden_modules = ["tlon.agents", "tlon_server", "tlon_launcher"]
+
+# Managed infrastructure exposes only a facade to serving; no reverse dependencies.
+[[tool.importlinter.contracts]]
+name = "gitea 不依赖业务与装配层"
+type = "forbidden"
+source_modules = "tlon.gitea"
+forbidden_modules = ["tlon.agents", "tlon.organization", "tlon.tools", "tlon.api", "tlon_server", "tlon_launcher"]

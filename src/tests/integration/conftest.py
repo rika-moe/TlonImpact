@@ -34,6 +34,7 @@ import litellm
 import pytest
 
 from tests.process_helpers import ProcessTree
+from tlon.api.gitea import GiteaFacade
 from tlon.base.paths import TlonPaths
 from tlon.base.settings import Settings
 from tlon.organization.mail.store import MailStore
@@ -46,6 +47,16 @@ SERVER_KILL_TIMEOUT = 5.0
 logger = logging.getLogger(__name__)
 TEST_MODEL_OUTPUT_TOKENS = 8192
 TEST_MODEL_CONTEXT_WINDOW = 32768
+
+
+@pytest.fixture(autouse=True)
+def no_managed_gitea_containers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Protocol tests exercise HTTP/mail without leaving persistent Docker services."""
+
+    async def ensure_started(self: GiteaFacade) -> dict[str, object]:
+        return {**self.status(), "state": "unavailable", "message": "test dependency omitted"}
+
+    monkeypatch.setattr(GiteaFacade, "ensure_started", ensure_started)
 
 
 @pytest.fixture(autouse=True)
@@ -170,7 +181,13 @@ async def _run_server(
     with tempfile.TemporaryDirectory(prefix="tlon-smoke-") as tlon_home:
         argv = ["tlon", "dream", "--host", "127.0.0.1", "--rest-port", str(port)]
         code = (
-            f"import runpy,sys; sys.argv = {argv!r}; "
+            "import runpy, sys\n"
+            "from tlon.api.gitea import GiteaFacade\n"
+            "async def unavailable(self):\n"
+            "    return {**self.status(), 'state': 'unavailable', "
+            "'message': 'test dependency omitted'}\n"
+            "GiteaFacade.ensure_started = unavailable\n"
+            f"sys.argv = {argv!r}\n"
             "runpy.run_module('tlon_launcher.main', run_name='__main__')"
         )
         tree = await ProcessTree.start(
