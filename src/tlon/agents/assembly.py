@@ -150,7 +150,7 @@ async def assemble_member_services(
     none of the device-dependent shell/filesystem tools; L1 (issue #40,
     文件层) gets the runtime but only the filesystem five — no bash tools,
     and run() is refused at the device layer. Otherwise no
-    container exists here: Gitea-enabled members prepare their development
+    container exists here: Gitea-enabled L2 members prepare their development
     image before tools are assembled; ``run()`` spins a one-shot execution unit per
     command (issue #25) and the file cabinet is created lazily on first
     file I/O via ensure_running(), so waking an agent for pure
