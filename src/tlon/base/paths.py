@@ -126,6 +126,32 @@ class TlonPaths:
     def shared_dir(self) -> Path:
         return self._home / "shared"
 
+    def gitea_dir(self) -> Path:
+        """Private persistent collaboration infrastructure."""
+        return self._home / "infrastructure" / "gitea"
+
+    def gitea_data_dir(self) -> Path:
+        return self.gitea_dir() / "data"
+
+    def gitea_config_dir(self) -> Path:
+        return self.gitea_dir() / "config"
+
+    def gitea_mount_probe_file(self, nonce: str, *, config: bool, reply: bool = False) -> Path:
+        directory = self.gitea_config_dir() if config else self.gitea_data_dir()
+        return directory / (f".tlon-probe-{nonce}-reply" if reply else f".tlon-probe-{nonce}")
+
+    def gitea_lock_file(self) -> Path:
+        return self.gitea_dir().with_suffix(".lock")
+
+    def gitea_state_file(self) -> Path:
+        return self.gitea_dir() / "state.json"
+
+    def gitea_credentials_file(self) -> Path:
+        return self.gitea_dir() / "credentials.json"
+
+    def gitea_operator_credentials_file(self) -> Path:
+        return self.gitea_dir() / "operator-credentials.json"
+
     # ===== Per-agent =====
 
     def agent_dir(self, agent_id: str) -> Path:

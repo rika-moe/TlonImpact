@@ -15,6 +15,7 @@ Usage:
 """
 
 import asyncio
+import contextlib
 import signal
 import sys
 from types import FrameType
@@ -111,6 +112,7 @@ class ServerApp:
         self._shutdown_event = asyncio.Event()
         self.ready = asyncio.Event()
         self._running = False
+        self._gitea_start_task: asyncio.Task[None] | None = None
         # shutdown() re-entry guard: the signal handler spawns one
         # shutdown task per signal and run_server's finally always calls
         # shutdown() again after start() returns — without this flag the
@@ -200,6 +202,7 @@ class ServerApp:
             configs=runtime.configs,
             events=runtime.events,
             arena=runtime.arena,
+            gitea=runtime.gitea,
             model_setup=ModelSetupFacade(self._paths, runtime.configs, runtime.members),
             host=self.host,
             port=self.rest_port,
@@ -241,6 +244,8 @@ class ServerApp:
         self.rest_port = self.rest.port
         assert self.client_gateway is not None
         self.client_gateway.port = self.rest_port
+        # Image pulls must not delay mail. Only serving starts infrastructure.
+        self._gitea_start_task = asyncio.create_task(self._start_gitea())
         self.ready.set()
 
         agent_count = len(self._runtime.members.list_ids()) if self._runtime else 0
@@ -251,11 +256,25 @@ class ServerApp:
             agent_count=agent_count,
         )
         print(_startup_banner(self.host, self.rest_port), flush=True)
+        print(
+            f"   Gitea      : starting — http://127.0.0.1:{self._settings.gitea_port}/",
+            flush=True,
+        )
 
         # Wait for shutdown signal
         await self._shutdown_event.wait()
 
         logger.info("shutdown_signal_received")
+
+    async def _start_gitea(self) -> None:
+        """Report readiness independently of the core HTTP service."""
+        assert self._runtime is not None
+        status = await self._runtime.gitea.ensure_started()
+        logger.info("gitea_status", **status)
+        print(
+            f"   Gitea      : {status['state']} — {status['url']} ({status['message']})",
+            flush=True,
+        )
 
     async def shutdown(self) -> None:
         """Shutdown the server gracefully.
@@ -292,6 +311,11 @@ class ServerApp:
         # Shutdown ClientGateway
         if self.client_gateway:
             await self.client_gateway.shutdown()
+
+        if self._gitea_start_task is not None:
+            self._gitea_start_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._gitea_start_task
 
         # Shutdown the runtime components (reverse order of creation;
         # Adam (PID 1) stops before the registry (kernel) it drives)

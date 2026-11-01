@@ -126,7 +126,7 @@ agent:
 读取方是 [base/settings.py](../../src/tlon/base/settings.py) 的 `Settings`（只处理进程级基建与密钥；业务配置在 `AgentConfig`）与 [base/tracing/otel.py](../../src/tlon/base/tracing/otel.py)。`.env` 在 **`{TLON_HOME}/.env`**（默认 `~/.tlon/.env`，配置与数据同目录）加载，且不覆盖已设置的真实环境变量（`load_process_env`，`override=False`）；`TLON_HOME` 本身只认真实环境变量，不来自 `.env`。
 
 <!-- BEGIN GENERATED: env-vars -->
-`Settings` 读取的环境变量（10 个，按源码顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`Settings` 读取的环境变量（11 个，按源码顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
@@ -140,6 +140,7 @@ agent:
 | `GITHUB_WEBHOOK_SECRET` | "" | GitHub webhook ingress (see docs/design/mail.md 「外部来信与信任面」): HMAC secret of the webhook; empty = POST /webhooks/github is not registered at all |
 | `GITHUB_RECIPIENT` | "" | GitHub 来信的默认收件人 member id；空 = 发给全体已知人类 |
 | `GITHUB_TOKEN` | "" | GitHub API token（出站：回信 → issue/PR comment）； 空 = 出站禁用，入站不受影响 |
+| `TLON_GITEA_PORT` | 3000 | Managed Gitea: loopback HTTP port (1..65535), separate from dream |
 <!-- END GENERATED: env-vars -->
 
 上表是 `Settings` 的全部读取点；另有两个环境变量由其他模块读取（手写维护）：
@@ -205,3 +206,11 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 - **agent 目录结构假设**：任何新路径需求必须加进 `TlonPaths`，不许在其他模块硬编码目录结构（[base/paths.py](../../src/tlon/base/paths.py) 模块 docstring 的硬性规定）。
 
 模型请求和普通工具分别限时：model-call 使用模型 request_timeout（当前为运行时默认 300 秒），普通工具使用 tool.per_timeout（默认 30 秒），两者均受当前执行域更早的截止时间约束。嵌套模型调用不能扩大父工具期限。派发后未知请求不会自动重发，详见 [ADR 0050](../decisions/0050-model-operation-timeouts.md)。
+
+## 托管 Gitea
+
+`tlon dream` 在核心 HTTP 就绪后自动确保 Gitea 运行；不要求另装 Compose。唯一新增环境配置是 `TLON_GITEA_PORT`（默认 3000，1–65535），宿主网页地址为 `http://127.0.0.1:<port>/`。不同实例需使用不同端口；实例已有状态后改变端口会报告冲突，不自动改造容器。
+
+数据目录为 `{TLON_HOME}/infrastructure/gitea/`，必须由 Docker daemon 共享且可写。`state.json` 保存实例归属；`data/`、`config/` 保存 Gitea 数据和配置；私有 `credentials.json` 保存宿主凭据，`operator-credentials.json` 保存 `tlon-operator` 的初始密码。首次登录需改密，后续启动不会重置。不要把这些文件放进成员 workspace 或提交到仓库。
+
+状态见启动终端及 `GET /admin/gitea`。Docker 不可用或初始化失败不阻断核心邮件；退出 dream 不停止 Gitea。当前没有持续健康监控、成员账号接入或自动 CI，详细边界见 [设计](../design/gitea-collaboration.md)。

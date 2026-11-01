@@ -55,7 +55,7 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 
 ## 通信与记忆
 
-[ADR 0055：Tlon 托管 Gitea 与成员软件协作](0055-managed-gitea-collaboration.md)：已接受、尚未实施；持久容器、独立成员账号、分级项目权限、成果讨论及 webhook 转邮件。目标设计见 [Gitea 软件协作](../design/gitea-collaboration.md)。
+[ADR 0055：Tlon 托管 Gitea 与成员软件协作](0055-managed-gitea-collaboration.md)：已接受；#256 持久服务已实现，成员账号、项目权限及 webhook 转邮件尚未实施。目标设计见 [Gitea 软件协作](../design/gitea-collaboration.md)。
 
 | 决策 | 当前设计 | 有效范围与修订关系 |
 |---|---|---|

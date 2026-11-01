@@ -1,6 +1,24 @@
 # Gitea 软件协作设计
 
-> 已接受的目标设计，尚未实施（2026-11-01）。决策见 [ADR 0055](../decisions/0055-managed-gitea-collaboration.md)。本文中的启动、账号、权限、网络及通知行为均为实施契约，不是当前已提供的能力；不在 reference 中登记未实现接口。
+> 决策见 [ADR 0055](../decisions/0055-managed-gitea-collaboration.md)。#256 已实现持久服务、初始管理身份/组织与启动状态；#257–#259 的成员接入、项目授权及通知桥接尚未实施。下节说明当前机制，之后的总体契约继续约束后续施工，不代表完整协作闭环已经可用。
+
+## 当前实现：托管服务（#256）
+
+`build_runtime()` 只装配 [GiteaFacade](../../src/tlon/api/gitea.py)，不创建容器或打开端口。`ServerApp.start()` 在核心 HTTP 就绪后后台执行初始化，因此拉取镜像、Docker 不可用或端口冲突不会阻断邮件。启动终端输出地址与结果，`GET /admin/gitea` 经原有 WebUI 请求边界返回 `not_started` / `starting` / `ready` / `unavailable`；公共 `/health` 不返回 Gitea 身份或路径。
+
+实现分为 [service](../../src/tlon/gitea/service.py)（异步生命周期）、[storage](../../src/tlon/gitea/storage.py)（私有记录）、[docker_service](../../src/tlon/gitea/docker_service.py)（容器与挂载）、[initialize](../../src/tlon/gitea/initialize.py)（HTTP/账号/组织）及 [control](../../src/tlon/gitea/control.py)（截止与取消）。包依赖由 import-linter 约束，serving 只通过 facade 使用服务。
+
+- 固定镜像 `docker.gitea.com/gitea:28.2.0-rootless`；SQLite；`TLON_GITEA_PORT` 默认 3000，范围 1–65535，发布到 `127.0.0.1`。不自动升级，不支持远程 Gitea 模式。
+- 数据位于 `{TLON_HOME}/infrastructure/gitea/`：`state.json` 保存实例 UUID、规范路径和端口；`data/` 与 `config/` 是 Gitea 持久挂载。端口或路径变更、状态损坏以及容器归属/配置冲突均拒绝，不静默接管或重建。
+- 每次启动使用实例文件锁及挂载读写往返探测。Docker daemon 必须真正共享数据目录；Colima 默认仅共享用户家目录，未共享的 `/private/tmp` 不能作为 Gitea 数据根。探测使用同镜像的无网络短命容器，结束删除，仅持久服务被保留。
+- 服务按宿主非 root UID/GID 运行；root 宿主和 Windows 使用 1000:1000。设置 `USER=git` 供官方 Gitea 的用户名解析使用；不使用 root 运行 Gitea、不放宽目录到 777。平台实际文件共享权限仍须满足挂载探测。
+- 在首次启动前通过镜像环境配置锁定安装入口、关闭公开注册、要求登录、禁用 SSH 和 Actions。使用不带认证的 `/api/healthz` 确认数据库/缓存就绪，再初始化账号，避免未创建管理员时以认证 API 判定健康造成死锁。
+- 宿主管理账号 `tlon-service` 与人类账号 `tlon-operator` 分离。人类账号为私有组织 `tlon` 的 owner，首次登录强制改密；创建基础只读 `members` 团队，但尚不创建或加入 member 账号。重启查询已有账号、组织和团队，不重置密码；组织返回的 visibility 必须为 private（创建响应也校验），缺失、非私有或团队配置漂移均明确报错，不自动修改组织可见性。
+- `credentials.json` 保存宿主初始化密钥，`operator-credentials.json` 仅交付人类账号的初始密码。目录/文件采用私有权限；状态与日志只暴露人类凭据文件路径，不返回密码。首次网页登录自行读取该文件，改密后文件中的初始密码不再有效。
+- 启动工作使用 300 秒协作预算，HTTP/Docker 请求设超时，镜像流按进度检查截止；管理员 CLI 使用容器内 30 秒 kill 截止及宿主 detached exec 轮询。退出发取消信号并等待正在进行的有限 IO 与清理，不留下仍会继续创建容器的后台线程；总预算不是能中断内核或 Docker daemon 的硬实时保证。
+- 退出只释放集成任务和客户端，持久容器使用 `unless-stopped` 重启策略。服务停止、升级、删除和数据恢复仍由明确的管理操作完成，当前没有新增自动销毁或迁移命令。
+
+`ready` 表示本轮服务初始化及配置检查通过，是启动结果快照，不是持续存活监控。运行中手工停止 Gitea 后，重启 dream 会再次确保可用；当前状态端点不自动探活或重启服务。账号、成员 Shell、项目权限及 webhook 的后续阶段不在本实现中。
 
 ## 目标与事实边界
 

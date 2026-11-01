@@ -36,7 +36,7 @@ Tlon 让一组成员通过邮件协作，人类也以成员身份收发邮件。
 
 ## 当前实现：包与进程
 
-当前常规部署是一个 asyncio 服务端进程（`tlon dream`），以 aiohttp 提供单端口 REST + SSE，并在 `/ui/` 托管 WebUI。当前维护的客户端是 WebUI。默认监听 `127.0.0.1:8080`。这些是当前选择，改变仍需设计评估。
+当前常规部署是一个 asyncio 服务端进程（`tlon dream`），以 aiohttp 提供单端口 REST + SSE，并在 `/ui/` 托管 WebUI。当前维护的客户端是 WebUI。 dream 在核心 HTTP 启动后后台确保实例专属 Gitea 持久服务可用，退出保留服务；成员与成果通知接入尚未实现，见 [Gitea 软件协作](design/gitea-collaboration.md)。默认监听 `127.0.0.1:8080`。这些是当前选择，改变仍需设计评估。
 
 ```text
                WebUI

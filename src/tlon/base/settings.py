@@ -63,6 +63,11 @@ class Settings:
     github_webhook_secret: str
     github_recipient: str
     github_token: str
+    gitea_port: int = 3000
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.gitea_port <= 65535:
+            raise ValueError("TLON_GITEA_PORT must be between 1 and 65535")
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -96,4 +101,6 @@ class Settings:
             # GitHub API token（出站：回信 → issue/PR comment）；
             # 空 = 出站禁用，入站不受影响
             github_token=os.getenv("GITHUB_TOKEN", ""),
+            # Managed Gitea: loopback HTTP port (1..65535), separate from dream
+            gitea_port=int(os.getenv("TLON_GITEA_PORT", "3000")),
         )

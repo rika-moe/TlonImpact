@@ -103,3 +103,19 @@ def test_settings_import_has_no_filesystem_side_effect(tmp_path: Path) -> None:
     assert not hasattr(settings_module, "_paths")
     assert not hasattr(settings_module, "_settings")
     assert not hasattr(settings_module, "get_settings")
+
+
+@pytest.mark.parametrize("port", ["0", "-1", "65536"])
+def test_gitea_invalid_port_rejected_before_runtime(
+    monkeypatch: pytest.MonkeyPatch, port: str
+) -> None:
+    monkeypatch.setenv("TLON_GITEA_PORT", port)
+    with pytest.raises(ValueError, match="TLON_GITEA_PORT"):
+        Settings.from_env()
+
+
+def test_gitea_port_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TLON_GITEA_PORT", "3100")
+    settings = Settings.from_env()
+    monkeypatch.setenv("TLON_GITEA_PORT", "3200")
+    assert settings.gitea_port == 3100

@@ -78,11 +78,12 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 ## 端点总表
 
 <!-- BEGIN GENERATED: rest-endpoints -->
-`create_app` 共注册 55 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`create_app` 共注册 56 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 方法 | 路径 | handler | 注册条件 |
 |---|---|---|---|
 | GET | `/health` | `handle_health` | 无条件 |
+| GET | `/admin/gitea` | `handle_gitea_status` | gitea |
 | GET | `/identity` | `handle_identity` | 无条件 |
 | POST | `/identity` | `handle_initialize_identity` | 无条件 |
 | GET | `/config` | `handle_config` | 无条件 |
@@ -592,3 +593,9 @@ POST /admin/config/agents 的请求为 `{prototype, name, model, params?, person
 ### 原型模块包（P1）
 
 `POST /admin/prototypes` 和新增 `POST /admin/prototypes/staging` 接受可选 `modules: {相对路径: 源码字符串}`；v2 必须提供完整依赖，v1 不允许附带非空模块。staging 使用同一人工管理来源边界，后续经既有 approve 入口批准。详情 GET 附加 modules 全量源码；实例化复制完整包并校验已批准内容摘要。v2 behavior/modules PATCH 返回 400，源码变更必须创建新原型；元数据更新不重新批准源码。细节见[指南](../guides/writing-a-module-program.md)。
+
+## 托管 Gitea 状态
+
+`GET /admin/gitea` 在注入 Gitea facade 时注册，沿用 `/admin/*` 的回环 Host、同源及 `X-Tlon-WebUI: 1` 边界。返回 HTTP 200 的状态快照；Gitea 自身不可用用 `state=unavailable` 表示，不使核心 `/health` 失败。
+
+字段：`state`（`not_started` / `starting` / `ready` / `unavailable`）、`url`、`message`、`container_name`（初始化前为 null）、`organization`、`operator_username`、`credentials_file`（仅人类初始凭据文件路径）。响应不含密码或管理员凭据。`ready` 是最近启动初始化结果，不是持续探活；当前没有此服务的停止、删除或凭据读取 API。

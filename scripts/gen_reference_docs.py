@@ -295,6 +295,7 @@ def _route_condition(test: ast.expr) -> str:
         and test.attr
         in (
             "configs",
+            "gitea",
             "observability",
             "debug",
             "github_ingress",

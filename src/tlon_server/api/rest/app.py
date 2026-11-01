@@ -26,6 +26,7 @@ from aiohttp import web
 from tlon.api.arena import ArenaFacade
 from tlon.api.config import ConfigFacade
 from tlon.api.events import EventsFacade
+from tlon.api.gitea import GiteaFacade
 from tlon.api.mail import MailFacade
 from tlon.api.members import MembersFacade
 from tlon.api.model_setup import ModelSetupFacade
@@ -112,6 +113,7 @@ class RESTAPIHandler(
         configs: ConfigFacade | None = None,
         events: EventsFacade | None = None,
         arena: ArenaFacade | None = None,
+        gitea: GiteaFacade | None = None,
         model_setup: ModelSetupFacade | None = None,
         debug: bool = False,
         github_webhook_secret: str | None = None,
@@ -140,6 +142,7 @@ class RESTAPIHandler(
         self.observability = observability
         self.configs = configs
         self.events = events
+        self.gitea = gitea
         self.arena = arena
         self.model_setup = model_setup
         self.debug = debug
@@ -162,6 +165,8 @@ class RESTAPIHandler(
 
         # Add API routes first
         app.router.add_get("/health", self.handle_health)
+        if self.gitea:
+            app.router.add_get("/admin/gitea", self.handle_gitea_status)
         app.router.add_get("/identity", self.handle_identity)
         app.router.add_post("/identity", self.handle_initialize_identity)
         app.router.add_get("/config", self.handle_config)
@@ -366,6 +371,11 @@ class RESTAPIHandler(
         """Serve the WebUI entry page."""
         return web.FileResponse(WEBUI_DIST_DIR / "index.html")
 
+    async def handle_gitea_status(self, request: web.Request) -> web.Response:
+        """Expose managed service readiness, never credentials."""
+        assert self.gitea is not None
+        return web.json_response(self.gitea.status())
+
     async def handle_health(self, request: web.Request) -> web.Response:
         """GET /health - Health check endpoint.
 
@@ -496,6 +506,7 @@ class RESTServer:
         configs: ConfigFacade | None = None,
         events: EventsFacade | None = None,
         arena: ArenaFacade | None = None,
+        gitea: GiteaFacade | None = None,
         model_setup: ModelSetupFacade | None = None,
         host: str = "127.0.0.1",
         port: int = 8080,
@@ -535,6 +546,7 @@ class RESTServer:
             configs=configs,
             events=events,
             arena=arena,
+            gitea=gitea,
             model_setup=model_setup,
             debug=debug,
             identity=identity,
