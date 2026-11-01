@@ -83,6 +83,7 @@ from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.mail.post_office import PostOffice
 from tlon.organization.mail.resolver import MemberAddress
 from tlon.organization.mail.store import MailStore
+from tlon.sandbox.gitea_access import GiteaAccessProvider
 from tlosure.builtins import Builtin
 
 if TYPE_CHECKING:
@@ -140,6 +141,7 @@ class AgentRegistry(Component):
         metrics_service: MetricsService | None = None,
         trace_store: TraceStore | None = None,
         post_office: PostOffice | None = None,
+        gitea_access: GiteaAccessProvider | None = None,
     ):
         """Initialize the agent registry.
 
@@ -172,6 +174,7 @@ class AgentRegistry(Component):
         self._dead: set[str] = set()
         self._terminating: set[str] = set()
         self._post_office = post_office
+        self._gitea_access = gitea_access
         self._mail_rescue_task: asyncio.Task[None] | None = None
         self._mail_rescue_not_before: dict[str, float] = {}
         self._lifecycle_tasks: set[asyncio.Task[None]] = set()
@@ -528,6 +531,7 @@ class AgentRegistry(Component):
                 tlon_paths=self._paths,
                 metrics_service=self._metrics_service,
                 trace_store=self._trace_store,
+                gitea_access=self._gitea_access,
             )
 
             member = MemberRuntime(

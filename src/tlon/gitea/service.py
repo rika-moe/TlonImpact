@@ -9,6 +9,7 @@ from tlon.base.paths import TlonPaths
 from tlon.gitea.control import StartupControl
 from tlon.gitea.docker_service import ensure_container
 from tlon.gitea.initialize import OPERATOR, ORGANIZATION, initialize
+from tlon.gitea.members import MemberManager
 from tlon.gitea.storage import GiteaError, load_records
 from tlon.sandbox.docker_client import create_docker_client
 
@@ -33,6 +34,16 @@ class GiteaService:
 
     def status(self) -> dict[str, object]:
         return self._status.copy()
+
+    def member_manager(self) -> tuple[MemberManager, str]:
+        """Construct the host-only account client under the caller's instance lock."""
+        if self._status["state"] != "ready":
+            raise GiteaError("Gitea is unavailable")
+        state, credentials = load_records(self._paths, self._port)
+        return (
+            MemberManager(self._paths, str(self._status["url"]), credentials["admin_password"]),
+            f"tlon-gitea-{state['instance_id']}-network",
+        )
 
     def _ensure(self) -> dict[str, object]:
         try:

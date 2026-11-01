@@ -164,6 +164,12 @@ async def build_runtime(runtime_paths: TlonPaths, settings: Settings) -> Runtime
     post_office = PostOffice(event_bus, resolver, runtime_paths)
     await asyncio.to_thread(post_office.store.initialize)
 
+    gitea = GiteaFacade(
+        runtime_paths,
+        port=settings.gitea_port,
+        members=lambda: {key: config.name for key, config in config_service.agents.items()},
+    )
+
     # AgentRegistry - agent management.
     # Depends on EventBus and ConfigService (as AgentInfoProvider);
     # the metrics/trace pillars are forwarded into each member's
@@ -175,6 +181,7 @@ async def build_runtime(runtime_paths: TlonPaths, settings: Settings) -> Runtime
         metrics_service=metrics_service,
         trace_store=trace_store,
         post_office=post_office,
+        gitea_access=gitea.execution_access,
     )
     # Register initial agents (by ID, config is looked up from provider)
     for agent_id in config_service.agents:
@@ -271,5 +278,5 @@ async def build_runtime(runtime_paths: TlonPaths, settings: Settings) -> Runtime
             github_adapter=github_adapter,
         ),
         arena=ArenaFacade(tlon_paths=runtime_paths, settings=settings),
-        gitea=GiteaFacade(runtime_paths, port=settings.gitea_port),
+        gitea=gitea,
     )

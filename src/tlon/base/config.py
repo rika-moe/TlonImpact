@@ -113,6 +113,8 @@ class DockerRuntimeConfig(BaseModel):
     # 宪法零：邮件是唯一通道。默认断网（issue #23，实测调查：全部历史
     # bash 调用零联网命令）；确需外联的成员在此显式声明（如 "bridge"），
     # 声明即数据、随原型提案一起评审。
+    # "gitea" explicitly authorizes the managed collaboration network and
+    # Git/tea execution image. It does not change the execution level.
     network_mode: str = "none"
 
     @field_validator("level")

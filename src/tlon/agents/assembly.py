@@ -60,6 +60,7 @@ from tlon.organization.mail.store import MailStore
 from tlon.sandbox.device import AuditedExecutionDevice, ExecutionDevice
 from tlon.sandbox.docker_runtime import AGENT_HOME_CONTAINER_PATH, DockerRuntime
 from tlon.sandbox.filesystem import MemberFilesystemService
+from tlon.sandbox.gitea_access import GiteaAccessProvider
 from tlon.sandbox.shell import MemberShellService
 from tlon.tasks.manager import TaskManager
 
@@ -70,7 +71,9 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-async def _create_docker_runtime(config: AgentConfig, paths: TlonPaths) -> DockerRuntime:
+async def _create_docker_runtime(
+    config: AgentConfig, paths: TlonPaths, gitea_access: GiteaAccessProvider | None = None
+) -> DockerRuntime:
     """Probe Docker off-loop; cancellation retains ownership of a late client."""
     ownership = threading.Lock()
     abandoned = False
@@ -78,7 +81,7 @@ async def _create_docker_runtime(config: AgentConfig, paths: TlonPaths) -> Docke
 
     def construct() -> None:
         nonlocal runtime
-        created = DockerRuntime(config.docker, config.id, paths)
+        created = DockerRuntime(config.docker, config.id, paths, gitea_access=gitea_access)
         with ownership:
             if not abandoned:
                 runtime = created
@@ -128,6 +131,7 @@ async def assemble_member_services(
     tlon_paths: TlonPaths,
     metrics_service: MetricsService | None = None,
     trace_store: TraceStore | None = None,
+    gitea_access: GiteaAccessProvider | None = None,
 ) -> MemberServices:
     """Assemble the capability set for a member.
 
@@ -176,7 +180,7 @@ async def assemble_member_services(
     else:
         try:
             docker_runtime = AuditedExecutionDevice(
-                await _create_docker_runtime(config, tlon_paths), agent_id=config.id
+                await _create_docker_runtime(config, tlon_paths, gitea_access), agent_id=config.id
             )
         except Exception as e:
             logger.warning("docker_unavailable", agent_name=config.name, error=str(e))

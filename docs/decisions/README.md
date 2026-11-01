@@ -15,7 +15,7 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 | 决策 | 当前设计 | 有效范围与修订关系 |
 |---|---|---|
 | [ADR 0001：用 Lisp 风格 EDN 作为行为 DSL 的语法](0001-edn-as-dsl.md) | [dsl](../design/dsl.md) | 语法选择保留；「无 fn/def」由 ADR 0021 修订，语言核心路径由 ADR 0018 调整 |
-| [ADR 0002：邮件是唯一通信通道](0002-mail-as-only-channel.md) | [mail](../design/mail.md) | 邮件投信契约由 ADR 0030 明确；ADR 0055 接受 Gitea 成果讨论例外（未实施） |
+| [ADR 0002：邮件是唯一通信通道](0002-mail-as-only-channel.md) | [mail](../design/mail.md) | 邮件投信契约由 ADR 0030 明确；ADR 0055 接受 Gitea 成果讨论例外（成员接入已实现，通知桥接待实施） |
 | [ADR 0003：机制与策略分离——注册表纯机制，策略集中于 Adam](0003-mechanism-vs-policy.md) | [infrastructure](../design/infrastructure.md)、[society-policy](../design/society-policy.md) | 机制/策略分离保留；ADR 0022 的资格政策求值面由 ADR 0052 删除 |
 | [ADR 0004：stage 纯度——状态变更一律声明为 StageOutcome 数据](0004-stage-purity.md) | [runtime](../design/runtime.md) | Stage 纯度与效果数据化 |
 | [ADR 0005：SSE 而非 WebSocket](0005-sse-over-websocket.md) | [server-protocol](../design/server-protocol.md) | REST + SSE 通信选择 |
@@ -55,7 +55,7 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 
 ## 通信与记忆
 
-[ADR 0055：Tlon 托管 Gitea 与成员软件协作](0055-managed-gitea-collaboration.md)：已接受；#256 持久服务已实现，成员账号、项目权限及 webhook 转邮件尚未实施。目标设计见 [Gitea 软件协作](../design/gitea-collaboration.md)。
+[ADR 0055：Tlon 托管 Gitea 与成员软件协作](0055-managed-gitea-collaboration.md)：已接受；#256 持久服务及 #257 成员接入已实现，项目权限治理及 webhook 转邮件尚未实施。目标设计见 [Gitea 软件协作](../design/gitea-collaboration.md)。
 
 | 决策 | 当前设计 | 有效范围与修订关系 |
 |---|---|---|

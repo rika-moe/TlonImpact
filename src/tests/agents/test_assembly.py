@@ -187,7 +187,7 @@ class TestExecutionLevelAssembly:
         client = MagicMock()
         client.close.side_effect = closed.set
 
-        def construct(*args: Any) -> Any:
+        def construct(*args: Any, **kwargs: Any) -> Any:
             loop.call_soon_threadsafe(started.set)
             assert release.wait(timeout=3), "Docker probe blocked the event loop"
             return client

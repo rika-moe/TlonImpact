@@ -596,6 +596,6 @@ POST /admin/config/agents 的请求为 `{prototype, name, model, params?, person
 
 ## 托管 Gitea 状态
 
-`GET /admin/gitea` 在注入 Gitea facade 时注册，沿用 `/admin/*` 的回环 Host、同源及 `X-Tlon-WebUI: 1` 边界。返回 HTTP 200 的状态快照；Gitea 自身不可用用 `state=unavailable` 表示，不使核心 `/health` 失败。
+`GET /admin/gitea` 在注入 Gitea facade 时注册，沿用 `/admin/*` 的回环 Host、同源及 `X-Tlon-WebUI: 1` 边界。返回 HTTP 200 的状态快照；Gitea 自身不可用用 `state=unavailable` 表示，不使核心 `/health` 失败。装配成员对账后，`members.state` 单独返回 `not_started` / `ready` / `degraded` / `unavailable`，`members.errors` 按成员 ID（或 `service`）提供不含凭据的错误；后台自动重试。服务 `ready` 不等于所有成员都已完成接入。
 
 字段：`state`（`not_started` / `starting` / `ready` / `unavailable`）、`url`、`message`、`container_name`（初始化前为 null）、`organization`、`operator_username`、`credentials_file`（仅人类初始凭据文件路径）。响应不含密码或管理员凭据。`ready` 是最近启动初始化结果，不是持续探活；当前没有此服务的停止、删除或凭据读取 API。

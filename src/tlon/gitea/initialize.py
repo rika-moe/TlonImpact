@@ -27,10 +27,11 @@ def request(
     path: str,
     password: str,
     *,
+    username: str = ADMIN,
     method: str = "GET",
     body: dict[str, object] | None = None,
 ) -> tuple[int, Any]:
-    authorization = base64.b64encode(f"{ADMIN}:{password}".encode()).decode()
+    authorization = base64.b64encode(f"{username}:{password}".encode()).decode()
     req = Request(
         url + "api/v1/" + path,
         method=method,

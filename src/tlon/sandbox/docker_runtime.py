@@ -29,6 +29,7 @@ import io
 import posixpath
 import stat as stat_module
 import tarfile
+import threading
 import uuid
 from collections.abc import Callable
 from contextlib import suppress
@@ -47,6 +48,8 @@ from tlon.base.paths import TlonPaths
 from tlon.sandbox.author_files import author_mounts, author_root, is_author_path
 from tlon.sandbox.device import ExecutionResult
 from tlon.sandbox.docker_client import create_docker_client
+from tlon.sandbox.gitea_access import GiteaAccessProvider
+from tlon.sandbox.gitea_image import ensure_gitea_image, execution_environment
 
 logger = get_logger(__name__)
 
@@ -177,7 +180,14 @@ class DockerRuntime:
         >>> print(result.stdout)  # Hello
     """
 
-    def __init__(self, config: DockerRuntimeConfig, agent_id: str, tlon_paths: TlonPaths):
+    def __init__(
+        self,
+        config: DockerRuntimeConfig,
+        agent_id: str,
+        tlon_paths: TlonPaths,
+        *,
+        gitea_access: GiteaAccessProvider | None = None,
+    ) -> None:
         """Initialize Docker runtime.
 
         Args:
@@ -186,6 +196,7 @@ class DockerRuntime:
             tlon_paths: Path resolver (workspace + home bind-mount sources)
         """
         self.config = config
+        self._gitea_access = gitea_access
         self.agent_id = agent_id
         self._paths = tlon_paths
         self.container_name = f"tlon-agent-{agent_id}"
@@ -274,7 +285,9 @@ class DockerRuntime:
             memory_bytes=int(parse_bytes(self.config.memory_limit)),
             cpu_period=CPU_PERIOD,
             cpu_quota=int(self.config.cpu_limit * CPU_PERIOD),
-            network_mode=self.config.network_mode,
+            network_mode="none"
+            if self.config.network_mode == "gitea"
+            else self.config.network_mode,
             read_only=True,
             tmpfs=dict(TMPFS_MOUNTS),
         )
@@ -328,7 +341,9 @@ class DockerRuntime:
             "mem_limit": self.config.memory_limit,
             "cpu_period": CPU_PERIOD,
             "cpu_quota": int(self.config.cpu_limit * CPU_PERIOD),
-            "network_mode": self.config.network_mode,
+            "network_mode": "none"
+            if self.config.network_mode == "gitea"
+            else self.config.network_mode,
             "read_only": True,
             "tmpfs": dict(TMPFS_MOUNTS),
         }
@@ -424,18 +439,32 @@ class DockerRuntime:
         container: Container | None = None
         creation: asyncio.Task[Container] | None = None
         starting: asyncio.Task[None] | None = None
+        building: asyncio.Task[str] | None = None
+        build_stop = threading.Event()
         try:
             # All docker SDK calls are blocking — run them in threads so
             # the event loop stays responsive.
-            creation = asyncio.create_task(
-                asyncio.to_thread(
-                    self.client.containers.create,
-                    **self._container_kwargs(
-                        name=exec_name,
-                        command=["timeout", str(timeout), "bash", "-c", program],
-                        working_dir=workdir or self.config.working_dir,
-                    ),
+            kwargs = self._container_kwargs(
+                name=exec_name,
+                command=["timeout", str(timeout), "bash", "-c", program],
+                working_dir=workdir or self.config.working_dir,
+            )
+            if self.config.network_mode == "gitea":
+                if self._gitea_access is None:
+                    raise RuntimeError("Gitea member access is unavailable")
+                # Build before acquiring credentials: a slow first build must not
+                # carry a member's stale authorization into an execution unit.
+                building = asyncio.create_task(
+                    asyncio.to_thread(ensure_gitea_image, self.client, stop=build_stop)
                 )
+                kwargs["image"] = await asyncio.shield(building)
+                access = await self._gitea_access(self.agent_id)
+                kwargs["network_mode"] = access.network
+                kwargs["environment"] = execution_environment(
+                    access.url, access.username, access.token
+                )
+            creation = asyncio.create_task(
+                asyncio.to_thread(self.client.containers.create, **kwargs)
             )
             container = await asyncio.shield(creation)
             starting = asyncio.create_task(asyncio.to_thread(container.start))
@@ -477,11 +506,24 @@ class DockerRuntime:
             return ExecutionResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
 
         except Exception as e:
+            if self.config.network_mode == "gitea":
+                # Docker errors may include the container creation payload,
+                # including credentials. Never forward that payload to logs.
+                logger.error("gitea_execution_error", agent_id=self.agent_id)
+                return ExecutionResult(
+                    exit_code=-1,
+                    stdout="",
+                    stderr="Gitea execution unavailable; check Gitea member status",
+                )
             logger.error("command_execution_error", error=str(e), exc_info=True)
             return ExecutionResult(exit_code=-1, stdout="", stderr=str(e))
         finally:
+            build_stop.set()
 
             async def cleanup() -> None:
+                if building is not None:
+                    with suppress(Exception):
+                        await building
                 # Cancelling to_thread does not stop its SDK call. Settle
                 # creation/start before removing, or a late SDK completion
                 # could leave a container behind after member shutdown.
