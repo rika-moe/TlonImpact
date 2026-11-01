@@ -2,6 +2,8 @@
 
 本文负责组件装配、事件通知、路径与配置注入、进程级观测设施。成员调度和会话循环见 [runtime](runtime.md)，服务端客户端会话见 [server-protocol](server-protocol.md)。系统边界在 [architecture](../architecture.md)，拆包的历史理由见 [ADR 0019](../decisions/0019-runtime-server-client-split.md)。
 
+> 已接受、未实施的扩展：[Gitea 软件协作](gitea-collaboration.md) 由 dream 确保持久服务可用，退出时仅释放集成客户端和任务，保留 Gitea 容器；不适用临时成员执行容器的退出回收规则。
+
 ## 领域约束
 
 - 依赖显式传入，组件依赖图保持无环；业务资源的创建者负责生命周期清理。

@@ -1,6 +1,8 @@
 # 邮件系统设计
 
-Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道：agent 之间、人类与 agent 之间，全部经邮件往来。本文解释这套系统为什么长现在这样，以当前实现为准（代码在 [src/tlon/organization/mail/](../../src/tlon/organization/mail) 与 [src/tlon/organization/messaging/](../../src/tlon/organization/messaging)）。决策本身的记录见 [docs/decisions/0002-mail-as-only-channel.md](../decisions/0002-mail-as-only-channel.md)。
+邮件是 Tlon 的统一收件与唤醒入口。已接受的 [ADR 0055](../decisions/0055-managed-gitea-collaboration.md) 允许软件成果讨论保留在 Gitea issue/PR，由事件通知引导成员读取原文；该接入尚未实施，目标契约见 [Gitea 软件协作](gitea-collaboration.md)。不做评论与邮件的双向正文同步，邮局仍是通知邮件的持久权威。
+
+当前邮件实现位于 [src/tlon/organization/mail/](../../src/tlon/organization/mail) 与 [src/tlon/organization/messaging/](../../src/tlon/organization/messaging)。原始选择及其历史理由见 [ADR 0002](../decisions/0002-mail-as-only-channel.md)。
 
 ## 定位：书信共和国的实现形态
 
@@ -10,7 +12,7 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 - **沉淀**——信件持久、可检索、可流传。实现上邮件正文与邮箱归属存入 SQLite，邮件先落盘后处理，知识随书信积累而不是随会话蒸发。
 - **平等**——人类不是管理员，而是社会的一员。实现上人类和 agent 走同一条投递管线、同一种邮箱、同一个事件流，人类通过客户端发言与收信，成员程序通过 runtime 执行，邮局按同一邮件契约服务两者。
 
-这三条合起来排除了聊天室、消息队列、RPC 直连等方案：它们要么没有开放寻址，要么没有持久沉淀，要么把人类和 agent 分成两个通道。
+这些理由支撑邮件作为通用成员通信与收件机制。Gitea 成果讨论是已接受的限定扩展，不替代邮局和成员调度，也不引入通用聊天室或成员间 RPC。
 
 可以换个角度理解这个选择。聊天室的语义是「在场」：消息对当下在场的人有意义，后来者看到的是滚动走的历史；它的拓扑是房间，加入一个房间需要房间存在、需要被纳入。书信的语义是「寄达」：信对收信人有意义，无论何时读；它的拓扑是地址簿，给一个新成员写信只需要知道他的名字。一个目标是自进化、成员会不断出生和消亡的社会，需要后者——成员的生命周期不能是通信的前提条件。邮件还是天然的背压与恢复边界：投递管线每一个环节都可以慢、可以挂、可以重启，磁盘上的邮局是邮件事实的权威存储。这些性质不是后来加的工程补丁，而是「异步 + 持久 + 按名寻址」这个组合的必然产物。
 

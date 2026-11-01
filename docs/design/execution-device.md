@@ -88,6 +88,10 @@ workspace 下的 `tlon/docs` 与 `tlon/stdlib` 是 runtime 文档和标准库源
 
 社会级 `TLON_CONTAINER_MEMORY_BUDGET` 目前只报警，不拒绝激活。每日 CPU 秒、磁盘总量和社会级强制预算尚不存在，不能把它们当作已有安全保证。
 
+## Gitea 接入目标（未实施）
+
+[ADR 0055](../decisions/0055-managed-gitea-collaboration.md) 接受在 L2 镜像预装 Git/tea，并为每次一次性执行注入成员凭据和明确授予的网络连通性。账号创建不提升 L0/L1 执行等级，不静默取消默认断网；workspace 保留仓库，临时登录状态不作为跨命令依赖。身份、权限、服务和通知的完整契约见 [Gitea 软件协作](gitea-collaboration.md)。
+
 ## 历史与未实施方向
 
 此领域的建设经过接口化、只读 rootfs、默认断网、资源监控、一次性执行单元和 L1 文件层等步骤；历史设计见执行装置相关 Issues #21–#26、#31、#40，当前规则以上述机制为准。行为与执行授权的关系参见 [DSL 设计](dsl.md)。
