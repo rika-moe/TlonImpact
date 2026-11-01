@@ -3,6 +3,7 @@
 from collections.abc import Callable, Mapping
 
 from tlon.api.gitea_members import GiteaMembersCoordinator
+from tlon.api.gitea_projects import GiteaProjectsCoordinator
 from tlon.base.paths import TlonPaths
 from tlon.gitea.service import GiteaService
 from tlon.gitea.storage import GiteaError
@@ -18,6 +19,7 @@ class GiteaFacade:
         members: Callable[[], Mapping[str, str]] | None = None,
     ) -> None:
         self._service = GiteaService(paths, port=port)
+        self.projects = GiteaProjectsCoordinator(paths, self._service, members)
         self._members = GiteaMembersCoordinator(paths, self._service, members) if members else None
 
     def status(self) -> dict[str, object]:
@@ -33,6 +35,7 @@ class GiteaFacade:
         return self.status()
 
     async def shutdown(self) -> None:
+        await self.projects.shutdown()
         if self._members is not None:
             await self._members.shutdown()
         await self._service.shutdown()

@@ -10,6 +10,7 @@ from tlon.gitea.control import StartupControl
 from tlon.gitea.docker_service import ensure_container
 from tlon.gitea.initialize import OPERATOR, ORGANIZATION, initialize
 from tlon.gitea.members import MemberManager
+from tlon.gitea.projects import ProjectManager
 from tlon.gitea.storage import GiteaError, load_records
 from tlon.sandbox.docker_client import create_docker_client
 
@@ -44,6 +45,13 @@ class GiteaService:
             MemberManager(self._paths, str(self._status["url"]), credentials["admin_password"]),
             f"tlon-gitea-{state['instance_id']}-network",
         )
+
+    def project_manager(self, control: StartupControl) -> ProjectManager:
+        """Construct the human governance client under the caller's instance lock."""
+        if self._status["state"] != "ready":
+            raise GiteaError("Gitea is unavailable")
+        _, credentials = load_records(self._paths, self._port)
+        return ProjectManager(str(self._status["url"]), credentials["admin_password"], control=control)
 
     def _ensure(self) -> dict[str, object]:
         try:

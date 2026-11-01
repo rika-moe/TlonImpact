@@ -18,6 +18,7 @@ from aiohttp import web
 from tlon.api.arena import ArenaFacade
 from tlon.api.config import ConfigFacade
 from tlon.api.events import EventsFacade
+from tlon.api.gitea import GiteaFacade
 from tlon.api.mail import MailFacade
 from tlon.api.members import MembersFacade
 from tlon.api.model_setup import ModelSetupFacade
@@ -41,6 +42,7 @@ class RestHandlerBase:
     observability: ObservabilityFacade | None
     configs: ConfigFacade | None
     events: EventsFacade | None
+    gitea: GiteaFacade | None
     arena: ArenaFacade | None
     model_setup: ModelSetupFacade | None
     debug: bool
