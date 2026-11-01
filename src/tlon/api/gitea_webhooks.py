@@ -53,6 +53,7 @@ class GiteaWebhookCoordinator:
         self._stop = asyncio.Event()
         self._worker_stop = threading.Event()
         self._task: asyncio.Task[None] | None = None
+        self._callback_ready = False
         self._transport: dict[str, str] | None = None
         self._remote: WebhookRemote | None = None
         self._status: dict[str, object] = {
@@ -64,6 +65,7 @@ class GiteaWebhookCoordinator:
         return self._status.copy()
 
     def unavailable(self, message: str) -> None:
+        self._callback_ready = False
         self._status.update(state="unavailable", message=message)
 
     async def recover(self) -> None:
@@ -92,6 +94,7 @@ class GiteaWebhookCoordinator:
             raise
 
     async def start(self, port: int) -> None:
+        self.unavailable("Webhook callback verification pending")
         self._stop.clear()
         self._worker_stop.clear()
         async with self._lock:
@@ -110,10 +113,12 @@ class GiteaWebhookCoordinator:
             lambda: self._service.probe_webhook(transport, StartupControl(self._worker_stop)),
             stop_on_cancel=True,
         )
+        self._callback_ready = True
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._run())
 
     async def shutdown(self) -> None:
+        self.unavailable("Webhook listener is offline")
         self._stop.set()
         self._worker_stop.set()
         if self._task is not None:
@@ -279,31 +284,41 @@ class GiteaWebhookCoordinator:
 
     async def _run(self) -> None:
         while not self._stop.is_set():
-            try:
-                async with self._lock:
+            if self._callback_ready:
+                try:
+                    async with self._lock:
 
-                    def sync() -> int:
-                        assert self._transport is not None
-                        with FileLock(self._paths.gitea_lock_file(), timeout=5):
-                            # Each synchronization has a fresh bounded budget.
-                            assert self._remote is not None
-                            self._remote.renew(StartupControl(self._worker_stop))
-                            repos = self._remote.sync(
-                                self._transport["callback_url"], self._transport["secret"]
-                            )
-                            return len(repos)
+                        def sync() -> int | None:
+                            if not self._callback_ready:
+                                return None
+                            assert self._transport is not None
+                            with FileLock(self._paths.gitea_lock_file(), timeout=5):
+                                # Each synchronization has a fresh bounded budget.
+                                assert self._remote is not None
+                                self._remote.renew(StartupControl(self._worker_stop))
+                                repos = self._remote.sync(
+                                    self._transport["callback_url"], self._transport["secret"]
+                                )
+                                return len(repos)
 
-                    count = await self._blocking(sync)
-                self._status.update(
-                    state="ready", message="Webhook bridge is listening", repositories=count
-                )
-            except Exception:
-                self.unavailable("Webhook configuration failed; retry pending")
+                        count = await self._blocking(sync)
+                    if self._callback_ready and count is not None:
+                        self._status.update(
+                            state="ready", message="Webhook bridge is listening", repositories=count
+                        )
+                except Exception:
+                    if self._callback_ready:
+                        self._status.update(
+                            state="unavailable", message="Webhook configuration failed; retry pending"
+                        )
             try:
                 # Already accepted mail remains recoverable even when Gitea is offline.
                 await self._deliver()
                 self._status.update(await asyncio.to_thread(self._store.status))
             except Exception:
-                self.unavailable("Webhook queue processing failed; retry pending")
+                if self._callback_ready:
+                    self._status.update(
+                        state="unavailable", message="Webhook queue processing failed; retry pending"
+                    )
             with suppress(TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), timeout=self._retry_seconds)

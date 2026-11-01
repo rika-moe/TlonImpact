@@ -285,3 +285,70 @@ async def test_restart_recovers_accepted_mail_without_gitea_or_listener(tmp_path
         remote.sync.assert_not_called()
     finally:
         await coordinator.shutdown()
+
+
+async def test_recovery_probe_failure_never_syncs_or_becomes_ready(tmp_path: Path) -> None:
+    coordinator, post, remote = setup(tmp_path)
+    await receive(coordinator)
+    probe_entered = threading.Event()
+    probe_release = threading.Event()
+
+    def probe(*args: object) -> None:
+        probe_entered.set()
+        assert probe_release.wait(2)
+        raise RuntimeError("callback unreachable")
+
+    await coordinator.recover()
+    try:
+        with patch.object(coordinator._service, "probe_webhook", side_effect=probe):
+            start = asyncio.create_task(coordinator.start(3001))
+            assert await asyncio.to_thread(probe_entered.wait, 1)
+            await asyncio.wait_for(post.delivered.wait(), 1)
+            remote.sync.assert_not_called()
+            probe_release.set()
+            with pytest.raises(RuntimeError, match="callback unreachable"):
+                await start
+        coordinator.unavailable("Gitea notification listener could not start")
+        # Observe complete recovery cycles after failure, including their status updates.
+        for _ in range(3):
+            async with coordinator._lock:
+                pass
+            await asyncio.sleep(coordinator._retry_seconds * 2)
+        assert len(post.mails) == 1
+        remote.sync.assert_not_called()
+        assert coordinator.status()["state"] == "unavailable"
+        assert coordinator.status()["message"] == "Gitea notification listener could not start"
+
+        await coordinator.start(3001)
+        async with asyncio.timeout(1):
+            while coordinator.status()["state"] != "ready":
+                await asyncio.sleep(0.01)
+        remote.sync.assert_called()
+    finally:
+        probe_release.set()
+        await coordinator.shutdown()
+
+
+async def test_listener_loss_during_sync_cannot_restore_ready(tmp_path: Path) -> None:
+    coordinator, _, remote = setup(tmp_path)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def sync(*args: object) -> list[object]:
+        entered.set()
+        assert release.wait(2)
+        return []
+
+    remote.sync.side_effect = sync
+    await coordinator.start(3001)
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        coordinator.unavailable("Webhook listener is offline")
+        release.set()
+        await asyncio.sleep(coordinator._retry_seconds * 3)
+        assert coordinator.status()["state"] == "unavailable"
+        assert coordinator.status()["message"] == "Webhook listener is offline"
+        remote.sync.assert_called_once()
+    finally:
+        release.set()
+        await coordinator.shutdown()

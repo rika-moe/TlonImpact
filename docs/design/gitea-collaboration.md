@@ -64,6 +64,8 @@ WebUI 设置页提供私有组织项目的创建、已有仓库纳管、保护�
 
 在 `GET /admin/gitea` 的 `webhooks` 字段查看状态、pending/failed/unrouted 计数及近期 delivery 与事件关联；WebUI 设置页刷新 Gitea 状态可看到同一结果。此状态与 Gitea 主服务启动快照分开：容器仍运行不代表回调 listener 在线，队列积压也不表示事件从未收到。
 
+Webhook 桥接的可用状态绑定 listener 与签名探针生命周期：探针成功前、失败后和 listener 停止后均不执行 hook 同步，也不能由后台 worker 标记为 ready；已经接收的持久队列继续投递。远端同步的暂时失败可以重试，但不能恢复已经失效的回调生命周期。
+
 停机期间从未接收的事件不会出现在本地 pending 中。恢复 dream 后，应由有项目设置权限的人类在 Gitea 项目的 **Settings → Webhooks** 中打开本实例 hook，检查失败 delivery，并手工重投。固定版本已实测原生登录会话与仓库 hook 页面，再调用该页面的 `POST /tlon/<repo>/settings/hooks/<id>/replay/<delivery UUID>` 重投操作；它会复制原 payload 并生成新的 delivery UUID。同源保护会拒绝跨站重投；连续两次重投仅产生一封持久邮件。不要通过改写 payload 或新建评论模拟重投。
 
 签名密钥保存在宿主私有 `webhook.json`，固定于 hook 创建时。Gitea 28.2 的 PATCH API 不更新 secret，GET 也不返回 secret；桥接只对账 URL、事件、启用状态和内容类型，不宣称自动修复密钥漂移。人工修改 Gitea hook secret 后，验签失败会在桥接诊断中呈现。确认密钥不一致时，先检查并保留需要的失败 delivery 记录，经人类确认后手工删除该实例 hook，桥接会用持久密钥重建；删除 hook 会丢失其 delivery 历史，因此程序绝不自动删除。

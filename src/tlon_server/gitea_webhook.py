@@ -55,4 +55,5 @@ class GiteaWebhookServer:
     async def stop(self) -> None:
         runner, self._runner = self._runner, None
         if runner is not None:
+            self._coordinator.unavailable("Webhook listener is offline")
             await runner.cleanup()
