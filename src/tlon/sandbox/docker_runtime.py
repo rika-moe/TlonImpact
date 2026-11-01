@@ -239,7 +239,11 @@ class DockerRuntime:
         Image construction belongs to member startup, outside shell tool budgets.
         Cancellation joins the Docker worker before its client can be closed.
         """
-        if self.config.network_mode != "gitea" or self._execution_image is not None:
+        if (
+            self.config.level != "L2"
+            or self.config.network_mode != "gitea"
+            or self._execution_image is not None
+        ):
             return
         stop = threading.Event()
         building = asyncio.create_task(

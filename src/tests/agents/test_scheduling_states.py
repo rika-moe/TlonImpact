@@ -52,12 +52,14 @@ async def settle(predicate: Callable[[], bool]) -> None:
             await asyncio.sleep(0.01)
 
 
+@pytest.mark.parametrize("level", ["L0", "L1", "L2"])
 @pytest.mark.parametrize("network", ["none", "gitea"])
 async def test_start_guard_allows_gitea_image_preparation_budget(
-    registry: AgentRegistry, monkeypatch: pytest.MonkeyPatch, network: str
+    registry: AgentRegistry, monkeypatch: pytest.MonkeyPatch, network: str, level: str
 ) -> None:
     config = AgentConfig(id="member", name="member")
     config.docker.network_mode = network
+    config.docker.level = level
     monkeypatch.setattr(registry._agent_info, "get_config", lambda _: config)
     monkeypatch.setattr(registry, "_START_TIMEOUT_SECONDS", 0.05)
     monkeypatch.setattr("tlon.agents.agent_registry.GITEA_IMAGE_BUILD_TIMEOUT_SECONDS", 1)
@@ -79,7 +81,7 @@ async def test_start_guard_allows_gitea_image_preparation_budget(
     monkeypatch.setattr("tlon.agents.agent_registry.assemble_member_services", slow_assembly)
     monkeypatch.setattr("tlon.agents.agent_registry.MemberRuntime", MagicMock(return_value=member))
     result = await registry._start_agent_guarded("member")
-    if network == "gitea":
+    if network == "gitea" and level == "L2":
         assert result is member
         assert completed.is_set() and not cancelled.is_set()
         member.initialize.assert_awaited_once()

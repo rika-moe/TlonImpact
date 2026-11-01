@@ -705,6 +705,19 @@ class TestCabinetIoRetry:
 
 
 class TestGiteaExecution:
+    @pytest.mark.parametrize("level", ["L0", "L1"])
+    async def test_file_only_member_skips_development_image(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, level: str
+    ) -> None:
+        runtime, _ = _runtime_with_exec_unit(monkeypatch, tmp_path, wait_result={"StatusCode": 0})
+        runtime.config.level = level
+        runtime.config.network_mode = "gitea"
+        build = MagicMock(side_effect=RuntimeError("image build unavailable"))
+        monkeypatch.setattr("tlon.sandbox.docker_runtime.ensure_gitea_image", build)
+        await runtime.prepare()
+        build.assert_not_called()
+        assert runtime._execution_image is None
+
     async def test_default_refreshes_identity_per_exec_and_keeps_cabinet_offline(
         self, tmp_path, monkeypatch
     ):

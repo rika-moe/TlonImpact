@@ -727,7 +727,7 @@ class AgentRegistry(Component):
         timeout = self._START_TIMEOUT_SECONDS
         if (
             config is not None
-            and config.docker.level != "L0"
+            and config.docker.level == "L2"
             and config.docker.network_mode == "gitea"
         ):
             timeout += GITEA_IMAGE_BUILD_TIMEOUT_SECONDS

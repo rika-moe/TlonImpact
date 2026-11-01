@@ -60,7 +60,7 @@ DEFAULT_TIME_BOX_SECONDS = 600.0
 HARD_TIME_BOX_SECONDS = 1800.0
 
 #: 演武场资源收紧（arena.md）：临时成员是试验装置，mem/cpu 收到最低可用；
-#: network 不动（config 默认即 none，而那正是被测对象——spec 的声明按原样测）
+#: network 不动（config 默认即 gitea，而那正是被测对象——spec 的声明按原样测）
 ARENA_MEMORY_LIMIT = "256m"
 ARENA_CPU_LIMIT = 0.5
 
