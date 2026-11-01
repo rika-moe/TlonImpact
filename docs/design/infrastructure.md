@@ -2,7 +2,7 @@
 
 本文负责组件装配、事件通知、路径与配置注入、进程级观测设施。成员调度和会话循环见 [runtime](runtime.md)，服务端客户端会话见 [server-protocol](server-protocol.md)。系统边界在 [architecture](../architecture.md)，拆包的历史理由见 [ADR 0019](../decisions/0019-runtime-server-client-split.md)。
 
-> [Gitea 软件协作](gitea-collaboration.md) 的托管服务已实现：runtime 只装配 facade，dream 在核心 HTTP 就绪后后台确保 Gitea 可用；退出取消初始化、释放客户端，保留持久容器。成员身份及通知接入尚未实施。
+> [Gitea 软件协作](gitea-collaboration.md) 的托管服务已实现：runtime 只装配 facade，dream 在核心 HTTP 就绪后后台确保 Gitea 可用；退出取消初始化、释放客户端，保留持久容器。成员身份在后台对账，授权 L2 执行通过注入端口取得本成员凭据；通知接入尚未实施。
 
 ## 领域约束
 

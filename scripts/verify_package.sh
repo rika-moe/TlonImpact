@@ -61,6 +61,8 @@ for pkg in tlon tlosure tlon_server tlon_launcher; do
 done
 check "tlon/base/_locked_dependencies.py" "wheel 含锁定依赖指纹"
 check "tlon/base/runtime_identity.py" "wheel 含恢复构建身份实现"
+check "tlon/sandbox/gitea_assets/Dockerfile" "wheel 含 Gitea 执行镜像配方"
+check "tlon/sandbox/gitea_assets/git-credential-tlon" "wheel 含 Git 凭据适配器"
 check "behavior.tlon" "wheel 含原型 DSL 数据文件"
 check "tlon/skills/review-prototype/SKILL.md" "wheel 含显式原型评审指导"
 check "tlon/resources/docs/README.md" "wheel 含作者文档目录"

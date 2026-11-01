@@ -688,3 +688,100 @@ class TestCabinetIoRetry:
 
         ensure.assert_awaited_once()
         assert runtime.container.put_archive.call_count == 2
+
+
+class TestGiteaExecution:
+    async def test_opt_in_refreshes_identity_per_exec_and_keeps_cabinet_offline(
+        self, tmp_path, monkeypatch
+    ):
+        from tlon.sandbox.gitea_access import GiteaExecutionAccess
+
+        runtime, unit = _runtime_with_exec_unit(
+            monkeypatch, tmp_path, wait_result={"StatusCode": 0}
+        )
+        runtime.config.network_mode = "gitea"
+        provider = AsyncMock(
+            side_effect=[
+                GiteaExecutionAccess("http://gitea:3000/", "member-a", "token-one", "instance-net"),
+                GiteaExecutionAccess("http://gitea:3000/", "member-a", "token-two", "instance-net"),
+            ]
+        )
+        runtime._gitea_access = provider
+        monkeypatch.setattr(
+            "tlon.sandbox.docker_runtime.ensure_gitea_image",
+            lambda client, **kwargs: "managed-image",
+        )
+        for token in ("token-one", "token-two"):
+            result = await runtime.run("git status")
+            assert result.exit_code == 0
+            kwargs = runtime.client.containers.create.call_args.kwargs
+            assert kwargs["image"] == "managed-image"
+            assert kwargs["network_mode"] == "instance-net"
+            assert kwargs["environment"]["GITEA_TOKEN"] == token
+            assert token not in repr(kwargs["command"])
+            assert kwargs["read_only"] is True
+            assert kwargs["mem_limit"] == runtime.config.memory_limit
+            assert kwargs["volumes"] == runtime._bind_mounts()
+        assert provider.await_count == 2
+        assert unit.remove.call_count == 2
+        cabinet = runtime._container_kwargs(name="cabinet", command=["true"])
+        assert cabinet["network_mode"] == runtime._expected_spec().network_mode == "none"
+        assert cabinet["image"] == runtime.config.image
+        assert "environment" not in cabinet
+
+    async def test_default_network_never_fetches_credentials(self, tmp_path, monkeypatch):
+        runtime, _ = _runtime_with_exec_unit(monkeypatch, tmp_path, wait_result={"StatusCode": 0})
+        runtime._gitea_access = AsyncMock()
+        assert (await runtime.run("true")).exit_code == 0
+        runtime._gitea_access.assert_not_awaited()
+        assert "environment" not in runtime.client.containers.create.call_args.kwargs
+
+    async def test_failed_authorization_creates_no_container(self, tmp_path, monkeypatch):
+        runtime, _ = _runtime_with_exec_unit(monkeypatch, tmp_path)
+        runtime.config.network_mode = "gitea"
+        runtime._gitea_access = AsyncMock(side_effect=RuntimeError("secret-token"))
+        monkeypatch.setattr(
+            "tlon.sandbox.docker_runtime.ensure_gitea_image",
+            lambda client, **kwargs: "managed-image",
+        )
+        result = await runtime.run("true")
+        assert result.exit_code == -1
+        assert "secret-token" not in result.stderr
+        runtime.client.containers.create.assert_not_called()
+
+    @pytest.mark.parametrize("level", ["L0", "L1"])
+    async def test_network_authorization_does_not_upgrade_level(self, tmp_path, monkeypatch, level):
+        runtime, _ = _runtime_with_exec_unit(monkeypatch, tmp_path)
+        runtime.config.level = level
+        runtime.config.network_mode = "gitea"
+        runtime._gitea_access = AsyncMock()
+        with pytest.raises(RuntimeError, match="仅 L2"):
+            await runtime.run("true")
+        runtime._gitea_access.assert_not_awaited()
+        runtime.client.containers.create.assert_not_called()
+
+    async def test_cancelled_build_settles_before_run_returns(self, tmp_path, monkeypatch):
+        import asyncio
+
+        runtime, _ = _runtime_with_exec_unit(monkeypatch, tmp_path)
+        runtime.config.network_mode = "gitea"
+        runtime._gitea_access = AsyncMock()
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
+        finished = threading.Event()
+
+        def build(client, *, stop):
+            loop.call_soon_threadsafe(started.set)
+            assert stop.wait(3)
+            finished.set()
+            raise RuntimeError("build stopped")
+
+        monkeypatch.setattr("tlon.sandbox.docker_runtime.ensure_gitea_image", build)
+        task = asyncio.create_task(runtime.run("true"))
+        await asyncio.wait_for(started.wait(), 2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert finished.is_set()
+        runtime._gitea_access.assert_not_awaited()
+        runtime.client.containers.create.assert_not_called()

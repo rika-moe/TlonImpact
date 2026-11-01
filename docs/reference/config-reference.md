@@ -70,6 +70,8 @@
 | `network_mode` | `str` | "none" |  |
 <!-- END GENERATED: agent-yaml-fields-docker -->
 
+`network_mode: gitea` 明确授权 L2 使用实例协作网络和托管 Git/tea 执行镜像，每次执行注入本成员凭据。默认 `none` 不变，L0/L1 不获得执行权限；此模式的 `image` 仅用于离线文件柜。见 [成员接入设计](../design/gitea-collaboration.md#当前实现成员与执行接入257)。
+
 `level`（issue #26，L1 落地于 #40）是执行装置能力阶梯声明：`"L0"` = 无执行装置——不创建 DockerRuntime、不注册 Shell，但五个文件工具可读写自己的 workspace 和读取只读作者资料；`"L1"`（默认，issue #31 于 2026-10-05 拍板翻转）= 文件层——archive-only，workspace 外文件访问可使用文件柜容器，但结构性零代码执行（容器从不启动、exec 单元从不存在，run() 由装置层直接拒绝）；`"L2"` = Docker 完整 userland。声明即数据、随原型提案一起评审。`docker.level` 也可由原型 spec 的顶层 `:execution` 段（见 [dsl-reference.md](./dsl-reference.md) 1.1 节）在实例化时一次性投影而来——此后运行时权威是本字段，成员自改 behavior.tlon 的 `:execution` 不会重新投影（防自提权）。
 
 ### `tool`
@@ -213,4 +215,4 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 
 数据目录为 `{TLON_HOME}/infrastructure/gitea/`，必须由 Docker daemon 共享且可写。`state.json` 保存实例归属；`data/`、`config/` 保存 Gitea 数据和配置；私有 `credentials.json` 保存宿主凭据，`operator-credentials.json` 保存 `tlon-operator` 的初始密码。首次登录需改密，后续启动不会重置。不要把这些文件放进成员 workspace 或提交到仓库。
 
-状态见启动终端及 `GET /admin/gitea`。Docker 不可用或初始化失败不阻断核心邮件；退出 dream 不停止 Gitea。当前没有持续健康监控、成员账号接入或自动 CI，详细边界见 [设计](../design/gitea-collaboration.md)。
+状态见启动终端及 `GET /admin/gitea`。Docker 不可用或初始化失败不阻断核心邮件；退出 dream 不停止 Gitea。成员账号后台对账并单独显示同步状态；当前没有持续服务健康监控或自动 CI，详细边界见 [设计](../design/gitea-collaboration.md)。
