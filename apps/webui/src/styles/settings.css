@@ -107,3 +107,38 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+.gitea-projects {
+  margin-bottom: 16px;
+}
+
+.gitea-project-list {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.gitea-project {
+  border-top: 1px solid var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.gitea-reviewer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.gitea-projects input,
+.gitea-projects select {
+  min-width: 0;
+  max-width: 100%;
+}
+
+@media (max-width: 600px) {
+  .gitea-projects .settings-field {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}

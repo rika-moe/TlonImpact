@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ReactElement } from "react";
 import type { ServerEvent, ViewProps } from "../types";
 import "../styles/settings.css";
+import { GiteaProjects } from "../components/GiteaProjects";
 import { ModelSettings } from "../components/ModelSetup";
 
 /** Flatten nested config objects into dotted key/value display rows. */
@@ -78,6 +79,7 @@ export function SettingsView({ rest, sse }: ViewProps): ReactElement {
       </div>
 
       <ModelSettings rest={rest} />
+      <GiteaProjects rest={rest} />
       <div className="settings-grid">
         <div className="panel">
           <h3 className="tech-label settings-section-title">SERVER CONFIG · GET /config</h3>

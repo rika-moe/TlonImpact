@@ -302,6 +302,26 @@ export interface SessionList {
   count: number;
 }
 
+export interface GiteaProject {
+  name: string;
+  html_url: string;
+  default_branch: string;
+  protected_branches: string[];
+  reviewers: string[];
+  managed: boolean;
+  problems: string[];
+}
+export interface GiteaProjectsSnapshot {
+  projects: GiteaProject[];
+  members: { id: string; name: string; username: string }[];
+}
+export interface GiteaProjectRequest {
+  name: string;
+  create: boolean;
+  default_branch: string;
+  protected_branches: string[];
+}
+
 export class RestClient {
   readonly baseUrl: string;
   constructor(baseUrl = "") {
@@ -361,6 +381,18 @@ export class RestClient {
       );
     }
     return data;
+  }
+
+  async giteaProjects(): Promise<GiteaProjectsSnapshot> {
+    return this.get("/admin/gitea/projects");
+  }
+
+  async configureGiteaProject(request: GiteaProjectRequest): Promise<GiteaProject> {
+    return this.send("POST", "/admin/gitea/projects", request);
+  }
+
+  async setGiteaReviewer(name: string, memberId: string, enabled: boolean): Promise<GiteaProject> {
+    return this.send("PUT", `/admin/gitea/projects/${encodeURIComponent(name)}/reviewers/${encodeURIComponent(memberId)}`, { enabled });
   }
 
   async health(): Promise<ServerHealth> {

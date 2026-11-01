@@ -1,6 +1,6 @@
 # Gitea 软件协作设计
 
-> 决策见 [ADR 0055](../decisions/0055-managed-gitea-collaboration.md)。#256 已实现持久服务、初始管理身份/组织与启动状态；#257 增加成员身份和执行接入；#258–#259 的项目授权治理及通知桥接尚未实施。下节说明当前机制，之后的总体契约继续约束后续施工，不代表完整协作闭环已经可用。
+> 决策见 [ADR 0055](../decisions/0055-managed-gitea-collaboration.md)。#256 已实现持久服务、初始管理身份/组织与启动状态；#257 增加成员身份和执行接入；#258 增加个人 fork + 上游 PR 的项目治理；#259 通知桥接尚未实施。下节说明当前机制，之后的总体契约继续约束后续施工，不代表完整协作闭环已经可用。
 
 ## 当前实现：托管服务（#256）
 
@@ -18,7 +18,7 @@
 - 启动工作使用 300 秒协作预算，HTTP/Docker 请求设超时，镜像流按进度检查截止；管理员 CLI 使用容器内 30 秒 kill 截止及宿主 detached exec 轮询。退出发取消信号并等待正在进行的有限 IO 与清理，不留下仍会继续创建容器的后台线程；总预算不是能中断内核或 Docker daemon 的硬实时保证。
 - 退出只释放集成任务和客户端，持久容器使用 `unless-stopped` 重启策略。服务停止、升级、删除和数据恢复仍由明确的管理操作完成，当前没有新增自动销毁或迁移命令。
 
-`ready` 表示本轮服务初始化及配置检查通过，是启动结果快照，不是持续存活监控。运行中手工停止 Gitea 后，重启 dream 会再次确保可用；当前状态端点不自动探活或重启服务。成员同步状态单独报告；项目权限治理及 webhook 仍在后续阶段。
+`ready` 表示本轮服务初始化及配置检查通过，是启动结果快照，不是持续存活监控。运行中手工停止 Gitea 后，重启 dream 会再次确保可用；当前状态端点不自动探活或重启服务。成员同步状态单独报告；项目治理按请求查询实际状态，webhook 仍在后续阶段。
 
 ## 当前实现：成员与执行接入（#257）
 
@@ -38,7 +38,19 @@ docker:
 
 浏览器继续使用 `http://127.0.0.1:<port>/`；成员 clone 使用 `$TLON_GITEA_URL/tlon/<repo>.git`，tea 通过 `--repo tlon/<repo>` 指定仓库。不能直接在容器使用 API 返回的浏览器 clone URL。每个临时执行单元保留既有只读 rootfs、workspace 挂载及资源限制，完成后清理；不挂 Docker socket。该网络是 Docker bridge，授权也意味着接入该网络的网络能力，并非只允许 Git 请求的应用防火墙。
 
-本阶段仅建立默认阅读/讨论身份。开发与合并权限由 #258 完成；本阶段 push 验收使用临时仓库的受控授权，不自动授予所有成员开发权。
+本阶段仅建立默认阅读/讨论身份。#257 的 push 验收仅使用临时仓库受控授权；个人 fork + 上游 reviewer 授权由下一节的 #258 提供。
+
+## 当前实现：个人 fork 与上游治理（#258）
+
+WebUI 设置页提供私有组织项目的创建、已有仓库纳管、保护规则替换及 reviewer 合并授权；fork、提交 PR 和评审使用 Gitea 原生界面或 Git/tea，不新增 Tlon 开发工作流按钮。管理接口继续使用现有浏览器来源边界，只接受稳定 member ID，宿主解析为绑定账号；成员执行 token 不用于调用这些管理接口。
+
+[ProjectManager](../../src/tlon/gitea/projects.py) 直接查询 Gitea 的仓库、团队、成员和保护规则，不保存另一份本地授权表。每个项目以仓库 ID 命名一个 reviewer 团队，只绑定该仓库，授予 code/PR write；默认 `members` 团队仍为 read。普通成员没有上游写权，在自己的私有 fork 中开发，不需要额外开发授权。
+
+新项目自动初始化默认分支，默认名称为 `main`；纳管已有项目保留其实际默认分支。默认分支总受保护，设置页预填额外规则 `develop, release/**`，人类可显式替换。保存先建立所需保护，再移除不再需要的已有托管规则；未知权限、跨项目团队、直接协作者或冲突的外部规则均报告问题，不静默接管。项目状态和授权变更都读取实际配置，校验失败不会显示成功；多次 Gitea API 请求不构成事务，部分失败应检查实际状态后重试。
+
+受保护分支禁止直接推送、强推和删除，合并名单仅包含项目 reviewer 团队及人类账号 `tlon-operator`，不允许管理员绕过正常合并检查。reviewer 获得上游写权但不是仓库管理员；其未保护分支仍遵循 Gitea 原生 write 权限。个人 fork 不注入上游保护规则，可正常强推和删除自己的开发分支。
+
+固定 Gitea 28.2.0 实测确认：成员的 `max_repo_creation=0` 禁止新建普通仓库，但镜像默认 `ALLOW_FORK_WITHOUT_MAXIMUM_LIMIT=true` 允许原生 fork，不需为此提升账号权限。退休会禁用账号、撤销 token 并退出组织，保留 fork 与已打开 PR；已打开 PR 的提交仍可经上游 PR ref 获取和合并。私有 fork 不保证 reviewer 能直接 clone，评审使用上游 ref，具体命令见下文。
 
 ## 目标与事实边界
 
@@ -106,22 +118,48 @@ Docker 不可用、端口冲突、服务超时均显示集成不可用，无关�
 
 tea 采用所固定版本支持的非交互认证；Git HTTP 认证通过成熟 credential helper 或 askpass 读取环境。不得把 token 写进 remote URL、命令文本、workspace 或提示词。核实版本的实际环境变量与 helper 行为后再写配置参考，不能假设 CLI 登录会自动覆盖 Git 认证。Git 提交姓名/邮箱与 member 绑定用于归因，但 author 可由 Git 客户端填写；认证推送者、PR 作者和 review 身份才由 Gitea 认证保证，不把提交 author 当成身份验证。
 
-## 项目和授权
+## 项目和授权：个人 fork + 上游 PR
 
-项目仓库归组织，由人类管理入口创建或纳管并配置基础权限。普通成员不持有组织 owner 或仓库 admin 权限。初始人类管理者默认可合并，并独占成员开发权和合并权的授予、撤销；Tlon 宿主管理账号只执行初始化与受权治理，不供成员日常开发使用。
+2026-11-01 用户修订：删除尚未合并的同仓库 developer/maintainer 双团队实现，采用 Gitea 原生 fork + PR。Tlon 管理身份与上游 reviewer 授权；fork、分支和 PR 由 Git/tea/Gitea 管理，不新增本地 fork 或权限数据库。
 
-| 身份 | 阅读与讨论 | 推送开发分支 | 合并受保护分支 | 改权限/保护规则 |
+项目仓库归私有组织，由人类管理入口创建或纳管。所有有效成员能阅读上游、讨论、参与评审和 fork。开发者把变更推到自己账号下的 fork，再向组织上游发起 PR。拥有读取权限就能贡献代码，不再单独审批“开发权”。
+
+| 身份 | 上游阅读、讨论、评审 | 自己 fork 写入 | 上游合并 | 改上游权限/保护 |
 |---|---|---|---|---|
-| 普通有效成员 | 是 | 否 | 否 | 否 |
-| 项目开发者 | 是 | 是 | 否 | 否 |
-| 项目维护者（明确授权的 member） | 是 | 是 | 是 | 否 |
+| 普通成员 / developer | 是 | 是 | 否 | 否 |
+| reviewer（人类明确授予合并权） | 是 | 是 | 是 | 否 |
 | 人类管理者 | 是 | 是 | 是 | 是 |
 
-维护者具备开发权，但授予开发权不连带授予合并权。团队分别覆盖默认阅读讨论和项目开发范围，受保护分支 merge allowlist 单独限定维护者。主分支及其他集成/发布分支禁止直接 push、force-push 和删除，代码通过 PR 合入。禁止普通成员绕过规则；人类管理者的行政配置能力必须与日常合并流程区分。
+上游只有一个项目 reviewer 团队获得 code/PR write，默认 members 团队保持 read。普通成员始终没有上游写权限，因此不能通过向其他上游分支提交 PR 绕过合并授权，也无需用全分支保护分离同仓库的开发与合并权。reviewer 不是仓库 admin；只有人类管理入口能授予或撤销其资格，Gitea 仍是实际权限的权威。
 
-阅读讨论允许创建 issue、评论和参与 review，不默认允许管理仓库设置或任意关闭别人的任务。具体 Gitea unit 权限应按固定版本验证，不能凭“Read/Write”名称推断。默认项目对组织成员可见，不意味着对匿名互联网公开。只读成员需要开发时先申请项目权限，首阶段不额外建设 fork 工作流。
+上游默认分支及人类指定的集成/发布分支采用保护规则，禁止直接 push、force-push 和删除，合并允许名单为 reviewer 团队与人类管理者。保护适用于日常人类操作；人类仍保留显式调整治理配置的行政能力。不为个人 fork 注入这些限制，开发者可在 fork 中正常整理、强推和删除自己的开发分支。新集成分支需在管理流程中建立并配置保护。
 
-第一阶段由维护者判断测试证据、评审意见与目标 commit，合并最新确认版本。独立评审是工作流程要求；本阶段不额外决定统一的强制审批人数，也不声称已部署 CI 必过规则。
+固定 tea 0.16.0 的开发流程如下。示例项目为 `example`，成员的工作目录位于持久 workspace，所有 remote 均不含凭据；提交前按项目要求完成实现与测试。
+
+```bash
+tea repos fork --repo tlon/example
+git clone "$TLON_GITEA_URL/$TLON_GITEA_USERNAME/example.git"
+cd example
+git remote add upstream "$TLON_GITEA_URL/tlon/example.git"
+git switch -c feature/example
+# 修改代码、运行项目测试，然后 git add 与 git commit。
+git push -u origin feature/example
+tea pulls create --repo tlon/example --head "$TLON_GITEA_USERNAME:feature/example" --base main --title "变更标题" --description "实现与测试证据"
+```
+
+上游和 fork 的浏览器地址与容器内部 Git/API origin 不同，容器命令使用 `$TLON_GITEA_URL`。reviewer 从上游读取 PR 信息，并从上游 PR ref 获取提交；不直接 clone 作者的私有 fork。以下以 PR 12 为例：
+
+```bash
+git clone "$TLON_GITEA_URL/tlon/example.git" example-review
+cd example-review
+git fetch origin refs/pull/12/head
+git switch --detach FETCH_HEAD
+# 评审并验证此 commit，随后在 Gitea PR 页面记录结论和合并。
+```
+
+退休禁用作者账号并撤销 token，保留 fork、提交和已有 PR 的历史；固定版本实测确认上述上游 ref 仍能 fetch，reviewer 仍可合并已打开 PR。继任成员用新账号/fork，不继承旧 reviewer 权限。
+
+第一阶段由 reviewer 判断最终 commit 的测试证据和评审意见。参与评审不等于拥有合并权，不自动提升权限；不设置统一强制审批人数或伪造 CI 必过规则。通知转邮件仍由 #259 实施。
 
 ## 网络与入口边界
 
@@ -159,7 +197,7 @@ Gitea 仍在运行而 dream 停止时，webhook 可能投递失败。第一阶�
 
 ## 第一阶段闭环与后续范围
 
-首阶段验收场景：人类创建项目和 issue，授予 A 开发权、B 评审所需访问权；A clone、修改、在自己容器测试、push 并开 PR；B 经通知阅读 diff 并提出修改；A 修订；人类维护者检查最终 commit 的证据后合并。另验证明确授权的 member 能合并，未授权开发者不能合并。
+首阶段验收场景：人类创建项目和 issue，A、B 默认可读上游；A fork、clone、修改、在自己容器测试、push 到个人 fork 并向上游开 PR；B 经通知阅读 diff 并提出修改；A 修订；人类维护者检查最终 commit 的证据后合并。另验证明确授权的 member 能合并，未授权开发者不能合并。
 
 测试报告至少包含 commit、命令、退出状态与结果摘要。测试来自开发成员的执行环境，不能作为独立 CI 通过信号。首阶段不启动 Actions runner，不设置不存在的必需检查，也不发布伪造的 CI 成功状态。
 
@@ -175,13 +213,13 @@ Gitea 仍在运行而 dream 停止时，webhook 可能投递失败。第一阶�
 | 持久化 | 重启及受控容器重建后仓库/issue/PR/账号仍在，备份恢复证据完整 |
 | 身份 | 两成员身份不同、重建不换号、显示名变化不改绑定、退休撤权、继任不继承权限 |
 | 执行 | 每次新执行单元都能认证，workspace 保留仓库，rootfs 隔离及无 Docker socket 不变 |
-| 权限 | 普通成员可读/讨论但不能 push；开发者可推分支但不能合并；维护者可合并但不能提权；直接推主分支被拒绝 |
+| 权限 | 普通成员可 fork/讨论但不能 push 上游；开发者可写个人 fork 但不能合并上游；reviewer 可合并但不能提权；直接推上游主分支被拒绝 |
 | 网络 | 浏览器、容器 Git/API、回调三向实测；admin API 不能因接入被开放；L0/L1 不获得 Shell |
 | 通知 | 正常验签、错误签名拒绝、收件人路由、重复投递与重投去重、接收/投信提交边界崩溃恢复 |
 | 不可用 | Gitea/Docker/回调故障明确呈现，核心邮件仍可用；停机事件重投限制可复现 |
 | 端到端 | 两成员完成开发—评审—修订—合并，测试证据绑定最终 commit，不冒充 CI |
 
-代码实施需运行 `scripts/check_all.sh` 全量质量门，以及隔离 `TLON_HOME` 的 dream + HTTP 投信 + 持久收件箱检查；Gitea 场景使用独立临时数据、端口和容器，结束后显式清理测试资源，不能让“退出保留 Gitea”导致测试资源泄漏，也不触碰真实 `~/.tlon`。本次文档验证不能替代未来 Gitea 功能验收。
+代码实施需运行 `scripts/check_all.sh` 全量质量门，以及隔离 `TLON_HOME` 的 dream + HTTP 投信 + 持久收件箱检查；Gitea 场景使用独立临时数据、端口和容器，结束后显式清理测试资源，不能让“退出保留 Gitea”导致测试资源泄漏，也不触碰真实 `~/.tlon`。各阶段的验证记录随对应 PR 提供；上述当前能力不代表尚未实施的通知闭环已通过验收。
 
 ## 外部依据
 

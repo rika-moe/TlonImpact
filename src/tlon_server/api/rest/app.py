@@ -39,6 +39,7 @@ from tlon_server.core.local_identity import LocalIdentity, validate_username
 
 from .admin_agents import AdminAgentHandlers
 from .admin_arena import AdminArenaHandlers
+from .admin_gitea import AdminGiteaHandlers
 from .admin_llm import AdminLlmHandlers
 from .admin_prototypes import AdminPrototypeHandlers
 from .browser_boundary import LOOPBACK_HOSTS, protect_response, trusted_request
@@ -66,6 +67,7 @@ class RESTAPIHandler(
     AdminLlmHandlers,
     AdminPrototypeHandlers,
     AdminArenaHandlers,
+    AdminGiteaHandlers,
     ObservabilityHandlers,
     GitHubWebhookMixin,
 ):
@@ -167,6 +169,11 @@ class RESTAPIHandler(
         app.router.add_get("/health", self.handle_health)
         if self.gitea:
             app.router.add_get("/admin/gitea", self.handle_gitea_status)
+            app.router.add_get("/admin/gitea/projects", self.handle_gitea_projects)
+            app.router.add_post("/admin/gitea/projects", self.handle_configure_gitea_project)
+            app.router.add_put(
+                "/admin/gitea/projects/{name}/reviewers/{member_id}", self.handle_gitea_reviewer
+            )
         app.router.add_get("/identity", self.handle_identity)
         app.router.add_post("/identity", self.handle_initialize_identity)
         app.router.add_get("/config", self.handle_config)
