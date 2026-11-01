@@ -128,7 +128,7 @@ agent:
 读取方是 [base/settings.py](../../src/tlon/base/settings.py) 的 `Settings`（只处理进程级基建与密钥；业务配置在 `AgentConfig`）与 [base/tracing/otel.py](../../src/tlon/base/tracing/otel.py)。`.env` 在 **`{TLON_HOME}/.env`**（默认 `~/.tlon/.env`，配置与数据同目录）加载，且不覆盖已设置的真实环境变量（`load_process_env`，`override=False`）；`TLON_HOME` 本身只认真实环境变量，不来自 `.env`。
 
 <!-- BEGIN GENERATED: env-vars -->
-`Settings` 读取的环境变量（11 个，按源码顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`Settings` 读取的环境变量（12 个，按源码顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
@@ -143,6 +143,7 @@ agent:
 | `GITHUB_RECIPIENT` | "" | GitHub 来信的默认收件人 member id；空 = 发给全体已知人类 |
 | `GITHUB_TOKEN` | "" | GitHub API token（出站：回信 → issue/PR comment）； 空 = 出站禁用，入站不受影响 |
 | `TLON_GITEA_PORT` | 3000 | Managed Gitea: loopback HTTP port (1..65535), separate from dream |
+| `TLON_GITEA_WEBHOOK_PORT` | 3001 | Dedicated signed Gitea webhook listener; never serves WebUI/admin |
 <!-- END GENERATED: env-vars -->
 
 上表是 `Settings` 的全部读取点；另有两个环境变量由其他模块读取（手写维护）：

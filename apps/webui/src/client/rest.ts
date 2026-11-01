@@ -302,6 +302,19 @@ export interface SessionList {
   count: number;
 }
 
+export interface GiteaStatus {
+  webhooks?: {
+    state: string;
+    message: string;
+    pending?: number;
+    failed?: number;
+    unrouted?: number;
+    repositories?: number;
+    last_rejection?: string;
+    recent_failures?: { event_key: string; member_id: string; attempts: number; error: string }[];
+  };
+}
+
 export interface GiteaProject {
   name: string;
   html_url: string;
@@ -381,6 +394,10 @@ export class RestClient {
       );
     }
     return data;
+  }
+
+  async giteaStatus(): Promise<GiteaStatus> {
+    return this.get("/admin/gitea");
   }
 
   async giteaProjects(): Promise<GiteaProjectsSnapshot> {

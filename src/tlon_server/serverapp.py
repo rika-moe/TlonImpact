@@ -34,6 +34,7 @@ from tlon_server.core.local_identity import LocalIdentity
 from tlon_server.core.member_directory import MemberDirectory
 from tlon_server.core.notification_service import NotificationService
 from tlon_server.core.session_manager import SessionManager
+from tlon_server.gitea_webhook import GiteaWebhookServer
 
 logger = get_logger(__name__)
 
@@ -113,6 +114,7 @@ class ServerApp:
         self.ready = asyncio.Event()
         self._running = False
         self._gitea_start_task: asyncio.Task[None] | None = None
+        self._gitea_webhook: GiteaWebhookServer | None = None
         # shutdown() re-entry guard: the signal handler spawns one
         # shutdown task per signal and run_server's finally always calls
         # shutdown() again after start() returns — without this flag the
@@ -275,6 +277,23 @@ class ServerApp:
             f"   Gitea      : {status['state']} — {status['url']} ({status['message']})",
             flush=True,
         )
+        if status["state"] != "ready":
+            return
+        coordinator = self._runtime.gitea.webhooks
+        if coordinator is None:
+            return
+        listener = GiteaWebhookServer(coordinator, self._settings.gitea_webhook_port)
+        self._gitea_webhook = listener
+        try:
+            await listener.start()
+            await coordinator.start(listener.port)
+        except asyncio.CancelledError:
+            await listener.stop()
+            raise
+        except Exception:
+            await listener.stop()
+            coordinator.unavailable("Gitea notification listener could not start")
+            logger.warning("gitea_webhook_unavailable")
 
     async def shutdown(self) -> None:
         """Shutdown the server gracefully.
@@ -316,6 +335,9 @@ class ServerApp:
             self._gitea_start_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._gitea_start_task
+
+        if self._gitea_webhook is not None:
+            await self._gitea_webhook.stop()
 
         # Shutdown the runtime components (reverse order of creation;
         # Adam (PID 1) stops before the registry (kernel) it drives)

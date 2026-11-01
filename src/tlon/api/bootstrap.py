@@ -168,6 +168,7 @@ async def build_runtime(runtime_paths: TlonPaths, settings: Settings) -> Runtime
         runtime_paths,
         port=settings.gitea_port,
         members=lambda: {key: config.name for key, config in config_service.agents.items()},
+        post_office=post_office,
     )
 
     # AgentRegistry - agent management.

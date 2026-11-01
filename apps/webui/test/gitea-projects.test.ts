@@ -30,3 +30,22 @@ test("unavailable Gitea and refused reviewer grants remain errors", async (t) =>
   await assert.rejects(rest.giteaProjects(), (err: unknown) => err instanceof RestError && err.status === 503);
   await assert.rejects(rest.setGiteaReviewer("project", "member", true), (err: unknown) => err instanceof RestError && err.status === 409 && err.message === "项目权限存在漂移");
 });
+
+test("notification status uses the local browser boundary and preserves diagnostics", async (t) => {
+  const expected = { webhooks: { state: "unavailable", message: "Retry pending", pending: 2, failed: 1, unrouted: 3, repositories: 4, last_rejection: "Invalid webhook signature", recent_failures: [{ event_key: "event", member_id: "member", attempts: 2, error: "Mail delivery failed; retry pending" }] } };
+  t.mock.method(globalThis, "fetch", async (url: unknown, init: RequestInit) => {
+    assert.equal(url, "/admin/gitea");
+    assert.equal(new Headers(init.headers).get("X-Tlon-WebUI"), "1");
+    assert.equal(new Headers(init.headers).has("Authorization"), false);
+    return new Response(JSON.stringify(expected));
+  });
+  assert.deepEqual(await new RestClient().giteaStatus(), expected);
+});
+
+test("notification status allows an unconfigured bridge and reports HTTP failure", async (t) => {
+  const fetchMock = t.mock.method(globalThis, "fetch", async () => new Response("{}"));
+  const rest = new RestClient();
+  assert.equal((await rest.giteaStatus()).webhooks, undefined);
+  fetchMock.mock.mockImplementation(async () => new Response("{}", { status: 503 }));
+  await assert.rejects(rest.giteaStatus(), (err: unknown) => err instanceof RestError && err.status === 503);
+});
