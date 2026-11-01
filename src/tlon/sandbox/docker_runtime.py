@@ -30,9 +30,10 @@ import posixpath
 import stat as stat_module
 import tarfile
 import threading
+import time
 import uuid
-from collections.abc import Callable
-from contextlib import suppress
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
@@ -143,10 +144,9 @@ class DockerRuntime:
     First implementation of the ``ExecutionDevice`` interface
     (``sandbox/device.py``, design: docs/design/execution-device.md).
 
-    Each agent gets its own isolated execution environment. Network is
-    off by default (``network_mode="none"``, issue #23 — constitution
-    zero: mail is the only channel); a member that genuinely needs
-    egress declares it explicitly in its agent.yaml.
+    Each agent gets its own isolated execution environment. Execution
+    defaults to the managed Gitea network and development image; explicit
+    ``network_mode="none"`` keeps execution offline.
 
     Two container roles (issue #25):
 
@@ -203,6 +203,7 @@ class DockerRuntime:
         self.client = self._create_client()
         self.container: Container | None = None
         self._closed = False
+        self._execution_image: str | None = None
 
     def _create_client(self) -> docker.DockerClient:
         """Create a Docker client via the shared sandbox probe chain
@@ -232,6 +233,33 @@ class DockerRuntime:
         self._closed = True
         self.client.close()
 
+    async def prepare(self) -> None:
+        """Prepare development tools before the member can create any containers.
+
+        Image construction belongs to member startup, outside shell tool budgets.
+        Cancellation joins the Docker worker before its client can be closed.
+        """
+        if (
+            self.config.level != "L2"
+            or self.config.network_mode != "gitea"
+            or self._execution_image is not None
+        ):
+            return
+        stop = threading.Event()
+        building = asyncio.create_task(
+            asyncio.to_thread(ensure_gitea_image, self.client, stop=stop)
+        )
+        try:
+            self._execution_image = await asyncio.shield(building)
+        except asyncio.CancelledError:
+            stop.set()
+            while not building.done():
+                with suppress(Exception, asyncio.CancelledError):
+                    await asyncio.shield(building)
+            with suppress(Exception):
+                building.result()
+            raise
+
     async def ensure_running(self) -> None:
         """Ensure the file cabinet exists and is usable for file I/O.
 
@@ -247,6 +275,7 @@ class DockerRuntime:
         it is removed and recreated — workspace state survives on the
         bind mount, so the rebuild is transparent to the member.
         """
+        await self.prepare()
         try:
             # Try to get existing container (blocking docker SDK call → thread)
             container = await asyncio.to_thread(self.client.containers.get, self.container_name)
@@ -387,6 +416,29 @@ class DockerRuntime:
 
         logger.info("container_created", container_name=self.container_name)
 
+    @contextmanager
+    def _execution_phase(self, phase: str, container_name: str) -> Iterator[None]:
+        """Expose SDK latency without logging commands, credentials or SDK payloads."""
+        started = time.monotonic()
+        fields = {"agent_id": self.agent_id, "container_name": container_name, "phase": phase}
+        logger.info("execution_container_phase_started", **fields)
+        outcome = "completed"
+        error_type = ""
+        try:
+            yield
+        except BaseException as error:
+            outcome = "cancelled" if isinstance(error, asyncio.CancelledError) else "failed"
+            error_type = type(error).__name__
+            raise
+        finally:
+            logger.info(
+                "execution_container_phase_finished",
+                **fields,
+                duration_seconds=time.monotonic() - started,
+                outcome=outcome,
+                error_type=error_type,
+            )
+
     async def run(
         self, program: str, timeout: int = 60, workdir: str | None = None
     ) -> ExecutionResult:
@@ -439,8 +491,6 @@ class DockerRuntime:
         container: Container | None = None
         creation: asyncio.Task[Container] | None = None
         starting: asyncio.Task[None] | None = None
-        building: asyncio.Task[str] | None = None
-        build_stop = threading.Event()
         try:
             # All docker SDK calls are blocking — run them in threads so
             # the event loop stays responsive.
@@ -452,35 +502,37 @@ class DockerRuntime:
             if self.config.network_mode == "gitea":
                 if self._gitea_access is None:
                     raise RuntimeError("Gitea member access is unavailable")
-                # Build before acquiring credentials: a slow first build must not
-                # carry a member's stale authorization into an execution unit.
-                building = asyncio.create_task(
-                    asyncio.to_thread(ensure_gitea_image, self.client, stop=build_stop)
-                )
-                kwargs["image"] = await asyncio.shield(building)
+                if self._execution_image is None:
+                    raise RuntimeError("Gitea development image has not been prepared")
+                kwargs["image"] = self._execution_image
                 access = await self._gitea_access(self.agent_id)
                 kwargs["network_mode"] = access.network
                 kwargs["environment"] = execution_environment(
                     access.url, access.username, access.token
                 )
-            creation = asyncio.create_task(
-                asyncio.to_thread(self.client.containers.create, **kwargs)
-            )
-            container = await asyncio.shield(creation)
-            starting = asyncio.create_task(asyncio.to_thread(container.start))
-            await asyncio.shield(starting)
-            try:
-                wait_result = await asyncio.wait_for(
-                    asyncio.to_thread(container.wait), timeout=timeout + 5
+            with self._execution_phase("create", exec_name):
+                creation = asyncio.create_task(
+                    asyncio.to_thread(self.client.containers.create, **kwargs)
                 )
+                container = await asyncio.shield(creation)
+            with self._execution_phase("start", exec_name):
+                starting = asyncio.create_task(asyncio.to_thread(container.start))
+                await asyncio.shield(starting)
+            try:
+                with self._execution_phase("wait", exec_name):
+                    wait_result = await asyncio.wait_for(
+                        asyncio.to_thread(container.wait), timeout=timeout + 5
+                    )
             except TimeoutError:
-                logger.warning("command_timeout", timeout=timeout, command=program)
+                logger.warning("command_timeout", timeout=timeout, container_name=exec_name)
                 return ExecutionResult(
                     exit_code=-1, stdout="", stderr=f"Command timed out after {timeout} seconds"
                 )
 
-            stdout_bytes = await asyncio.to_thread(container.logs, stdout=True, stderr=False)
-            stderr_bytes = await asyncio.to_thread(container.logs, stdout=False, stderr=True)
+            with self._execution_phase("logs_stdout", exec_name):
+                stdout_bytes = await asyncio.to_thread(container.logs, stdout=True, stderr=False)
+            with self._execution_phase("logs_stderr", exec_name):
+                stderr_bytes = await asyncio.to_thread(container.logs, stdout=False, stderr=True)
             status_code = wait_result.get("StatusCode")
             exit_code: int = status_code if isinstance(status_code, int) else -1
             stdout = (
@@ -496,7 +548,7 @@ class DockerRuntime:
 
             # `timeout` kills the command with exit code 124
             if exit_code == 124:
-                logger.warning("command_timeout", timeout=timeout, command=program)
+                logger.warning("command_timeout", timeout=timeout, container_name=exec_name)
                 return ExecutionResult(
                     exit_code=-1,
                     stdout=stdout,
@@ -515,15 +567,13 @@ class DockerRuntime:
                     stdout="",
                     stderr="Gitea execution unavailable; check Gitea member status",
                 )
-            logger.error("command_execution_error", error=str(e), exc_info=True)
+            logger.error(
+                "command_execution_error", error_type=type(e).__name__, container_name=exec_name
+            )
             return ExecutionResult(exit_code=-1, stdout="", stderr=str(e))
         finally:
-            build_stop.set()
 
             async def cleanup() -> None:
-                if building is not None:
-                    with suppress(Exception):
-                        await building
                 # Cancelling to_thread does not stop its SDK call. Settle
                 # creation/start before removing, or a late SDK completion
                 # could leave a container behind after member shutdown.
@@ -538,12 +588,13 @@ class DockerRuntime:
                         await starting
                 if unit is not None:
                     try:
-                        await asyncio.to_thread(unit.remove, force=True)
+                        with self._execution_phase("cleanup", exec_name):
+                            await asyncio.to_thread(unit.remove, force=True)
                     except Exception as error:
                         logger.warning(
                             "exec_container_remove_error",
                             container_name=exec_name,
-                            error=str(error),
+                            error_type=type(error).__name__,
                         )
 
             finishing = asyncio.create_task(cleanup())

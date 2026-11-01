@@ -769,7 +769,7 @@ class MemberRuntime(Member):
                 context = CallContext(
                     self._member_id,
                     root,
-                    "failure-mail",
+                    f"{root}:failure-mail",
                     call_path=("failure-mail",),
                     execution=scope,
                 )

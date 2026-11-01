@@ -282,6 +282,8 @@ class TestModelInheritance:
         # persisted: agent.yaml on disk carries the inherited model
         on_disk = yaml_load_file(p.agent_config_file(config.id))
         assert on_disk is not None and on_disk.llm is not None
+        assert config.docker.network_mode == "gitea"
+        assert on_disk.docker.network_mode == "gitea"
         assert on_disk.llm.model_name == _SPAWNER_MODEL
 
     async def test_spawner_without_model_fails(self, tmp_path):

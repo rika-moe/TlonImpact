@@ -25,7 +25,9 @@ from tlon.sandbox.docker_runtime import (
 def _make_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> DockerRuntime:
     monkeypatch.setattr(DockerRuntime, "_create_client", lambda self: MagicMock())
     return DockerRuntime(
-        DockerRuntimeConfig(level="L2"), agent_id="dev-001", tlon_paths=TlonPaths(home=tmp_path)
+        DockerRuntimeConfig(level="L2", network_mode="none"),
+        agent_id="dev-001",
+        tlon_paths=TlonPaths(home=tmp_path),
     )
 
 
@@ -50,7 +52,9 @@ class TestCreateContainerMounts:
         monkeypatch.setattr(DockerRuntime, "_create_client", lambda self: MagicMock())
         tlon_paths = TlonPaths(home=tmp_path)
 
-        runtime = DockerRuntime(DockerRuntimeConfig(), agent_id="dev-001", tlon_paths=tlon_paths)
+        runtime = DockerRuntime(
+            DockerRuntimeConfig(network_mode="none"), agent_id="dev-001", tlon_paths=tlon_paths
+        )
         runtime.client.images.get = MagicMock()
         runtime.client.containers.create = MagicMock(return_value=MagicMock())
 
@@ -324,7 +328,9 @@ class TestClose:
     def test_close_closes_underlying_client(self, monkeypatch, tmp_path):
         monkeypatch.setattr(DockerRuntime, "_create_client", lambda self: MagicMock())
         runtime = DockerRuntime(
-            DockerRuntimeConfig(), agent_id="dev-001", tlon_paths=TlonPaths(home=tmp_path)
+            DockerRuntimeConfig(network_mode="none"),
+            agent_id="dev-001",
+            tlon_paths=TlonPaths(home=tmp_path),
         )
 
         runtime.close()
@@ -334,7 +340,9 @@ class TestClose:
     def test_close_is_idempotent(self, monkeypatch, tmp_path):
         monkeypatch.setattr(DockerRuntime, "_create_client", lambda self: MagicMock())
         runtime = DockerRuntime(
-            DockerRuntimeConfig(), agent_id="dev-001", tlon_paths=TlonPaths(home=tmp_path)
+            DockerRuntimeConfig(network_mode="none"),
+            agent_id="dev-001",
+            tlon_paths=TlonPaths(home=tmp_path),
         )
 
         runtime.close()
@@ -364,7 +372,9 @@ def _runtime_with_archive(
 ) -> DockerRuntime:
     monkeypatch.setattr(DockerRuntime, "_create_client", lambda self: MagicMock())
     tlon_paths = TlonPaths(home=tmp_path)
-    runtime = DockerRuntime(DockerRuntimeConfig(), agent_id="dev-001", tlon_paths=tlon_paths)
+    runtime = DockerRuntime(
+        DockerRuntimeConfig(network_mode="none"), agent_id="dev-001", tlon_paths=tlon_paths
+    )
     container = MagicMock()
     if chunk_size > 0:
         chunks = [tar_bytes[i : i + chunk_size] for i in range(0, len(tar_bytes), chunk_size)]
@@ -397,7 +407,9 @@ class TestReadFile:
     ):
         monkeypatch.setattr(DockerRuntime, "_create_client", lambda self: MagicMock())
         runtime = DockerRuntime(
-            DockerRuntimeConfig(), agent_id="dev-001", tlon_paths=TlonPaths(home=tmp_path)
+            DockerRuntimeConfig(network_mode="none"),
+            agent_id="dev-001",
+            tlon_paths=TlonPaths(home=tmp_path),
         )
         container = MagicMock()
         container.get_archive.side_effect = NotFound("no such file")
@@ -436,7 +448,7 @@ class TestRunLevelGate:
     ):
         monkeypatch.setattr(DockerRuntime, "_create_client", lambda self: MagicMock())
         runtime = DockerRuntime(
-            DockerRuntimeConfig(level=level),
+            DockerRuntimeConfig(level=level, network_mode="none"),
             agent_id="dev-001",
             tlon_paths=TlonPaths(home=tmp_path),
         )
@@ -463,7 +475,9 @@ def _runtime_with_probe(
     ``existing`` path set (NotFound otherwise) and captures put_archive."""
     monkeypatch.setattr(DockerRuntime, "_create_client", lambda self: MagicMock())
     runtime = DockerRuntime(
-        DockerRuntimeConfig(), agent_id="dev-001", tlon_paths=TlonPaths(home=tmp_path)
+        DockerRuntimeConfig(network_mode="none"),
+        agent_id="dev-001",
+        tlon_paths=TlonPaths(home=tmp_path),
     )
     container = MagicMock()
 
@@ -691,7 +705,20 @@ class TestCabinetIoRetry:
 
 
 class TestGiteaExecution:
-    async def test_opt_in_refreshes_identity_per_exec_and_keeps_cabinet_offline(
+    @pytest.mark.parametrize("level", ["L0", "L1"])
+    async def test_file_only_member_skips_development_image(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, level: str
+    ) -> None:
+        runtime, _ = _runtime_with_exec_unit(monkeypatch, tmp_path, wait_result={"StatusCode": 0})
+        runtime.config.level = level
+        runtime.config.network_mode = "gitea"
+        build = MagicMock(side_effect=RuntimeError("image build unavailable"))
+        monkeypatch.setattr("tlon.sandbox.docker_runtime.ensure_gitea_image", build)
+        await runtime.prepare()
+        build.assert_not_called()
+        assert runtime._execution_image is None
+
+    async def test_default_refreshes_identity_per_exec_and_keeps_cabinet_offline(
         self, tmp_path, monkeypatch
     ):
         from tlon.sandbox.gitea_access import GiteaExecutionAccess
@@ -699,7 +726,7 @@ class TestGiteaExecution:
         runtime, unit = _runtime_with_exec_unit(
             monkeypatch, tmp_path, wait_result={"StatusCode": 0}
         )
-        runtime.config.network_mode = "gitea"
+        runtime.config = DockerRuntimeConfig(level="L2")
         provider = AsyncMock(
             side_effect=[
                 GiteaExecutionAccess("http://gitea:3000/", "member-a", "token-one", "instance-net"),
@@ -711,6 +738,7 @@ class TestGiteaExecution:
             "tlon.sandbox.docker_runtime.ensure_gitea_image",
             lambda client, **kwargs: "managed-image",
         )
+        await runtime.prepare()
         for token in ("token-one", "token-two"):
             result = await runtime.run("git status")
             assert result.exit_code == 0
@@ -729,7 +757,7 @@ class TestGiteaExecution:
         assert cabinet["image"] == runtime.config.image
         assert "environment" not in cabinet
 
-    async def test_default_network_never_fetches_credentials(self, tmp_path, monkeypatch):
+    async def test_explicit_offline_network_never_fetches_credentials(self, tmp_path, monkeypatch):
         runtime, _ = _runtime_with_exec_unit(monkeypatch, tmp_path, wait_result={"StatusCode": 0})
         runtime._gitea_access = AsyncMock()
         assert (await runtime.run("true")).exit_code == 0
@@ -744,6 +772,7 @@ class TestGiteaExecution:
             "tlon.sandbox.docker_runtime.ensure_gitea_image",
             lambda client, **kwargs: "managed-image",
         )
+        await runtime.prepare()
         result = await runtime.run("true")
         assert result.exit_code == -1
         assert "secret-token" not in result.stderr
@@ -760,7 +789,7 @@ class TestGiteaExecution:
         runtime._gitea_access.assert_not_awaited()
         runtime.client.containers.create.assert_not_called()
 
-    async def test_cancelled_build_settles_before_run_returns(self, tmp_path, monkeypatch):
+    async def test_cancelled_build_settles_before_preparation_returns(self, tmp_path, monkeypatch):
         import asyncio
 
         runtime, _ = _runtime_with_exec_unit(monkeypatch, tmp_path)
@@ -777,11 +806,54 @@ class TestGiteaExecution:
             raise RuntimeError("build stopped")
 
         monkeypatch.setattr("tlon.sandbox.docker_runtime.ensure_gitea_image", build)
-        task = asyncio.create_task(runtime.run("true"))
+        task = asyncio.create_task(runtime.prepare())
         await asyncio.wait_for(started.wait(), 2)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
         assert finished.is_set()
+        runtime._gitea_access.assert_not_awaited()
+        runtime.client.containers.create.assert_not_called()
+
+    async def test_prepares_before_cabinet_lookup_and_reuses_image(self, tmp_path, monkeypatch):
+        runtime = _make_runtime(monkeypatch, tmp_path)
+        runtime.config.network_mode = "gitea"
+        events: list[str] = []
+
+        def build(client: Any, **kwargs: Any) -> str:
+            events.append("build")
+            return "prepared"
+
+        monkeypatch.setattr("tlon.sandbox.docker_runtime.ensure_gitea_image", build)
+        cabinet = MagicMock()
+        cabinet.attrs = _matching_attrs(runtime._expected_spec())
+        runtime.client.containers.get.side_effect = lambda _: (events.append("cabinet"), cabinet)[1]
+        await runtime.ensure_running()
+        await runtime.prepare()
+        assert events == ["build", "cabinet"]
+        cabinet.start.assert_not_called()
+        runtime.client.containers.create.assert_not_called()
+
+    async def test_failed_preparation_creates_no_cabinet(self, tmp_path, monkeypatch):
+        runtime = _make_runtime(monkeypatch, tmp_path)
+        runtime.config.network_mode = "gitea"
+
+        def build(client: Any, **kwargs: Any) -> str:
+            raise RuntimeError("build failed")
+
+        monkeypatch.setattr("tlon.sandbox.docker_runtime.ensure_gitea_image", build)
+        with pytest.raises(RuntimeError, match="build failed"):
+            await runtime.ensure_running()
+        runtime.client.containers.get.assert_not_called()
+        runtime.client.containers.create.assert_not_called()
+
+    async def test_unprepared_run_never_builds(self, tmp_path, monkeypatch):
+        runtime = _make_runtime(monkeypatch, tmp_path)
+        runtime.config.network_mode = "gitea"
+        runtime._gitea_access = AsyncMock()
+        build = MagicMock()
+        monkeypatch.setattr("tlon.sandbox.docker_runtime.ensure_gitea_image", build)
+        assert (await runtime.run("true")).exit_code == -1
+        build.assert_not_called()
         runtime._gitea_access.assert_not_awaited()
         runtime.client.containers.create.assert_not_called()

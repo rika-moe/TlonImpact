@@ -84,6 +84,7 @@ from tlon.organization.mail.post_office import PostOffice
 from tlon.organization.mail.resolver import MemberAddress
 from tlon.organization.mail.store import MailStore
 from tlon.sandbox.gitea_access import GiteaAccessProvider
+from tlon.sandbox.gitea_image import GITEA_IMAGE_BUILD_TIMEOUT_SECONDS
 from tlosure.builtins import Builtin
 
 if TYPE_CHECKING:
@@ -722,15 +723,21 @@ class AgentRegistry(Component):
         """``_start_agent`` with a timeout: a hung assembly must not wedge
         the per-agent wake lock forever. Returns None on timeout (same
         contract as ``_start_agent`` failure)."""
+        config = self._agent_info.get_config(agent_id)
+        timeout = self._START_TIMEOUT_SECONDS
+        if (
+            config is not None
+            and config.docker.level == "L2"
+            and config.docker.network_mode == "gitea"
+        ):
+            timeout += GITEA_IMAGE_BUILD_TIMEOUT_SECONDS
         try:
-            return await asyncio.wait_for(
-                self._start_agent(agent_id), timeout=self._START_TIMEOUT_SECONDS
-            )
+            return await asyncio.wait_for(self._start_agent(agent_id), timeout=timeout)
         except TimeoutError:
             logger.error(
                 "agent_start_timeout",
                 agent_id=agent_id,
-                timeout_seconds=self._START_TIMEOUT_SECONDS,
+                timeout_seconds=timeout,
             )
             return None
 

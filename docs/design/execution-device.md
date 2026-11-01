@@ -82,7 +82,7 @@ workspace 下的 `tlon/docs` 与 `tlon/stdlib` 是 runtime 文档和标准库源
 
 ## 网络与资源
 
-网络默认 `none`；成员配置可显式声明其他 `docker.network_mode`。文件柜和执行单元使用相同网络配置。默认断网不是对所有成员配置都强制断网。
+网络默认 `gitea`：L2 执行单元使用预装开发镜像、实例网络和瞬时成员凭据；文件柜不启动、保持离线且没有凭据。成员仍可显式声明 `none` 或其他 `docker.network_mode`。
 
 每容器内存/CPU 限额由 Docker 执行。[sandbox/resource_monitor.py](../../src/tlon/sandbox/resource_monitor.py) 的 `ContainerResourceMonitor` 在后台采样，按成员归并执行单元，向 metrics 提供内存、CPU 与社会汇总的内存快照；metrics 读取不阻塞等待 Docker。daemon 不可达时记录警告并返回空账本。
 
@@ -90,7 +90,7 @@ workspace 下的 `tlon/docs` 与 `tlon/stdlib` 是 runtime 文档和标准库源
 
 ## Gitea 接入目标（未实施）
 
-[ADR 0055](../decisions/0055-managed-gitea-collaboration.md) 接受在 L2 镜像预装 Git/tea，并为每次一次性执行注入成员凭据和明确授予的网络连通性。账号创建不提升 L0/L1 执行等级，不静默取消默认断网；workspace 保留仓库，临时登录状态不作为跨命令依赖。身份、权限、服务和通知的完整契约见 [Gitea 软件协作](gitea-collaboration.md)。
+[ADR 0055](../decisions/0055-managed-gitea-collaboration.md) 接受在 L2 镜像预装 Git/tea，并为每次一次性执行注入成员凭据和明确授予的网络连通性。2026-11-01 决策改为所有成员默认接入 Gitea，账号创建不提升 L0/L1 执行等级；workspace 保留仓库，临时登录状态不作为跨命令依赖。身份、权限、服务和通知的完整契约见 [Gitea 软件协作](gitea-collaboration.md)。
 
 ## 历史与未实施方向
 

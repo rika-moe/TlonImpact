@@ -4,6 +4,7 @@ import io
 import os
 import subprocess
 import tarfile
+from collections.abc import Iterator
 from importlib.resources import files
 from unittest.mock import Mock
 
@@ -73,6 +74,8 @@ def test_environment_uses_native_tea_auth_and_disables_git_redirects() -> None:
     assert env["GITEA_INSTANCE_URL"] == "http://internal:3000"
     assert env["GITEA_TOKEN"] == "secret-token"
     assert env["XDG_CONFIG_HOME"] == "/tmp/tlon-config"
+    assert env["npm_config_cache"] == "/tmp/npm-cache"
+    assert env["PIP_CACHE_DIR"] == "/tmp/pip-cache"
     assert env["GIT_CONFIG_KEY_0"] == "credential.helper"
     assert env["GIT_CONFIG_VALUE_0"] == ""
     assert env["GIT_CONFIG_KEY_2"] == "http.followRedirects"
@@ -109,7 +112,9 @@ def test_build_context_contains_packaged_assets_without_host_directory() -> None
         dockerfile = archive.extractfile("Dockerfile")
         assert dockerfile is not None
         recipe = dockerfile.read()
-        assert b"git=1:2.34.1-1ubuntu1.18" in recipe
+        assert b"FROM node:24-bookworm-slim" in recipe
+        assert b"python3 python3-pip python3-venv" in recipe
+        assert b"build-essential perl" in recipe
         assert b"tea-0.16.0-linux-${arch}" in recipe
         assert b"sha256sum --check" in recipe
 
@@ -149,3 +154,34 @@ def test_image_build_error_hides_build_output() -> None:
     client.api.build.return_value = iter([{"error": "sensitive build detail"}])
     with pytest.raises(RuntimeError, match="^Gitea execution image build failed$"):
         ensure_gitea_image(client)
+
+
+def test_concurrent_members_build_shared_image_once() -> None:
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    built = threading.Event()
+    started = threading.Event()
+    release = threading.Event()
+    client = Mock()
+
+    def get(tag: str) -> Mock:
+        if not built.is_set():
+            raise ImageNotFound("absent")
+        return Mock()
+
+    def build(**kwargs: object) -> Iterator[dict[str, str]]:
+        started.set()
+        assert release.wait(3)
+        built.set()
+        yield {"stream": "done"}
+
+    client.images.get.side_effect = get
+    client.api.build.side_effect = build
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(ensure_gitea_image, client)
+        assert started.wait(3)
+        second = pool.submit(ensure_gitea_image, client)
+        release.set()
+        assert first.result(timeout=3) == second.result(timeout=3) == gitea_image_tag()
+    client.api.build.assert_called_once()

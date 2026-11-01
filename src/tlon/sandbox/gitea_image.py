@@ -1,4 +1,4 @@
-"""Bundled, reproducible CLI recipe and per-execution environment for managed Gitea."""
+"""Bundled development image recipe and ephemeral managed Gitea environment."""
 
 from __future__ import annotations
 
@@ -13,6 +13,10 @@ from urllib.parse import urlsplit
 
 import docker
 from docker.errors import ImageNotFound
+
+_BUILD_LOCK = threading.Lock()
+# Cold Node base pulls plus compiler/Python packages exceed the former CLI-only budget.
+GITEA_IMAGE_BUILD_TIMEOUT_SECONDS = 900
 
 _ASSETS = ("Dockerfile", "git-credential-tlon")
 
@@ -35,37 +39,45 @@ def ensure_gitea_image(client: docker.DockerClient, *, stop: threading.Event | N
     started = time.monotonic()
 
     def check() -> None:
-        if (stop is not None and stop.is_set()) or time.monotonic() - started > 300:
+        if (
+            stop is not None and stop.is_set()
+        ) or time.monotonic() - started > GITEA_IMAGE_BUILD_TIMEOUT_SECONDS:
             raise RuntimeError("Gitea execution image build stopped or timed out")
 
-    check()
-    tag = gitea_image_tag()
-    try:
-        client.images.get(tag)
-    except ImageNotFound:
-        context = io.BytesIO()
-        with tarfile.open(fileobj=context, mode="w") as archive:
-            for name, content in _build_assets().items():
-                info = tarfile.TarInfo(name)
-                info.size = len(content)
-                info.mode = 0o755 if name == "git-credential-tlon" else 0o644
-                archive.addfile(info, io.BytesIO(content))
-        context.seek(0)
-        stream = client.api.build(
-            fileobj=context, custom_context=True, tag=tag, rm=True, timeout=30, decode=True
-        )
-        try:
-            for event in stream:
-                check()
-                if "error" in event:
-                    raise RuntimeError("Gitea execution image build failed")
-        finally:
-            close = getattr(stream, "close", None)
-            if callable(close):
-                close()
+    # Members are assembled concurrently; only one thread builds the shared recipe.
+    while not _BUILD_LOCK.acquire(timeout=0.1):
         check()
-        client.images.get(tag)
-    return tag
+    try:
+        check()
+        tag = gitea_image_tag()
+        try:
+            client.images.get(tag)
+        except ImageNotFound:
+            context = io.BytesIO()
+            with tarfile.open(fileobj=context, mode="w") as archive:
+                for name, content in _build_assets().items():
+                    info = tarfile.TarInfo(name)
+                    info.size = len(content)
+                    info.mode = 0o755 if name == "git-credential-tlon" else 0o644
+                    archive.addfile(info, io.BytesIO(content))
+            context.seek(0)
+            stream = client.api.build(
+                fileobj=context, custom_context=True, tag=tag, rm=True, timeout=120, decode=True
+            )
+            try:
+                for event in stream:
+                    check()
+                    if "error" in event:
+                        raise RuntimeError("Gitea execution image build failed")
+            finally:
+                close = getattr(stream, "close", None)
+                if callable(close):
+                    close()
+            check()
+            client.images.get(tag)
+        return tag
+    finally:
+        _BUILD_LOCK.release()
 
 
 def execution_environment(url: str, username: str, token: str) -> dict[str, str]:
@@ -100,6 +112,8 @@ def execution_environment(url: str, username: str, token: str) -> dict[str, str]
         # tea probes/creates its config directory even with environment auth.
         # /tmp is per-execution tmpfs, never the persistent workspace.
         "XDG_CONFIG_HOME": "/tmp/tlon-config",
+        "npm_config_cache": "/tmp/npm-cache",
+        "PIP_CACHE_DIR": "/tmp/pip-cache",
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_GLOBAL": "/dev/null",

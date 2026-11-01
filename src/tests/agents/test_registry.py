@@ -19,7 +19,7 @@ from tlon.agents.lifecycle import StartRequest
 from tlon.agents.loader import load_member_spec
 from tlon.agents.member_runtime import MemberRuntime
 from tlon.agents.registry_queries import RegistryQueries
-from tlon.base.config import AgentConfig, AgentInfoProvider, LLMConfig
+from tlon.base.config import AgentConfig, AgentInfoProvider, DockerRuntimeConfig, LLMConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.paths import TlonPaths
@@ -94,6 +94,7 @@ class TestRegistryStart:
             agent_info_provider=_StaticProvider(
                 {
                     "relay-1": AgentConfig(
+                        docker=DockerRuntimeConfig(network_mode="none"),
                         id="relay-1",
                         name="转发者",
                         llm=LLMConfig(
@@ -176,8 +177,12 @@ class TestSpecDerivedLifecycle:
 
     async def test_boot_candidates_and_is_lazy(self, bus, tmp_path, monkeypatch):
         configs = {
-            "booty-1": AgentConfig(id="booty-1", name="常驻"),
-            "sleepy-1": AgentConfig(id="sleepy-1", name="延迟"),
+            "booty-1": AgentConfig(
+                docker=DockerRuntimeConfig(network_mode="none"), id="booty-1", name="常驻"
+            ),
+            "sleepy-1": AgentConfig(
+                docker=DockerRuntimeConfig(network_mode="none"), id="sleepy-1", name="延迟"
+            ),
         }
         registry = await self._make_registry(
             bus,
@@ -200,7 +205,10 @@ class TestSpecDerivedLifecycle:
         override."""
         configs = {
             "c-relay-a1b2c3d4": AgentConfig(
-                id="c-relay-a1b2c3d4", name="外包", spawned_by="spawner-1"
+                docker=DockerRuntimeConfig(network_mode="none"),
+                id="c-relay-a1b2c3d4",
+                name="外包",
+                spawned_by="spawner-1",
             )
         }
         registry = await self._make_registry(
@@ -214,7 +222,11 @@ class TestSpecDerivedLifecycle:
 
     async def test_unreadable_spec_is_lazy(self, bus, tmp_path, monkeypatch):
         """A member whose spec cannot be loaded has no boot rule to declare."""
-        configs = {"ghost-1": AgentConfig(id="ghost-1", name="无规约")}
+        configs = {
+            "ghost-1": AgentConfig(
+                docker=DockerRuntimeConfig(network_mode="none"), id="ghost-1", name="无规约"
+            )
+        }
         registry = await self._make_registry(bus, tmp_path, monkeypatch, configs, {})
 
         assert registry.boot_candidates() == []
@@ -251,8 +263,15 @@ class TestRegistryQueries:
 
         p = TlonPaths(home=tmp_path)
         configs = {
-            "a-bai-1a2b3c4d": AgentConfig(id="a-bai-1a2b3c4d", name="阿白", prototype="worker"),
-            "manual-1": AgentConfig(id="manual-1", name="手册"),
+            "a-bai-1a2b3c4d": AgentConfig(
+                docker=DockerRuntimeConfig(network_mode="none"),
+                id="a-bai-1a2b3c4d",
+                name="阿白",
+                prototype="worker",
+            ),
+            "manual-1": AgentConfig(
+                docker=DockerRuntimeConfig(network_mode="none"), id="manual-1", name="手册"
+            ),
         }
         provider = _StaticProvider(configs)
         bus = EventBus()
@@ -318,6 +337,7 @@ class TestWakeOnMail:
             agent_info_provider=_StaticProvider(
                 {
                     agent_id: AgentConfig(
+                        docker=DockerRuntimeConfig(network_mode="none"),
                         id=agent_id,
                         name=agent_id,
                         llm=LLMConfig(
@@ -422,6 +442,7 @@ class TestWakeOnMail:
             agent_info_provider=_StaticProvider(
                 {
                     "gu-yanxi-9": AgentConfig(
+                        docker=DockerRuntimeConfig(network_mode="none"),
                         id="gu-yanxi-9",
                         name="客服",
                         llm=LLMConfig(
@@ -500,7 +521,11 @@ class TestMemberStopAndDrain:
         """Stopping a member puts it to sleep — home survives (archived),
         AGENT_STOPPED is published without a role field."""
         agent_id = "c-relay-a1b2c3d4"
-        configs = {agent_id: AgentConfig(id=agent_id, name="外包")}
+        configs = {
+            agent_id: AgentConfig(
+                docker=DockerRuntimeConfig(network_mode="none"), id=agent_id, name="外包"
+            )
+        }
         registry, p = await self._make_registry(
             bus, tmp_path, monkeypatch, configs, homes=(agent_id,)
         )
@@ -533,6 +558,7 @@ class TestMemberStopAndDrain:
         agent_id = "c-relay-a1b2c3d4"
         configs = {
             agent_id: AgentConfig(
+                docker=DockerRuntimeConfig(network_mode="none"),
                 id=agent_id,
                 name="外包",
                 idle_timeout_seconds=0,
@@ -572,6 +598,7 @@ class TestPendingStop:
             agent_info_provider=_StaticProvider(
                 {
                     agent_id: AgentConfig(
+                        docker=DockerRuntimeConfig(network_mode="none"),
                         id=agent_id,
                         name=agent_id,
                         llm=LLMConfig(

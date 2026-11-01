@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import AsyncGenerator, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -50,6 +50,70 @@ async def settle(predicate: Callable[[], bool]) -> None:
     async with asyncio.timeout(2):
         while not predicate():
             await asyncio.sleep(0.01)
+
+
+@pytest.mark.parametrize("level", ["L0", "L1", "L2"])
+@pytest.mark.parametrize("network", ["none", "gitea"])
+async def test_start_guard_allows_gitea_image_preparation_budget(
+    registry: AgentRegistry, monkeypatch: pytest.MonkeyPatch, network: str, level: str
+) -> None:
+    config = AgentConfig(id="member", name="member")
+    config.docker.network_mode = network
+    config.docker.level = level
+    monkeypatch.setattr(registry._agent_info, "get_config", lambda _: config)
+    monkeypatch.setattr(registry, "_START_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr("tlon.agents.agent_registry.GITEA_IMAGE_BUILD_TIMEOUT_SECONDS", 1)
+    completed = asyncio.Event()
+    cancelled = asyncio.Event()
+    member = MagicMock()
+    member.initialize = AsyncMock()
+    member.shutdown = AsyncMock()
+
+    async def slow_assembly(*args: object, **kwargs: object) -> MagicMock:
+        try:
+            await asyncio.sleep(0.1)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        completed.set()
+        return MagicMock()
+
+    monkeypatch.setattr("tlon.agents.agent_registry.assemble_member_services", slow_assembly)
+    monkeypatch.setattr("tlon.agents.agent_registry.MemberRuntime", MagicMock(return_value=member))
+    result = await registry._start_agent_guarded("member")
+    if network == "gitea" and level == "L2":
+        assert result is member
+        assert completed.is_set() and not cancelled.is_set()
+        member.initialize.assert_awaited_once()
+    else:
+        assert result is None
+        assert cancelled.is_set() and not completed.is_set()
+        member.initialize.assert_not_awaited()
+
+
+async def test_gitea_start_guard_propagates_external_cancellation(
+    registry: AgentRegistry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = AgentConfig(id="member", name="member")
+    config.docker.network_mode = "gitea"
+    monkeypatch.setattr(registry._agent_info, "get_config", lambda _: config)
+    started = asyncio.Event()
+    settled = asyncio.Event()
+
+    async def assembly(*args: object, **kwargs: object) -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            settled.set()
+
+    monkeypatch.setattr("tlon.agents.agent_registry.assemble_member_services", assembly)
+    task = asyncio.create_task(registry._start_agent_guarded("member"))
+    await asyncio.wait_for(started.wait(), 2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert settled.is_set()
 
 
 async def test_sleep_blocks_mail_and_manual_boot_and_expires(registry: AgentRegistry) -> None:

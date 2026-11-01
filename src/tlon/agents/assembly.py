@@ -98,6 +98,12 @@ async def _create_docker_runtime(
             created.close()
         raise
     assert runtime is not None
+    try:
+        if config.docker.network_mode == "gitea":
+            await runtime.prepare()
+    except BaseException:
+        runtime.close()
+        raise
     return runtime
 
 
@@ -144,7 +150,8 @@ async def assemble_member_services(
     none of the device-dependent shell/filesystem tools; L1 (issue #40,
     文件层) gets the runtime but only the filesystem five — no bash tools,
     and run() is refused at the device layer. Otherwise no
-    container exists here: ``run()`` spins a one-shot execution unit per
+    container exists here: Gitea-enabled L2 members prepare their development
+    image before tools are assembled; ``run()`` spins a one-shot execution unit per
     command (issue #25) and the file cabinet is created lazily on first
     file I/O via ensure_running(), so waking an agent for pure
     conversation costs zero containers — a daemon failure surfaces as a
