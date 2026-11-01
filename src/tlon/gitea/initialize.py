@@ -150,10 +150,10 @@ def initialize(
             raise GiteaError("Gitea human account initialization failed")
     elif code != 200:
         raise GiteaError("Gitea human account lookup failed")
-    code, _ = request(url, f"orgs/{ORGANIZATION}", password)
+    code, organization = request(url, f"orgs/{ORGANIZATION}", password)
     if code == 404:
         control.check()
-        code, _ = request(
+        code, organization = request(
             url,
             f"admin/users/{OPERATOR}/orgs",
             password,
@@ -168,6 +168,8 @@ def initialize(
             raise GiteaError("Gitea organization initialization failed")
     elif code != 200:
         raise GiteaError("Gitea organization lookup failed")
+    if not isinstance(organization, dict) or organization.get("visibility") != "private":
+        raise GiteaError("Gitea organization visibility mismatch; private organization required")
     teams: list[dict[str, Any]] = []
     page = 1
     while True:

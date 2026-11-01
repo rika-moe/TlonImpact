@@ -98,7 +98,7 @@ def test_existing_bootstrap_does_not_reset_password(monkeypatch: pytest.MonkeyPa
         [
             (200, {"is_admin": True, "login": "tlon-service"}),
             (200, {}),
-            (200, {}),
+            (200, {"visibility": "private"}),
             (
                 200,
                 [
@@ -162,7 +162,7 @@ def test_first_bootstrap_and_interrupted_resume(monkeypatch: pytest.MonkeyPatch)
             (200, {"is_admin": True, "login": "tlon-service"}),
             (200, {}),
             (404, None),
-            (201, {}),
+            (201, {"visibility": "private"}),
             (200, [{"name": "Owners", "id": 1}]),
             (200, {}),
             (201, {}),
@@ -225,7 +225,7 @@ def test_team_missing_units_refused(monkeypatch: pytest.MonkeyPatch) -> None:
         [
             (200, {"is_admin": True, "login": "tlon-service"}),
             (200, {}),
-            (200, {}),
+            (200, {"visibility": "private"}),
             (
                 200,
                 [
@@ -262,3 +262,37 @@ def test_health_request_is_unauthenticated_before_first_admin(
     assert req.full_url == "http://127.0.0.1:3000/api/healthz"
     assert req.get_header("Authorization") is None
     assert req.data is None
+
+
+@pytest.mark.parametrize("created", [False, True])
+@pytest.mark.parametrize(
+    "organization", [{"visibility": "public"}, {"visibility": "limited"}, {}, None]
+)
+def test_organization_visibility_drift_refused(
+    monkeypatch: pytest.MonkeyPatch, created: bool, organization: object
+) -> None:
+    from tlon.gitea import initialize as module
+
+    monkeypatch.setattr(module, "health_ready", lambda url: True)
+    calls: list[str] = []
+    responses = iter(
+        [
+            (200, {"is_admin": True, "login": "tlon-service"}),
+            (200, {}),
+            *(([(404, None), (201, organization)]) if created else [(200, organization)]),
+        ]
+    )
+
+    def reply(url: str, path: str, password: str, **kwargs: object) -> tuple[int, object]:
+        calls.append(path)
+        return next(responses)
+
+    monkeypatch.setattr(module, "request", reply)
+    with pytest.raises(GiteaError, match="organization visibility mismatch"):
+        initialize(MagicMock(), "http://127.0.0.1:3000/", {"admin_password": "secret"})
+    assert calls == [
+        "user",
+        "users/tlon-operator",
+        "orgs/tlon",
+        *(["admin/users/tlon-operator/orgs"] if created else []),
+    ]
