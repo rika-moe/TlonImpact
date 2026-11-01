@@ -110,12 +110,10 @@ class DockerRuntimeConfig(BaseModel):
     working_dir: str = "/workspace"
     memory_limit: str = "512m"
     cpu_limit: float = 1.0
-    # 宪法零：邮件是唯一通道。默认断网（issue #23，实测调查：全部历史
-    # bash 调用零联网命令）；确需外联的成员在此显式声明（如 "bridge"），
-    # 声明即数据、随原型提案一起评审。
-    # "gitea" explicitly authorizes the managed collaboration network and
-    # Git/tea execution image. It does not change the execution level.
-    network_mode: str = "none"
+    # Members default to the managed Gitea network and development execution
+    # image. Explicit "none" keeps execution offline; L0/L1 capabilities and
+    # the stopped, credential-free file cabinet are unchanged.
+    network_mode: str = "gitea"
 
     @field_validator("level")
     @classmethod

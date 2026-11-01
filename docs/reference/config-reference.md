@@ -67,10 +67,10 @@
 | `working_dir` | `str` | "/workspace" |  |
 | `memory_limit` | `str` | "512m" |  |
 | `cpu_limit` | `float` | 1.0 |  |
-| `network_mode` | `str` | "none" |  |
+| `network_mode` | `str` | "gitea" |  |
 <!-- END GENERATED: agent-yaml-fields-docker -->
 
-`network_mode: gitea` 明确授权 L2 使用实例协作网络和托管 Git/tea 执行镜像，每次执行注入本成员凭据。默认 `none` 不变，L0/L1 不获得执行权限；此模式的 `image` 仅用于离线文件柜。见 [成员接入设计](../design/gitea-collaboration.md#当前实现成员与执行接入257)。
+`network_mode` 默认 `gitea`，L2 使用实例协作网络和预装 Node/Python/Git/tea 的托管开发镜像，每次执行注入本成员凭据。L0/L1 不获得执行权限；此模式的 `image` 仅用于离线文件柜。需要离线时可显式设置 `none`。见 [成员接入设计](../design/gitea-collaboration.md#当前实现成员与执行接入257)。
 
 `level`（issue #26，L1 落地于 #40）是执行装置能力阶梯声明：`"L0"` = 无执行装置——不创建 DockerRuntime、不注册 Shell，但五个文件工具可读写自己的 workspace 和读取只读作者资料；`"L1"`（默认，issue #31 于 2026-10-05 拍板翻转）= 文件层——archive-only，workspace 外文件访问可使用文件柜容器，但结构性零代码执行（容器从不启动、exec 单元从不存在，run() 由装置层直接拒绝）；`"L2"` = Docker 完整 userland。声明即数据、随原型提案一起评审。`docker.level` 也可由原型 spec 的顶层 `:execution` 段（见 [dsl-reference.md](./dsl-reference.md) 1.1 节）在实例化时一次性投影而来——此后运行时权威是本字段，成员自改 behavior.tlon 的 `:execution` 不会重新投影（防自提权）。
 
@@ -101,7 +101,7 @@ agent:
     working_dir: /workspace
     memory_limit: 512m
     cpu_limit: 1.0
-    network_mode: none   # 默认断网（issue #23）；确需外联改为 "bridge" 等显式声明
+    network_mode: gitea  # 默认使用托管开发环境与实例网络；显式 none 可保持离线
   tool:
     per_timeout: 30.0
     allowed_paths:

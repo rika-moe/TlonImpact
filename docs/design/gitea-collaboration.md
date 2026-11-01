@@ -24,7 +24,7 @@
 
 宿主按稳定 member ID 的 SHA-256 派生 Gitea 用户名，在私有 `members/` 记录绑定、密码及执行 token。账号不随显示名或运行容器重建而变化。对账在服务初始化后后台运行；新增成员不等待 Gitea，失败通过 `GET /admin/gitea` 的 `members` 状态暴露并自动重试。休眠成员仍是有效成员；退休以邮件库的持久退休事实为准，删除成员也撤权。退休先禁止登录，再撤销全部 token、退出组织，保留账号与历史；撤权失败保留待处理状态，不能因为进程重启丢失。继任 ID 创建新账号，不能复活旧绑定。
 
-成员执行接入使用现有配置的明确授权值：
+新建成员默认接入 Gitea，无需初始化后逐个修改 YAML。以下为默认网络及 L2 执行配置：
 
 ```yaml
 docker:
@@ -32,7 +32,7 @@ docker:
   network_mode: gitea
 ```
 
-`gitea` 是实例网络的逻辑名称，不是一个全局 Docker 网络。默认仍为 `none`；该值不提升 L0/L1 的执行等级。授权成员的一次性执行单元使用随包提供配方构建的开发镜像；文件柜仍使用声明的基础镜像且不联网。该模式下执行镜像由集成管理，`docker.image` 仅决定文件柜镜像。开发镜像基于官方 `node:24-bookworm-slim`，预装 Node/npm、Python/pip/venv、C/C++/make、完整 Perl、Git/curl、jq/rg/zip/unzip；tea 固定 `0.16.0`（amd64/arm64 下载均校验 SHA256）。配方 tag 用于本地缓存，不保证滚动基础镜像及发行包逐字节复现。成员装配时先准备镜像，同一进程的成员共用构建锁，完成后才开放执行工具；构建失败不创建执行单元。Shell 调用不再承担镜像构建时间。Gitea 成员的启动上限为普通装配的 60 秒加共享镜像准备预算，避免外层启动计时提前取消冷构建；其他成员保持 60 秒。开发镜像冷构建使用 900 秒协作预算、流式取消与 120 秒构建请求读取超时，退出等待宿主 worker 结束；关闭客户端流不等同于保证 Docker daemon 的构建任务立即停止。
+`gitea` 是实例网络的逻辑名称，不是一个全局 Docker 网络。默认值为 `gitea`，适用于初始社会成员、管理端创建和原型生成的成员；该值不提升 L0/L1 的执行等级。显式 `none` 仍表示离线。授权成员的一次性执行单元使用随包提供配方构建的开发镜像；文件柜仍使用声明的基础镜像且不联网。该模式下执行镜像由集成管理，`docker.image` 仅决定文件柜镜像。开发镜像基于官方 `node:24-bookworm-slim`，预装 Node/npm、Python/pip/venv、C/C++/make、完整 Perl、Git/curl、jq/rg/zip/unzip；tea 固定 `0.16.0`（amd64/arm64 下载均校验 SHA256）。配方 tag 用于本地缓存，不保证滚动基础镜像及发行包逐字节复现。成员装配时先准备镜像，同一进程的成员共用构建锁，完成后才开放执行工具；构建失败不创建执行单元。Shell 调用不再承担镜像构建时间。Gitea 成员的启动上限为普通装配的 60 秒加共享镜像准备预算，避免外层启动计时提前取消冷构建；其他成员保持 60 秒。开发镜像冷构建使用 900 秒协作预算、流式取消与 120 秒构建请求读取超时，退出等待宿主 worker 结束；关闭客户端流不等同于保证 Docker daemon 的构建任务立即停止。
 
 每次执行通过注入端口获取本成员凭据，并检查成员仍存在、未退休；sandbox 不读取宿主凭据文件。临时容器环境提供 `GITEA_INSTANCE_URL`、`GITEA_TOKEN`（tea 原生支持）和 `TLON_GITEA_URL`、`TLON_GITEA_USERNAME`、`TLON_GITEA_TOKEN`。Git 使用预装 credential helper，精确匹配内部服务的协议与主机，禁用 HTTP 重定向，不依赖可写 HOME 或上次容器的登录文件。tea 启动仍需创建配置目录，`XDG_CONFIG_HOME=/tmp/tlon-config` 指向每次执行的 tmpfs；不执行 `tea login`，认证仍来自环境。工作副本的 remote 保留无凭据 URL。环境凭据对本成员的代码可见，不能防止成员主动输出自己的 token；宿主管理密码不进入执行单元。
 
@@ -88,7 +88,7 @@ Gitea 项目权限不复制为另一套可独立修改的 Tlon 权限表。绑�
 
 ## 已核实的现状与接入点
 
-- [执行装置](execution-device.md) 使用 L0/L1/L2；L2 为文件柜加一次性执行单元，rootfs 只读，workspace 持久化，网络默认 none。
+- [执行装置](execution-device.md) 使用 L0/L1/L2；L2 为文件柜加一次性执行单元，rootfs 只读，workspace 持久化，网络默认 gitea。
 - [DockerRuntime](../../src/tlon/sandbox/docker_runtime.py) 按现有镜像创建容器，不在启动时安装软件；每次执行创建并清理独立容器。因此 Git/tea 和认证适配需预装进镜像，凭据需每次注入，不能依赖上一次命令的进程环境或临时登录文件。
 - 项目已依赖 Docker SDK、aiohttp 和 filelock，先复用已有依赖；不要求用户另装 Compose，不引入通用基础设施编排框架。
 - [基础设施](infrastructure.md) 显式注入路径和设置；[邮件](mail.md) 先提交 SQLite 再通知；EventBus 不保证持久投递。
@@ -185,7 +185,7 @@ git switch --detach FETCH_HEAD
 
 需分别验证三条链路：成员执行单元访问 Git/API、人类浏览器访问网页、Gitea 回调 Tlon。容器里的 localhost 不代表宿主或其他容器。
 
-Gitea 接入实例专用 Docker 网络；获网络授权的 L2 执行单元接入可达该服务的网络。保留其他成员的默认断网策略，不静默改变所有原型执行权限。普通 Docker bridge 仅提供连通性，不能宣称已实现“只允许访问 Gitea”的出口控制；本阶段不新增通用 egress 防火墙。
+Gitea 接入实例专用 Docker 网络；获网络授权的 L2 执行单元接入可达该服务的网络。所有成员默认获得 Gitea 网络连通性；执行等级及仓库权限独立控制。普通 Docker bridge 仅提供连通性，不能宣称已实现“只允许访问 Gitea”的出口控制；本阶段不新增通用 egress 防火墙。
 
 网页端口默认仅发布到宿主回环地址。区分浏览器可访问的规范 URL（配置为 Gitea ROOT_URL）和容器内 Git/API 服务地址；通知保存规范链接，成员按仓库/issue/PR 标识通过内部地址读取。不得让模型猜测替换域名或把内部服务名当成人类可打开的链接。实施验证 clone、API 重定向和凭据 host 匹配，防止内部请求被重定向到容器 localhost。
 
@@ -258,7 +258,7 @@ Gitea 仍在运行而 dream 停止时，webhook 可能投递失败。第一阶�
 
 ## 开发沙箱准备（2026-11-01）
 
-成员显式使用 `network_mode: gitea` 接入托管开发环境。镜像预装 Node.js/npm、Python/pip/venv、C/C++/make、完整 Perl 及 Git/tea/curl；成员装配时先完成共享镜像准备，再创建沙箱，Shell 调用不承担首次构建。运行单元仍保持只读根文件系统与临时凭据，项目依赖安装到持久 workspace（例如 `npm install`、`python3 -m venv .venv` 后使用虚拟环境的 pip），npm/pip 缓存使用 `/tmp`。
+成员默认使用 `network_mode: gitea` 接入托管开发环境。镜像预装 Node.js/npm、Python/pip/venv、C/C++/make、完整 Perl 及 Git/tea/curl；成员装配时先完成共享镜像准备，再创建沙箱，Shell 调用不承担首次构建。运行单元仍保持只读根文件系统与临时凭据，项目依赖安装到持久 workspace（例如 `npm install`、`python3 -m venv .venv` 后使用虚拟环境的 pip），npm/pip 缓存使用 `/tmp`。
 
 既有成员和用户原型不由播种自动覆盖。本次用户明确授权的本地配置维护将标准智能体副本同步至 PR #251 的 200 轮和 400000 fuel，并启用成员的 Gitea 网络；先备份，不修改历史运行回执或重新投递邮件。执行超时继续保留结果未知的语义，不能未经核实重放可能已经产生副作用的命令。
 

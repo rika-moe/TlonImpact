@@ -322,7 +322,7 @@ async def test_happy_path_layout_feed_archive_teardown(tmp_path: Path) -> None:
     assert h.config_at_build is not None
     assert h.config_at_build.docker.memory_limit == "256m"
     assert h.config_at_build.docker.cpu_limit == 0.5
-    assert h.config_at_build.docker.network_mode == "none"
+    assert h.config_at_build.docker.network_mode == "gitea"
     assert h.config_at_build.llm is not None
     assert h.config_at_build.llm.model_name == "deepseek/test-chat"
 

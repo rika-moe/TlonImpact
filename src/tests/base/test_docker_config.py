@@ -11,7 +11,7 @@ lowest sufficient file layer.
 import pytest
 from pydantic import ValidationError
 
-from tlon.base.config import DockerRuntimeConfig
+from tlon.base.config import AgentConfig, DockerRuntimeConfig
 
 
 class TestExecutionLevel:
@@ -26,3 +26,14 @@ class TestExecutionLevel:
     def test_rejects_undeclared_levels(self, level: str) -> None:
         with pytest.raises(ValidationError, match=r"docker\.level"):
             DockerRuntimeConfig(level=level)
+
+
+def test_new_members_default_to_gitea() -> None:
+    assert AgentConfig(id="new-member", name="New member").docker.network_mode == "gitea"
+
+
+def test_explicit_offline_configuration_is_preserved() -> None:
+    config = AgentConfig(
+        id="offline", name="Offline", docker=DockerRuntimeConfig(network_mode="none")
+    )
+    assert config.docker.network_mode == "none"

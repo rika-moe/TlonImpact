@@ -415,7 +415,7 @@ class ArenaRunner:
             instantiated = True
 
             # 资源收紧：演武场成员是试验装置（arena.md 成本界）；network 不动
-            # （默认即 none，且 spec 声明是被测对象）。
+            # （沿用成员默认值；spec 声明是被测对象）。
             config_file = arena_paths.agent_config_file(agent_id)
             config = yaml_load_file(config_file)
             if config is None:

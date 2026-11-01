@@ -167,7 +167,7 @@ class TestExecutionLevelAssembly:
             id=f"member-{level.lower()}",
             name=f"member-{level.lower()}",
             llm=LLMConfig(model_name="test/model", max_output_tokens=8192, context_window=64000),
-            docker=DockerRuntimeConfig(level=level),
+            docker=DockerRuntimeConfig(level=level, network_mode="none"),
         )
         return await assemble_member_services(
             config,
@@ -429,9 +429,7 @@ async def test_gitea_assembly_prepares_image_and_closes_failed_client(
     runtime = MagicMock()
     runtime.prepare = AsyncMock(side_effect=RuntimeError("build failed") if failure else None)
     monkeypatch.setattr("tlon.agents.assembly.DockerRuntime", MagicMock(return_value=runtime))
-    config = AgentConfig(
-        id="member-dev", name="developer", docker=DockerRuntimeConfig(network_mode="gitea")
-    )
+    config = AgentConfig(id="member-dev", name="developer")
     if failure:
         with pytest.raises(RuntimeError, match="build failed"):
             await _create_docker_runtime(config, tlon_paths)

@@ -144,10 +144,9 @@ class DockerRuntime:
     First implementation of the ``ExecutionDevice`` interface
     (``sandbox/device.py``, design: docs/design/execution-device.md).
 
-    Each agent gets its own isolated execution environment. Network is
-    off by default (``network_mode="none"``, issue #23 — constitution
-    zero: mail is the only channel); a member that genuinely needs
-    egress declares it explicitly in its agent.yaml.
+    Each agent gets its own isolated execution environment. Execution
+    defaults to the managed Gitea network and development image; explicit
+    ``network_mode="none"`` keeps execution offline.
 
     Two container roles (issue #25):
 
